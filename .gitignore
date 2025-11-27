@@ -72,7 +72,8 @@ secrets/
 
 # Kiro AI files - tracked locally, excluded from remote via skip-worktree
 # These contain AI-generated specs, steering rules, and task lists
-# .kiro/
+# Run: git update-index --skip-worktree .kiro/ to exclude from pushes
+.kiro/
 
 # Coverage
 coverage/
