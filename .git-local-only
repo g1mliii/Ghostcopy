@@ -1,0 +1,32 @@
+# Local-Only Git Tracking for .kiro Directory
+# 
+# The .kiro directory contains AI-generated specs, steering rules, and task lists.
+# We want to track these locally for version history but NOT push to the public repo.
+#
+# SETUP INSTRUCTIONS:
+#
+# Option 1: Use git update-index (Recommended)
+# After committing .kiro files locally, run:
+#   git update-index --skip-worktree .kiro/
+#
+# This tells git to ignore changes to .kiro when pushing, but keeps local history.
+#
+# Option 2: Separate local branch
+# Keep a local-only branch for .kiro files:
+#   git checkout -b local-specs
+#   git add .kiro/
+#   git commit -m "Add local specs"
+#   git checkout main
+#
+# Option 3: Git worktree
+# Use a separate worktree for local-only files.
+#
+# CURRENT SETUP:
+# The .gitignore excludes .kiro/ from being pushed to origin.
+# To track locally, you can:
+#   1. Remove .kiro/ from .gitignore temporarily
+#   2. Commit the files
+#   3. Add .kiro/ back to .gitignore
+#   4. Run: git update-index --assume-unchanged .kiro/
+#
+# This gives you local version history without pushing to remote.

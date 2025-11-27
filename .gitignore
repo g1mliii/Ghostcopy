@@ -1,0 +1,87 @@
+# Dependencies
+/build/
+/.dart_tool/
+/.packages
+.packages
+.pub/
+pubspec.lock
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Flutter/Dart
+*.dart.js
+*.js_
+*.js.deps
+*.js.map
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.*
+
+# iOS/macOS
+**/ios/**/*.mode1v3
+**/ios/**/*.mode2v3
+**/ios/**/*.moved-aside
+**/ios/**/*.pbxuser
+**/ios/**/*.perspectivev3
+**/ios/**/DerivedData/
+**/ios/.symlinks/
+**/ios/**/Flutter/App.framework
+**/ios/**/Flutter/Flutter.framework
+**/ios/**/Flutter/Flutter.podspec
+**/ios/**/Flutter/Generated.xcconfig
+**/ios/**/Flutter/ephemeral
+**/ios/**/Flutter/app.flx
+**/ios/**/Flutter/app.zip
+**/ios/**/Flutter/flutter_assets/
+**/ios/**/Pods/
+**/ios/**/.symlinks/
+**/macos/Flutter/ephemeral
+**/macos/Pods/
+
+# Environment & Secrets
+.env
+.env.*
+*.env
+secrets/
+*.pem
+*.p12
+*.key
+
+# Kiro AI files - keep local only, exclude from remote
+# These contain AI-generated specs, steering rules, and task lists
+# We want version history locally but not in public repo
+.kiro/
+
+# Coverage
+coverage/
+*.lcov
+
+# Test
+test/.test_coverage.dart
+
+# Logs
+*.log
+logs/
