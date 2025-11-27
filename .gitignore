@@ -70,10 +70,9 @@ secrets/
 *.p12
 *.key
 
-# Kiro AI files - keep local only, exclude from remote
+# Kiro AI files - tracked locally, excluded from remote via skip-worktree
 # These contain AI-generated specs, steering rules, and task lists
-# We want version history locally but not in public repo
-.kiro/
+# .kiro/
 
 # Coverage
 coverage/
