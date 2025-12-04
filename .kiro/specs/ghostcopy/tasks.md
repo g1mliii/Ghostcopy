@@ -8,11 +8,10 @@
     - Configure `pubspec.yaml` with core dependencies
     - _Requirements: 1.1, 2.1_
   - [x] 1.2 Set up project structure with service interfaces
-
     - Create `lib/services/`, `lib/models/`, `lib/repositories/`, `lib/ui/` directories
     - Define abstract interfaces for all services (IWindowService, IHotkeyService, etc.)
     - _Requirements: All_
-  - [ ] 1.3 Configure Supabase Flutter SDK
+  - [x] 1.3 Configure Supabase Flutter SDK
     - Add `supabase_flutter` dependency
     - Create Supabase initialization in main.dart
     - Set up environment configuration for Supabase URL and anon key
