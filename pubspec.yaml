@@ -72,22 +72,30 @@ flutter:
   # For details regarding adding assets from package dependencies, see
   # https://flutter.dev/to/asset-from-package
 
-  # To add custom fonts to your application, add a fonts section here,
-  # in this "flutter" section. Each entry in this list should have a
-  # "family" key with the font family name, and a "fonts" key with a
-  # list giving the asset and other descriptors for the font. For
-  # example:
+  # Custom fonts for GhostCopy
+  # NOTE: Download font files from Google Fonts and place in assets/fonts/
+  # See assets/fonts/README.md for instructions
+  # 
+  # Uncomment when font files are added:
   # fonts:
-  #   - family: Schyler
+  #   - family: Inter
   #     fonts:
-  #       - asset: fonts/Schyler-Regular.ttf
-  #       - asset: fonts/Schyler-Italic.ttf
-  #         style: italic
-  #   - family: Trajan Pro
+  #       - asset: assets/fonts/inter/Inter-Regular.ttf
+  #         weight: 400
+  #       - asset: assets/fonts/inter/Inter-Medium.ttf
+  #         weight: 500
+  #       - asset: assets/fonts/inter/Inter-SemiBold.ttf
+  #         weight: 600
+  #       - asset: assets/fonts/inter/Inter-Bold.ttf
+  #         weight: 700
+  #   - family: JetBrains Mono
   #     fonts:
-  #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
+  #       - asset: assets/fonts/jetbrains_mono/JetBrainsMono-Regular.ttf
+  #         weight: 400
+  #       - asset: assets/fonts/jetbrains_mono/JetBrainsMono-Medium.ttf
+  #         weight: 500
+  #       - asset: assets/fonts/jetbrains_mono/JetBrainsMono-Bold.ttf
   #         weight: 700
   #
-  # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+  # Alternative: Use google_fonts package (recommended for easier setup)
+  # Add to dependencies: google_fonts: ^6.1.0

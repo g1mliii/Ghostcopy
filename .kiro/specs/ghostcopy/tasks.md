@@ -2,7 +2,7 @@
 
 ## Phase 1: Project Setup & Core Desktop Infrastructure
 
-- [ ] 1. Initialize Flutter project with multi-platform support
+- [x] 1. Initialize Flutter project with multi-platform support
   - [x] 1.1 Create Flutter project with Windows, macOS, Android, iOS targets
     - Run `flutter create` with appropriate flags
     - Configure `pubspec.yaml` with core dependencies
@@ -16,7 +16,7 @@
     - Create Supabase initialization in main.dart
     - Set up environment configuration for Supabase URL and anon key
     - _Requirements: 5.1, 9.1_
-  - [ ] 1.4 Establish UI Design System should take inspiraton from blip app and discord
+  - [x] 1.4 Establish UI Design System should take inspiraton from blip app and discord
     - Create GhostColors class with dark theme palette
     - Create GhostTypography class with font styles
     - Set up ThemeData with design tokens
