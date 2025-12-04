@@ -3,11 +3,12 @@
 ## Phase 1: Project Setup & Core Desktop Infrastructure
 
 - [ ] 1. Initialize Flutter project with multi-platform support
-  - [ ] 1.1 Create Flutter project with Windows, macOS, Android, iOS targets
+  - [x] 1.1 Create Flutter project with Windows, macOS, Android, iOS targets
     - Run `flutter create` with appropriate flags
     - Configure `pubspec.yaml` with core dependencies
     - _Requirements: 1.1, 2.1_
-  - [ ] 1.2 Set up project structure with service interfaces
+  - [x] 1.2 Set up project structure with service interfaces
+
     - Create `lib/services/`, `lib/models/`, `lib/repositories/`, `lib/ui/` directories
     - Define abstract interfaces for all services (IWindowService, IHotkeyService, etc.)
     - _Requirements: All_
@@ -16,7 +17,7 @@
     - Create Supabase initialization in main.dart
     - Set up environment configuration for Supabase URL and anon key
     - _Requirements: 5.1, 9.1_
-  - [ ] 1.4 Establish UI Design System
+  - [ ] 1.4 Establish UI Design System should take inspiraton from blip app and discord
     - Create GhostColors class with dark theme palette
     - Create GhostTypography class with font styles
     - Set up ThemeData with design tokens
@@ -28,7 +29,8 @@
     - Implement `toJson()` and `fromJson()` methods
     - Include all fields: id, userId, content, deviceName, deviceType, isPublic, createdAt
     - _Requirements: 5.3, 5.4_
-  - [ ]* 2.2 Write property test for ClipboardItem serialization round-trip
+  - [ ] 2.2 Write property test for ClipboardItem serialization round-trip
+
     - **Property 16: JSON Round-Trip** (applied to ClipboardItem)
     - **Validates: Requirements 7.5, 7.6**
 
@@ -53,10 +55,7 @@
     - Register global hotkey (configurable, default Ctrl+Shift+S)
     - Handle hotkey callback to show Spotlight window
     - _Requirements: 1.1, 3.4_
-  - [ ]* 5.2 Write property test for hotkey listener invariant
-    - **Property 4: Hotkey Listener Invariant**
-    - **Validates: Requirements 3.4**
-
+  
 - [ ] 6. Implement System Tray Service
   - [ ] 6.1 Create TrayService implementation using tray_manager package
     - Set up tray icon
@@ -79,10 +78,6 @@
     - Tab navigation between elements
     - Arrow keys for transformer options
     - _Requirements: 12.5_
-  - [ ]* 8.3 Write property test for clipboard content population
-    - **Property 1: Clipboard Content Population**
-    - **Validates: Requirements 1.2**
-
 - [ ] 9. Implement Clipboard Repository
   - [ ] 9.1 Create ClipboardRepository with Supabase operations
     - Implement insert() with device metadata
@@ -113,10 +108,12 @@
     - Implement enterSleepMode() and exitSleepMode()
     - Manage list of Pausable resources
     - _Requirements: 3.1, 3.2, 3.3_
-  - [ ]* 11.2 Write property test for sleep mode resource pausing
+  - [ ] 11.2 Write property test for sleep mode resource pausing
+
     - **Property 2: Sleep Mode Resource Pausing**
     - **Validates: Requirements 3.1, 3.2**
-  - [ ]* 11.3 Write property test for sleep mode round-trip
+  - [ ] 11.3 Write property test for sleep mode round-trip
+
     - **Property 3: Sleep Mode Round-Trip**
     - **Validates: Requirements 3.3**
 
@@ -138,13 +135,16 @@
     - Detect JWT tokens (three dot-separated base64 segments)
     - Detect hex color codes (#RGB, #RRGGBB, #RRGGBBAA)
     - _Requirements: 7.1, 7.2, 7.3_
-  - [ ]* 14.2 Write property test for JSON detection
+  - [ ] 14.2 Write property test for JSON detection
+
     - **Property 13: JSON Detection**
     - **Validates: Requirements 7.1**
-  - [ ]* 14.3 Write property test for JWT detection and decoding
+  - [ ] 14.3 Write property test for JWT detection and decoding
+
     - **Property 14: JWT Detection and Decoding**
     - **Validates: Requirements 7.2**
-  - [ ]* 14.4 Write property test for hex color detection
+  - [ ] 14.4 Write property test for hex color detection
+
     - **Property 15: Hex Color Detection**
     - **Validates: Requirements 7.3**
 
@@ -153,7 +153,8 @@
     - Parse JSON, format with 2-space indentation
     - Handle nested objects and arrays
     - _Requirements: 7.4, 7.5, 7.6_
-  - [ ]* 15.2 Write property test for JSON round-trip
+  - [ ] 15.2 Write property test for JSON round-trip
+
     - **Property 16: JSON Round-Trip**
     - **Validates: Requirements 7.5, 7.6**
 
@@ -273,7 +274,21 @@
     - Dark theme consistent with design system
     - _Requirements: 13.1, 13.2, 13.3_
 
-- [ ] 30. Final Desktop Checkpoint - Ensure all tests pass
+- [ ] 30. Desktop Security Review & Memory Leak Testing
+  - [ ] 30.1 Conduct security review
+    - Review RLS policies in Supabase
+    - Verify .env file is in .gitignore
+    - Check for exposed API keys or secrets in code
+    - Validate input sanitization for clipboard content
+    - Test authentication flow for vulnerabilities
+  - [ ] 30.2 Memory leak testing
+    - Use Flutter DevTools to profile memory usage
+    - Test sleep mode transitions for memory leaks
+    - Verify stream subscriptions are properly disposed
+    - Check for retained references in lifecycle controller
+    - Test long-running app scenarios (24+ hours)
+
+- [ ] 31. Final Desktop Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Phase 10: macOS Port
@@ -308,6 +323,12 @@
     - Set up notification channels
     - Handle notification tap to open app and copy
     - _Requirements: 8.1, 8.2, 8.3_
+  - [ ] 34.2 Integrate Firebase Cloud Messaging (FCM) with Supabase
+    - Add firebase_messaging package
+    - Configure FCM for Android and iOS
+    - Store FCM tokens in Supabase
+    - Set up Supabase Edge Function or database trigger to send push notifications via FCM
+    - _Requirements: 8.1_
 
 - [ ] 35. Implement Home Screen Widget
   - [ ] 35.1 Configure home_widget package
@@ -316,5 +337,54 @@
     - Dark theme consistent with app
     - _Requirements: 8.4, 8.5_
 
-- [ ] 36. Final Checkpoint - Ensure all tests pass
+- [ ] 36. Mobile Security Review & Memory Leak Testing
+  - [ ] 36.1 Conduct mobile security review
+    - Review FCM token storage and handling
+    - Verify clipboard data is cleared after auto-copy
+    - Test notification permissions and handling
+    - Validate widget data security
+    - Check for background process vulnerabilities
+  - [ ] 36.2 Mobile memory leak testing
+    - Profile memory usage on Android and iOS
+    - Test widget updates for memory leaks
+    - Verify notification listeners are properly disposed
+    - Test app backgrounding/foregrounding scenarios
+
+- [ ] 37. Final Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
+
+## Phase 12: Landing Page & Distribution
+
+- [ ] 38. Build Landing Page
+  - [ ] 38.1 Create simple landing page
+    - Hero section with GhostCopy branding and tagline
+    - Feature highlights (cross-platform, realtime, secure)
+    - Download buttons for Windows and macOS
+    - Screenshots/demo video
+    - Dark theme consistent with app design
+  - [ ] 38.2 Set up hosting
+    - Deploy to Vercel, Netlify, or GitHub Pages
+    - Configure custom domain (optional)
+    - Set up analytics (optional)
+
+- [ ] 39. Prepare Distribution Builds
+  - [ ] 39.1 Create Windows installer
+    - Build release executable
+    - Create installer with NSIS or Inno Setup
+    - Code sign the executable (optional but recommended)
+  - [ ] 39.2 Create macOS app bundle
+    - Build release .app
+    - Create DMG installer
+    - Notarize with Apple (required for distribution)
+  - [ ] 39.3 Prepare mobile app store submissions
+    - Build release APK/AAB for Android
+    - Build release IPA for iOS
+    - Prepare app store listings and screenshots
+
+- [ ] 40. Landing Page Security Review
+  - [ ] 40.1 Review landing page security
+    - Verify HTTPS is enabled
+    - Check for XSS vulnerabilities
+    - Validate download links point to correct files
+    - Test download integrity (checksums)
+    - Review privacy policy and terms (if applicable)
