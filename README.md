@@ -102,9 +102,6 @@ CREATE POLICY "Users can delete own items" ON clipboard
 CREATE INDEX idx_clipboard_user_created ON clipboard(user_id, created_at DESC);
 ```
 
-Then enable Realtime:
-1. Go to Database → Replication
-2. Enable INSERT and UPDATE on the `clipboard` table
 
 ## Smart Transformers
 
