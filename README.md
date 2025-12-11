@@ -1,23 +1,18 @@
-# GhostCopy 👻
+# GhostCopy
 
-A seamless, real-time cross-platform clipboard synchronization tool. Copy text on one device, instantly paste on another.
+Real-time cross-platform clipboard synchronization. Copy text on one device, instantly paste on another.
 
-![Flutter](https://img.shields.io/badge/Flutter-02569B?style=flat&logo=flutter&logoColor=white)
-![Dart](https://img.shields.io/badge/Dart-0175C2?style=flat&logo=dart&logoColor=white)
-![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat&logo=supabase&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+## Features
 
-## ✨ Features
+- Invisible Desktop Utility - Runs silently in the background, activated with a global hotkey
+- Cross-Platform Sync - Windows, macOS, iOS, and Android support
+- Real-time synchronization via Supabase
+- Game Mode - Suppresses notifications during full-screen apps
+- Smart Transformers - Auto-detect and enhance JSON, JWT tokens, and hex colors
+- Private & Secure - Row-level security ensures only you see your data
+- Zero-CPU Sleep Mode - No performance impact when idle
 
-- **🖥️ Invisible Desktop Utility** - Runs silently in the background, activated with a global hotkey
-- **📱 Cross-Platform Sync** - Windows, macOS, iOS, and Android support
-- **⚡ Real-time** - Instant synchronization via Supabase Realtime
-- **🎮 Game Mode** - Suppresses notifications during full-screen apps
-- **🛠️ Smart Transformers** - Auto-detect and enhance JSON, JWT tokens, and hex colors
-- **🔒 Private & Secure** - Row-level security ensures only you see your data
-- **💤 Zero-CPU Sleep Mode** - No performance impact when idle
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -62,7 +57,7 @@ A seamless, real-time cross-platform clipboard synchronization tool. Copy text o
    flutter run -d ios
    ```
 
-## 🎯 Usage
+## Usage
 
 ### Desktop (Windows/macOS)
 
@@ -78,7 +73,7 @@ A seamless, real-time cross-platform clipboard synchronization tool. Copy text o
 2. Tap notification to auto-copy to clipboard
 3. To send from mobile: Open app → Paste → Tap Send
 
-## 🗄️ Database Setup
+## Database Setup
 
 Run this SQL in your Supabase SQL Editor:
 
@@ -111,16 +106,7 @@ Then enable Realtime:
 1. Go to Database → Replication
 2. Enable INSERT and UPDATE on the `clipboard` table
 
-## 🎨 Design
-
-GhostCopy features a modern, sleek dark theme inspired by Discord and Blip:
-
-- **Glassmorphism** effects with subtle blur
-- **Smooth animations** (150ms ease-out transitions)
-- **Clean typography** using Inter and JetBrains Mono
-- **Keyboard-first** navigation support
-
-## 🛠️ Smart Transformers
+## Smart Transformers
 
 GhostCopy automatically detects and enhances certain content types:
 
@@ -130,33 +116,13 @@ GhostCopy automatically detects and enhances certain content types:
 | **JWT** | Three base64 segments | Decode and show payload (exp, user_id) |
 | **Hex Color** | #RGB, #RRGGBB | Color preview square |
 
-## 📦 Tech Stack
+## Tech Stack
 
 - **Frontend:** Flutter (Dart 3.x)
 - **Backend:** Supabase (PostgreSQL + Realtime + Auth)
 - **Desktop:** window_manager, hotkey_manager, tray_manager
 - **Mobile:** flutter_local_notifications, home_widget
 
-## 🤝 Contributing
+## License
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [Supabase](https://supabase.com) for the amazing backend-as-a-service
-- [Flutter](https://flutter.dev) for cross-platform magic
-- Design inspiration from [Discord](https://discord.com) and [Blip](https://blip.net)
-
----
-
-Made with 👻 by [Your Name]
+This project is licensed under the MIT License.
