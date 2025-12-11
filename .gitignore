@@ -85,3 +85,11 @@ test/.test_coverage.dart
 # Logs
 *.log
 logs/
+
+# AI-generated documentation artifacts (keep locally, don't commit)
+ghostcopy.md
+CONTRIBUTING.md
+lib/README.md
+lib/ui/theme/IMPLEMENTATION_*.md
+.github/ISSUE_TEMPLATE/
+.github/pull_request_template.md
