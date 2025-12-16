@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /b /s \"C:\\src\\flutter\\bin\\cache\\artifacts\\engine\")",
+      "Bash(findstr:*)",
+      "Bash(flutter precache:*)",
+      "Bash(flutter build:*)",
+      "Bash(flutter doctor:*)",
+      "Bash(flutter analyze:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(flutter pub:*)",
+      "Bash(flutter config:*)",
+      "Bash(flutter create:*)",
+      "Bash(flutter test:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}
