@@ -1,7 +1,21 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:window_manager/window_manager.dart';
+
+import 'services/game_mode_service.dart';
+import 'services/hotkey_service.dart';
+import 'services/impl/game_mode_service.dart';
+import 'services/impl/hotkey_service.dart';
+import 'services/impl/tray_service.dart';
+import 'services/impl/window_service.dart';
+import 'services/tray_service.dart';
+import 'services/window_service.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/widgets/tray_menu_window.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,106 +29,231 @@ Future<void> main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
   );
 
-  runApp(const MyApp());
+  // Initialize services (desktop only)
+  if (_isDesktop()) {
+    final windowService = WindowService();
+    final trayService = TrayService();
+    final hotkeyService = HotkeyService();
+    final gameModeService = GameModeService();
+
+    // Initialize window manager with hidden state (Acceptance Criteria #1)
+    await windowService.initialize();
+
+    // Initialize system tray (Acceptance Criteria #2)
+    await trayService.initialize();
+
+    // Register global hotkey (Requirement 1.1, 3.4)
+    // Default: Ctrl+Shift+S to show Spotlight window
+    const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
+    await hotkeyService.registerHotkey(
+      defaultHotkey,
+      windowService.showSpotlight,
+    );
+
+    runApp(
+      MyApp(
+        windowService: windowService,
+        trayService: trayService,
+        hotkeyService: hotkeyService,
+        gameModeService: gameModeService,
+      ),
+    );
+  } else {
+    // Mobile app
+    runApp(const MyApp());
+  }
+}
+
+/// Check if running on desktop platform
+bool _isDesktop() {
+  return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 }
 
 // Global Supabase client accessor
 final supabase = Supabase.instance.client;
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class MyApp extends StatefulWidget {
+  const MyApp({
+    this.windowService,
+    this.trayService,
+    this.hotkeyService,
+    this.gameModeService,
+    super.key,
+  });
+
+  final IWindowService? windowService;
+  final ITrayService? trayService;
+  final IHotkeyService? hotkeyService;
+  final IGameModeService? gameModeService;
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  bool _showingTrayMenu = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isDesktop()) {
+      // Set up tray right-click to show custom menu
+      (widget.trayService as TrayService?)?.onRightClick = _showTrayMenu;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_isDesktop()) {
+      // Dispose all services to prevent memory leaks
+      widget.trayService?.dispose();
+      widget.hotkeyService?.dispose();
+      widget.gameModeService?.dispose();
+      widget.windowService?.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _showTrayMenu() async {
+    // Configure window for tray menu (borderless, transparent)
+    // Batch operations to reduce lag
+    await Future.wait([
+      windowManager.setSize(const Size(250, 300)),
+      windowManager.setBackgroundColor(Colors.transparent),
+      windowManager.setAsFrameless(),
+    ]);
+
+    await windowManager.setAlignment(Alignment.bottomRight);
+    await windowManager.show();
+    await windowManager.focus();
+
+    setState(() => _showingTrayMenu = true);
+  }
+
+  void _hideTrayMenu() {
+    setState(() => _showingTrayMenu = false);
+    widget.windowService?.hideSpotlight();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'GhostCopy',
       theme: AppTheme.darkTheme,
-      home: const MyHomePage(title: 'GhostCopy'),
+      debugShowCheckedModeBanner: false,
+      home: Stack(
+        children: [
+          SpotlightScreen(windowService: widget.windowService),
+          if (_showingTrayMenu)
+            TrayMenuWindow(
+              windowService: widget.windowService!,
+              gameModeService: widget.gameModeService!,
+              onClose: _hideTrayMenu,
+            ),
+        ],
+      ),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({required this.title, super.key});
+/// Temporary Spotlight screen placeholder
+/// This will be replaced with the proper Spotlight UI from ui/screens/spotlight_screen.dart
+class SpotlightScreen extends StatefulWidget {
+  const SpotlightScreen({this.windowService, super.key});
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  final IWindowService? windowService;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<SpotlightScreen> createState() => _SpotlightScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _SpotlightScreenState extends State<SpotlightScreen> with WindowListener {
+  final FocusNode _focusNode = FocusNode();
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    if (_isDesktop()) {
+      windowManager.addListener(this);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_isDesktop()) {
+      windowManager.removeListener(this);
+    }
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  void onWindowFocus() {
+    // Request focus when window gains focus
+    _focusNode.requestFocus();
+  }
+
+  @override
+  void onWindowBlur() {
+    // Hide window when it loses focus (user clicks outside)
+    widget.windowService?.hideSpotlight();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+    return KeyboardListener(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: (event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          // Hide on Escape key
+          widget.windowService?.hideSpotlight();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Center(
+          child: Container(
+            width: 500,
+            height: 400,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1D),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  blurRadius: 20,
+                  spreadRadius: 5,
+                ),
+              ],
             ),
-          ],
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.content_copy,
+                  size: 64,
+                  color: Color(0xFF5865F2),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'GhostCopy Spotlight',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.headlineMedium?.copyWith(color: Colors.white),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Press Escape to close',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }

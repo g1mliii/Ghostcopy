@@ -1,0 +1,83 @@
+import 'dart:developer' as developer;
+import 'dart:io';
+import 'package:tray_manager/tray_manager.dart';
+import '../tray_service.dart';
+
+/// Concrete implementation of ITrayService using tray_manager package
+///
+/// Manages the system tray icon and context menu for desktop platforms.
+/// Provides Quit option and settings access as required by acceptance criteria.
+class TrayService implements ITrayService {
+  @override
+  Future<void> initialize() async {
+    // Only initialize on desktop platforms
+    if (!_isDesktop()) {
+      return;
+    }
+
+    await trayManager.setIcon(_getTrayIconPath());
+  }
+
+  @override
+  Future<void> setIcon(String iconPath) async {
+    if (!_isDesktop()) return;
+    await trayManager.setIcon(iconPath);
+  }
+
+  @override
+  Future<void> setContextMenu(List<TrayMenuItem> items) async {
+    if (!_isDesktop()) return;
+
+    developer.log(
+      '📋 TrayService: Setting context menu with ${items.length} items',
+      name: 'TrayService',
+    );
+
+    // Convert TrayMenuItem to tray_manager Menu items
+    final menuItems = items.map((item) {
+      if (item.isSeparator) {
+        developer.log('  - Separator', name: 'TrayService');
+        return MenuItem.separator();
+      }
+      developer.log(
+        '  - ${item.label} (checked: ${item.isChecked})',
+        name: 'TrayService',
+      );
+      return MenuItem(
+        key: item.label.toLowerCase().replaceAll(' ', '_'),
+        label: item.label,
+        checked: item.isChecked,
+      );
+    }).toList();
+
+    await trayManager.setContextMenu(Menu(items: menuItems));
+    developer.log(
+      '✅ TrayService: Context menu set successfully',
+      name: 'TrayService',
+    );
+  }
+
+  @override
+  Future<void> dispose() async {
+    if (!_isDesktop()) return;
+    // tray_manager handles cleanup automatically
+    await trayManager.destroy();
+  }
+
+  /// Get platform-specific tray icon path
+  String _getTrayIconPath() {
+    if (Platform.isWindows) {
+      return 'assets/icons/tray_icon.ico';
+    } else if (Platform.isMacOS) {
+      return 'assets/icons/tray_icon.png';
+    } else if (Platform.isLinux) {
+      return 'assets/icons/tray_icon.png';
+    }
+    return '';
+  }
+
+  /// Check if running on desktop platform
+  bool _isDesktop() {
+    return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+  }
+}

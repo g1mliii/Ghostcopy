@@ -27,8 +27,10 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+  flutter_controller_->engine()->SetNextFrameCallback([this]() {
+    if (flutter_controller_) {
+      this->Show();
+    }
   });
 
   // Flutter can complete the first frame before the "show window" callback is

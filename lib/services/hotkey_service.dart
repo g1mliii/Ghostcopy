@@ -26,5 +26,5 @@ abstract class IHotkeyService {
   Future<void> unregisterHotkey(HotKey hotkey);
 
   /// Dispose of the service and clean up resources
-  void dispose();
+  Future<void> dispose();
 }

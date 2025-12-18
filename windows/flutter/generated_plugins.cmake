@@ -4,10 +4,9 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
-  firebase_core
   hotkey_manager_windows
   screen_retriever
-  tray_manager
+  system_tray
   url_launcher_windows
   window_manager
 )

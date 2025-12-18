@@ -17,4 +17,7 @@ abstract class IWindowService {
   
   /// Check if the window is currently visible
   bool get isVisible;
+
+  /// Dispose of the service and clean up resources
+  Future<void> dispose();
 }

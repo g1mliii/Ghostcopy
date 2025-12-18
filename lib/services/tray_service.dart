@@ -6,14 +6,20 @@ class TrayMenuItem {
     required this.label,
     this.onTap,
     this.isSeparator = false,
+    this.isChecked = false,
   });
 
   /// Create a separator menu item
-  const TrayMenuItem.separator() : label = '', onTap = null, isSeparator = true;
+  const TrayMenuItem.separator()
+    : label = '',
+      onTap = null,
+      isSeparator = true,
+      isChecked = false;
 
   final String label;
   final VoidCallback? onTap;
   final bool isSeparator;
+  final bool isChecked;
 }
 
 /// Abstract interface for system tray management
@@ -28,5 +34,5 @@ abstract class ITrayService {
   Future<void> setContextMenu(List<TrayMenuItem> items);
 
   /// Dispose of the service and clean up resources
-  void dispose();
+  Future<void> dispose();
 }

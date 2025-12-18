@@ -62,10 +62,8 @@ class WindowClassRegistrar {
 
   // Returns the singleton registrar instance.
   static WindowClassRegistrar* GetInstance() {
-    if (!instance_) {
-      instance_ = new WindowClassRegistrar();
-    }
-    return instance_;
+    static WindowClassRegistrar instance;
+    return &instance;
   }
 
   // Returns the name of the window class, registering the class if it hasn't
@@ -79,12 +77,10 @@ class WindowClassRegistrar {
  private:
   WindowClassRegistrar() = default;
 
-  static WindowClassRegistrar* instance_;
-
   bool class_registered_ = false;
 };
 
-WindowClassRegistrar* WindowClassRegistrar::instance_ = nullptr;
+
 
 const wchar_t* WindowClassRegistrar::GetWindowClass() {
   if (!class_registered_) {
