@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:system_tray/system_tray.dart';
 import '../tray_service.dart';
 
@@ -53,7 +54,12 @@ class TrayService implements ITrayService {
     // Clean up callback to prevent memory leak
     onRightClick = null;
 
-    await _systemTray.destroy();
+    try {
+      await _systemTray.destroy();
+    } on Object catch (e, st) {
+      // Avoid throwing during app shutdown
+      debugPrint('TrayService.dispose error: $e\n$st');
+    }
   }
 
   /// Get platform-specific tray icon path

@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -14,6 +13,7 @@ import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
 import 'services/tray_service.dart';
 import 'services/window_service.dart';
+import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/widgets/tray_menu_window.dart';
 
@@ -28,6 +28,19 @@ Future<void> main() async {
     url: dotenv.env['SUPABASE_URL'] ?? '',
     anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
   );
+
+  // Sign in anonymously for testing (auth features will be added later)
+  try {
+    final currentUser = Supabase.instance.client.auth.currentUser;
+    if (currentUser == null) {
+      await Supabase.instance.client.auth.signInAnonymously();
+      debugPrint('Signed in anonymously');
+    } else {
+      debugPrint('Already signed in as: ${currentUser.id}');
+    }
+  } on Exception catch (e) {
+    debugPrint('Failed to sign in anonymously: $e');
+  }
 
   // Initialize services (desktop only)
   if (_isDesktop()) {
@@ -44,11 +57,7 @@ Future<void> main() async {
 
     // Register global hotkey (Requirement 1.1, 3.4)
     // Default: Ctrl+Shift+S to show Spotlight window
-    const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
-    await hotkeyService.registerHotkey(
-      defaultHotkey,
-      windowService.showSpotlight,
-    );
+    // Note: We'll set the callback in MyApp since it needs state access
 
     runApp(
       MyApp(
@@ -99,7 +108,27 @@ class _MyAppState extends State<MyApp> {
     if (_isDesktop()) {
       // Set up tray right-click to show custom menu
       (widget.trayService as TrayService?)?.onRightClick = _showTrayMenu;
+
+      // Register global hotkey with state-aware callback
+      const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
+      widget.hotkeyService?.registerHotkey(
+        defaultHotkey,
+        _handleHotkeySpotlight,
+      );
     }
+  }
+
+  /// Handle Ctrl+Shift+S hotkey - ensures correct state before showing
+  Future<void> _handleHotkeySpotlight() async {
+    // Always ensure tray menu state is false
+    if (_showingTrayMenu) {
+      setState(() => _showingTrayMenu = false);
+      // Wait for state to update and tray to close
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    // Now show spotlight
+    await widget.windowService?.showSpotlight();
   }
 
   @override
@@ -115,19 +144,33 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> _showTrayMenu() async {
-    // Configure window for tray menu (borderless, transparent)
-    // Batch operations to reduce lag
-    await Future.wait([
-      windowManager.setSize(const Size(250, 300)),
-      windowManager.setBackgroundColor(Colors.transparent),
-      windowManager.setAsFrameless(),
-    ]);
+    // Hide window first to prevent warping during resize
+    await windowManager.hide();
 
+    // Update state so correct widget (TrayMenuWindow) will render
+    setState(() => _showingTrayMenu = true);
+
+    // Give a frame for state to update
+    await Future<void>.delayed(
+      const Duration(milliseconds: 16),
+    ); // One frame at 60fps
+
+    // Configure window for tray menu
+    await windowManager.setSize(const Size(250, 300));
+    await windowManager.setBackgroundColor(Colors.transparent);
+    await windowManager.setAsFrameless();
+
+    // Wait for resize to complete
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    // Position menu above taskbar at bottom-right
+    // Use Alignment to position, but we'll use topRight anchored to bottom
+    // This positions it in bottom-right area but the menu extends upward
     await windowManager.setAlignment(Alignment.bottomRight);
+
+    // Show with correct size and content
     await windowManager.show();
     await windowManager.focus();
-
-    setState(() => _showingTrayMenu = true);
   }
 
   void _hideTrayMenu() {
@@ -141,120 +184,15 @@ class _MyAppState extends State<MyApp> {
       title: 'GhostCopy',
       theme: AppTheme.darkTheme,
       debugShowCheckedModeBanner: false,
-      home: Stack(
-        children: [
-          SpotlightScreen(windowService: widget.windowService),
-          if (_showingTrayMenu)
-            TrayMenuWindow(
+      home: _showingTrayMenu
+          ? TrayMenuWindow(
               windowService: widget.windowService!,
               gameModeService: widget.gameModeService!,
               onClose: _hideTrayMenu,
-            ),
-        ],
-      ),
+            )
+          : SpotlightScreen(windowService: widget.windowService!),
     );
   }
 }
 
-/// Temporary Spotlight screen placeholder
-/// This will be replaced with the proper Spotlight UI from ui/screens/spotlight_screen.dart
-class SpotlightScreen extends StatefulWidget {
-  const SpotlightScreen({this.windowService, super.key});
-
-  final IWindowService? windowService;
-
-  @override
-  State<SpotlightScreen> createState() => _SpotlightScreenState();
-}
-
-class _SpotlightScreenState extends State<SpotlightScreen> with WindowListener {
-  final FocusNode _focusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    if (_isDesktop()) {
-      windowManager.addListener(this);
-    }
-  }
-
-  @override
-  void dispose() {
-    if (_isDesktop()) {
-      windowManager.removeListener(this);
-    }
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  void onWindowFocus() {
-    // Request focus when window gains focus
-    _focusNode.requestFocus();
-  }
-
-  @override
-  void onWindowBlur() {
-    // Hide window when it loses focus (user clicks outside)
-    widget.windowService?.hideSpotlight();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: (event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
-          // Hide on Escape key
-          widget.windowService?.hideSpotlight();
-        }
-      },
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Center(
-          child: Container(
-            width: 500,
-            height: 400,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1A1A1D),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  blurRadius: 20,
-                  spreadRadius: 5,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.content_copy,
-                  size: 64,
-                  color: Color(0xFF5865F2),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'GhostCopy Spotlight',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.headlineMedium?.copyWith(color: Colors.white),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Press Escape to close',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+// Spotlight screen now imported from ui/screens/spotlight_screen.dart

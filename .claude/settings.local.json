@@ -31,7 +31,18 @@
       "Bash(copy:*)",
       "Bash(cmd /c copy:*)",
       "Bash(powershell:*)",
-      "Bash(start ghostcopy.exe)"
+      "Bash(start ghostcopy.exe)",
+      "Bash(find:*)",
+      "Bash(test:*)",
+      "Bash(timeout /t 15)",
+      "Bash(timeout /t 12)",
+      "Bash(timeout:*)",
+      "mcp__supabase__list_projects",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__get_advisors",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__apply_migration"
     ]
   },
   "enableAllProjectMcpServers": true,

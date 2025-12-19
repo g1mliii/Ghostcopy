@@ -30,7 +30,7 @@ class WindowService implements IWindowService {
     const windowOptions = WindowOptions(
       size: Size(_windowWidth, _windowHeight),
       center: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: Color(0xFF1A1A1D), // Solid surface color
       skipTaskbar: true,
       titleBarStyle: TitleBarStyle.hidden, // Borderless window
       windowButtonVisibility: false,
@@ -47,11 +47,19 @@ class WindowService implements IWindowService {
   Future<void> showSpotlight() async {
     if (!_isDesktop()) return;
 
-    // Reset to Spotlight size
+    // Set background color FIRST before any visibility changes
+    await windowManager.setBackgroundColor(const Color(0xFF1A1A1D));
+
+    // Hide to avoid warping during resize
+    await windowManager.hide();
+
+    // Set to Spotlight size and center (do this while hidden)
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
-    await centerWindow();
+    await windowManager.center();
+
+    // Show and focus
     await windowManager.show();
-    await focusWindow();
+    await windowManager.focus();
     _isVisible = true;
   }
 
@@ -77,8 +85,15 @@ class WindowService implements IWindowService {
 
   @override
   Future<void> dispose() async {
-    // window_manager doesn't require explicit disposal
-    // This method is here for consistency with other services
+    // window_manager doesn't require explicit disposal.
+    // Keep this method so callers can dispose services uniformly.
+    // Guard against unexpected errors during shutdown to avoid crashes.
+    try {
+      // No explicit resources to free for window_manager
+    } on Object catch (e, st) {
+      // Swallow and log any errors during app shutdown
+      debugPrint('WindowService.dispose error: $e\n$st');
+    }
   }
 
   /// Check if running on desktop platform (Windows or macOS)

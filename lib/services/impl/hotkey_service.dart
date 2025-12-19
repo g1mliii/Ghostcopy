@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart' as hkm;
 import '../hotkey_service.dart';
@@ -66,10 +67,17 @@ class HotkeyService implements IHotkeyService {
   /// Dispose of the service and clean up resources
   @override
   Future<void> dispose() async {
-    // Unregister all hotkeys and await completion
-    await Future.wait(
-      _registeredHotkeys.values.map(hkm.hotKeyManager.unregister),
-    );
+    // Unregister all hotkeys and await completion. Wrap in try/catch to
+    // avoid throwing during app shutdown which could crash the host.
+    try {
+      await Future.wait(
+        _registeredHotkeys.values.map(hkm.hotKeyManager.unregister),
+      );
+    } on Object catch (e, st) {
+      // Log and continue shutdown
+      debugPrint('HotkeyService.dispose error: $e\n$st');
+    }
+
     _registeredHotkeys.clear();
   }
 

@@ -27,7 +27,9 @@ class TrayMenuWindow extends StatelessWidget {
           child: Align(
             alignment: Alignment.bottomRight,
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              // Position menu above where taskbar would be
+              // Right and bottom padding to lift it up from taskbar
+              padding: const EdgeInsets.only(right: 16, bottom: 60),
               child: _buildMenu(context),
             ),
           ),
@@ -56,9 +58,11 @@ class TrayMenuWindow extends StatelessWidget {
           _buildMenuItem(
             icon: Icons.visibility,
             label: 'Show Spotlight',
-            onTap: () {
-              windowService.showSpotlight();
-              onClose();
+            onTap: () async {
+              onClose(); // Close tray first
+              // Wait for tray to close and state to update
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+              await windowService.showSpotlight();
             },
           ),
           _buildDivider(),
