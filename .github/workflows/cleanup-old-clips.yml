@@ -21,13 +21,29 @@ jobs:
 
     steps:
       - name: Call Supabase cleanup function
+        env:
+          CLEANUP_SECRET: ${{ secrets.SUPABASE_CLEANUP_SECRET }}
         run: |
-          curl -X POST \
+          if [ -z "$CLEANUP_SECRET" ]; then
+            echo "ERROR: SUPABASE_CLEANUP_SECRET not set in GitHub secrets"
+            exit 1
+          fi
+
+          response=$(curl -s -w "\n%{http_code}" -X POST \
             https://xhbggxftvnlkotvehwmj.supabase.co/functions/v1/cleanup-old-clips \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_CLEANUP_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d '{"timestamp": "'$(date -u +'%Y-%m-%dT%H:%M:%SZ')'"}' \
-            -w "\nHTTP Status: %{http_code}\n"
+            -H "Authorization: Bearer $CLEANUP_SECRET" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n 1)
+          body=$(echo "$response" | head -n -1)
+
+          echo "Response Body: $body"
+          echo "HTTP Status: $http_code"
+
+          if [ "$http_code" != "200" ]; then
+            echo "ERROR: Cleanup function returned HTTP $http_code"
+            exit 1
+          fi
 
       - name: Log cleanup status
         if: always()
