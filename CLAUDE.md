@@ -79,7 +79,9 @@ success: Color(0xFF3BA55C)       // Green confirmations
 
 **Typography**: Inter for UI, JetBrains Mono for code/JSON
 
-**Spotlight Window**: 500px wide, max 400px height, 12px border radius, discord and blip as inspiration.
+**Spotlight Window (Desktop)**: 500px wide, max 400px height, 12px border radius, discord and blip as inspiration.
+
+**Mobile UI**: History list with glassmorphism cards, prominent paste area with clear CTA, send button. Same dark theme and staggered animations as desktop.
 
 **Animations**:
 - Spotlight appear: fade + scale from 0.95 (150ms ease-out)
@@ -111,17 +113,29 @@ test/
 - **Property tests**: Minimum 100 iterations, tag with `**Feature: ghostcopy, Property N: description**`
 - Use `const` widgets where possible to reduce rebuilds
 
+### Mobile-Specific Testing
+- **Memory Profiling**: Test widget updates, notification listeners, and app backgrounding/foregrounding scenarios
+- **Security Review Checklist**:
+  - FCM token storage and handling
+  - Clipboard data clearing after auto-copy
+  - Notification permissions validation
+  - Widget data security
+  - Background process vulnerabilities
+
 ## Key Packages
 
 | Package | Purpose |
 |---------|---------|
 | `supabase_flutter` | Auth, Database, Realtime |
-| `window_manager` | Borderless window, hide/show |
-| `hotkey_manager` | Global keyboard shortcuts |
-| `tray_manager` | System tray icon and menu |
-| `launch_at_startup` | Auto-start on login |
+| `window_manager` | Borderless window, hide/show (desktop) |
+| `hotkey_manager` | Global keyboard shortcuts (desktop) |
+| `tray_manager` | System tray icon and menu (desktop) |
+| `launch_at_startup` | Auto-start on login (desktop) |
 | `dart_jsonwebtoken` | JWT decoding |
 | `glados` | Property-based testing |
+| `flutter_local_notifications` | Notification channels (mobile) |
+| `firebase_messaging` | FCM push notifications (mobile) |
+| `home_widget` | Home screen widget (mobile) |
 
 ## Environment Setup
 
@@ -137,7 +151,15 @@ SUPABASE_ANON_KEY=your-anon-key
 
 **macOS**: Requires Accessibility permissions for global hotkeys. Configure App Sandbox entitlements for network access.
 
-**Mobile**: Cannot auto-detect clipboard changes (OS restriction). Use paste-to-send flow. Push notifications require FCM/APNs setup.
+**Mobile (iOS/Android)**:
+- Cannot auto-detect clipboard changes (OS restriction)
+- Use paste-to-send flow with prominent paste area and send button
+- **Push Notifications**: FCM for Android, APNs for iOS via Firebase Cloud Messaging
+  - FCM tokens stored in Supabase user table
+  - Supabase Edge Function or database trigger sends notifications on new clipboard items
+  - Notification tap opens app and auto-copies content
+- **Home Screen Widget**: Displays 5 most recent clips in scrollable list, auto-updates via `home_widget` package
+- **UI Design**: Glassmorphism cards, dark theme, staggered animations consistent with desktop
 
 ## Database Schema
 
@@ -153,6 +175,9 @@ CREATE TABLE clipboard (
 );
 
 -- RLS enabled with user-scoped policies
+
+-- Note: FCM tokens for push notifications are stored in Supabase
+-- (implementation may use a separate devices table or extend auth.users metadata)
 ```
 
 ## Implementation Status

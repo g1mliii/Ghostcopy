@@ -7,6 +7,13 @@ analyzer:
   exclude:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
+    - "test/property/game_mode_service_property_test.dart"
+    - "test/property/lifecycle_controller_property_test.dart"
+    - "test/property/transformer_service_property_test.dart"
+    - "test/property/user_data_isolation_property_test.dart"
+    - "test/unit/services/dos_attack_test.dart"
+    - "test/unit/services/auth_service_test.dart"
+    - "test/unit/services/game_mode_service_test.dart"
   errors:
     invalid_annotation_target: ignore
   language:

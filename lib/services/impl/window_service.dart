@@ -1,13 +1,34 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../lifecycle_controller.dart';
 import '../window_service.dart';
 
 /// Concrete implementation of IWindowService using window_manager package
 ///
 /// Manages the borderless Spotlight window with transparent background,
 /// rounded corners, and show/hide functionality for desktop platforms.
+///
+/// Sleep Mode Integration (ONLY pauses UI resources, NOT core functionality):
+/// - WHEN window is hidden THEN pause UI animations (TickerProviders)
+/// - WHEN window is shown THEN resume UI animations within 50ms
+///
+/// CRITICAL: Sleep Mode does NOT pause:
+/// - Realtime clipboard stream (must receive clips 24/7 from other devices)
+/// - Hotkey listener (needed to wake the app)
+/// - System tray (needed for user access)
+///
+/// Only register Pausable resources that are purely UI-related:
+/// - AnimationControllers for fade effects, loading spinners
+/// - Non-essential UI streams (search filters, etc.)
+/// - DO NOT register Realtime clipboard sync stream as Pausable!
 class WindowService implements IWindowService {
+  WindowService({ILifecycleController? lifecycleController})
+      : _lifecycleController = lifecycleController;
+
+  final ILifecycleController? _lifecycleController;
   bool _isVisible = false;
 
   // Spotlight window dimensions from CLAUDE.md
@@ -47,6 +68,11 @@ class WindowService implements IWindowService {
   Future<void> showSpotlight() async {
     if (!_isDesktop()) return;
 
+    // Exit Sleep Mode BEFORE showing window to resume UI animations
+    // Note: Only UI resources (AnimationControllers, etc.) are paused/resumed
+    // Core services (Realtime stream, hotkeys) run 24/7
+    _lifecycleController?.exitSleepMode();
+
     // Set background color FIRST before any visibility changes
     await windowManager.setBackgroundColor(const Color(0xFF1A1A1D));
 
@@ -69,6 +95,11 @@ class WindowService implements IWindowService {
 
     await windowManager.hide();
     _isVisible = false;
+
+    // Enter Sleep Mode AFTER hiding window to pause UI animations
+    // Note: Only pauses UI-related resources (AnimationControllers, etc.)
+    // Core services continue running: Realtime stream, hotkeys, tray
+    _lifecycleController?.enterSleepMode();
   }
 
   @override

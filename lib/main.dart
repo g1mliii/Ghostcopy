@@ -5,12 +5,18 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'services/auth_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/hotkey_service.dart';
+import 'services/impl/auth_service.dart';
 import 'services/impl/game_mode_service.dart';
 import 'services/impl/hotkey_service.dart';
+import 'services/impl/lifecycle_controller.dart';
+import 'services/impl/notification_service.dart';
 import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
+import 'services/lifecycle_controller.dart';
+import 'services/notification_service.dart';
 import 'services/tray_service.dart';
 import 'services/window_service.dart';
 import 'ui/screens/spotlight_screen.dart';
@@ -29,25 +35,21 @@ Future<void> main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
   );
 
-  // Sign in anonymously for testing (auth features will be added later)
-  try {
-    final currentUser = Supabase.instance.client.auth.currentUser;
-    if (currentUser == null) {
-      await Supabase.instance.client.auth.signInAnonymously();
-      debugPrint('Signed in anonymously');
-    } else {
-      debugPrint('Already signed in as: ${currentUser.id}');
-    }
-  } on Exception catch (e) {
-    debugPrint('Failed to sign in anonymously: $e');
-  }
+  // Initialize AuthService (handles anonymous sign-in)
+  final authService = AuthService();
+  await authService.initialize();
 
   // Initialize services (desktop only)
   if (_isDesktop()) {
-    final windowService = WindowService();
+    // Create LifecycleController for Sleep Mode management (Task 12.1)
+    final lifecycleController = LifecycleController();
+
+    // Initialize services with lifecycle support
+    final windowService = WindowService(lifecycleController: lifecycleController);
     final trayService = TrayService();
     final hotkeyService = HotkeyService();
     final gameModeService = GameModeService();
+    final notificationService = NotificationService();
 
     // Initialize window manager with hidden state (Acceptance Criteria #1)
     await windowService.initialize();
@@ -61,15 +63,18 @@ Future<void> main() async {
 
     runApp(
       MyApp(
+        authService: authService,
         windowService: windowService,
         trayService: trayService,
         hotkeyService: hotkeyService,
         gameModeService: gameModeService,
+        lifecycleController: lifecycleController,
+        notificationService: notificationService,
       ),
     );
   } else {
     // Mobile app
-    runApp(const MyApp());
+    runApp(MyApp(authService: authService));
   }
 }
 
@@ -83,17 +88,23 @@ final supabase = Supabase.instance.client;
 
 class MyApp extends StatefulWidget {
   const MyApp({
+    required this.authService,
     this.windowService,
     this.trayService,
     this.hotkeyService,
     this.gameModeService,
+    this.lifecycleController,
+    this.notificationService,
     super.key,
   });
 
+  final IAuthService authService;
   final IWindowService? windowService;
   final ITrayService? trayService;
   final IHotkeyService? hotkeyService;
   final IGameModeService? gameModeService;
+  final ILifecycleController? lifecycleController;
+  final INotificationService? notificationService;
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -101,11 +112,23 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   bool _showingTrayMenu = false;
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
     super.initState();
     if (_isDesktop()) {
+      // Initialize notification service with navigator key
+      widget.notificationService?.initialize(_navigatorKey);
+
+      // Wire up Game Mode notification callback (Requirement 6.3)
+      widget.gameModeService?.setNotificationCallback((item) {
+        widget.notificationService?.showClipboardNotification(
+          content: item.content,
+          deviceType: item.deviceType,
+        );
+      });
+
       // Set up tray right-click to show custom menu
       (widget.trayService as TrayService?)?.onRightClick = _showTrayMenu;
 
@@ -135,10 +158,13 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     if (_isDesktop()) {
       // Dispose all services to prevent memory leaks
+      widget.authService.dispose();
+      widget.notificationService?.dispose();
       widget.trayService?.dispose();
       widget.hotkeyService?.dispose();
       widget.gameModeService?.dispose();
       widget.windowService?.dispose();
+      widget.lifecycleController?.dispose();
     }
     super.dispose();
   }
@@ -181,6 +207,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'GhostCopy',
       theme: AppTheme.darkTheme,
       debugShowCheckedModeBanner: false,
@@ -190,7 +217,13 @@ class _MyAppState extends State<MyApp> {
               gameModeService: widget.gameModeService!,
               onClose: _hideTrayMenu,
             )
-          : SpotlightScreen(windowService: widget.windowService!),
+          : SpotlightScreen(
+              authService: widget.authService,
+              windowService: widget.windowService!,
+              lifecycleController: widget.lifecycleController,
+              notificationService: widget.notificationService,
+              gameModeService: widget.gameModeService,
+            ),
     );
   }
 }

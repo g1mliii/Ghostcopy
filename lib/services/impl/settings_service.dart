@@ -47,7 +47,7 @@ class SettingsService implements ISettingsService {
   }
 
   @override
-  Future<void> setAutoSendEnabled(bool enabled) async {
+  Future<void> setAutoSendEnabled({required bool enabled}) async {
     _ensureInitialized();
     await _prefs!.setBool(_keyAutoSendEnabled, enabled);
     debugPrint('Auto-send ${enabled ? "enabled" : "disabled"}');

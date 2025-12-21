@@ -6,7 +6,7 @@ abstract class ISettingsService {
   Future<bool> getAutoSendEnabled();
 
   /// Set auto-send enabled setting
-  Future<void> setAutoSendEnabled(bool enabled);
+  Future<void> setAutoSendEnabled({required bool enabled});
 
   /// Get clipboard staleness duration in minutes (default: 5)
   Future<int> getClipboardStaleDurationMinutes();

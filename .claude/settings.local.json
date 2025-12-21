@@ -42,7 +42,12 @@
       "mcp__supabase__execute_sql",
       "mcp__supabase__get_advisors",
       "mcp__supabase__list_migrations",
-      "mcp__supabase__apply_migration"
+      "mcp__supabase__apply_migration",
+      "Bash(echo.)",
+      "Bash(if not exist \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\lib\\\\utils\" mkdir \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\lib\\\\utils\")",
+      "Bash(if not exist \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\test\\\\unit\\\\services\" mkdir \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\test\\\\unit\\\\services\")",
+      "Bash(cmd /c \"if exist supabase\\\\migrations \\(echo Directory exists\\) else \\(echo Need to create\\)\")",
+      "Bash(cmd /c \"if not exist supabase\\\\migrations mkdir supabase\\\\migrations\")"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -8,7 +8,15 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/auth_service.dart';
+import '../../services/game_mode_service.dart';
+import '../../services/impl/security_service.dart';
+import '../../services/impl/transformer_service.dart';
+import '../../services/lifecycle_controller.dart';
+import '../../services/notification_service.dart';
+import '../../services/security_service.dart';
 import '../../services/settings_service.dart';
+import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -30,9 +38,20 @@ enum PlatformType {
 /// Spotlight window for sending clipboard content
 /// Discord/Blip-inspired design with glassmorphism
 class SpotlightScreen extends StatefulWidget {
-  const SpotlightScreen({required this.windowService, super.key});
+  const SpotlightScreen({
+    required this.authService,
+    required this.windowService,
+    this.lifecycleController,
+    this.notificationService,
+    this.gameModeService,
+    super.key,
+  });
 
+  final IAuthService authService;
   final IWindowService windowService;
+  final ILifecycleController? lifecycleController;
+  final INotificationService? notificationService;
+  final IGameModeService? gameModeService;
 
   @override
   State<SpotlightScreen> createState() => _SpotlightScreenState();
@@ -48,15 +67,27 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late Animation<Offset> _historySlideAnimation;
   late AnimationController _settingsSlideController;
   late Animation<Offset> _settingsSlideAnimation;
+  late AnimationController _authSlideController;
+  late Animation<Offset> _authSlideAnimation;
+
+  // Pausable wrappers for lifecycle management (Task 12.1)
+  late PausableAnimationController _pausableAnimationController;
+  late PausableAnimationController _pausableHistorySlideController;
+  late PausableAnimationController _pausableSettingsSlideController;
+  late PausableAnimationController _pausableAuthSlideController;
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
+  final TextEditingController _authEmailController = TextEditingController();
+  final TextEditingController _authPasswordController = TextEditingController();
   final FocusNode _textFieldFocusNode = FocusNode();
   final FocusNode _keyboardFocusNode = FocusNode();
 
   // Repository and Services
   late final ClipboardRepository _clipboardRepository;
   late final ISettingsService _settingsService;
+  late final ISecurityService _securityService;
+  late final ITransformerService _transformerService;
 
   // State
   String _content = '';
@@ -65,10 +96,20 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   String? _errorMessage;
   bool _showHistory = false;
   bool _showSettings = false;
+  bool _showAuth = false;
   bool _showCopiedToast = false;
   List<ClipboardItem> _historyItems = [];
   bool _isLoadingHistory = false;
   RealtimeChannel? _realtimeChannel;
+
+  // Auth state
+  bool _isLogin = true; // true = login, false = signup
+  bool _authLoading = false;
+  String? _authError;
+
+  // Transformer state (for JSON prettify, JWT decoding, color preview)
+  ContentDetectionResult? _detectedContentType;
+  TransformationResult? _transformationResult;
 
   // Settings state
   bool _autoSendEnabled = false;
@@ -81,6 +122,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   // Smart auto-receive: Track clipboard staleness
   DateTime? _lastClipboardModificationTime;
 
+  // Auto-receive debouncing (Requirement 11.4)
+  Timer? _autoReceiveDebounceTimer;
+  Map<String, dynamic>? _pendingAutoReceiveRecord;
+
   // Auto-send clipboard monitoring
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
@@ -92,6 +137,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Initialize repository and services
     _clipboardRepository = ClipboardRepository();
     _settingsService = SettingsService();
+    _securityService = SecurityService();
+    _transformerService = TransformerService();
 
     // Initialize settings service and load settings
     _initializeSettings();
@@ -143,10 +190,47 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       ),
     );
 
-    // Listen to text changes
+    // Set up auth slide animation (200ms)
+    _authSlideController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+
+    _authSlideAnimation = Tween<Offset>(
+      begin: const Offset(-1, 0), // Start off-screen to the left
+      end: Offset.zero, // End at normal position
+    ).animate(
+      CurvedAnimation(
+        parent: _authSlideController,
+        curve: Curves.easeOut,
+      ),
+    );
+
+    // Wrap AnimationControllers in Pausable wrappers and register with LifecycleController
+    // for Sleep Mode (Task 12.1). These will be paused when window is hidden, resumed when shown.
+    _pausableAnimationController = PausableAnimationController(_animationController);
+    _pausableHistorySlideController =
+        PausableAnimationController(_historySlideController);
+    _pausableSettingsSlideController =
+        PausableAnimationController(_settingsSlideController);
+    _pausableAuthSlideController =
+        PausableAnimationController(_authSlideController);
+
+    widget.lifecycleController?.addPausable(_pausableAnimationController);
+    widget.lifecycleController?.addPausable(_pausableHistorySlideController);
+    widget.lifecycleController?.addPausable(_pausableSettingsSlideController);
+    widget.lifecycleController?.addPausable(_pausableAuthSlideController);
+
+    // Listen to text changes and detect content type
     _textController.addListener(() {
       setState(() {
         _content = _textController.text;
+
+        // Detect content type (JSON, JWT, hex color, etc.)
+        _detectedContentType = _transformerService.detectContentType(_content);
+
+        // Clear previous transformation result when content changes
+        _transformationResult = null;
       });
     });
 
@@ -237,8 +321,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 deviceName != currentDeviceName;
 
             if (isFromDifferentDevice) {
-              // From another device - handle smart auto-copy
-              _handleSmartAutoReceive(payload.newRecord);
+              // Debounce auto-receive to prevent clipboard thrashing (Requirement 11.4)
+              // If multiple items arrive quickly, only process the most recent one
+              _debouncedAutoReceive(payload.newRecord);
             }
 
             // Always reload history to show new items
@@ -248,9 +333,46 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         .subscribe();
   }
 
+  /// Debounce auto-receive to prevent clipboard thrashing
+  ///
+  /// Requirement 11.4: Copy only the most recent item when multiple arrive quickly
+  ///
+  /// When multiple items are received in quick succession (e.g., user sends 5 clips
+  /// from mobile within 1 second), this debounces the auto-receive logic to only
+  /// process the most recent item after a 500ms delay. This prevents:
+  /// - Clipboard thrashing (overwriting clipboard multiple times)
+  /// - Excessive database queries
+  /// - Multiple notifications
+  void _debouncedAutoReceive(Map<String, dynamic> record) {
+    // Cancel any pending auto-receive operation
+    _autoReceiveDebounceTimer?.cancel();
+
+    // Store the most recent record
+    _pendingAutoReceiveRecord = record;
+
+    // Schedule processing after 500ms delay
+    // If another item arrives within 500ms, this timer will be cancelled
+    // and a new one will be created, ensuring only the last item is processed
+    _autoReceiveDebounceTimer = Timer(
+      const Duration(milliseconds: 500),
+      () {
+        if (_pendingAutoReceiveRecord != null && mounted) {
+          _handleSmartAutoReceive(_pendingAutoReceiveRecord!);
+          _pendingAutoReceiveRecord = null;
+        }
+      },
+    );
+  }
+
   /// Handle smart auto-receive logic for new clips from other devices
+  ///
+  /// Requirement 11.1: Auto-copy to clipboard when received from another device
+  /// Requirement 11.2: Show subtle toast notification
+  /// Requirement 11.3: Suppress notification when Game Mode is active
   Future<void> _handleSmartAutoReceive(Map<String, dynamic> record) async {
     try {
+      final deviceType = record['device_type'] as String? ?? 'unknown';
+
       // Check if clipboard is stale (hasn't been modified recently)
       final now = DateTime.now();
       final staleDuration = Duration(minutes: _staleDurationMinutes);
@@ -264,26 +386,50 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
         if (history.isNotEmpty && mounted) {
           final content = history.first.content;
+          final item = history.first;
 
-          // Auto-copy to clipboard
+          // Auto-copy to clipboard (Requirement 11.1)
           await FlutterClipboard.copy(content);
-          debugPrint('Auto-copied stale clipboard from ${record['device_type']}');
+          debugPrint('Auto-copied stale clipboard from $deviceType');
 
           // Update modification time
           _lastClipboardModificationTime = now;
 
-          // Show toast notification
-          setState(() => _showCopiedToast = true);
-          Future<void>.delayed(const Duration(seconds: 2), () {
-            if (mounted) setState(() => _showCopiedToast = false);
-          });
+          // Show notification or queue if Game Mode active (Requirement 11.2, 11.3)
+          if (widget.gameModeService?.isActive ?? false) {
+            // Game Mode active - queue the notification
+            widget.gameModeService?.queueNotification(item);
+            debugPrint('Game Mode active - notification queued');
+          } else {
+            // Show notification immediately
+            widget.notificationService?.showToast(
+              message: 'Auto-copied from $deviceType',
+              type: NotificationType.success,
+            );
+          }
         }
       } else {
         // Clipboard is fresh - just notify user (don't auto-copy)
+        final minutesAgo = now.difference(_lastClipboardModificationTime!).inMinutes;
         debugPrint(
-          'Clipboard fresh (modified ${now.difference(_lastClipboardModificationTime!).inMinutes}m ago) - not auto-copying',
+          'Clipboard fresh (modified ${minutesAgo}m ago) - not auto-copying',
         );
-        // Could show notification here if we implement notifications
+
+        // Still show notification about new clip arrival (Requirement 11.2)
+        if (widget.gameModeService?.isActive ?? false) {
+          // Game Mode active - queue the notification
+          final history = await _clipboardRepository.getHistory(limit: 1);
+          if (history.isNotEmpty) {
+            widget.gameModeService?.queueNotification(history.first);
+            debugPrint('Game Mode active - notification queued (fresh clipboard)');
+          }
+        } else {
+          // Show notification about new clip
+          widget.notificationService?.showToast(
+            message: 'New clip from $deviceType (clipboard not auto-copied)',
+            duration: const Duration(seconds: 3),
+          );
+        }
       }
     } on Exception catch (e) {
       debugPrint('Failed to handle smart auto-receive: $e');
@@ -333,6 +479,32 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         }
       }
 
+      // Security check: Detect sensitive data BEFORE auto-send
+      final detection = _securityService.detectSensitiveData(clipboardContent);
+      if (detection.isSensitive) {
+        debugPrint(
+          'Auto-send blocked: ${detection.type?.label} detected - ${detection.reason}',
+        );
+
+        // Show warning notification to user
+        if (mounted) {
+          setState(() {
+            _errorMessage =
+                '⚠️ ${detection.type?.label} detected. Auto-send blocked for safety. '
+                'You can still manually send if needed.';
+          });
+
+          // Auto-clear warning after 5 seconds
+          Future<void>.delayed(const Duration(seconds: 5), () {
+            if (mounted) {
+              setState(() => _errorMessage = null);
+            }
+          });
+        }
+
+        return; // Block auto-send
+      }
+
       // Auto-send the clipboard content
       debugPrint('Auto-sending clipboard: ${clipboardContent.substring(0, clipboardContent.length > 50 ? 50 : clipboardContent.length)}...');
       await _autoSendClipboard(clipboardContent);
@@ -373,6 +545,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Stop clipboard monitoring
     _clipboardMonitorTimer?.cancel();
 
+    // Cancel auto-receive debounce timer to prevent memory leaks
+    _autoReceiveDebounceTimer?.cancel();
+
     // Unsubscribe from real-time updates to prevent memory leaks
     _realtimeChannel?.unsubscribe();
 
@@ -382,11 +557,21 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Dispose settings service
     _settingsService.dispose();
 
+    // Remove Pausable wrappers from LifecycleController before disposing (Task 12.1)
+    // This prevents memory leaks from unbounded Set growth
+    widget.lifecycleController?.removePausable(_pausableAuthSlideController);
+    widget.lifecycleController?.removePausable(_pausableSettingsSlideController);
+    widget.lifecycleController?.removePausable(_pausableHistorySlideController);
+    widget.lifecycleController?.removePausable(_pausableAnimationController);
+
     // Dispose in reverse order of creation
     windowManager.removeListener(this);
+    _authSlideController.dispose();
     _settingsSlideController.dispose();
     _historySlideController.dispose();
     _animationController.dispose();
+    _authPasswordController.dispose();
+    _authEmailController.dispose();
     _textController.dispose();
     _textFieldFocusNode.dispose();
     _keyboardFocusNode.dispose();
@@ -540,8 +725,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       if (event.logicalKey == LogicalKeyboardKey.enter) {
         _handleSend();
       } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-        // Close settings/history panels first if open, otherwise close window
-        if (_showSettings) {
+        // Close settings/history/auth panels first if open, otherwise close window
+        if (_showAuth) {
+          _authSlideController.reverse();
+          setState(() => _showAuth = false);
+        } else if (_showSettings) {
           _settingsSlideController.reverse();
           setState(() => _showSettings = false);
         } else if (_showHistory) {
@@ -586,6 +774,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                           const SizedBox(height: 12),
                           _buildTextField(),
                           const SizedBox(height: 10),
+                          // Show transformer previews if content is transformable
+                          if (_detectedContentType?.isTransformable ?? false)
+                            ..._buildTransformerUI(),
                           _buildPlatformSelector(),
                           const SizedBox(height: 12),
                           _buildSendButton(),
@@ -600,6 +791,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 ),
               ),
             ),
+            // Click-outside overlay to close auth
+            if (_showAuth)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () {
+                    _authSlideController.reverse();
+                    setState(() => _showAuth = false);
+                  },
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
             // Click-outside overlay to close settings
             if (_showSettings)
               Positioned.fill(
@@ -622,6 +824,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   child: Container(color: Colors.transparent),
                 ),
               ),
+            // Auth panel overlay (left side, wider than settings)
+            if (_showAuth) _buildAuthPanel(),
             // Settings panel overlay (left side)
             if (_showSettings) _buildSettingsPanel(),
             // History panel overlay (right side)
@@ -771,6 +975,186 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         },
       ),
     );
+  }
+
+  /// Build transformer UI (JSON prettify, JWT decode, color preview)
+  List<Widget> _buildTransformerUI() {
+    if (_detectedContentType == null) return [];
+
+    final widgets = <Widget>[const SizedBox(height: 10)];
+
+    switch (_detectedContentType!.type) {
+      case ContentType.json:
+        widgets.add(_buildJsonTransformer());
+      case ContentType.jwt:
+        widgets.add(_buildJwtTransformer());
+      case ContentType.hexColor:
+        widgets.add(_buildHexColorPreview());
+      case ContentType.plainText:
+        break;
+    }
+
+    return widgets;
+  }
+
+  /// Build JSON prettifier button and preview
+  Widget _buildJsonTransformer() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ElevatedButton.icon(
+          icon: const Icon(Icons.format_align_left, size: 16),
+          label: const Text('Prettify JSON'),
+          onPressed: () {
+            final result = _transformerService.transform(
+              _content,
+              ContentType.json,
+            );
+            if (result.isSuccess && result.transformedContent != null) {
+              setState(() {
+                _textController.text = result.transformedContent!;
+                _transformationResult = result;
+              });
+            } else {
+              setState(() {
+                _errorMessage = result.error ?? 'Failed to prettify JSON';
+              });
+            }
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: GhostColors.primary.withValues(alpha: 0.8),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Build JWT decoder preview
+  Widget _buildJwtTransformer() {
+    final result = _transformationResult ??
+        _transformerService.transform(_content, ContentType.jwt);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: GhostColors.primary.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.vpn_key, size: 16, color: Colors.amber),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'JWT Token',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.amber,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _transformationResult = _transformerService.transform(
+                      _content,
+                      ContentType.jwt,
+                    );
+                  });
+                },
+                child: const Icon(Icons.refresh, size: 14, color: Colors.white60),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (result.error != null)
+            Text(
+              result.error!,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.redAccent,
+              ),
+            )
+          else if (result.preview != null)
+            Text(
+              result.preview!,
+              style: const TextStyle(
+                fontSize: 10,
+                fontFamily: 'monospace',
+                color: Colors.white70,
+              ),
+              maxLines: 6,
+              overflow: TextOverflow.ellipsis,
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Build hex color preview
+  Widget _buildHexColorPreview() {
+    final colorValue = _detectedContentType!.metadata?['color'] as String?;
+    if (colorValue == null) return const SizedBox.shrink();
+
+    try {
+      // Parse hex color (support #RGB, #RRGGBB, #RRGGBBAA)
+      final colorStr = colorValue.replaceFirst('#', '');
+      final hexPrefix = colorStr.length == 6
+          ? 'FF$colorStr'
+          : colorStr.length == 8
+              ? colorStr
+              : colorStr.padRight(8, 'F');
+      final rgbValue = int.parse(hexPrefix, radix: 16);
+
+      return Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Color(rgbValue),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: GhostColors.surfaceLight,
+                width: 2,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Color',
+                  style: TextStyle(fontSize: 10, color: Colors.white60),
+                ),
+                Text(
+                  colorValue.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    } on Exception {
+      return const SizedBox.shrink();
+    }
   }
 
   /// Build send button
@@ -950,7 +1334,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                         value: _autoSendEnabled,
                         onChanged: (value) async {
                           setState(() => _autoSendEnabled = value);
-                          await _settingsService.setAutoSendEnabled(value);
+                          await _settingsService.setAutoSendEnabled(enabled: value);
 
                           // Start/stop clipboard monitoring
                           if (value) {
@@ -1008,7 +1392,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'New clips from other devices auto-paste only if your clipboard hasn\'t changed recently.',
+                              "New clips from other devices auto-paste only if your clipboard hasn't changed recently.",
                               style: TextStyle(
                                 fontSize: 11,
                                 color: GhostColors.textMuted,
@@ -1016,6 +1400,73 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      // Account Section
+                      Text(
+                        'ACCOUNT',
+                        style: GhostTypography.caption.copyWith(
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Account status button
+                      InkWell(
+                        onTap: () {
+                          setState(() => _showAuth = true);
+                          _authSlideController.forward();
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: GhostColors.surface,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                widget.authService.isAnonymous
+                                    ? Icons.person_outline
+                                    : Icons.verified_user,
+                                size: 18,
+                                color: GhostColors.primary,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      widget.authService.isAnonymous
+                                          ? 'Anonymous User'
+                                          : widget.authService.currentUser?.email ??
+                                              '',
+                                      style: GhostTypography.body.copyWith(
+                                        fontSize: 13,
+                                        color: GhostColors.textPrimary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      widget.authService.isAnonymous
+                                          ? 'Tap to upgrade account'
+                                          : 'Manage account',
+                                      style: GhostTypography.caption.copyWith(
+                                        color: GhostColors.textMuted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(
+                                Icons.chevron_right,
+                                size: 16,
+                                color: GhostColors.textMuted,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -1027,6 +1478,412 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildAuthPanel() {
+    return Positioned(
+      left: 0,
+      top: 0,
+      bottom: 0,
+      child: SlideTransition(
+        position: _authSlideAnimation,
+        child: GestureDetector(
+          onTap: () {}, // Prevent closing when clicking inside panel
+          child: Container(
+            width: 400, // Wider than Settings (280px)
+            decoration: BoxDecoration(
+              color: GhostColors.surfaceLight,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  blurRadius: 20,
+                  offset: const Offset(5, 0),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.lock,
+                        size: 18,
+                        color: GhostColors.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.authService.isAnonymous
+                            ? 'Upgrade Account'
+                            : 'Account Settings',
+                        style: GhostTypography.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: GhostColors.textPrimary,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        color: GhostColors.textSecondary,
+                        onPressed: () {
+                          _authSlideController.reverse();
+                          setState(() => _showAuth = false);
+                        },
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: GhostColors.surface),
+                // Auth form
+                Expanded(
+                  child: _buildAuthForm(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAuthForm() {
+    if (!widget.authService.isAnonymous) {
+      // User is already logged in - show account management
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Signed in as',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.authService.currentUser?.email ?? '',
+              style: GhostTypography.body.copyWith(
+                fontWeight: FontWeight.w600,
+                color: GhostColors.textPrimary,
+              ),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _handleSignOut,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: GhostColors.surface,
+                  foregroundColor: GhostColors.textPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Sign Out'),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Anonymous user - show login/signup form
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Login/Signup toggle
+          Container(
+            decoration: BoxDecoration(
+              color: GhostColors.surface,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _isLogin = true),
+                    borderRadius: const BorderRadius.horizontal(
+                      left: Radius.circular(8),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color:
+                            _isLogin ? GhostColors.primary : Colors.transparent,
+                        borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(8),
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Login',
+                        style: GhostTypography.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: _isLogin
+                              ? Colors.white
+                              : GhostColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _isLogin = false),
+                    borderRadius: const BorderRadius.horizontal(
+                      right: Radius.circular(8),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: !_isLogin
+                            ? GhostColors.primary
+                            : Colors.transparent,
+                        borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(8),
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Sign Up',
+                        style: GhostTypography.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: !_isLogin
+                              ? Colors.white
+                              : GhostColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Email field
+          TextField(
+            controller: _authEmailController,
+            decoration: const InputDecoration(
+              labelText: 'Email',
+              filled: true,
+              fillColor: GhostColors.surface,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8)),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8)),
+                borderSide: BorderSide(color: GhostColors.primary, width: 2),
+              ),
+            ),
+            keyboardType: TextInputType.emailAddress,
+            autocorrect: false,
+          ),
+          const SizedBox(height: 16),
+          // Password field
+          TextField(
+            controller: _authPasswordController,
+            decoration: const InputDecoration(
+              labelText: 'Password',
+              filled: true,
+              fillColor: GhostColors.surface,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8)),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8)),
+                borderSide: BorderSide(color: GhostColors.primary, width: 2),
+              ),
+            ),
+            obscureText: true,
+            autocorrect: false,
+          ),
+          if (_authError != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.red.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.red, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _authError!,
+                      style: GhostTypography.caption.copyWith(
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 24),
+          // Submit button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _authLoading ? null : _handleEmailAuth,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: GhostColors.primary,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: _authLoading
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(_isLogin ? 'Login' : 'Sign Up'),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Divider
+          Row(
+            children: [
+              const Expanded(child: Divider(color: GhostColors.surface)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  'OR',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
+                  ),
+                ),
+              ),
+              const Expanded(child: Divider(color: GhostColors.surface)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Google sign in
+          OutlinedButton.icon(
+            onPressed: _authLoading ? null : _handleGoogleAuth,
+            icon: const Icon(Icons.login, size: 18),
+            label: const Text('Continue with Google'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              side: const BorderSide(color: GhostColors.surface),
+              foregroundColor: GhostColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleEmailAuth() async {
+    setState(() {
+      _authLoading = true;
+      _authError = null;
+    });
+
+    try {
+      if (_isLogin) {
+        // Sign in existing user
+        await widget.authService.signInWithEmail(
+          _authEmailController.text,
+          _authPasswordController.text,
+        );
+      } else {
+        // Upgrade anonymous to permanent account
+        await widget.authService.upgradeWithEmail(
+          _authEmailController.text,
+          _authPasswordController.text,
+        );
+      }
+
+      // Success - close auth panel and clear fields
+      if (mounted) {
+        await _authSlideController.reverse();
+        setState(() {
+          _showAuth = false;
+          _authLoading = false;
+        });
+        _authEmailController.clear();
+        _authPasswordController.clear();
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        setState(() {
+          _authError = e.message;
+          _authLoading = false;
+        });
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(() {
+          _authError = e.toString().replaceAll('Exception: ', '');
+          _authLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleGoogleAuth() async {
+    setState(() {
+      _authLoading = true;
+      _authError = null;
+    });
+
+    try {
+      final success = await widget.authService.linkGoogleIdentity();
+
+      if (mounted) {
+        if (success) {
+          // Success - close auth panel
+          await _authSlideController.reverse();
+          setState(() {
+            _showAuth = false;
+            _authLoading = false;
+          });
+        } else {
+          // User cancelled or failed
+          setState(() {
+            _authLoading = false;
+          });
+        }
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(() {
+          _authError = e.toString().replaceAll('Exception: ', '');
+          _authLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleSignOut() async {
+    try {
+      await widget.authService.signOut();
+
+      if (mounted) {
+        await _authSlideController.reverse();
+        setState(() => _showAuth = false);
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(() {
+          _authError = e.toString().replaceAll('Exception: ', '');
+        });
+      }
+    }
   }
 
   Widget _buildSettingToggle({
@@ -1066,7 +1923,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             Switch(
               value: value,
               onChanged: onChanged,
-              activeColor: GhostColors.primary,
+              activeThumbColor: GhostColors.primary,
             ),
           ],
         ),

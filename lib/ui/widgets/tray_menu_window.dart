@@ -66,13 +66,20 @@ class TrayMenuWindow extends StatelessWidget {
             },
           ),
           _buildDivider(),
-          _buildMenuItem(
-            icon: Icons.videogame_asset,
-            label: 'Game Mode',
-            isChecked: gameModeService.isActive,
-            onTap: () {
-              gameModeService.toggle();
-              onClose();
+          // Use StreamBuilder for reactive Game Mode checkbox
+          StreamBuilder<bool>(
+            stream: gameModeService.isActiveStream,
+            initialData: gameModeService.isActive,
+            builder: (context, snapshot) {
+              return _buildMenuItem(
+                icon: Icons.videogame_asset,
+                label: 'Game Mode',
+                isChecked: snapshot.data ?? false,
+                onTap: () {
+                  gameModeService.toggle();
+                  onClose();
+                },
+              );
             },
           ),
           _buildDivider(),
