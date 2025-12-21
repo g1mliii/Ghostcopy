@@ -47,7 +47,8 @@
       "Bash(if not exist \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\lib\\\\utils\" mkdir \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\lib\\\\utils\")",
       "Bash(if not exist \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\test\\\\unit\\\\services\" mkdir \"C:\\\\Users\\\\subai\\\\Documents\\\\Ghostcopy\\\\test\\\\unit\\\\services\")",
       "Bash(cmd /c \"if exist supabase\\\\migrations \\(echo Directory exists\\) else \\(echo Need to create\\)\")",
-      "Bash(cmd /c \"if not exist supabase\\\\migrations mkdir supabase\\\\migrations\")"
+      "Bash(cmd /c \"if not exist supabase\\\\migrations mkdir supabase\\\\migrations\")",
+      "mcp__supabase__deploy_edge_function"
     ]
   },
   "enableAllProjectMcpServers": true,
