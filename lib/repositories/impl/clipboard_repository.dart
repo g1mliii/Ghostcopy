@@ -82,39 +82,20 @@ class ClipboardRepository implements IClipboardRepository {
       final sanitizedContent = _sanitizeContent(item.content);
       final encryptedContent = await _encryptionService.encrypt(sanitizedContent);
 
-      // Step 1: Insert metadata into clipboard table
+      // Insert into clipboard table (content is now in the same table)
       // RLS policies will enforce user_id = auth.uid()
       // Cleanup happens automatically via database trigger (no client-side overhead)
-      final response = await _client.from('clipboard').insert({
+      await _client.from('clipboard').insert({
         'user_id': userId,
         'device_name': _sanitizeDeviceName(item.deviceName),
         'device_type': _validateDeviceType(item.deviceType),
+        'target_device_type': item.targetDeviceType != null
+            ? _validateDeviceType(item.targetDeviceType!)
+            : null, // null = broadcast to all devices
+        'content': encryptedContent, // Content is now in the same table
         'is_public': false, // Force to false for security - no public sharing
         'encryption_version': 1, // Track encryption version for future upgrades
-      }).select('id');
-
-      // Extract the ID from response
-      if (response.isEmpty) {
-        throw RepositoryException('Failed to get inserted item ID');
-      }
-      final clipboardId = response.first['id'];
-
-      // Step 2: Insert encrypted content into separate table
-      try {
-        await _client.from('clipboard_content').insert({
-          'id': clipboardId,
-          'user_id': userId,
-          'content': encryptedContent,
-        });
-      } on PostgrestException {
-        // If content insert fails, delete the orphaned clipboard metadata
-        try {
-          await _client.from('clipboard').delete().eq('id', clipboardId as Object);
-        } on PostgrestException catch (deleteError) {
-          debugPrint('Failed to cleanup orphaned clipboard item: $deleteError');
-        }
-        rethrow;
-      }
+      });
     } on SecurityException {
       // Rethrow security exceptions
       rethrow;
@@ -188,12 +169,12 @@ class ClipboardRepository implements IClipboardRepository {
         );
       }
 
-      // Fetch history with content join and RLS enforcement
+      // Fetch history with RLS enforcement (content is now in the same table)
       final response = await _client
           .from('clipboard')
-          .select('*, clipboard_content(content)')
+          .select()
           .eq('user_id', userId) // Explicit filter for defense in depth
-          .order('created_at', ascending: false)
+          .order('created_at')
           .limit(safeLimit);
 
       final items = _parseClipboardItems(response);
@@ -393,32 +374,28 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Parses raw JSON data into ClipboardItem list
-  /// Handles nested clipboard_content structure from the join query
+  /// Content is now in the same table (no more join needed)
   List<ClipboardItem> _parseClipboardItems(List<Map<String, dynamic>> data) {
     return data.map((json) {
       try {
-        // Extract content from nested clipboard_content array
-        String? encryptedContent;
-        final contentArray = json['clipboard_content'] as List?;
-        if (contentArray != null && contentArray.isNotEmpty) {
-          final contentObj = contentArray.first as Map<String, dynamic>;
-          encryptedContent = contentObj['content'] as String?;
-        }
+        // Extract encrypted content directly from clipboard table
+        final encryptedContent = json['content'] as String?;
 
-        // If no content found in nested structure, throw error
+        // If no content found, throw error
         if (encryptedContent == null) {
           throw RepositoryException(
             'No content found for clipboard item ${json['id']}',
           );
         }
 
-        // Create ClipboardItem with content from nested structure
+        // Create ClipboardItem with content directly from clipboard table
         final item = ClipboardItem(
           id: json['id'].toString(),
           userId: json['user_id'] as String,
           content: encryptedContent, // This is still encrypted at this point
           deviceName: json['device_name'] as String?,
           deviceType: json['device_type'] as String,
+          targetDeviceType: json['target_device_type'] as String?,
           isPublic: json['is_public'] as bool? ?? false,
           createdAt: DateTime.parse(json['created_at'] as String),
         );
@@ -448,6 +425,7 @@ class ClipboardRepository implements IClipboardRepository {
             content: decryptedContent,
             deviceName: item.deviceName,
             deviceType: item.deviceType,
+            targetDeviceType: item.targetDeviceType,
             createdAt: item.createdAt,
           ),
         );

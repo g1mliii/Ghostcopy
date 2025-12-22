@@ -39,7 +39,11 @@ flutter analyze
 ### Client-Server Model
 - **Backend**: Supabase (PostgreSQL + Realtime + Auth + RLS)
 - **Sync**: Bidirectional via Supabase Realtime subscriptions
-- **Auth**: Email/password via Supabase Auth with Row Level Security
+- **Auth**:
+  - Anonymous sign-in by default
+  - Upgrade to email/password or Google OAuth
+  - Preserves user_id and clipboard data during upgrade
+  - See `GOOGLE_OAUTH_SETUP.md` for Google OAuth configuration
 
 ### Service-Based Architecture
 All features are implemented as services with abstract interfaces for testability:
@@ -143,7 +147,10 @@ Create `.env` file in project root:
 ```
 SUPABASE_URL=your-project-url
 SUPABASE_ANON_KEY=your-anon-key
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com  # Optional, for Google OAuth
 ```
+
+For Google OAuth setup, see `GOOGLE_OAUTH_SETUP.md`.
 
 ## Platform Notes
 

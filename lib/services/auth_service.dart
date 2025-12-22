@@ -17,11 +17,21 @@ abstract class IAuthService {
 
   /// Sign up a new user with email and password
   /// Returns AuthResponse with user data or error
-  Future<AuthResponse> signUpWithEmail(String email, String password);
+  /// [captchaToken] Required if captcha is enabled in Supabase
+  Future<AuthResponse> signUpWithEmail(
+    String email,
+    String password, {
+    String? captchaToken,
+  });
 
   /// Sign in an existing user with email and password
   /// Returns AuthResponse with user data or error
-  Future<AuthResponse> signInWithEmail(String email, String password);
+  /// [captchaToken] Required if captcha is enabled in Supabase
+  Future<AuthResponse> signInWithEmail(
+    String email,
+    String password, {
+    String? captchaToken,
+  });
 
   /// Sign in with Google OAuth provider
   /// Returns true if successful, false if cancelled or failed
@@ -30,7 +40,12 @@ abstract class IAuthService {
   /// Upgrade anonymous user to email/password account
   /// Uses Supabase's updateUser() to preserve user_id and clipboard data
   /// Throws exception if email already exists
-  Future<UserResponse> upgradeWithEmail(String email, String password);
+  /// [captchaToken] Required if captcha is enabled in Supabase
+  Future<UserResponse> upgradeWithEmail(
+    String email,
+    String password, {
+    String? captchaToken,
+  });
 
   /// Link Google OAuth identity to current anonymous user
   /// Uses Supabase's linkIdentity() to preserve user_id
@@ -45,6 +60,16 @@ abstract class IAuthService {
   /// Sign in using a mobile link token
   /// Returns AuthResponse with user data or error if token is expired/invalid
   Future<AuthResponse> signInWithToken(String token);
+
+  /// Send password reset email to user
+  /// Returns true if email sent successfully, false otherwise
+  /// User will receive an email with a link to reset their password
+  Future<bool> sendPasswordResetEmail(String email);
+
+  /// Reset password using the reset token from email
+  /// Called after user clicks the link in the password reset email
+  /// Returns true if password updated successfully
+  Future<bool> resetPassword(String newPassword);
 
   /// Sign out the current user
   /// Clears session and returns to anonymous state

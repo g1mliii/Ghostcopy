@@ -52,7 +52,10 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "mcp__supabase__get_project"
+      "mcp__supabase__get_project",
+      "mcp__supabase__list_edge_functions",
+      "Bash(curl:*)",
+      "Bash(cat:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

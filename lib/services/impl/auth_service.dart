@@ -51,11 +51,16 @@ class AuthService implements IAuthService {
   Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
 
   @override
-  Future<AuthResponse> signUpWithEmail(String email, String password) async {
+  Future<AuthResponse> signUpWithEmail(
+    String email,
+    String password, {
+    String? captchaToken,
+  }) async {
     try {
       final response = await _client.auth.signUp(
         email: email,
         password: password,
+        captchaToken: captchaToken,
       );
       debugPrint('[AuthService] Sign up successful for: $email');
       return response;
@@ -66,11 +71,16 @@ class AuthService implements IAuthService {
   }
 
   @override
-  Future<AuthResponse> signInWithEmail(String email, String password) async {
+  Future<AuthResponse> signInWithEmail(
+    String email,
+    String password, {
+    String? captchaToken,
+  }) async {
     try {
       final response = await _client.auth.signInWithPassword(
         email: email,
         password: password,
+        captchaToken: captchaToken,
       );
       debugPrint('[AuthService] Sign in successful for: $email');
       return response;
@@ -83,9 +93,15 @@ class AuthService implements IAuthService {
   @override
   Future<bool> signInWithGoogle() async {
     try {
+      // Use web-based OAuth flow for all platforms (desktop and mobile)
+      // This opens a browser window/webview for authentication
+      // For mobile, the user is brought back via deep linking
       final response = await _client.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: 'ghostcopy://auth-callback',
+        redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
+        authScreenLaunchMode: kIsWeb
+            ? LaunchMode.platformDefault
+            : LaunchMode.externalApplication,
       );
       debugPrint('[AuthService] Google sign in initiated');
       return response;
@@ -96,7 +112,11 @@ class AuthService implements IAuthService {
   }
 
   @override
-  Future<UserResponse> upgradeWithEmail(String email, String password) async {
+  Future<UserResponse> upgradeWithEmail(
+    String email,
+    String password, {
+    String? captchaToken,
+  }) async {
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
@@ -104,6 +124,7 @@ class AuthService implements IAuthService {
     try {
       // First, update the user's email
       // This will fail if the email is already in use
+      // Note: captchaToken not needed for updateUser - user is already authenticated
       final userResponse = await _client.auth.updateUser(
         UserAttributes(
           email: email,
@@ -133,7 +154,16 @@ class AuthService implements IAuthService {
     }
 
     try {
-      final response = await _client.auth.linkIdentity(OAuthProvider.google);
+      // Use linkIdentity to upgrade anonymous user to Google OAuth
+      // This preserves the user_id and all clipboard data
+      // Opens browser/webview for Google authentication
+      final response = await _client.auth.linkIdentity(
+        OAuthProvider.google,
+        redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
+        authScreenLaunchMode: kIsWeb
+            ? LaunchMode.platformDefault
+            : LaunchMode.externalApplication,
+      );
       debugPrint('[AuthService] Google identity linked (user_id preserved)');
       return response;
     } on AuthException catch (e) {
@@ -203,6 +233,39 @@ class AuthService implements IAuthService {
     } on PostgrestException catch (e) {
       debugPrint('[AuthService] Token verification failed: ${e.message}');
       throw Exception('Invalid or expired token');
+    }
+  }
+
+  @override
+  Future<bool> sendPasswordResetEmail(String email) async {
+    try {
+      // Supabase will send a password reset email with a link
+      // The link redirects to: ghostcopy://reset-password?token=...
+      await _client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: kIsWeb ? null : 'ghostcopy://reset-password',
+      );
+      debugPrint('[AuthService] Password reset email sent to: $email');
+      return true;
+    } on AuthException catch (e) {
+      debugPrint('[AuthService] Send password reset failed: ${e.message}');
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> resetPassword(String newPassword) async {
+    try {
+      // Update the user's password after they've clicked the reset link
+      // Supabase automatically validates the reset token from the deep link
+      await _client.auth.updateUser(
+        UserAttributes(password: newPassword),
+      );
+      debugPrint('[AuthService] Password reset successfully');
+      return true;
+    } on AuthException catch (e) {
+      debugPrint('[AuthService] Password reset failed: ${e.message}');
+      return false;
     }
   }
 

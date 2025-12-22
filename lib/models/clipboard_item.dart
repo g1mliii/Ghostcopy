@@ -7,6 +7,7 @@ class ClipboardItem {
     required this.deviceType,
     required this.createdAt,
     this.deviceName,
+    this.targetDeviceType,
     this.isPublic = false,
   });
 
@@ -18,6 +19,7 @@ class ClipboardItem {
       content: json['content'] as String,
       deviceName: json['device_name'] as String?,
       deviceType: json['device_type'] as String,
+      targetDeviceType: json['target_device_type'] as String?,
       isPublic: json['is_public'] as bool? ?? false,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
@@ -27,7 +29,8 @@ class ClipboardItem {
   final String userId;
   final String content;
   final String? deviceName;
-  final String deviceType; // 'windows', 'macos', 'android', 'ios'
+  final String deviceType; // sender's device type: 'windows', 'macos', 'android', 'ios'
+  final String? targetDeviceType; // target device type filter: null = all devices, specific = only that type
   final bool isPublic;
   final DateTime createdAt;
 
@@ -39,6 +42,7 @@ class ClipboardItem {
       'content': content,
       'device_name': deviceName,
       'device_type': deviceType,
+      'target_device_type': targetDeviceType,
       'is_public': isPublic,
       'created_at': createdAt.toIso8601String(),
     };
@@ -53,6 +57,7 @@ class ClipboardItem {
         other.content == content &&
         other.deviceName == deviceName &&
         other.deviceType == deviceType &&
+        other.targetDeviceType == targetDeviceType &&
         other.isPublic == isPublic &&
         other.createdAt == createdAt;
   }
@@ -65,6 +70,7 @@ class ClipboardItem {
       content,
       deviceName,
       deviceType,
+      targetDeviceType,
       isPublic,
       createdAt,
     );
@@ -72,6 +78,6 @@ class ClipboardItem {
 
   @override
   String toString() {
-    return 'ClipboardItem(id: $id, userId: $userId, content: ${content.substring(0, content.length > 20 ? 20 : content.length)}..., deviceName: $deviceName, deviceType: $deviceType, isPublic: $isPublic, createdAt: $createdAt)';
+    return 'ClipboardItem(id: $id, userId: $userId, content: ${content.substring(0, content.length > 20 ? 20 : content.length)}..., deviceName: $deviceName, deviceType: $deviceType, targetDeviceType: $targetDeviceType, isPublic: $isPublic, createdAt: $createdAt)';
   }
 }

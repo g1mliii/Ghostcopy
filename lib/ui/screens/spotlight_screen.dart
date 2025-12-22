@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:clipboard/clipboard.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:hcaptcha/hcaptcha.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -240,6 +242,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Load initial history
     _loadHistory();
 
+    // Initialize hCaptcha with site key from environment
+    final siteKey = dotenv.env['HCAPTCHA_SITE_KEY'];
+    if (siteKey != null && siteKey.isNotEmpty) {
+      HCaptcha.init(siteKey: siteKey);
+      debugPrint('[Spotlight] hCaptcha initialized');
+    } else {
+      debugPrint('[Spotlight] WARNING: hCaptcha site key not found in .env');
+    }
+
     // Subscribe to real-time updates
     _subscribeToRealtimeUpdates();
 
@@ -320,7 +331,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 currentDeviceName != null &&
                 deviceName != currentDeviceName;
 
-            if (isFromDifferentDevice) {
+            // Check if this message is targeted to this device type
+            final targetDeviceType = payload.newRecord['target_device_type'] as String?;
+            final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
+
+            // Message is for us if:
+            // - target is null (broadcast to all devices)
+            // - OR target matches our device type
+            final isTargetedToMe = targetDeviceType == null ||
+                                   targetDeviceType == currentDeviceType;
+
+            if (isFromDifferentDevice && isTargetedToMe) {
               // Debounce auto-receive to prevent clipboard thrashing (Requirement 11.4)
               // If multiple items arrive quickly, only process the most recent one
               _debouncedAutoReceive(payload.newRecord);
@@ -527,6 +548,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         content: content,
         deviceName: ClipboardRepository.getCurrentDeviceName(),
         deviceType: ClipboardRepository.getCurrentDeviceType(),
+        // targetDeviceType defaults to null (broadcasts to all devices)
         createdAt: DateTime.now(),
       );
 
@@ -656,6 +678,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         content: _content,
         deviceName: ClipboardRepository.getCurrentDeviceName(),
         deviceType: ClipboardRepository.getCurrentDeviceType(),
+        targetDeviceType: _selectedPlatform, // null = all devices, specific = only that type
         createdAt: DateTime.now(),
       );
 
@@ -1159,46 +1182,92 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build send button
   Widget _buildSendButton() {
-    return ElevatedButton(
-      onPressed: _isSending ? null : _handleSend,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: GhostColors.primary,
-        minimumSize: const Size(double.infinity, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      ),
-      child: _isSending
-          ? const SizedBox(
-              height: 20,
-              width: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
+    // Get the target description
+    var targetText = 'all devices';
+    if (_selectedPlatform != null) {
+      final platform = PlatformType.values.firstWhere(
+        (p) => p.name == _selectedPlatform,
+        orElse: () => PlatformType.all,
+      );
+      targetText = platform.label.toLowerCase();
+    }
+
+    return Column(
+      children: [
+        // Target indicator
+        if (_selectedPlatform != null)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: GhostColors.surfaceLight,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: GhostColors.primary.withValues(alpha: 0.3),
               ),
-            )
-          : Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.send, size: 18, color: Colors.white),
-                const SizedBox(width: 8),
-                const Text(
-                  'Send',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
+                Icon(
+                  Icons.info_outline,
+                  size: 14,
+                  color: GhostColors.primary,
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 6),
                 Text(
-                  '⏎',
+                  'Sending to $targetText only',
                   style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 11,
+                    color: GhostColors.textSecondary,
                   ),
                 ),
               ],
             ),
+          ),
+        // Send button
+        ElevatedButton(
+          onPressed: _isSending ? null : _handleSend,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: GhostColors.primary,
+            minimumSize: const Size(double.infinity, 48),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          ),
+          child: _isSending
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.send, size: 18, color: Colors.white),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Send',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      '⏎',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ],
     );
   }
 
@@ -1704,6 +1773,28 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             obscureText: true,
             autocorrect: false,
           ),
+          // Forgot password link (only show in login mode)
+          if (_isLogin) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _authLoading ? null : _handleForgotPassword,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  'Forgot Password?',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.primary,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+          ],
           if (_authError != null) ...[
             const SizedBox(height: 16),
             Container(
@@ -1731,7 +1822,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
             ),
           ],
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           // Submit button
           SizedBox(
             width: double.infinity,
@@ -1794,27 +1885,94 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     });
 
     try {
+      // Show hCaptcha and get verification token
+      final captchaDetails = await HCaptcha.show(context);
+
+      if (captchaDetails == null || !mounted) {
+        // User cancelled captcha
+        setState(() => _authLoading = false);
+        return;
+      }
+
+      // Extract token from captcha response
+      final captchaToken = captchaDetails['code'] as String?;
+
+      if (captchaToken == null) {
+        setState(() {
+          _authError = 'Captcha verification failed. Please try again.';
+          _authLoading = false;
+        });
+        return;
+      }
+
+      debugPrint('[Auth] hCaptcha verified, proceeding with authentication');
+
       if (_isLogin) {
         // Sign in existing user
         await widget.authService.signInWithEmail(
           _authEmailController.text,
           _authPasswordController.text,
+          captchaToken: captchaToken,
         );
       } else {
-        // Upgrade anonymous to permanent account
+        // Upgrade anonymous to permanent account (captcha optional for upgrade)
         await widget.authService.upgradeWithEmail(
           _authEmailController.text,
           _authPasswordController.text,
         );
       }
 
-      // Success - close auth panel and clear fields
+      // Success - check if email confirmation is required
       if (mounted) {
+        setState(() => _authLoading = false);
+
+        // Check if user email is confirmed
+        final user = widget.authService.currentUser;
+        final emailConfirmed = user?.emailConfirmedAt != null;
+
+        if (!emailConfirmed && !_isLogin) {
+          // Email confirmation required - show message
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              backgroundColor: GhostColors.surfaceLight,
+              title: Row(
+                children: [
+                  const Icon(Icons.mark_email_unread, color: GhostColors.primary),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Verify Your Email',
+                    style: GhostTypography.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: GhostColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              content: Text(
+                "We've sent a confirmation email to ${_authEmailController.text}. "
+                'Please click the link in the email to verify your account.',
+                style: GhostTypography.body.copyWith(
+                  color: GhostColors.textSecondary,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'OK',
+                    style: TextStyle(color: GhostColors.primary),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // Close auth panel and clear fields
         await _authSlideController.reverse();
-        setState(() {
-          _showAuth = false;
-          _authLoading = false;
-        });
+        setState(() => _showAuth = false);
         _authEmailController.clear();
         _authPasswordController.clear();
       }
@@ -1842,7 +2000,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     });
 
     try {
-      final success = await widget.authService.linkGoogleIdentity();
+      final bool success;
+
+      if (_isLogin) {
+        // Login mode: Sign in with existing Google account
+        success = await widget.authService.signInWithGoogle();
+      } else {
+        // Sign Up mode: Upgrade anonymous user to Google account (preserves user_id)
+        success = await widget.authService.linkGoogleIdentity();
+      }
 
       if (mounted) {
         if (success) {
@@ -1856,6 +2022,86 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           // User cancelled or failed
           setState(() {
             _authLoading = false;
+          });
+        }
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(() {
+          _authError = e.toString().replaceAll('Exception: ', '');
+          _authLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleForgotPassword() async {
+    final email = _authEmailController.text.trim();
+
+    if (email.isEmpty) {
+      setState(() {
+        _authError = 'Please enter your email address';
+      });
+      return;
+    }
+
+    setState(() {
+      _authLoading = true;
+      _authError = null;
+    });
+
+    try {
+      final success = await widget.authService.sendPasswordResetEmail(email);
+
+      if (mounted) {
+        setState(() => _authLoading = false);
+
+        if (success) {
+          // Show success message
+          setState(() {
+            _authError = null;
+          });
+
+          // Show success dialog
+          if (mounted) {
+            await showDialog<void>(
+              context: context,
+              builder: (context) => AlertDialog(
+                backgroundColor: GhostColors.surfaceLight,
+                title: Row(
+                  children: [
+                    const Icon(Icons.mark_email_read, color: GhostColors.success),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Email Sent',
+                      style: GhostTypography.body.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: GhostColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                content: Text(
+                  'Check your email for a password reset link. The link will expire in 1 hour.',
+                  style: GhostTypography.body.copyWith(
+                    color: GhostColors.textSecondary,
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(
+                      'OK',
+                      style: TextStyle(color: GhostColors.primary),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        } else {
+          setState(() {
+            _authError = 'Failed to send reset email. Please check your email address.';
           });
         }
       }
@@ -2059,6 +2305,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                               content: item.content,
                               timeAgo: _formatTimeAgo(item.createdAt),
                               device: _capitalizeFirst(item.deviceType),
+                              targetDeviceType: item.targetDeviceType,
                               onTap: () {
                                 // Copy to text field
                                 _textController.text = item.content;
@@ -2208,11 +2455,13 @@ class _HistoryItem extends StatefulWidget {
     required this.timeAgo,
     required this.device,
     required this.onTap,
+    this.targetDeviceType,
   });
 
   final String content;
   final String timeAgo;
   final String device;
+  final String? targetDeviceType;
   final VoidCallback onTap;
 
   @override
@@ -2253,6 +2502,7 @@ class _HistoryItemState extends State<_HistoryItem> {
                 // Metadata row
                 Row(
                   children: [
+                    // Source device icon and name
                     Icon(
                       _getDeviceIcon(widget.device),
                       size: 12,
@@ -2266,6 +2516,21 @@ class _HistoryItemState extends State<_HistoryItem> {
                         color: GhostColors.textMuted,
                       ),
                     ),
+                    // Show target if specified
+                    if (widget.targetDeviceType != null) ...[
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 10,
+                        color: GhostColors.primary.withValues(alpha: 0.7),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        _getDeviceIconByType(widget.targetDeviceType!),
+                        size: 12,
+                        color: GhostColors.primary,
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     Text(
                       '•',
@@ -2293,7 +2558,11 @@ class _HistoryItemState extends State<_HistoryItem> {
   }
 
   IconData _getDeviceIcon(String device) {
-    switch (device.toLowerCase()) {
+    return _getDeviceIconByType(device.toLowerCase());
+  }
+
+  IconData _getDeviceIconByType(String deviceType) {
+    switch (deviceType.toLowerCase()) {
       case 'windows':
         return Icons.desktop_windows;
       case 'macos':
@@ -2302,6 +2571,8 @@ class _HistoryItemState extends State<_HistoryItem> {
         return Icons.phone_android;
       case 'ios':
         return Icons.phone_iphone;
+      case 'linux':
+        return Icons.computer;
       default:
         return Icons.devices;
     }
