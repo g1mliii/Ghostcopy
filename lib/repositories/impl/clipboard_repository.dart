@@ -55,7 +55,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  Future<void> insert(ClipboardItem item) async {
+  Future<ClipboardItem> insert(ClipboardItem item) async {
     // Validate and sanitize input before sending to Supabase
     _validateClipboardItem(item);
 
@@ -85,7 +85,8 @@ class ClipboardRepository implements IClipboardRepository {
       // Insert into clipboard table (content is now in the same table)
       // RLS policies will enforce user_id = auth.uid()
       // Cleanup happens automatically via database trigger (no client-side overhead)
-      await _client.from('clipboard').insert({
+      // Use .select() to get the inserted record with generated ID
+      final response = await _client.from('clipboard').insert({
         'user_id': userId,
         'device_name': _sanitizeDeviceName(item.deviceName),
         'device_type': _validateDeviceType(item.deviceType),
@@ -95,7 +96,18 @@ class ClipboardRepository implements IClipboardRepository {
         'content': encryptedContent, // Content is now in the same table
         'is_public': false, // Force to false for security - no public sharing
         'encryption_version': 1, // Track encryption version for future upgrades
-      });
+      }).select().single();
+
+      // Return the inserted item with generated ID
+      return ClipboardItem(
+        id: response['id'].toString(),
+        userId: userId,
+        content: item.content, // Return original unencrypted content
+        deviceName: item.deviceName,
+        deviceType: item.deviceType,
+        targetDeviceType: item.targetDeviceType,
+        createdAt: DateTime.parse(response['created_at'] as String),
+      );
     } on SecurityException {
       // Rethrow security exceptions
       rethrow;

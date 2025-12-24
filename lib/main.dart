@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'services/auth_service.dart';
+import 'services/auto_start_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/hotkey_service.dart';
 import 'services/impl/auth_service.dart';
@@ -17,14 +18,18 @@ import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
 import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
+import 'services/settings_service.dart';
 import 'services/tray_service.dart';
 import 'services/window_service.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/widgets/tray_menu_window.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Check if app was launched at startup (for hidden mode)
+  final launchedAtStartup = args.contains('--launched-at-startup');
 
   // Load environment variables
   await dotenv.load();
@@ -50,8 +55,29 @@ Future<void> main() async {
     final hotkeyService = HotkeyService();
     final gameModeService = GameModeService();
     final notificationService = NotificationService();
+    final settingsService = SettingsService();
+    final autoStartService = AutoStartService();
+
+    // Initialize settings service first
+    await settingsService.initialize();
+
+    // Initialize auto-start service
+    await autoStartService.initialize();
+
+    // Sync auto-start setting with system if needed
+    final autoStartEnabled = await settingsService.getAutoStartEnabled();
+    final systemAutoStartEnabled = await autoStartService.isEnabled();
+    if (autoStartEnabled != systemAutoStartEnabled) {
+      // Sync setting with actual system state
+      if (autoStartEnabled) {
+        await autoStartService.enable();
+      } else {
+        await autoStartService.disable();
+      }
+    }
 
     // Initialize window manager with hidden state (Acceptance Criteria #1)
+    // Note: App always starts hidden, regardless of launch method
     await windowService.initialize();
 
     // Initialize system tray (Acceptance Criteria #2)
@@ -70,6 +96,9 @@ Future<void> main() async {
         gameModeService: gameModeService,
         lifecycleController: lifecycleController,
         notificationService: notificationService,
+        settingsService: settingsService,
+        autoStartService: autoStartService,
+        launchedAtStartup: launchedAtStartup,
       ),
     );
   } else {
@@ -95,6 +124,9 @@ class MyApp extends StatefulWidget {
     this.gameModeService,
     this.lifecycleController,
     this.notificationService,
+    this.settingsService,
+    this.autoStartService,
+    this.launchedAtStartup = false,
     super.key,
   });
 
@@ -105,6 +137,9 @@ class MyApp extends StatefulWidget {
   final IGameModeService? gameModeService;
   final ILifecycleController? lifecycleController;
   final INotificationService? notificationService;
+  final ISettingsService? settingsService;
+  final IAutoStartService? autoStartService;
+  final bool launchedAtStartup;
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -165,6 +200,8 @@ class _MyAppState extends State<MyApp> {
       widget.gameModeService?.dispose();
       widget.windowService?.dispose();
       widget.lifecycleController?.dispose();
+      widget.settingsService?.dispose();
+      widget.autoStartService?.dispose();
     }
     super.dispose();
   }

@@ -1,0 +1,20 @@
+{
+    "name": "dart-lsp",
+    "description": "Provides Dart language server support for Claude Code using the Flutter SDK",
+    "version": "1.0.0",
+    "author": {
+        "name": "Your Name"
+    },
+    "lspServers": {
+        "dart": {
+            "command": "dart",
+            "args": [
+                "language-server",
+                "--client-id=claude-cli"
+            ],
+            "extensionToLanguage": {
+                ".dart": "dart"
+            }
+        }
+    }
+}

@@ -15,10 +15,14 @@ class SettingsService implements ISettingsService {
   // Settings keys
   static const String _keyAutoSendEnabled = 'auto_send_enabled';
   static const String _keyStaleDurationMinutes = 'clipboard_stale_duration_minutes';
+  static const String _keyAutoSendTargetDevices = 'auto_send_target_devices';
+  static const String _keyAutoStartEnabled = 'auto_start_enabled';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
   static const int _defaultStaleDurationMinutes = 5;
+  static const Set<String> _defaultAutoSendTargetDevices = {}; // Empty = all devices
+  static const bool _defaultAutoStartEnabled = false;
 
   @override
   Future<void> initialize() async {
@@ -70,6 +74,46 @@ class SettingsService implements ISettingsService {
 
     await _prefs!.setInt(_keyStaleDurationMinutes, minutes);
     debugPrint('Clipboard stale duration set to $minutes minutes');
+  }
+
+  @override
+  Future<Set<String>> getAutoSendTargetDevices() async {
+    _ensureInitialized();
+    final devices = _prefs!.getStringList(_keyAutoSendTargetDevices);
+    if (devices == null || devices.isEmpty) {
+      return _defaultAutoSendTargetDevices;
+    }
+    return devices.toSet();
+  }
+
+  @override
+  Future<void> setAutoSendTargetDevices(Set<String> devices) async {
+    _ensureInitialized();
+
+    // Validate device types
+    const validDevices = {'windows', 'macos', 'android', 'ios'};
+    final invalidDevices = devices.where((d) => !validDevices.contains(d));
+    if (invalidDevices.isNotEmpty) {
+      throw ArgumentError('Invalid device types: ${invalidDevices.join(", ")}');
+    }
+
+    await _prefs!.setStringList(_keyAutoSendTargetDevices, devices.toList());
+    debugPrint(
+      'Auto-send target devices: ${devices.isEmpty ? "all devices" : devices.join(", ")}',
+    );
+  }
+
+  @override
+  Future<bool> getAutoStartEnabled() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keyAutoStartEnabled) ?? _defaultAutoStartEnabled;
+  }
+
+  @override
+  Future<void> setAutoStartEnabled({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyAutoStartEnabled, enabled);
+    debugPrint('Auto-start ${enabled ? "enabled" : "disabled"}');
   }
 
   @override

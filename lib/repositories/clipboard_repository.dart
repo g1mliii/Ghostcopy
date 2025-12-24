@@ -4,8 +4,8 @@ export 'impl/clipboard_repository.dart';
 
 /// Abstract interface for clipboard data operations
 abstract class IClipboardRepository {
-  /// Insert a new clipboard item
-  Future<void> insert(ClipboardItem item);
+  /// Insert a new clipboard item and return it with generated ID
+  Future<ClipboardItem> insert(ClipboardItem item);
 
   /// Watch clipboard history with real-time updates
   Stream<List<ClipboardItem>> watchHistory({int limit = 50});

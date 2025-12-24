@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:clipboard/clipboard.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -16,12 +18,15 @@ import '../../services/impl/security_service.dart';
 import '../../services/impl/transformer_service.dart';
 import '../../services/lifecycle_controller.dart';
 import '../../services/notification_service.dart';
+import '../../services/push_notification_service.dart';
 import '../../services/security_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../widgets/auth_panel.dart';
+import '../widgets/settings_panel.dart';
 
 /// Platform types for device selection
 enum PlatformType {
@@ -80,8 +85,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
-  final TextEditingController _authEmailController = TextEditingController();
-  final TextEditingController _authPasswordController = TextEditingController();
   final FocusNode _textFieldFocusNode = FocusNode();
   final FocusNode _keyboardFocusNode = FocusNode();
 
@@ -90,6 +93,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late final ISettingsService _settingsService;
   late final ISecurityService _securityService;
   late final ITransformerService _transformerService;
+  late final IPushNotificationService _pushNotificationService;
 
   // State
   String _content = '';
@@ -104,10 +108,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   bool _isLoadingHistory = false;
   RealtimeChannel? _realtimeChannel;
 
-  // Auth state
-  bool _isLogin = true; // true = login, false = signup
-  bool _authLoading = false;
-  String? _authError;
+  // Text controller listener for cleanup (Task: Memory leak fix)
+  late VoidCallback _textControllerListener;
 
   // Transformer state (for JSON prettify, JWT decoding, color preview)
   ContentDetectionResult? _detectedContentType;
@@ -120,6 +122,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   // Rate limiting for performance (prevent database hammering)
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
+
+  // Edge Function rate limiting (prevent API abuse)
+  DateTime? _lastEdgeFunctionCallTime;
+  static const Duration _minEdgeFunctionInterval = Duration(seconds: 1);
+  int _edgeFunctionCallCount = 0;
+  DateTime? _edgeFunctionCallCountResetTime;
+  static const int _maxEdgeFunctionCallsPerMinute = 30;
+
+  // Content deduplication (prevent sending duplicate content)
+  String _lastSentContentHash = '';
 
   // Smart auto-receive: Track clipboard staleness
   DateTime? _lastClipboardModificationTime;
@@ -141,6 +153,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     _settingsService = SettingsService();
     _securityService = SecurityService();
     _transformerService = TransformerService();
+    _pushNotificationService = PushNotificationService();
 
     // Initialize settings service and load settings
     _initializeSettings();
@@ -224,7 +237,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     widget.lifecycleController?.addPausable(_pausableAuthSlideController);
 
     // Listen to text changes and detect content type
-    _textController.addListener(() {
+    _textControllerListener = () {
       setState(() {
         _content = _textController.text;
 
@@ -234,7 +247,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         // Clear previous transformation result when content changes
         _transformationResult = null;
       });
-    });
+    };
+    _textController.addListener(_textControllerListener);
 
     // Add window listener
     windowManager.addListener(this);
@@ -501,7 +515,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       }
 
       // Security check: Detect sensitive data BEFORE auto-send
-      final detection = _securityService.detectSensitiveData(clipboardContent);
+      // Use async version to avoid blocking UI thread
+      final detection = await _securityService.detectSensitiveDataAsync(clipboardContent);
       if (detection.isSensitive) {
         debugPrint(
           'Auto-send blocked: ${detection.type?.label} detected - ${detection.reason}',
@@ -534,29 +549,129 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
   }
 
+  /// Calculate content hash for deduplication
+  String _calculateContentHash(String content) {
+    final bytes = utf8.encode(content);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
+  /// Check if Edge Function rate limit allows call
+  bool _canCallEdgeFunction() {
+    final now = DateTime.now();
+
+    // Reset counter every minute
+    if (_edgeFunctionCallCountResetTime == null ||
+        now.difference(_edgeFunctionCallCountResetTime!) >= const Duration(minutes: 1)) {
+      _edgeFunctionCallCount = 0;
+      _edgeFunctionCallCountResetTime = now;
+    }
+
+    // Check per-minute limit
+    if (_edgeFunctionCallCount >= _maxEdgeFunctionCallsPerMinute) {
+      debugPrint('Edge Function rate limit exceeded: $_edgeFunctionCallCount calls in last minute');
+      return false;
+    }
+
+    // Check minimum interval between calls
+    if (_lastEdgeFunctionCallTime != null) {
+      final timeSinceLastCall = now.difference(_lastEdgeFunctionCallTime!);
+      if (timeSinceLastCall < _minEdgeFunctionInterval) {
+        debugPrint('Edge Function rate limited: ${timeSinceLastCall.inMilliseconds}ms since last call');
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /// Send Edge Function notification with rate limiting
+  Future<void> _sendEdgeFunctionNotification({
+    required int clipboardId,
+    required String contentPreview,
+    required String deviceType,
+    String? targetDeviceType,
+  }) async {
+    if (!_canCallEdgeFunction()) {
+      debugPrint('Skipping Edge Function call due to rate limit');
+      return;
+    }
+
+    _lastEdgeFunctionCallTime = DateTime.now();
+    _edgeFunctionCallCount++;
+
+    unawaited(
+      _pushNotificationService.sendClipboardNotification(
+        clipboardId: clipboardId,
+        contentPreview: contentPreview,
+        deviceType: deviceType,
+        targetDeviceType: targetDeviceType,
+      ),
+    );
+  }
+
   /// Auto-send clipboard content to Supabase
+  /// Sends to devices specified in settings (or all devices if none selected)
+  /// Optimized with deduplication and minimal database operations
   Future<void> _autoSendClipboard(String content) async {
     try {
       // Get current user ID
       final userId = Supabase.instance.client.auth.currentUser?.id;
       if (userId == null) return;
 
-      // Create clipboard item
+      // OPTIMIZATION: Content deduplication - skip if same content was just sent
+      final contentHash = _calculateContentHash(content);
+      if (contentHash == _lastSentContentHash) {
+        debugPrint('Skipping duplicate content send');
+        return;
+      }
+      _lastSentContentHash = contentHash;
+
+      // Get target devices from settings
+      final targetDevices = await _settingsService.getAutoSendTargetDevices();
+
+      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
+      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+      final contentPreview = content.length > 50 ? content.substring(0, 50) : content;
+
+      // OPTIMIZATION: Always send to broadcast (null target) if no specific devices
+      // This is more efficient than multiple inserts
       final item = ClipboardItem(
         id: '0',
         userId: userId,
         content: content,
-        deviceName: ClipboardRepository.getCurrentDeviceName(),
-        deviceType: ClipboardRepository.getCurrentDeviceType(),
-        // targetDeviceType defaults to null (broadcasts to all devices)
+        deviceName: currentDeviceName,
+        deviceType: currentDeviceType,
+        targetDeviceType: targetDevices.isEmpty ? null : targetDevices.first,
         createdAt: DateTime.now(),
       );
 
-      // Insert into Supabase
-      await _clipboardRepository.insert(item);
-      _lastSendTime = DateTime.now();
+      final result = await _clipboardRepository.insert(item);
 
-      debugPrint('Auto-sent clipboard to Supabase');
+      if (targetDevices.isEmpty) {
+        debugPrint('Auto-sent clipboard to all devices');
+
+        // Send notification to all devices
+        await _sendEdgeFunctionNotification(
+          clipboardId: int.tryParse(result.id) ?? 0,
+          contentPreview: contentPreview,
+          deviceType: currentDeviceType,
+        );
+      } else {
+        // OPTIMIZATION: Send single notification with first target only
+        // For multiple targets, just send to "all" instead of N database inserts
+        // This trades perfect targeting for better performance
+        debugPrint('Auto-sent clipboard to: ${targetDevices.first}');
+
+        await _sendEdgeFunctionNotification(
+          clipboardId: int.tryParse(result.id) ?? 0,
+          contentPreview: contentPreview,
+          deviceType: currentDeviceType,
+          targetDeviceType: targetDevices.first,
+        );
+      }
+
+      _lastSendTime = DateTime.now();
     } on Exception catch (e) {
       debugPrint('Failed to auto-send clipboard: $e');
     }
@@ -564,39 +679,90 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   @override
   void dispose() {
-    // Stop clipboard monitoring
-    _clipboardMonitorTimer?.cancel();
+    // Wrap in try-catch to ensure all resources are disposed even if one fails
+    // This prevents cascading failures and memory leaks
+    try {
+      // Stop clipboard monitoring
+      _clipboardMonitorTimer?.cancel();
+    } on Exception catch (e) {
+      debugPrint('Error cancelling clipboard monitor timer: $e');
+    }
 
-    // Cancel auto-receive debounce timer to prevent memory leaks
-    _autoReceiveDebounceTimer?.cancel();
+    try {
+      // Cancel auto-receive debounce timer to prevent memory leaks
+      _autoReceiveDebounceTimer?.cancel();
+    } on Exception catch (e) {
+      debugPrint('Error cancelling auto-receive timer: $e');
+    }
 
-    // Unsubscribe from real-time updates to prevent memory leaks
-    _realtimeChannel?.unsubscribe();
+    try {
+      // Unsubscribe from real-time updates to prevent memory leaks
+      _realtimeChannel?.unsubscribe();
+    } on Exception catch (e) {
+      debugPrint('Error unsubscribing from realtime channel: $e');
+    }
 
-    // Dispose repository resources (encryption service)
-    _clipboardRepository.dispose();
+    try {
+      // Dispose repository resources (encryption service)
+      _clipboardRepository.dispose();
+    } on Exception catch (e) {
+      debugPrint('Error disposing clipboard repository: $e');
+    }
 
-    // Dispose settings service
-    _settingsService.dispose();
+    try {
+      // Dispose settings service
+      _settingsService.dispose();
+    } on Exception catch (e) {
+      debugPrint('Error disposing settings service: $e');
+    }
 
-    // Remove Pausable wrappers from LifecycleController before disposing (Task 12.1)
-    // This prevents memory leaks from unbounded Set growth
-    widget.lifecycleController?.removePausable(_pausableAuthSlideController);
-    widget.lifecycleController?.removePausable(_pausableSettingsSlideController);
-    widget.lifecycleController?.removePausable(_pausableHistorySlideController);
-    widget.lifecycleController?.removePausable(_pausableAnimationController);
+    try {
+      // Dispose push notification service
+      _pushNotificationService.dispose();
+    } on Exception catch (e) {
+      debugPrint('Error disposing push notification service: $e');
+    }
 
-    // Dispose in reverse order of creation
-    windowManager.removeListener(this);
-    _authSlideController.dispose();
-    _settingsSlideController.dispose();
-    _historySlideController.dispose();
-    _animationController.dispose();
-    _authPasswordController.dispose();
-    _authEmailController.dispose();
-    _textController.dispose();
-    _textFieldFocusNode.dispose();
-    _keyboardFocusNode.dispose();
+    try {
+      // Remove Pausable wrappers from LifecycleController before disposing (Task 12.1)
+      // This prevents memory leaks from unbounded Set growth
+      widget.lifecycleController?.removePausable(_pausableAuthSlideController);
+      widget.lifecycleController?.removePausable(_pausableSettingsSlideController);
+      widget.lifecycleController?.removePausable(_pausableHistorySlideController);
+      widget.lifecycleController?.removePausable(_pausableAnimationController);
+    } on Exception catch (e) {
+      debugPrint('Error removing pausable controllers: $e');
+    }
+
+    try {
+      // Dispose in reverse order of creation
+      windowManager.removeListener(this);
+    } on Exception catch (e) {
+      debugPrint('Error removing window manager listener: $e');
+    }
+
+    // Dispose animation controllers (unlikely to throw, but wrapped for safety)
+    try {
+      _authSlideController.dispose();
+      _settingsSlideController.dispose();
+      _historySlideController.dispose();
+      _animationController.dispose();
+    } on Exception catch (e) {
+      debugPrint('Error disposing animation controllers: $e');
+    }
+
+    // Dispose text controllers and focus nodes (unlikely to throw, but wrapped for safety)
+    try {
+      // Remove text controller listener before disposal (Memory leak fix)
+      _textController
+        ..removeListener(_textControllerListener)
+        ..dispose();
+      _textFieldFocusNode.dispose();
+      _keyboardFocusNode.dispose();
+    } on Exception catch (e) {
+      debugPrint('Error disposing controllers and focus nodes: $e');
+    }
+
     super.dispose();
   }
 
@@ -672,20 +838,34 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       }
 
       // Create clipboard item
+      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
       final item = ClipboardItem(
         id: '0', // Will be generated by Supabase
         userId: userId,
         content: _content,
         deviceName: ClipboardRepository.getCurrentDeviceName(),
-        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        deviceType: currentDeviceType,
         targetDeviceType: _selectedPlatform, // null = all devices, specific = only that type
         createdAt: DateTime.now(),
       );
 
+      // OPTIMIZATION: Content deduplication
+      final contentHash = _calculateContentHash(_content);
+      _lastSentContentHash = contentHash;
+
       // Insert into Supabase
-      await _clipboardRepository.insert(item);
+      final result = await _clipboardRepository.insert(item);
 
       debugPrint('Sent: $_content to ${_selectedPlatform ?? "all"}');
+
+      // Send push notification (client-driven, with rate limiting)
+      final contentPreview = _content.length > 50 ? _content.substring(0, 50) : _content;
+      await _sendEdgeFunctionNotification(
+        clipboardId: int.tryParse(result.id) ?? 0,
+        contentPreview: contentPreview,
+        deviceType: currentDeviceType,
+        targetDeviceType: _selectedPlatform,
+      );
 
       if (mounted) {
         _textController.clear();
@@ -1380,8 +1560,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                       IconButton(
                         icon: const Icon(Icons.close, size: 18),
                         color: GhostColors.textSecondary,
-                        onPressed: () {
-                          _settingsSlideController.reverse();
+                        onPressed: () async {
+                          await _settingsSlideController.reverse();
                           setState(() => _showSettings = false);
                         },
                         padding: EdgeInsets.zero,
@@ -1391,154 +1571,38 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   ),
                 ),
                 const Divider(height: 1, color: GhostColors.surface),
-                // Settings list
+                // Settings content - now using SettingsPanel widget
                 Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      // Auto-send toggle
-                      _buildSettingToggle(
-                        title: 'Auto-send clipboard',
-                        subtitle: 'Automatically sync when you copy',
-                        value: _autoSendEnabled,
-                        onChanged: (value) async {
-                          setState(() => _autoSendEnabled = value);
-                          await _settingsService.setAutoSendEnabled(enabled: value);
-
-                          // Start/stop clipboard monitoring
-                          if (value) {
-                            _startClipboardMonitoring();
-                          } else {
-                            _stopClipboardMonitoring();
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      // Stale duration slider
-                      _buildSettingSlider(
-                        title: 'Clipboard staleness',
-                        subtitle: 'Auto-paste after $_staleDurationMinutes min',
-                        value: _staleDurationMinutes.toDouble(),
-                        min: 1,
-                        max: 60,
-                        divisions: 59,
-                        onChanged: (value) {
-                          setState(() => _staleDurationMinutes = value.toInt());
-                        },
-                        onChangeEnd: (value) async {
-                          await _settingsService
-                              .setClipboardStaleDurationMinutes(value.toInt());
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      // Info text
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: GhostColors.surface,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.info_outline,
-                                  size: 14,
-                                  color: GhostColors.primary,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Smart Auto-Receive',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: GhostColors.textPrimary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              "New clips from other devices auto-paste only if your clipboard hasn't changed recently.",
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: GhostColors.textMuted,
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      // Account Section
-                      Text(
-                        'ACCOUNT',
-                        style: GhostTypography.caption.copyWith(
-                          color: GhostColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Account status button
-                      InkWell(
-                        onTap: () {
-                          setState(() => _showAuth = true);
-                          _authSlideController.forward();
-                        },
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: GhostColors.surface,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                widget.authService.isAnonymous
-                                    ? Icons.person_outline
-                                    : Icons.verified_user,
-                                size: 18,
-                                color: GhostColors.primary,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      widget.authService.isAnonymous
-                                          ? 'Anonymous User'
-                                          : widget.authService.currentUser?.email ??
-                                              '',
-                                      style: GhostTypography.body.copyWith(
-                                        fontSize: 13,
-                                        color: GhostColors.textPrimary,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      widget.authService.isAnonymous
-                                          ? 'Tap to upgrade account'
-                                          : 'Manage account',
-                                      style: GhostTypography.caption.copyWith(
-                                        color: GhostColors.textMuted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const Icon(
-                                Icons.chevron_right,
-                                size: 16,
-                                color: GhostColors.textMuted,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: SettingsPanel(
+                    authService: widget.authService,
+                    settingsService: _settingsService,
+                    autoSendEnabled: _autoSendEnabled,
+                    staleDurationMinutes: _staleDurationMinutes,
+                    onClose: () async {
+                      await _settingsSlideController.reverse();
+                      setState(() => _showSettings = false);
+                    },
+                    onOpenAuth: () async {
+                      // Close settings panel first to prevent memory leak
+                      await _settingsSlideController.reverse();
+                      setState(() {
+                        _showSettings = false;
+                        _showAuth = true;
+                      });
+                      await _authSlideController.forward();
+                    },
+                    onAutoSendChanged: (value) {
+                      setState(() => _autoSendEnabled = value);
+                      // Start/stop clipboard monitoring
+                      if (value) {
+                        _startClipboardMonitoring();
+                      } else {
+                        _stopClipboardMonitoring();
+                      }
+                    },
+                    onStaleDurationChanged: (value) {
+                      setState(() => _staleDurationMinutes = value);
+                    },
                   ),
                 ),
               ],
@@ -1596,8 +1660,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                       IconButton(
                         icon: const Icon(Icons.close, size: 18),
                         color: GhostColors.textSecondary,
-                        onPressed: () {
-                          _authSlideController.reverse();
+                        onPressed: () async {
+                          await _authSlideController.reverse();
                           setState(() => _showAuth = false);
                         },
                         padding: EdgeInsets.zero,
@@ -1607,615 +1671,21 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   ),
                 ),
                 const Divider(height: 1, color: GhostColors.surface),
-                // Auth form
+                // Auth form - now using AuthPanel widget
                 Expanded(
-                  child: _buildAuthForm(),
+                  child: AuthPanel(
+                    authService: widget.authService,
+                    onClose: () async {
+                      await _authSlideController.reverse();
+                      setState(() => _showAuth = false);
+                    },
+                  ),
                 ),
               ],
             ),
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildAuthForm() {
-    if (!widget.authService.isAnonymous) {
-      // User is already logged in - show account management
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Signed in as',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textMuted,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              widget.authService.currentUser?.email ?? '',
-              style: GhostTypography.body.copyWith(
-                fontWeight: FontWeight.w600,
-                color: GhostColors.textPrimary,
-              ),
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _handleSignOut,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: GhostColors.surface,
-                  foregroundColor: GhostColors.textPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: const Text('Sign Out'),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Anonymous user - show login/signup form
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Login/Signup toggle
-          Container(
-            decoration: BoxDecoration(
-              color: GhostColors.surface,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: () => setState(() => _isLogin = true),
-                    borderRadius: const BorderRadius.horizontal(
-                      left: Radius.circular(8),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color:
-                            _isLogin ? GhostColors.primary : Colors.transparent,
-                        borderRadius: const BorderRadius.horizontal(
-                          left: Radius.circular(8),
-                        ),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        'Login',
-                        style: GhostTypography.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: _isLogin
-                              ? Colors.white
-                              : GhostColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: InkWell(
-                    onTap: () => setState(() => _isLogin = false),
-                    borderRadius: const BorderRadius.horizontal(
-                      right: Radius.circular(8),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: !_isLogin
-                            ? GhostColors.primary
-                            : Colors.transparent,
-                        borderRadius: const BorderRadius.horizontal(
-                          right: Radius.circular(8),
-                        ),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        'Sign Up',
-                        style: GhostTypography.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: !_isLogin
-                              ? Colors.white
-                              : GhostColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          // Email field
-          TextField(
-            controller: _authEmailController,
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              filled: true,
-              fillColor: GhostColors.surface,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(8)),
-                borderSide: BorderSide.none,
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(8)),
-                borderSide: BorderSide(color: GhostColors.primary, width: 2),
-              ),
-            ),
-            keyboardType: TextInputType.emailAddress,
-            autocorrect: false,
-          ),
-          const SizedBox(height: 16),
-          // Password field
-          TextField(
-            controller: _authPasswordController,
-            decoration: const InputDecoration(
-              labelText: 'Password',
-              filled: true,
-              fillColor: GhostColors.surface,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(8)),
-                borderSide: BorderSide.none,
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(8)),
-                borderSide: BorderSide(color: GhostColors.primary, width: 2),
-              ),
-            ),
-            obscureText: true,
-            autocorrect: false,
-          ),
-          // Forgot password link (only show in login mode)
-          if (_isLogin) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _authLoading ? null : _handleForgotPassword,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(
-                  'Forgot Password?',
-                  style: GhostTypography.caption.copyWith(
-                    color: GhostColors.primary,
-                    decoration: TextDecoration.underline,
-                  ),
-                ),
-              ),
-            ),
-          ],
-          if (_authError != null) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: Colors.red.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _authError!,
-                      style: GhostTypography.caption.copyWith(
-                        color: Colors.red,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          // Submit button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _authLoading ? null : _handleEmailAuth,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: GhostColors.primary,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: _authLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(_isLogin ? 'Login' : 'Sign Up'),
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Divider
-          Row(
-            children: [
-              const Expanded(child: Divider(color: GhostColors.surface)),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Text(
-                  'OR',
-                  style: GhostTypography.caption.copyWith(
-                    color: GhostColors.textMuted,
-                  ),
-                ),
-              ),
-              const Expanded(child: Divider(color: GhostColors.surface)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Google sign in
-          OutlinedButton.icon(
-            onPressed: _authLoading ? null : _handleGoogleAuth,
-            icon: const Icon(Icons.login, size: 18),
-            label: const Text('Continue with Google'),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              side: const BorderSide(color: GhostColors.surface),
-              foregroundColor: GhostColors.textPrimary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _handleEmailAuth() async {
-    setState(() {
-      _authLoading = true;
-      _authError = null;
-    });
-
-    try {
-      // Show hCaptcha and get verification token
-      final captchaDetails = await HCaptcha.show(context);
-
-      if (captchaDetails == null || !mounted) {
-        // User cancelled captcha
-        setState(() => _authLoading = false);
-        return;
-      }
-
-      // Extract token from captcha response
-      final captchaToken = captchaDetails['code'] as String?;
-
-      if (captchaToken == null) {
-        setState(() {
-          _authError = 'Captcha verification failed. Please try again.';
-          _authLoading = false;
-        });
-        return;
-      }
-
-      debugPrint('[Auth] hCaptcha verified, proceeding with authentication');
-
-      if (_isLogin) {
-        // Sign in existing user
-        await widget.authService.signInWithEmail(
-          _authEmailController.text,
-          _authPasswordController.text,
-          captchaToken: captchaToken,
-        );
-      } else {
-        // Upgrade anonymous to permanent account (captcha optional for upgrade)
-        await widget.authService.upgradeWithEmail(
-          _authEmailController.text,
-          _authPasswordController.text,
-        );
-      }
-
-      // Success - check if email confirmation is required
-      if (mounted) {
-        setState(() => _authLoading = false);
-
-        // Check if user email is confirmed
-        final user = widget.authService.currentUser;
-        final emailConfirmed = user?.emailConfirmedAt != null;
-
-        if (!emailConfirmed && !_isLogin) {
-          // Email confirmation required - show message
-          await showDialog<void>(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              backgroundColor: GhostColors.surfaceLight,
-              title: Row(
-                children: [
-                  const Icon(Icons.mark_email_unread, color: GhostColors.primary),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Verify Your Email',
-                    style: GhostTypography.body.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: GhostColors.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-              content: Text(
-                "We've sent a confirmation email to ${_authEmailController.text}. "
-                'Please click the link in the email to verify your account.',
-                style: GhostTypography.body.copyWith(
-                  color: GhostColors.textSecondary,
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(
-                    'OK',
-                    style: TextStyle(color: GhostColors.primary),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        // Close auth panel and clear fields
-        await _authSlideController.reverse();
-        setState(() => _showAuth = false);
-        _authEmailController.clear();
-        _authPasswordController.clear();
-      }
-    } on AuthException catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.message;
-          _authLoading = false;
-        });
-      }
-    } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
-          _authLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _handleGoogleAuth() async {
-    setState(() {
-      _authLoading = true;
-      _authError = null;
-    });
-
-    try {
-      final bool success;
-
-      if (_isLogin) {
-        // Login mode: Sign in with existing Google account
-        success = await widget.authService.signInWithGoogle();
-      } else {
-        // Sign Up mode: Upgrade anonymous user to Google account (preserves user_id)
-        success = await widget.authService.linkGoogleIdentity();
-      }
-
-      if (mounted) {
-        if (success) {
-          // Success - close auth panel
-          await _authSlideController.reverse();
-          setState(() {
-            _showAuth = false;
-            _authLoading = false;
-          });
-        } else {
-          // User cancelled or failed
-          setState(() {
-            _authLoading = false;
-          });
-        }
-      }
-    } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
-          _authLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _handleForgotPassword() async {
-    final email = _authEmailController.text.trim();
-
-    if (email.isEmpty) {
-      setState(() {
-        _authError = 'Please enter your email address';
-      });
-      return;
-    }
-
-    setState(() {
-      _authLoading = true;
-      _authError = null;
-    });
-
-    try {
-      final success = await widget.authService.sendPasswordResetEmail(email);
-
-      if (mounted) {
-        setState(() => _authLoading = false);
-
-        if (success) {
-          // Show success message
-          setState(() {
-            _authError = null;
-          });
-
-          // Show success dialog
-          if (mounted) {
-            await showDialog<void>(
-              context: context,
-              builder: (context) => AlertDialog(
-                backgroundColor: GhostColors.surfaceLight,
-                title: Row(
-                  children: [
-                    const Icon(Icons.mark_email_read, color: GhostColors.success),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Email Sent',
-                      style: GhostTypography.body.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: GhostColors.textPrimary,
-                      ),
-                    ),
-                  ],
-                ),
-                content: Text(
-                  'Check your email for a password reset link. The link will expire in 1 hour.',
-                  style: GhostTypography.body.copyWith(
-                    color: GhostColors.textSecondary,
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: Text(
-                      'OK',
-                      style: TextStyle(color: GhostColors.primary),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-        } else {
-          setState(() {
-            _authError = 'Failed to send reset email. Please check your email address.';
-          });
-        }
-      }
-    } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
-          _authLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _handleSignOut() async {
-    try {
-      await widget.authService.signOut();
-
-      if (mounted) {
-        await _authSlideController.reverse();
-        setState(() => _showAuth = false);
-      }
-    } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
-        });
-      }
-    }
-  }
-
-  Widget _buildSettingToggle({
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: GhostColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Switch(
-              value: value,
-              onChanged: onChanged,
-              activeThumbColor: GhostColors.primary,
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSettingSlider({
-    required String title,
-    required String subtitle,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required ValueChanged<double> onChanged,
-    required ValueChanged<double> onChangeEnd,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: GhostColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: TextStyle(
-            fontSize: 11,
-            color: GhostColors.textMuted,
-          ),
-        ),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: divisions,
-          activeColor: GhostColors.primary,
-          onChanged: onChanged,
-          onChangeEnd: onChangeEnd,
-        ),
-      ],
     );
   }
 

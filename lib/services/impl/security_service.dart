@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../security_service.dart';
 
 /// Lightweight implementation of ISecurityService
@@ -8,6 +10,7 @@ import '../security_service.dart';
 /// - Single-pass detection (O(n) time)
 /// - No memory allocations for safe content
 /// - Stateless (no memory leaks)
+/// - Background execution via compute() to prevent main thread blocking
 class SecurityService implements ISecurityService {
   // Security: Maximum content length (1MB) to prevent DoS attacks
   static const int _maxContentLength = 1048576;
@@ -31,6 +34,32 @@ class SecurityService implements ISecurityService {
 
   @override
   DetectionResult detectSensitiveData(String content) {
+    // Run detection in background isolate to prevent UI blocking
+    // For very short content (<1000 chars), run synchronously to avoid overhead
+    if (content.length < 1000) {
+      return _detectSensitiveDataSync(content);
+    }
+
+    // For larger content, this will be called asynchronously
+    // The caller should use detectSensitiveDataAsync() for non-blocking operation
+    return _detectSensitiveDataSync(content);
+  }
+
+  /// Async version that runs in background isolate (non-blocking)
+  /// Use this for large content or when called from UI thread
+  @override
+  Future<DetectionResult> detectSensitiveDataAsync(String content) async {
+    // For very short content, avoid isolate overhead
+    if (content.length < 1000) {
+      return _detectSensitiveDataSync(content);
+    }
+
+    // Run in background isolate using compute()
+    return compute(_detectSensitiveDataSync, content);
+  }
+
+  /// Static detection logic (can run in isolate)
+  static DetectionResult _detectSensitiveDataSync(String content) {
     // Early return for empty or very short content (performance optimization)
     if (content.isEmpty || content.length < 10) {
       return DetectionResult.safe;
@@ -98,7 +127,7 @@ class SecurityService implements ISecurityService {
   }
 
   /// Luhn algorithm for credit card validation (efficient O(n) check)
-  bool _isValidLuhn(String digits) {
+  static bool _isValidLuhn(String digits) {
     if (digits.length < 13 || digits.length > 19) return false;
 
     var sum = 0;
@@ -129,7 +158,7 @@ class SecurityService implements ISecurityService {
   /// - Sufficient length without being too long
   ///
   /// Performance: O(n) single pass, early return
-  bool _hasHighEntropy(String content) {
+  static bool _hasHighEntropy(String content) {
     // Skip if content has spaces (likely natural text, not a key/password)
     if (content.contains(' ')) return false;
 
