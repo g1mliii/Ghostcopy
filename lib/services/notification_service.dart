@@ -29,6 +29,19 @@ abstract class INotificationService {
     required String deviceType,
   });
 
+  /// Show a clickable toast notification with an action button
+  ///
+  /// [message] - The text to display
+  /// [actionLabel] - Text for the action button (e.g., "Copy", "Open")
+  /// [onAction] - Callback when the action button is tapped
+  /// [duration] - How long to show the toast (default: 3 seconds)
+  void showClickableToast({
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+    Duration duration = const Duration(seconds: 3),
+  });
+
   /// Initialize the notification service with the global context
   void initialize(GlobalKey<NavigatorState> navigatorKey);
 

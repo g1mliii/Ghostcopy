@@ -66,7 +66,9 @@ class WindowService implements IWindowService {
 
   @override
   Future<void> showSpotlight() async {
-    if (!_isDesktop()) return;
+    if (!_isDesktop()) {
+      return;
+    }
 
     // Exit Sleep Mode BEFORE showing window to resume UI animations
     // Note: Only UI resources (AnimationControllers, etc.) are paused/resumed

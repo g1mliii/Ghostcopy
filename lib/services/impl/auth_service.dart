@@ -17,16 +17,22 @@ class AuthService implements IAuthService {
 
   @override
   Future<void> initialize() async {
-    if (_initialized) return;
+    if (_initialized) {
+      debugPrint('[AuthService] Already initialized, skipping');
+      return;
+    }
+
+    debugPrint('[AuthService] 🚀 Starting initialization...');
 
     // Sign in anonymously if no user exists
     final currentUser = _client.auth.currentUser;
     if (currentUser == null) {
+      debugPrint('[AuthService] No current user, signing in anonymously...');
       try {
         await _client.auth.signInAnonymously();
-        debugPrint('[AuthService] Signed in anonymously');
+        debugPrint('[AuthService] ✅ Signed in anonymously');
       } on AuthException catch (e) {
-        debugPrint('[AuthService] Failed to sign in anonymously: ${e.message}');
+        debugPrint('[AuthService] ❌ Failed to sign in anonymously: ${e.message}');
         rethrow;
       }
     } else {

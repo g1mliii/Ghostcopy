@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/impl/passphrase_sync_service.dart';
 import '../clipboard_repository.dart';
 
 /// Implementation of ClipboardRepository with security hardening
@@ -24,7 +25,10 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
   })  : _client = client ?? Supabase.instance.client,
-        _encryptionService = encryptionService ?? EncryptionService();
+        _encryptionService = encryptionService ??
+            EncryptionService(
+              passphraseSyncService: PassphraseSyncService(),
+            );
 
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
@@ -78,9 +82,12 @@ class ClipboardRepository implements IClipboardRepository {
       // Initialize encryption if not already done
       await _ensureEncryptionInitialized();
 
-      // Encrypt content before sending to Supabase
+      // Encrypt content only if encryption is enabled
       final sanitizedContent = _sanitizeContent(item.content);
-      final encryptedContent = await _encryptionService.encrypt(sanitizedContent);
+      final isEncryptionEnabled = await _encryptionService.isEnabled();
+      final contentToStore = isEncryptionEnabled
+          ? await _encryptionService.encrypt(sanitizedContent)
+          : sanitizedContent;
 
       // Insert into clipboard table (content is now in the same table)
       // RLS policies will enforce user_id = auth.uid()
@@ -90,12 +97,10 @@ class ClipboardRepository implements IClipboardRepository {
         'user_id': userId,
         'device_name': _sanitizeDeviceName(item.deviceName),
         'device_type': _validateDeviceType(item.deviceType),
-        'target_device_type': item.targetDeviceType != null
-            ? _validateDeviceType(item.targetDeviceType!)
-            : null, // null = broadcast to all devices
-        'content': encryptedContent, // Content is now in the same table
+        'target_device_type': item.targetDeviceTypes?.map(_validateDeviceType).toList(), // null = broadcast to all devices
+        'content': contentToStore,
         'is_public': false, // Force to false for security - no public sharing
-        'encryption_version': 1, // Track encryption version for future upgrades
+        'is_encrypted': isEncryptionEnabled, // Track if content is encrypted
       }).select().single();
 
       // Return the inserted item with generated ID
@@ -105,7 +110,8 @@ class ClipboardRepository implements IClipboardRepository {
         content: item.content, // Return original unencrypted content
         deviceName: item.deviceName,
         deviceType: item.deviceType,
-        targetDeviceType: item.targetDeviceType,
+        targetDeviceTypes: item.targetDeviceTypes,
+        isEncrypted: isEncryptionEnabled,
         createdAt: DateTime.parse(response['created_at'] as String),
       );
     } on SecurityException {
@@ -135,7 +141,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  Stream<List<ClipboardItem>> watchHistory({int limit = 50}) {
+  Stream<List<ClipboardItem>> watchHistory({int limit = 10}) {
     // Validate limit parameter
     final safeLimit = _validateLimit(limit);
 
@@ -168,7 +174,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  Future<List<ClipboardItem>> getHistory({int limit = 50}) async {
+  Future<List<ClipboardItem>> getHistory({int limit = 10}) async {
     // Validate limit parameter
     final safeLimit = _validateLimit(limit);
 
@@ -400,15 +406,28 @@ class ClipboardRepository implements IClipboardRepository {
           );
         }
 
+        // Parse target_device_type (can be null, list, or single string)
+        List<String>? targetDeviceTypes;
+        final targetDeviceTypeJson = json['target_device_type'];
+        if (targetDeviceTypeJson != null) {
+          if (targetDeviceTypeJson is List) {
+            targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
+          } else if (targetDeviceTypeJson is String) {
+            // Handle old single-value format for backwards compatibility
+            targetDeviceTypes = [targetDeviceTypeJson];
+          }
+        }
+
         // Create ClipboardItem with content directly from clipboard table
         final item = ClipboardItem(
           id: json['id'].toString(),
           userId: json['user_id'] as String,
-          content: encryptedContent, // This is still encrypted at this point
+          content: encryptedContent, // This may be encrypted or plaintext
           deviceName: json['device_name'] as String?,
           deviceType: json['device_type'] as String,
-          targetDeviceType: json['target_device_type'] as String?,
+          targetDeviceTypes: targetDeviceTypes,
           isPublic: json['is_public'] as bool? ?? false,
+          isEncrypted: json['is_encrypted'] as bool? ?? false,
           createdAt: DateTime.parse(json['created_at'] as String),
         );
 
@@ -420,7 +439,7 @@ class ClipboardRepository implements IClipboardRepository {
     }).toList();
   }
 
-  /// Decrypt clipboard items content
+  /// Decrypt clipboard items content (only if encrypted)
   Future<List<ClipboardItem>> _decryptItems(
     List<ClipboardItem> items,
   ) async {
@@ -429,15 +448,20 @@ class ClipboardRepository implements IClipboardRepository {
     final decryptedItems = <ClipboardItem>[];
     for (final item in items) {
       try {
-        final decryptedContent = await _encryptionService.decrypt(item.content);
+        // Only decrypt if item is marked as encrypted
+        final contentToShow = item.isEncrypted
+            ? await _encryptionService.decrypt(item.content)
+            : item.content; // Return plaintext as-is
+
         decryptedItems.add(
           ClipboardItem(
             id: item.id,
             userId: item.userId,
-            content: decryptedContent,
+            content: contentToShow,
             deviceName: item.deviceName,
             deviceType: item.deviceType,
-            targetDeviceType: item.targetDeviceType,
+            targetDeviceTypes: item.targetDeviceTypes,
+            isEncrypted: item.isEncrypted,
             createdAt: item.createdAt,
           ),
         );

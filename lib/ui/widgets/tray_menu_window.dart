@@ -9,12 +9,14 @@ class TrayMenuWindow extends StatelessWidget {
     required this.windowService,
     required this.gameModeService,
     required this.onClose,
+    required this.onOpenSettings,
     super.key,
   });
 
   final IWindowService windowService;
   final IGameModeService gameModeService;
   final VoidCallback onClose;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -55,7 +57,8 @@ class TrayMenuWindow extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildMenuItem(
+          RepaintBoundary(
+            child: _buildMenuItem(
             icon: Icons.visibility,
             label: 'Show Spotlight',
             onTap: () async {
@@ -64,38 +67,45 @@ class TrayMenuWindow extends StatelessWidget {
               await Future<void>.delayed(const Duration(milliseconds: 100));
               await windowService.showSpotlight();
             },
+            ),
           ),
           _buildDivider(),
-          // Use StreamBuilder for reactive Game Mode checkbox
-          StreamBuilder<bool>(
-            stream: gameModeService.isActiveStream,
-            initialData: gameModeService.isActive,
-            builder: (context, snapshot) {
-              return _buildMenuItem(
+          // Use StreamBuilder for reactive Game Mode toggle
+          RepaintBoundary(
+            child: StreamBuilder<bool>(
+              stream: gameModeService.isActiveStream,
+              initialData: gameModeService.isActive,
+              builder: (context, snapshot) {
+                final isActive = snapshot.data ?? false;
+                return _buildMenuItem(
                 icon: Icons.videogame_asset,
                 label: 'Game Mode',
-                isChecked: snapshot.data ?? false,
-                onTap: () {
-                  gameModeService.toggle();
-                  onClose();
-                },
+                isChecked: isActive,
+                isToggle: true,
+                color: isActive ? const Color(0xFF5865F2) : null,
+                onTap: gameModeService.toggle, // Tearoff - keeps menu open so user sees toggle
               );
-            },
+              },
+            ),
           ),
           _buildDivider(),
-          _buildMenuItem(
-            icon: Icons.settings,
-            label: 'Settings',
-            onTap: () {
-              debugPrint('Settings clicked');
-              onClose();
-            },
+          RepaintBoundary(
+            child: _buildMenuItem(
+              icon: Icons.settings,
+              label: 'Settings',
+              onTap: () {
+                onClose(); // This will trigger opening spotlight with settings
+                onOpenSettings(); // Signal to open settings panel
+              },
+            ),
           ),
           _buildDivider(),
-          _buildMenuItem(
-            icon: Icons.close,
-            label: 'Quit',
-            onTap: windowManager.destroy,
+          RepaintBoundary(
+            child: _buildMenuItem(
+              icon: Icons.close,
+              label: 'Quit',
+              onTap: windowManager.destroy,
+            ),
           ),
         ],
       ),
@@ -107,6 +117,7 @@ class TrayMenuWindow extends StatelessWidget {
     required String label,
     required VoidCallback onTap,
     bool isChecked = false,
+    bool isToggle = false,
     Color? color,
   }) {
     return Material(
@@ -135,7 +146,32 @@ class TrayMenuWindow extends StatelessWidget {
                   ),
                 ),
               ),
-              if (isChecked)
+              if (isToggle)
+                // Show toggle switch for toggle items
+                Container(
+                  width: 32,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: isChecked
+                        ? const Color(0xFF5865F2)
+                        : Colors.white.withValues(alpha: 0.2),
+                  ),
+                  child: Align(
+                    alignment:
+                        isChecked ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(
+                      width: 12,
+                      height: 12,
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                )
+              else if (isChecked)
                 const Icon(
                   Icons.check,
                   size: 14,
@@ -149,6 +185,16 @@ class TrayMenuWindow extends StatelessWidget {
   }
 
   Widget _buildDivider() {
+    return const _MenuDivider();
+  }
+}
+
+/// Const divider widget for menu items
+class _MenuDivider extends StatelessWidget {
+  const _MenuDivider();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       height: 1,
       margin: const EdgeInsets.symmetric(horizontal: 12),

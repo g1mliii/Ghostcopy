@@ -55,7 +55,12 @@
       "mcp__supabase__get_project",
       "mcp__supabase__list_edge_functions",
       "Bash(curl:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(cmd /c \"dir /b supabase\\\\migrations\")",
+      "Bash(cmd /c \"dir /b /o:n supabase\\\\migrations\")",
+      "Bash(supabase functions deploy:*)",
+      "Bash(dart run:*)",
+      "Bash(cmdkey /list:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

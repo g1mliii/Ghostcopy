@@ -1,10 +1,14 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:cryptography/cryptography.dart' as crypto;
 import 'package:encrypt/encrypt.dart' as enc;
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../encryption_service.dart';
+import '../passphrase_sync_service.dart';
 
 /// Parameters for background encryption
 class _EncryptParams {
@@ -28,43 +32,278 @@ class _DecryptParams {
   final Uint8List keyBytes;
 }
 
-/// Concrete implementation of IEncryptionService using AES-256-GCM
+/// Concrete implementation of IEncryptionService using optional user passphrase
 ///
 /// Provides client-side end-to-end encryption for clipboard content.
-/// Even Supabase admins cannot read encrypted clipboard data.
+/// **Encryption is optional** - users must set a passphrase to enable it.
 ///
 /// Security Features:
 /// - AES-256-GCM authenticated encryption
-/// - User-specific encryption keys derived from auth.uid()
+/// - User-specific encryption keys derived via PBKDF2 (100,000 iterations)
+/// - Passphrase stored securely in platform keychain/credential manager
+/// - Per-user salt derived from user ID
 /// - IV (initialization vector) stored with each encrypted message
 /// - Authenticated encryption prevents tampering
 /// - Background execution via compute() to prevent main thread blocking
+/// - Proper disposal to prevent memory leaks
+///
+/// Key Derivation:
+/// - PBKDF2-HMAC-SHA256 with 100,000 iterations (OWASP recommended)
+/// - User passphrase from secure storage (Windows Credential Manager, macOS Keychain, etc.)
+/// - Per-user salt = SHA-256(user_id)
+/// - Resistant to brute force and rainbow table attacks
+///
+/// **CRITICAL SECURITY**: No shared secrets - each user controls their own passphrase.
+/// If passphrase is lost, encrypted data is permanently irrecoverable.
 class EncryptionService implements IEncryptionService {
+  EncryptionService({
+    FlutterSecureStorage? secureStorage,
+    IPassphraseSyncService? passphraseSyncService,
+  })  : _secureStorage = secureStorage ??
+            const FlutterSecureStorage(
+              aOptions: AndroidOptions(
+                encryptedSharedPreferences: true,
+              ),
+            ),
+        _passphraseSync = passphraseSyncService;
+
+  final FlutterSecureStorage _secureStorage;
+  final IPassphraseSyncService? _passphraseSync;
   Uint8List? _keyBytes;
+  String? _userId;
   bool _initialized = false;
+
+  // Storage keys
+  static const _passphraseKey = 'encryption_passphrase';
+  static const _verificationHashKey = 'encryption_verification_hash';
+
+  // PBKDF2 algorithm for key derivation
+  static final _pbkdf2 = crypto.Pbkdf2(
+    macAlgorithm: crypto.Hmac.sha256(),
+    iterations: 100000, // OWASP recommendation for PBKDF2-HMAC-SHA256
+    bits: 256, // 256-bit output for AES-256
+  );
+
+  // Passphrase security requirements
+  static const _minPassphraseLength = 8;
 
   @override
   Future<void> initialize(String userId) async {
-    if (_initialized) return;
+    debugPrint('[EncryptionService] Starting initialization for user: $userId');
+    _userId = userId;
+    _initialized = true;
+
+    // Try to load and initialize with existing passphrase
+    final passphrase = await _secureStorage.read(key: _passphraseKey);
+    if (passphrase != null && passphrase.isNotEmpty) {
+      debugPrint('[EncryptionService] Found existing passphrase, deriving key...');
+      await _deriveKey(passphrase);
+    } else {
+      debugPrint('[EncryptionService] No existing passphrase found');
+    }
+
+    debugPrint('[EncryptionService] ✅ Initialized (encryption enabled: ${_keyBytes != null})');
+  }
+
+  @override
+  Future<bool> isEnabled() async {
+    return _keyBytes != null;
+  }
+
+  @override
+  Future<bool> hasPassphrase() async {
+    final passphrase = await _secureStorage.read(key: _passphraseKey);
+    return passphrase != null && passphrase.isNotEmpty;
+  }
+
+  @override
+  Future<bool> setPassphrase(String passphrase) async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+
+    // Validate passphrase meets security requirements
+    if (passphrase.length < _minPassphraseLength) {
+      debugPrint('Passphrase too short (minimum $_minPassphraseLength characters)');
+      return false;
+    }
 
     try {
-      // Derive a 256-bit key from user ID using SHA-256
-      // In production, you might want to use PBKDF2 or similar
-      final keyBytes = sha256.convert(utf8.encode(userId)).bytes;
-      _keyBytes = Uint8List.fromList(keyBytes);
-      _initialized = true;
+      // Store passphrase in platform secure storage
+      await _secureStorage.write(key: _passphraseKey, value: passphrase);
 
-      debugPrint('EncryptionService initialized for user');
+      // Create verification hash to validate passphrase later
+      final verificationHash = sha256.convert(utf8.encode(passphrase)).toString();
+      await _secureStorage.write(key: _verificationHashKey, value: verificationHash);
+
+      // Derive encryption key
+      await _deriveKey(passphrase);
+
+      // Auto-backup to cloud if available
+      if (_passphraseSync != null) {
+        final canBackup = await _passphraseSync.canUseCloudBackup();
+        if (canBackup) {
+          await _passphraseSync.uploadToCloud(passphrase);
+        }
+      }
+
+      debugPrint('Encryption enabled with user passphrase');
+      return true;
     } on Exception catch (e) {
-      debugPrint('Failed to initialize encryption: $e');
+      debugPrint('Failed to set passphrase: $e');
+      return false;
+    }
+  }
+
+  @override
+  Future<void> clearPassphrase() async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+
+    try {
+      // Delete cloud backup if available
+      if (_passphraseSync != null) {
+        await _passphraseSync.deleteCloudBackup();
+      }
+
+      // Clear from secure storage
+      await _secureStorage.delete(key: _passphraseKey);
+      await _secureStorage.delete(key: _verificationHashKey);
+
+      // Clear from memory
+      _keyBytes = null;
+
+      debugPrint('Encryption disabled - passphrase cleared');
+    } on Exception catch (e) {
+      debugPrint('Failed to clear passphrase: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<bool> verifyPassphrase(String passphrase) async {
+    final storedHash = await _secureStorage.read(key: _verificationHashKey);
+    if (storedHash == null) return false;
+
+    final inputHash = sha256.convert(utf8.encode(passphrase)).toString();
+    return inputHash == storedHash;
+  }
+
+  @override
+  Future<String?> exportPassphraseForQr() async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+
+    // Get passphrase from secure storage
+    final passphrase = await _secureStorage.read(key: _passphraseKey);
+    if (passphrase == null || passphrase.isEmpty) {
+      return null; // Encryption not enabled
+    }
+
+    try {
+      // For QR transfer, we encrypt the passphrase with a one-time key
+      // The key is embedded in the QR data itself (first 32 bytes)
+      // This prevents plaintext passphrase in QR while still allowing transfer
+
+      // Generate random one-time key (32 bytes for AES-256)
+      final oneTimeKey = enc.Key.fromSecureRandom(32);
+
+      // Generate random IV
+      final iv = enc.IV.fromSecureRandom(16);
+
+      // Encrypt passphrase
+      final encrypter = enc.Encrypter(enc.AES(oneTimeKey, mode: enc.AESMode.gcm));
+      final encrypted = encrypter.encrypt(passphrase, iv: iv);
+
+      // Combine: oneTimeKey + IV + encrypted
+      final combined = BytesBuilder()
+        ..add(oneTimeKey.bytes)
+        ..add(iv.bytes)
+        ..add(encrypted.bytes);
+
+      // Return base64-encoded
+      return base64Encode(combined.toBytes());
+    } on Exception catch (e) {
+      debugPrint('Failed to export passphrase: $e');
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> importPassphraseFromQr(String encryptedData) async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+
+    try {
+      // Decode from base64
+      final combined = base64Decode(encryptedData);
+
+      // Extract components: key (32) + IV (16) + encrypted (rest)
+      if (combined.length < 48) {
+        throw const FormatException('Invalid encrypted data length');
+      }
+
+      final oneTimeKey = enc.Key(combined.sublist(0, 32));
+      final iv = enc.IV(combined.sublist(32, 48));
+      final encryptedBytes = combined.sublist(48);
+
+      // Decrypt passphrase
+      final encrypter = enc.Encrypter(enc.AES(oneTimeKey, mode: enc.AESMode.gcm));
+      final encrypted = enc.Encrypted(encryptedBytes);
+      final passphrase = encrypter.decrypt(encrypted, iv: iv);
+
+      // Store passphrase using existing method
+      final success = await setPassphrase(passphrase);
+
+      // Clear sensitive data from memory
+      combined.fillRange(0, combined.length, 0);
+
+      return success;
+    } on Exception catch (e) {
+      debugPrint('Failed to import passphrase: $e');
+      return false;
+    }
+  }
+
+  /// Derives encryption key from passphrase using PBKDF2
+  Future<void> _deriveKey(String passphrase) async {
+    if (_userId == null) {
+      throw StateError('User ID not set');
+    }
+
+    try {
+      // Derive per-user salt from user ID
+      // This ensures each user has a unique salt, but it's deterministic
+      final saltBytes = sha256.convert(utf8.encode(_userId!)).bytes;
+
+      // Derive encryption key using PBKDF2 (100,000 iterations)
+      // This takes ~100ms on modern hardware (acceptable for initialization)
+      final secretKey = await _pbkdf2.deriveKey(
+        secretKey: crypto.SecretKey(utf8.encode(passphrase)),
+        nonce: saltBytes,
+      );
+
+      _keyBytes = Uint8List.fromList(await secretKey.extractBytes());
+
+      debugPrint('Encryption key derived via PBKDF2 (100k iterations)');
+    } on Exception catch (e) {
+      debugPrint('Failed to derive key: $e');
       rethrow;
     }
   }
 
   @override
   Future<String> encrypt(String plaintext) async {
-    if (!_initialized || _keyBytes == null) {
+    if (!_initialized) {
       throw StateError('EncryptionService not initialized');
+    }
+
+    // If encryption not enabled, return plaintext
+    if (_keyBytes == null) {
+      return plaintext;
     }
 
     try {
@@ -110,8 +349,13 @@ class EncryptionService implements IEncryptionService {
 
   @override
   Future<String> decrypt(String ciphertext) async {
-    if (!_initialized || _keyBytes == null) {
+    if (!_initialized) {
       throw StateError('EncryptionService not initialized');
+    }
+
+    // If encryption not enabled, return ciphertext unchanged
+    if (_keyBytes == null) {
+      return ciphertext;
     }
 
     try {
@@ -161,9 +405,18 @@ class EncryptionService implements IEncryptionService {
 
   @override
   void dispose() {
+    debugPrint('[EncryptionService] Disposing service...');
+
     // Clear sensitive key material from memory
-    _keyBytes = null;
+    if (_keyBytes != null) {
+      _keyBytes!.fillRange(0, _keyBytes!.length, 0); // Zero out memory
+      debugPrint('[EncryptionService] Encryption keys zeroed out in memory');
+      _keyBytes = null;
+    }
+    _userId = null;
     _initialized = false;
+
+    debugPrint('[EncryptionService] ✅ Disposed - all sensitive data cleared from memory');
   }
 }
 

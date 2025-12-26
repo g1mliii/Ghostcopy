@@ -8,10 +8,10 @@ abstract class IClipboardRepository {
   Future<ClipboardItem> insert(ClipboardItem item);
 
   /// Watch clipboard history with real-time updates
-  Stream<List<ClipboardItem>> watchHistory({int limit = 50});
+  Stream<List<ClipboardItem>> watchHistory({int limit = 10});
 
   /// Get clipboard history (one-time fetch)
-  Future<List<ClipboardItem>> getHistory({int limit = 50});
+  Future<List<ClipboardItem>> getHistory({int limit = 10});
 
   /// Delete a clipboard item by ID
   Future<void> delete(String id);

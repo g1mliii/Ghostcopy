@@ -1,5 +1,20 @@
 export 'impl/settings_service.dart';
 
+/// Auto-receive behavior options for incoming clipboard items
+enum AutoReceiveBehavior {
+  /// Always auto-copy to clipboard regardless of staleness
+  always('Always auto-copy'),
+
+  /// Smart: Only auto-copy if clipboard is stale (default)
+  smart('Smart (when clipboard is stale)'),
+
+  /// Never auto-copy, only show notification
+  never('Never auto-copy');
+
+  const AutoReceiveBehavior(this.label);
+  final String label;
+}
+
 /// Abstract interface for app settings management
 abstract class ISettingsService {
   /// Get auto-send enabled setting (default: false)
@@ -28,6 +43,12 @@ abstract class ISettingsService {
 
   /// Set auto-start enabled setting
   Future<void> setAutoStartEnabled({required bool enabled});
+
+  /// Get auto-receive behavior (default: smart)
+  Future<AutoReceiveBehavior> getAutoReceiveBehavior();
+
+  /// Set auto-receive behavior
+  Future<void> setAutoReceiveBehavior(AutoReceiveBehavior behavior);
 
   /// Initialize settings service
   Future<void> initialize();

@@ -17,12 +17,14 @@ class SettingsService implements ISettingsService {
   static const String _keyStaleDurationMinutes = 'clipboard_stale_duration_minutes';
   static const String _keyAutoSendTargetDevices = 'auto_send_target_devices';
   static const String _keyAutoStartEnabled = 'auto_start_enabled';
+  static const String _keyAutoReceiveBehavior = 'auto_receive_behavior';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
   static const int _defaultStaleDurationMinutes = 5;
   static const Set<String> _defaultAutoSendTargetDevices = {}; // Empty = all devices
   static const bool _defaultAutoStartEnabled = false;
+  static const AutoReceiveBehavior _defaultAutoReceiveBehavior = AutoReceiveBehavior.smart;
 
   @override
   Future<void> initialize() async {
@@ -114,6 +116,26 @@ class SettingsService implements ISettingsService {
     _ensureInitialized();
     await _prefs!.setBool(_keyAutoStartEnabled, enabled);
     debugPrint('Auto-start ${enabled ? "enabled" : "disabled"}');
+  }
+
+  @override
+  Future<AutoReceiveBehavior> getAutoReceiveBehavior() async {
+    _ensureInitialized();
+    final value = _prefs!.getString(_keyAutoReceiveBehavior);
+    if (value == null) return _defaultAutoReceiveBehavior;
+
+    // Parse enum from stored string
+    return AutoReceiveBehavior.values.firstWhere(
+      (e) => e.name == value,
+      orElse: () => _defaultAutoReceiveBehavior,
+    );
+  }
+
+  @override
+  Future<void> setAutoReceiveBehavior(AutoReceiveBehavior behavior) async {
+    _ensureInitialized();
+    await _prefs!.setString(_keyAutoReceiveBehavior, behavior.name);
+    debugPrint('Auto-receive behavior set to: ${behavior.label}');
   }
 
   @override

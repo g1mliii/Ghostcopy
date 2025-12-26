@@ -12,14 +12,14 @@ abstract class IPushNotificationService {
   /// - [clipboardId]: ID of the clipboard record
   /// - [contentPreview]: Preview of clipboard content (first 50 chars)
   /// - [deviceType]: Sender device type (windows/macos/android/ios)
-  /// - [targetDeviceType]: Optional target device filter (null = all devices)
+  /// - [targetDeviceTypes]: Optional target device types filter (null = all devices)
   ///
   /// Returns number of devices notified
   Future<int> sendClipboardNotification({
     required int clipboardId,
     required String contentPreview,
     required String deviceType,
-    String? targetDeviceType,
+    List<String>? targetDeviceTypes,
   });
 
   /// Dispose resources

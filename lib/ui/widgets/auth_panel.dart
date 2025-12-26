@@ -97,23 +97,23 @@ class _AuthPanelState extends State<AuthPanel> {
           _buildLoginSignupToggle(),
           const SizedBox(height: 24),
           // Email field
-          _buildEmailField(),
+          RepaintBoundary(child: _buildEmailField()),
           const SizedBox(height: 16),
           // Password field
-          _buildPasswordField(),
+          RepaintBoundary(child: _buildPasswordField()),
           // Forgot password link (only show in login mode)
           if (_isLogin) _buildForgotPasswordLink(),
           // Error message
           if (_authError != null) _buildErrorMessage(),
           const SizedBox(height: 16),
           // Submit button
-          _buildSubmitButton(),
+          RepaintBoundary(child: _buildSubmitButton()),
           const SizedBox(height: 16),
           // Divider
           _buildDivider(),
           const SizedBox(height: 16),
           // Google sign in
-          _buildGoogleSignInButton(),
+          RepaintBoundary(child: _buildGoogleSignInButton()),
         ],
       ),
     );

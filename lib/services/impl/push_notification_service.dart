@@ -15,12 +15,18 @@ class PushNotificationService implements IPushNotificationService {
     required int clipboardId,
     required String contentPreview,
     required String deviceType,
-    String? targetDeviceType,
+    List<String>? targetDeviceTypes,
   }) async {
     try {
+      final targetText = targetDeviceTypes == null
+          ? 'all devices'
+          : targetDeviceTypes.length == 1
+              ? targetDeviceTypes.first
+              : targetDeviceTypes.join(', ');
+
       debugPrint(
         '[PushNotification] Calling Edge Function for clipboard #$clipboardId '
-        'from $deviceType to ${targetDeviceType ?? "all devices"}',
+        'from $deviceType to $targetText',
       );
 
       // Call Edge Function to send push notifications
@@ -31,7 +37,7 @@ class PushNotificationService implements IPushNotificationService {
           'clipboard_id': clipboardId,
           'content_preview': contentPreview,
           'device_type': deviceType,
-          if (targetDeviceType != null) 'target_device_type': targetDeviceType,
+          if (targetDeviceTypes != null) 'target_device_types': targetDeviceTypes,
         },
       );
 
