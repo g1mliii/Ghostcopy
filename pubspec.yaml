@@ -55,6 +55,7 @@ dev_dependencies:
     sdk: flutter
   glados: any
   mocktail: ^1.0.0
+  msix: ^3.16.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -105,3 +106,13 @@ flutter:
   #
   # Alternative: Use google_fonts package (recommended for easier setup)
   # Add to dependencies: google_fonts: ^6.1.0
+
+# MSIX Configuration for Windows Store packaging
+msix_config:
+  display_name: GhostCopy
+  publisher_display_name: GhostCopy
+  identity_name: com.ghostcopy.app
+  msix_version: 1.0.0.0
+  logo_path: assets\icons\app_icon.png
+  capabilities: internetClient
+  install_certificate: false

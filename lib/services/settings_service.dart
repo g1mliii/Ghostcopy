@@ -50,6 +50,12 @@ abstract class ISettingsService {
   /// Set auto-receive behavior
   Future<void> setAutoReceiveBehavior(AutoReceiveBehavior behavior);
 
+  // ========== FEATURE FLAGS ==========
+
+  /// Check if hybrid mode is enabled (from Supabase app_config table)
+  /// Returns false by default if error or not found
+  Future<bool> isHybridModeEnabled();
+
   /// Initialize settings service
   Future<void> initialize();
 

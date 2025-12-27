@@ -24,11 +24,10 @@ class ClipboardRepository implements IClipboardRepository {
   ClipboardRepository({
     SupabaseClient? client,
     IEncryptionService? encryptionService,
-  })  : _client = client ?? Supabase.instance.client,
-        _encryptionService = encryptionService ??
-            EncryptionService(
-              passphraseSyncService: PassphraseSyncService(),
-            );
+  }) : _client = client ?? Supabase.instance.client,
+       _encryptionService =
+           encryptionService ??
+           EncryptionService(passphraseSyncService: PassphraseSyncService());
 
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
@@ -93,15 +92,23 @@ class ClipboardRepository implements IClipboardRepository {
       // RLS policies will enforce user_id = auth.uid()
       // Cleanup happens automatically via database trigger (no client-side overhead)
       // Use .select() to get the inserted record with generated ID
-      final response = await _client.from('clipboard').insert({
-        'user_id': userId,
-        'device_name': _sanitizeDeviceName(item.deviceName),
-        'device_type': _validateDeviceType(item.deviceType),
-        'target_device_type': item.targetDeviceTypes?.map(_validateDeviceType).toList(), // null = broadcast to all devices
-        'content': contentToStore,
-        'is_public': false, // Force to false for security - no public sharing
-        'is_encrypted': isEncryptionEnabled, // Track if content is encrypted
-      }).select().single();
+      final response = await _client
+          .from('clipboard')
+          .insert({
+            'user_id': userId,
+            'device_name': _sanitizeDeviceName(item.deviceName),
+            'device_type': _validateDeviceType(item.deviceType),
+            'target_device_type': item.targetDeviceTypes
+                ?.map(_validateDeviceType)
+                .toList(), // null = broadcast to all devices
+            'content': contentToStore,
+            'is_public':
+                false, // Force to false for security - no public sharing
+            'is_encrypted':
+                isEncryptionEnabled, // Track if content is encrypted
+          })
+          .select()
+          .single();
 
       // Return the inserted item with generated ID
       return ClipboardItem(
@@ -160,7 +167,7 @@ class ClipboardRepository implements IClipboardRepository {
           .from('clipboard')
           .stream(primaryKey: ['id', 'user_id'])
           .eq('user_id', userId) // Explicit filter for defense in depth
-          .order('created_at')
+          .order('created_at') // Newest first
           .limit(safeLimit)
           .map(_parseClipboardItems)
           .asyncMap(_decryptItems); // Decrypt items asynchronously
@@ -192,7 +199,7 @@ class ClipboardRepository implements IClipboardRepository {
           .from('clipboard')
           .select()
           .eq('user_id', userId) // Explicit filter for defense in depth
-          .order('created_at')
+          .order('created_at', ascending: false) // Newest first
           .limit(safeLimit);
 
       final items = _parseClipboardItems(response);
@@ -266,16 +273,16 @@ class ClipboardRepository implements IClipboardRepository {
             .map((item) => item['id'] as Object)
             .toList();
 
-        // Delete old items individually
-        for (final id in itemsToDelete) {
-          await _client
-              .from('clipboard')
-              .delete()
-              .eq('id', id)
-              .eq('user_id', userId); // Defense in depth
-        }
+        // Batch delete all old items in one network request (performance optimization)
+        await _client
+            .from('clipboard')
+            .delete()
+            .eq('user_id', userId) // Defense in depth
+            .inFilter('id', itemsToDelete);
 
-        debugPrint('Cleaned up ${itemsToDelete.length} old clipboard items');
+        debugPrint(
+          'Cleaned up ${itemsToDelete.length} old clipboard items in one batch',
+        );
       }
     } on SecurityException {
       rethrow;
@@ -440,9 +447,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Decrypt clipboard items content (only if encrypted)
-  Future<List<ClipboardItem>> _decryptItems(
-    List<ClipboardItem> items,
-  ) async {
+  Future<List<ClipboardItem>> _decryptItems(List<ClipboardItem> items) async {
     await _ensureEncryptionInitialized();
 
     final decryptedItems = <ClipboardItem>[];

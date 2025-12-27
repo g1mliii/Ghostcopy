@@ -55,6 +55,10 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   bool get isMonitoring => _isMonitoring;
 
+  // Polling mode state
+  Timer? _pollingTimer;
+  String? _lastPolledItemId; // Track last seen item to avoid duplicates
+
   // Auto-receive debouncing
   Timer? _autoReceiveDebounceTimer;
   Map<String, dynamic>? _pendingAutoReceiveRecord;
@@ -479,6 +483,87 @@ class ClipboardSyncService implements IClipboardSyncService {
     debugPrint('[ClipboardSyncService] Manual send notified, preventing duplicate auto-send');
   }
 
+  // ========== CONNECTION MODE MANAGEMENT ==========
+
+  /// Pause realtime subscription (keep it for resume)
+  @override
+  void pauseRealtime() {
+    if (_realtimeChannel == null) return;
+
+    debugPrint('[ClipboardSync] ⏸️  Pausing realtime subscription');
+    _realtimeChannel?.unsubscribe();
+    _realtimeChannel = null;
+  }
+
+  /// Resume realtime subscription
+  @override
+  void resumeRealtime() {
+    if (_realtimeChannel != null) return; // Already active
+
+    debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
+    _subscribeToRealtimeUpdates();
+  }
+
+  /// Start polling mode
+  @override
+  void startPolling({Duration interval = const Duration(minutes: 5)}) {
+    if (_pollingTimer != null) return; // Already polling
+
+    debugPrint('[ClipboardSync] 🔄 Starting polling mode (${interval.inMinutes} min)');
+
+    _pollingTimer = Timer.periodic(interval, (_) async {
+      await _pollForNewClipboards();
+    });
+  }
+
+  /// Stop polling mode
+  @override
+  void stopPolling() {
+    if (_pollingTimer == null) return;
+
+    debugPrint('[ClipboardSync] 🛑 Stopping polling mode');
+    _pollingTimer?.cancel();
+    _pollingTimer = null;
+  }
+
+  /// Poll for new clipboard items
+  Future<void> _pollForNewClipboards() async {
+    try {
+      debugPrint('[ClipboardSync] 🔍 Polling for new items...');
+
+      // Get latest items
+      final history = await _clipboardRepository.getHistory(limit: 5);
+
+      if (history.isEmpty) return;
+
+      // Check if there are new items since last poll
+      final latestItem = history.first;
+      if (_lastPolledItemId != null && latestItem.id == _lastPolledItemId) {
+        debugPrint('[ClipboardSync] ✅ No new items');
+        return; // No new items
+      }
+
+      _lastPolledItemId = latestItem.id;
+
+      // Check if from different device
+      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+      final isFromDifferentDevice = latestItem.deviceName != currentDeviceName;
+
+      if (isFromDifferentDevice) {
+        debugPrint('[ClipboardSync] 📥 New item from ${latestItem.deviceType}');
+        await _handleSmartAutoReceive({
+          'content': latestItem.content,
+          'device_type': latestItem.deviceType,
+        });
+      }
+
+      // Notify UI to refresh
+      onClipboardReceived?.call();
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSync] ❌ Polling error: $e');
+    }
+  }
+
   @override
   void dispose() {
     debugPrint('[ClipboardSyncService] Disposing...');
@@ -489,6 +574,9 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     _autoReceiveDebounceTimer?.cancel();
     _autoReceiveDebounceTimer = null;
+
+    _pollingTimer?.cancel(); // NEW - Cancel polling timer
+    _pollingTimer = null;
 
     // Unsubscribe from realtime
     _realtimeChannel?.unsubscribe();

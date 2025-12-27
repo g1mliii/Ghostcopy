@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../settings_service.dart';
 
@@ -136,6 +137,31 @@ class SettingsService implements ISettingsService {
     _ensureInitialized();
     await _prefs!.setString(_keyAutoReceiveBehavior, behavior.name);
     debugPrint('Auto-receive behavior set to: ${behavior.label}');
+  }
+
+  // ========== FEATURE FLAGS ==========
+
+  /// Check if hybrid mode is enabled (from Supabase app_config table)
+  @override
+  Future<bool> isHybridModeEnabled() async {
+    try {
+      final config = await Supabase.instance.client
+          .from('app_config')
+          .select('enabled')
+          .eq('key', 'hybrid_mode_enabled')
+          .maybeSingle();
+
+      final isEnabled = config?['enabled'] as bool? ?? false;
+
+      debugPrint(
+        '[Settings] 🎛️  Hybrid mode: ${isEnabled ? "ENABLED" : "DISABLED"}',
+      );
+
+      return isEnabled;
+    } on Exception catch (e) {
+      debugPrint('[Settings] ⚠️  Failed to check hybrid mode flag: $e');
+      return false; // Default to disabled if error
+    }
   }
 
   @override

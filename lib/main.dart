@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ import 'services/impl/hotkey_service.dart';
 import 'services/impl/lifecycle_controller.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/security_service.dart';
+import 'services/impl/system_power_service.dart';
 import 'services/impl/toast_window_service.dart';
 import 'services/impl/transformer_service.dart';
 import 'services/impl/tray_service.dart';
@@ -29,6 +31,7 @@ import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
+import 'services/system_power_service.dart';
 import 'services/toast_window_service.dart';
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
@@ -72,19 +75,11 @@ Future<void> main(List<String> args) async {
 
   // Initialize services (desktop only)
   if (_isDesktop()) {
-    // Create LifecycleController for Sleep Mode management (Task 12.1)
-    final lifecycleController = LifecycleController();
-
-    // Initialize services with lifecycle support
-    final windowService = WindowService(lifecycleController: lifecycleController);
+    // Initialize core services first
     final trayService = TrayService();
     final hotkeyService = HotkeyService();
     final gameModeService = GameModeService();
     final toastWindowService = ToastWindowService();
-    final notificationService = NotificationService(
-      windowService: windowService,
-      toastWindowService: toastWindowService,
-    );
     final settingsService = SettingsService();
     final autoStartService = AutoStartService();
     final clipboardRepository = ClipboardRepository();
@@ -94,27 +89,53 @@ Future<void> main(List<String> args) async {
     final transformerService = TransformerService();
     final pushNotificationService = PushNotificationService();
 
-    // Initialize background clipboard sync service
-    final clipboardSyncService = ClipboardSyncService(
-      clipboardRepository: clipboardRepository,
-      settingsService: settingsService,
-      securityService: securityService,
-      pushNotificationService: pushNotificationService,
-      notificationService: notificationService,
-      gameModeService: gameModeService,
-    );
-
     // Initialize settings service first
     await settingsService.initialize();
 
     // Initialize toast window service
     await toastWindowService.initialize();
 
-    // Initialize auto-start service
-    await autoStartService.initialize();
+    // Initialize background clipboard sync service
+    final clipboardSyncService = ClipboardSyncService(
+      clipboardRepository: clipboardRepository,
+      settingsService: settingsService,
+      securityService: securityService,
+      pushNotificationService: pushNotificationService,
+      gameModeService: gameModeService,
+    );
 
     // Initialize clipboard sync service (starts realtime subscription and monitoring)
     await clipboardSyncService.initialize();
+
+    // Create LifecycleController for Tray Mode and connection management
+    // Must be created AFTER clipboardSyncService and settingsService
+    final lifecycleController = LifecycleController(
+      clipboardSyncService: clipboardSyncService,
+      settingsService: settingsService,
+    );
+
+    // Initialize lifecycle controller (loads feature flags, starts monitoring)
+    await lifecycleController.initialize();
+
+    // Initialize system power monitoring (desktop only)
+    final systemPowerService = SystemPowerService();
+    await systemPowerService.initialize();
+
+    // Note: Power event stream subscription is set up in MyApp.initState()
+    // to ensure it can be properly cancelled in dispose()
+
+    // Initialize services with lifecycle support
+    final windowService = WindowService(lifecycleController: lifecycleController);
+    final notificationService = NotificationService(
+      windowService: windowService,
+      toastWindowService: toastWindowService,
+    );
+
+    // Note: ClipboardSyncService was initialized with notificationService: null
+    // This is okay - the service will just skip notifications if null
+
+    // Initialize auto-start service
+    await autoStartService.initialize();
 
     // Sync auto-start setting with system if needed
     final autoStartEnabled = await settingsService.getAutoStartEnabled();
@@ -157,6 +178,7 @@ Future<void> main(List<String> args) async {
         securityService: securityService,
         transformerService: transformerService,
         pushNotificationService: pushNotificationService,
+        systemPowerService: systemPowerService,
         launchedAtStartup: launchedAtStartup,
       ),
     );
@@ -195,6 +217,7 @@ class MyApp extends StatefulWidget {
     this.securityService,
     this.transformerService,
     this.pushNotificationService,
+    this.systemPowerService,
     this.launchedAtStartup = false,
     super.key,
   });
@@ -215,6 +238,7 @@ class MyApp extends StatefulWidget {
   final ISecurityService? securityService;
   final ITransformerService? transformerService;
   final IPushNotificationService? pushNotificationService;
+  final ISystemPowerService? systemPowerService;
   final bool launchedAtStartup;
 
   @override
@@ -225,6 +249,7 @@ class _MyAppState extends State<MyApp> {
   bool _showingTrayMenu = false;
   bool _openSettingsOnShow = false;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  StreamSubscription<PowerEvent>? _powerEventSubscription;
 
   @override
   void initState() {
@@ -239,6 +264,26 @@ class _MyAppState extends State<MyApp> {
           content: item.content,
           deviceType: item.deviceType,
         );
+      });
+
+      // Wire up power events to lifecycle controller
+      _powerEventSubscription = widget.systemPowerService?.powerEventStream.listen((event) {
+        debugPrint('[Main] 🔌 Power event: ${event.type.name}');
+
+        switch (event.type) {
+          case PowerEventType.systemSleep:
+            widget.lifecycleController?.onSystemSleep();
+            break;
+          case PowerEventType.systemWake:
+            widget.lifecycleController?.onSystemWake();
+            break;
+          case PowerEventType.screenLock:
+            widget.lifecycleController?.onScreenLock();
+            break;
+          case PowerEventType.screenUnlock:
+            widget.lifecycleController?.onScreenUnlock();
+            break;
+        }
       });
 
       // Set up tray right-click to show custom menu
@@ -269,6 +314,10 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     if (_isDesktop()) {
+      // Cancel stream subscription to prevent memory leaks
+      _powerEventSubscription?.cancel();
+      _powerEventSubscription = null;
+
       // Dispose all services to prevent memory leaks
       widget.authService.dispose();
       widget.deviceService.dispose();
@@ -283,6 +332,7 @@ class _MyAppState extends State<MyApp> {
       widget.autoStartService?.dispose();
       widget.clipboardRepository?.dispose();
       widget.clipboardSyncService?.dispose();
+      widget.systemPowerService?.dispose();
       // Note: securityService, transformerService, pushNotificationService
       // are stateless and don't need disposal
     } else {

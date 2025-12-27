@@ -11,11 +11,11 @@ import '../window_service.dart';
 /// Manages the borderless Spotlight window with transparent background,
 /// rounded corners, and show/hide functionality for desktop platforms.
 ///
-/// Sleep Mode Integration (ONLY pauses UI resources, NOT core functionality):
+/// Tray Mode Integration (ONLY pauses UI resources, NOT core functionality):
 /// - WHEN window is hidden THEN pause UI animations (TickerProviders)
 /// - WHEN window is shown THEN resume UI animations within 50ms
 ///
-/// CRITICAL: Sleep Mode does NOT pause:
+/// CRITICAL: Tray Mode does NOT pause:
 /// - Realtime clipboard stream (must receive clips 24/7 from other devices)
 /// - Hotkey listener (needed to wake the app)
 /// - System tray (needed for user access)
@@ -70,10 +70,10 @@ class WindowService implements IWindowService {
       return;
     }
 
-    // Exit Sleep Mode BEFORE showing window to resume UI animations
+    // Exit Tray Mode BEFORE showing window to resume UI animations
     // Note: Only UI resources (AnimationControllers, etc.) are paused/resumed
     // Core services (Realtime stream, hotkeys) run 24/7
-    _lifecycleController?.exitSleepMode();
+    _lifecycleController?.exitTrayMode();
 
     // Set background color FIRST before any visibility changes
     await windowManager.setBackgroundColor(const Color(0xFF1A1A1D));
@@ -98,10 +98,10 @@ class WindowService implements IWindowService {
     await windowManager.hide();
     _isVisible = false;
 
-    // Enter Sleep Mode AFTER hiding window to pause UI animations
+    // Enter Tray Mode AFTER hiding window to pause UI animations
     // Note: Only pauses UI-related resources (AnimationControllers, etc.)
     // Core services continue running: Realtime stream, hotkeys, tray
-    _lifecycleController?.enterSleepMode();
+    _lifecycleController?.enterTrayMode();
   }
 
   @override

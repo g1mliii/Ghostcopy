@@ -1,8 +1,10 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <wtsapi32.h>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "power_monitor.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -27,6 +29,13 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // Initialize power monitor for system sleep/wake/lock events
+  power_monitor_ =
+      std::make_unique<PowerMonitor>(flutter_controller_->engine());
+
+  // Register for session change notifications (lock/unlock)
+  WTSRegisterSessionNotification(GetHandle(), NOTIFY_FOR_THIS_SESSION);
+
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     if (flutter_controller_) {
       this->Show();
@@ -42,6 +51,14 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Unregister from session change notifications
+  WTSUnRegisterSessionNotification(GetHandle());
+
+  // Clean up power monitor
+  if (power_monitor_) {
+    power_monitor_ = nullptr;
+  }
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -66,6 +83,20 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   switch (message) {
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
+      break;
+
+    case WM_POWERBROADCAST:
+      // Handle system sleep/wake events
+      if (power_monitor_) {
+        power_monitor_->HandlePowerBroadcast(wparam);
+      }
+      break;
+
+    case WM_WTSSESSION_CHANGE:
+      // Handle session lock/unlock events
+      if (power_monitor_) {
+        power_monitor_->HandleSessionChange(wparam);
+      }
       break;
   }
 

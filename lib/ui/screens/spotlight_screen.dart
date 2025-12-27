@@ -213,7 +213,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
 
     // Wrap AnimationControllers in Pausable wrappers and register with LifecycleController
-    // for Sleep Mode (Task 12.1). These will be paused when window is hidden, resumed when shown.
+    // for Tray Mode. These will be paused when window is hidden, resumed when shown.
     _pausableAnimationController = PausableAnimationController(_animationController);
     _pausableHistorySlideController =
         PausableAnimationController(_historySlideController);
@@ -875,6 +875,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         break;
     }
 
+    // Add spacing after transformer widgets to prevent overlap with device selector
+    widgets.add(const SizedBox(height: 16));
+
     return widgets;
   }
 
@@ -1392,8 +1395,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                       IconButton(
                         icon: const Icon(Icons.close, size: 18),
                         color: GhostColors.textSecondary,
-                        onPressed: () {
-                          _historySlideController.reverse();
+                        onPressed: () async {
+                          await _historySlideController.reverse();
                           setState(() => _showHistory = false);
                         },
                         padding: EdgeInsets.zero,

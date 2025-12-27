@@ -60,11 +60,13 @@
       "Bash(cmd /c \"dir /b /o:n supabase\\\\migrations\")",
       "Bash(supabase functions deploy:*)",
       "Bash(dart run:*)",
-      "Bash(cmdkey /list:*)"
+      "Bash(cmdkey /list:*)",
+      "Bash(taskkill:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "supabase"
-  ]
+  ],
+  "spinnerTipsEnabled": false
 }

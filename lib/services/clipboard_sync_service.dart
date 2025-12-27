@@ -44,6 +44,20 @@ abstract class IClipboardSyncService {
   /// This prevents the monitor from auto-sending the same content
   void notifyManualSend(String content);
 
+  // ========== CONNECTION MODE MANAGEMENT ==========
+
+  /// Pause realtime subscription (keeps subscription for resume)
+  void pauseRealtime();
+
+  /// Resume realtime subscription
+  void resumeRealtime();
+
+  /// Start polling mode (HTTP polling every N minutes)
+  void startPolling({Duration interval});
+
+  /// Stop polling mode
+  void stopPolling();
+
   /// Dispose resources
   void dispose();
 }

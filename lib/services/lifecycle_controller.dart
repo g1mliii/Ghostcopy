@@ -1,5 +1,29 @@
 import 'package:flutter/animation.dart';
 
+/// Connection modes for Supabase realtime management
+enum ConnectionMode {
+  /// Active WebSocket connection for realtime updates
+  realtime,
+
+  /// Periodic HTTP polling (used after 15 min inactivity in tray)
+  polling,
+
+  /// All connections paused (system sleep or screen lock)
+  paused,
+}
+
+/// System power states for lifecycle management
+enum PowerState {
+  /// Normal operation - system is awake and unlocked
+  awake,
+
+  /// Computer is sleeping or hibernating
+  systemSleeping,
+
+  /// Screen is locked but system is awake
+  screenLocked,
+}
+
 /// Interface for UI resources that can be paused when window is hidden
 ///
 /// Implement this for:
@@ -43,25 +67,69 @@ class PausableAnimationController implements Pausable {
   }
 }
 
-/// Abstract interface for lifecycle management and Sleep Mode
+/// Abstract interface for lifecycle management and Tray Mode
 ///
-/// Sleep Mode pauses UI-only resources when Spotlight window is hidden.
-/// Core services (Realtime sync, hotkeys) continue running 24/7.
+/// Tray Mode pauses UI-only resources when Spotlight window is hidden.
+/// Connection Mode manages Supabase realtime/polling states.
+/// Power State handles system sleep and screen lock detection.
 abstract class ILifecycleController {
-  /// Check if the app is currently in Sleep Mode
-  bool get isSleeping;
+  // ========== TRAY MODE (UI State) ==========
 
-  /// Enter Sleep Mode (pause UI animations and non-essential streams)
-  void enterSleepMode();
+  /// Check if the app is currently in Tray Mode (window hidden)
+  bool get isInTrayMode;
 
-  /// Exit Sleep Mode (resume UI animations)
-  void exitSleepMode();
+  /// Enter Tray Mode (pause UI animations and non-essential streams)
+  void enterTrayMode();
 
-  /// Add a UI resource to be paused/resumed with Sleep Mode
+  /// Exit Tray Mode (resume UI animations)
+  void exitTrayMode();
+
+  /// Add a UI resource to be paused/resumed with Tray Mode
   void addPausable(Pausable pausable);
 
-  /// Remove a UI resource from Sleep Mode management
+  /// Remove a UI resource from Tray Mode management
   void removePausable(Pausable pausable);
+
+  // ========== CONNECTION MODE (Network State) ==========
+
+  /// Current connection mode (realtime/polling/paused)
+  ConnectionMode get connectionMode;
+
+  /// Stream of connection mode changes
+  Stream<ConnectionMode> get connectionModeStream;
+
+  /// Switch to realtime mode (WebSocket)
+  void switchToRealtime();
+
+  /// Switch to polling mode (HTTP every 5 min)
+  void switchToPolling();
+
+  // ========== POWER STATE (System State) ==========
+
+  /// Current system power state
+  PowerState get powerState;
+
+  /// Handle system sleep event
+  void onSystemSleep();
+
+  /// Handle system wake event
+  void onSystemWake();
+
+  /// Handle screen lock event
+  void onScreenLock();
+
+  /// Handle screen unlock event
+  void onScreenUnlock();
+
+  // ========== ACTIVITY TRACKING ==========
+
+  /// Notify controller of clipboard activity (resets inactivity timer)
+  void notifyClipboardActivity();
+
+  // ========== INITIALIZATION & CLEANUP ==========
+
+  /// Initialize the lifecycle controller (load feature flags, start monitoring)
+  Future<void> initialize();
 
   /// Dispose and cleanup all resources
   void dispose();
