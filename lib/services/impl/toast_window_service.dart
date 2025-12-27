@@ -116,12 +116,16 @@ class ToastWindowService implements IToastWindowService {
   Future<void> _positionBottomRight() async {
     // For better positioning, we should use screen_retriever package
     // For now, use reasonable defaults
-    // Windows taskbar is typically 40-48px, so offset by 50px
     const defaultScreenWidth = 1920.0;
     const defaultScreenHeight = 1080.0;
 
+    // Platform-specific taskbar/dock offsets:
+    // - Windows: Taskbar at bottom (40-48px) → offset by 50px
+    // - macOS: Dock at bottom (variable) → offset by 60px, menu bar at top doesn't affect bottom positioning
+    final taskbarOffset = Platform.isWindows ? 50.0 : 60.0;
+
     final x = defaultScreenWidth - _toastWidth - _screenPadding;
-    final y = defaultScreenHeight - _toastMaxHeight - _screenPadding - 50; // 50 for taskbar
+    final y = defaultScreenHeight - _toastMaxHeight - _screenPadding - taskbarOffset;
 
     await windowManager.setPosition(Offset(x, y));
   }

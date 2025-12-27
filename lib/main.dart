@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hcaptcha/hcaptcha.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -12,6 +12,7 @@ import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/device_service.dart';
+import 'services/fcm_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/hotkey_service.dart';
 import 'services/impl/auth_service.dart';
@@ -36,9 +37,17 @@ import 'services/toast_window_service.dart';
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
 import 'services/window_service.dart';
+import 'ui/screens/mobile_main_screen.dart';
+import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/widgets/tray_menu_window.dart';
+
+// Configuration - These values are safe to be public
+// Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
+const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
+const _supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+const _hcaptchaSiteKey = '30cca416-f3d4-4326-8bee-29a859a607be';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,22 +55,14 @@ Future<void> main(List<String> args) async {
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');
 
-  // Load environment variables
-  await dotenv.load();
-
   // Initialize hCaptcha once at app startup (not per-widget)
-  final siteKey = dotenv.env['HCAPTCHA_SITE_KEY'];
-  if (siteKey != null && siteKey.isNotEmpty) {
-    HCaptcha.init(siteKey: siteKey);
-    debugPrint('[App] hCaptcha initialized');
-  } else {
-    debugPrint('[App] WARNING: hCaptcha site key not found in .env');
-  }
+  HCaptcha.init(siteKey: _hcaptchaSiteKey);
+  debugPrint('[App] hCaptcha initialized');
 
   // Initialize Supabase
   await Supabase.initialize(
-    url: dotenv.env['SUPABASE_URL'] ?? '',
-    anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+    url: _supabaseUrl,
+    anonKey: _supabaseAnonKey,
   );
 
   // Initialize AuthService (handles anonymous sign-in)
@@ -183,10 +184,31 @@ Future<void> main(List<String> args) async {
       ),
     );
   } else {
-    // Mobile app
+    // Mobile app - initialize Firebase and FCM
+    await Firebase.initializeApp();
+    debugPrint('[App] Firebase initialized for mobile');
+
+    // Initialize FCM service for push notifications
+    final fcmService = FcmService();
+    await fcmService.initialize();
+
+    // Get FCM token and update device
+    final fcmToken = await fcmService.getToken();
+    if (fcmToken != null) {
+      debugPrint('[App] Got FCM token, will update device after registration');
+    }
+
+    // Listen for token refresh and update device
+    fcmService.tokenRefreshStream.listen((newToken) async {
+      debugPrint('[App] 🔄 FCM token refreshed, updating device...');
+      await deviceService.updateFcmToken(newToken);
+    });
+
     runApp(MyApp(
       authService: authService,
       deviceService: deviceService,
+      fcmService: fcmService,
+      fcmToken: fcmToken,
     ));
   }
 }
@@ -218,6 +240,8 @@ class MyApp extends StatefulWidget {
     this.transformerService,
     this.pushNotificationService,
     this.systemPowerService,
+    this.fcmService,
+    this.fcmToken,
     this.launchedAtStartup = false,
     super.key,
   });
@@ -239,6 +263,8 @@ class MyApp extends StatefulWidget {
   final ITransformerService? transformerService;
   final IPushNotificationService? pushNotificationService;
   final ISystemPowerService? systemPowerService;
+  final IFcmService? fcmService;
+  final String? fcmToken;
   final bool launchedAtStartup;
 
   @override
@@ -248,6 +274,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   bool _showingTrayMenu = false;
   bool _openSettingsOnShow = false;
+  bool _mobileAuthComplete = false;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<PowerEvent>? _powerEventSubscription;
 
@@ -339,6 +366,7 @@ class _MyAppState extends State<MyApp> {
       // Mobile disposal
       widget.authService.dispose();
       widget.deviceService.dispose();
+      widget.fcmService?.dispose();
     }
     super.dispose();
   }
@@ -399,7 +427,14 @@ class _MyAppState extends State<MyApp> {
       title: 'GhostCopy',
       theme: AppTheme.darkTheme,
       debugShowCheckedModeBanner: false,
-      home: _showingTrayMenu
+      home: _buildHome(),
+    );
+  }
+
+  Widget _buildHome() {
+    // Desktop app
+    if (_isDesktop()) {
+      return _showingTrayMenu
           ? TrayMenuWindow(
               windowService: widget.windowService!,
               gameModeService: widget.gameModeService!,
@@ -426,7 +461,41 @@ class _MyAppState extends State<MyApp> {
                 // Reset flag after settings opened
                 setState(() => _openSettingsOnShow = false);
               },
-            ),
+            );
+    }
+
+    // Mobile app - show welcome screen or main screen based on auth state
+    if (!_mobileAuthComplete) {
+      return MobileWelcomeScreen(
+        authService: widget.authService,
+        deviceService: widget.deviceService,
+        fcmToken: widget.fcmToken,
+        onAuthComplete: () async {
+          // Register device with FCM token after auth
+          await widget.deviceService.registerCurrentDevice();
+
+          // Update FCM token if available
+          if (widget.fcmToken != null) {
+            await widget.deviceService.updateFcmToken(widget.fcmToken!);
+            debugPrint('[Mobile] ✅ Device registered with FCM token');
+          }
+
+          // Navigate to main mobile UI
+          debugPrint('[Mobile] Auth complete, showing main UI');
+          setState(() {
+            _mobileAuthComplete = true;
+          });
+        },
+      );
+    }
+
+    // Mobile main screen - show after auth complete
+    return MobileMainScreen(
+      authService: widget.authService,
+      deviceService: widget.deviceService,
+      clipboardRepository: ClipboardRepository(),
+      securityService: SecurityService(),
+      transformerService: TransformerService(),
     );
   }
 }

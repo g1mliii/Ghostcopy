@@ -32,15 +32,17 @@ dependencies:
   cupertino_icons: ^1.0.8
   dart_jsonwebtoken: ^2.0.0
   encrypt: ^5.0.3
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.1.5
   flutter:
     sdk: flutter
-  flutter_dotenv: ^5.1.0
   flutter_local_notifications: ^17.0.0
   flutter_secure_storage: ^9.2.2
   hcaptcha: ^0.0.2
   home_widget: ^0.6.0
   hotkey_manager: ^0.2.0
   launch_at_startup: ^0.3.0
+  mobile_scanner: ^5.2.3
   package_info_plus: ^8.0.0
   qr_flutter: ^4.1.0
   shared_preferences: ^2.2.2
@@ -70,7 +72,6 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
-    - .env
     - assets/icons/
 
   # An image asset can refer to one or more resolution-specific "variants", see

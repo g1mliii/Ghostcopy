@@ -19,6 +19,9 @@ abstract class IClipboardRepository {
   /// Clean up old clipboard items, keeping only the most recent [keepCount] items
   Future<void> cleanupOldItems({int keepCount = 10});
 
+  /// Get clipboard count for the current authenticated user
+  Future<int> getClipboardCountForCurrentUser();
+
   /// Dispose resources to prevent memory leaks
   void dispose();
 }

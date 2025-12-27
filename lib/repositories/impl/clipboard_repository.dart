@@ -479,6 +479,27 @@ class ClipboardRepository implements IClipboardRepository {
     return decryptedItems;
   }
 
+  /// Get clipboard count for the current authenticated user
+  @override
+  Future<int> getClipboardCountForCurrentUser() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return 0;
+
+    try {
+      final response = await _client
+        .from('clipboard')
+        .select('id')
+        .eq('user_id', userId)
+        .count();
+
+      // The count method returns a PostgrestQueryResponse with count property
+      return response.count;
+    } on Object catch (e) {
+      debugPrint('[ClipboardRepository] Error getting clipboard count: $e');
+      return 0;
+    }
+  }
+
   /// Dispose resources to prevent memory leaks
   @override
   void dispose() {

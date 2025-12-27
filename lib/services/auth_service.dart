@@ -75,6 +75,15 @@ abstract class IAuthService {
   /// Clears session and returns to anonymous state
   Future<void> signOut();
 
+  /// Get the current user's ID
+  /// Returns null if no user is authenticated
+  String? get currentUserId;
+
+  /// Clean up all data for a user when switching to a different account
+  /// Calls database function to delete clipboard, devices, passphrases, and tokens
+  /// Best-effort operation - errors are logged but don't throw
+  Future<void> cleanupOldAccountData(String oldUserId);
+
   /// Dispose of any resources (streams, controllers, etc.)
   void dispose();
 }
