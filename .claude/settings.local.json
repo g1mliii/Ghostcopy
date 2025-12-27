@@ -61,7 +61,9 @@
       "Bash(supabase functions deploy:*)",
       "Bash(dart run:*)",
       "Bash(cmdkey /list:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(grep:*)",
+      "Bash(supabase db push:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

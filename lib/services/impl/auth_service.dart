@@ -291,6 +291,20 @@ class AuthService implements IAuthService {
   }
 
   @override
+  String? get currentUserId => _client.auth.currentUser?.id;
+
+  @override
+  Future<void> cleanupOldAccountData(String oldUserId) async {
+    try {
+      await _client.rpc<void>('cleanup_user_data', params: {'p_user_id': oldUserId});
+      debugPrint('[AuthService] ✅ Cleaned up old account data for: $oldUserId');
+    } on Object catch (e) {
+      debugPrint('[AuthService] ❌ Failed to cleanup old account: $e');
+      // Don't throw - cleanup is best-effort, don't block sign-in
+    }
+  }
+
+  @override
   void dispose() {
     // Cancel auth state subscription if it exists
     _authStateSubscription?.cancel();

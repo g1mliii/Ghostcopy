@@ -14,6 +14,7 @@ import '../../services/clipboard_sync_service.dart';
 import '../../services/device_service.dart';
 import '../../services/game_mode_service.dart';
 import '../../services/hotkey_service.dart';
+import '../../services/impl/notification_service.dart';
 import '../../services/lifecycle_controller.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
@@ -1333,6 +1334,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 Expanded(
                   child: AuthPanel(
                     authService: widget.authService,
+                    notificationService: widget.notificationService ?? NotificationService(),
                     onClose: () async {
                       await _authSlideController.reverse();
                       setState(() => _showAuth = false);

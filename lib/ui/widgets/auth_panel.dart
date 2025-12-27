@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:hcaptcha/hcaptcha.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/notification_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -13,11 +15,13 @@ import '../theme/typography.dart';
 class AuthPanel extends StatefulWidget {
   const AuthPanel({
     required this.authService,
+    required this.notificationService,
     required this.onClose,
     super.key,
   });
 
   final IAuthService authService;
+  final INotificationService notificationService;
   final VoidCallback onClose;
 
   @override
@@ -34,14 +38,18 @@ class _AuthPanelState extends State<AuthPanel> {
   bool _authLoading = false;
   String? _authError;
 
+  // Repository instance (cached to prevent multiple allocations)
+  late final IClipboardRepository _clipboardRepository = ClipboardRepository();
+
   @override
   void dispose() {
-    // Dispose controllers to prevent memory leaks
+    // Dispose all resources to prevent memory leaks
     try {
       _emailController.dispose();
       _passwordController.dispose();
+      _clipboardRepository.dispose();
     } on Exception catch (e) {
-      debugPrint('Error disposing auth panel controllers: $e');
+      debugPrint('Error disposing auth panel resources: $e');
     }
     super.dispose();
   }
@@ -70,6 +78,19 @@ class _AuthPanelState extends State<AuthPanel> {
               ),
             ),
             const Spacer(),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _handleSignInDifferent,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: GhostColors.primaryHover,
+                  foregroundColor: GhostColors.textPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Sign In with Different Account'),
+              ),
+            ),
+            const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -367,12 +388,36 @@ class _AuthPanelState extends State<AuthPanel> {
       debugPrint('[Auth] hCaptcha verified, proceeding with authentication');
 
       if (_isLogin) {
-        // Sign in existing user
+        // Sign in existing user - check if switching accounts
+        final currentUserId = widget.authService.currentUserId;
+        final wasAnonymous = widget.authService.isAnonymous;
+
+        // Warn user if they're about to lose local data when switching accounts
+        if (currentUserId != null) {
+          final clipboardCount = await _clipboardRepository.getClipboardCountForCurrentUser();
+
+          if (clipboardCount > 0) {
+            // Show warning notification for both anonymous and permanent accounts
+            widget.notificationService.showToast(
+              message: 'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
+              type: NotificationType.warning,
+              duration: const Duration(seconds: 4),
+            );
+          }
+        }
+
+        // Sign in with new account
         await widget.authService.signInWithEmail(
           _emailController.text,
           _passwordController.text,
           captchaToken: captchaToken,
         );
+
+        // Clean up old account data ONLY if it was anonymous
+        // Permanent accounts should keep their data in Supabase
+        if (wasAnonymous && currentUserId != null && currentUserId != widget.authService.currentUserId) {
+          await widget.authService.cleanupOldAccountData(currentUserId);
+        }
       } else {
         // Upgrade anonymous to permanent account
         await widget.authService.upgradeWithEmail(
@@ -461,8 +506,32 @@ class _AuthPanelState extends State<AuthPanel> {
       final bool success;
 
       if (_isLogin) {
-        // Login mode: Sign in with existing Google account
+        // Login mode: Sign in with existing Google account - check if switching accounts
+        final currentUserId = widget.authService.currentUserId;
+        final wasAnonymous = widget.authService.isAnonymous;
+
+        // Warn user if they're about to lose local data when switching accounts
+        if (currentUserId != null) {
+          final clipboardCount = await _clipboardRepository.getClipboardCountForCurrentUser();
+
+          if (clipboardCount > 0) {
+            // Show warning notification for both anonymous and permanent accounts
+            widget.notificationService.showToast(
+              message: 'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
+              type: NotificationType.warning,
+              duration: const Duration(seconds: 4),
+            );
+          }
+        }
+
+        // Sign in with Google
         success = await widget.authService.signInWithGoogle();
+
+        // Clean up old account data ONLY if it was anonymous
+        // Permanent accounts should keep their data in Supabase
+        if (success && wasAnonymous && currentUserId != null && currentUserId != widget.authService.currentUserId) {
+          await widget.authService.cleanupOldAccountData(currentUserId);
+        }
       } else {
         // Sign Up mode: Upgrade anonymous user to Google account
         success = await widget.authService.linkGoogleIdentity();
@@ -566,6 +635,16 @@ class _AuthPanelState extends State<AuthPanel> {
         });
       }
     }
+  }
+
+  Future<void> _handleSignInDifferent() async {
+    // Switch to login mode and show login form
+    setState(() {
+      _isLogin = true;
+      _authError = null;
+      _emailController.clear();
+      _passwordController.clear();
+    });
   }
 
   Future<void> _handleSignOut() async {
