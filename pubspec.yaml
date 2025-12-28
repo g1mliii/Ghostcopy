@@ -26,30 +26,30 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
-  clipboard: ^0.1.0
+  clipboard: ^3.0.8
   crypto: ^3.0.3
   cryptography: ^2.7.0
   cupertino_icons: ^1.0.8
-  dart_jsonwebtoken: ^2.0.0
+  dart_jsonwebtoken: ^3.1.1
   encrypt: ^5.0.3
-  firebase_core: ^3.8.1
-  firebase_messaging: ^15.1.5
+  firebase_core: ^4.3.0
+  firebase_messaging: ^16.1.0
   flutter:
     sdk: flutter
-  flutter_local_notifications: ^17.0.0
-  flutter_secure_storage: ^9.2.2
-  hcaptcha: ^0.0.2
-  home_widget: ^0.6.0
+  flutter_local_notifications: ^19.5.0
+  flutter_secure_storage: ^10.0.0
+  google_sign_in: ^6.2.2
+  home_widget: ^0.8.1
   hotkey_manager: ^0.2.0
-  launch_at_startup: ^0.3.0
-  mobile_scanner: ^7.0.0
-  package_info_plus: ^8.0.0
+  launch_at_startup: ^0.5.1
+  mobile_scanner: ^7.1.4
+  package_info_plus: ^9.0.0
   qr_flutter: ^4.1.0
   shared_preferences: ^2.2.2
   supabase_flutter: ^2.0.0
   system_tray: ^2.0.3
   timeago: ^3.7.0
-  window_manager: ^0.3.0
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_lints: ^6.0.0

@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:hcaptcha/hcaptcha.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -47,7 +46,6 @@ import 'ui/widgets/tray_menu_window.dart';
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
 const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
 const _supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
-const _hcaptchaSiteKey = '30cca416-f3d4-4326-8bee-29a859a607be';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,24 +53,30 @@ Future<void> main(List<String> args) async {
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');
 
-  // Initialize hCaptcha once at app startup (not per-widget)
-  HCaptcha.init(siteKey: _hcaptchaSiteKey);
-  debugPrint('[App] hCaptcha initialized');
-
   // Initialize Supabase
   await Supabase.initialize(
     url: _supabaseUrl,
     anonKey: _supabaseAnonKey,
   );
 
-  // Initialize AuthService (handles anonymous sign-in)
+  // Initialize AuthService
   final authService = AuthService();
-  await authService.initialize();
 
-  // Initialize DeviceService and register current device
+  // For desktop: Auto sign-in anonymously
+  // For mobile: Skip auth - let welcome screen handle it
+  if (_isDesktop()) {
+    await authService.initialize();
+  }
+
+  // Initialize DeviceService
   final deviceService = DeviceService();
   await deviceService.initialize();
-  await deviceService.registerCurrentDevice();
+
+  // For desktop: Register device immediately
+  // For mobile: Skip registration - welcome screen will handle it after auth
+  if (_isDesktop()) {
+    await deviceService.registerCurrentDevice();
+  }
 
   // Initialize services (desktop only)
   if (_isDesktop()) {
@@ -184,25 +188,33 @@ Future<void> main(List<String> args) async {
       ),
     );
   } else {
-    // Mobile app - initialize Firebase and FCM
-    await Firebase.initializeApp();
-    debugPrint('[App] Firebase initialized for mobile');
+    // Mobile app - initialize Firebase and FCM (optional)
+    FcmService? fcmService;
+    String? fcmToken;
 
-    // Initialize FCM service for push notifications
-    final fcmService = FcmService();
-    await fcmService.initialize();
+    try {
+      await Firebase.initializeApp();
+      debugPrint('[App] ✅ Firebase initialized for mobile');
 
-    // Get FCM token and update device
-    final fcmToken = await fcmService.getToken();
-    if (fcmToken != null) {
-      debugPrint('[App] Got FCM token, will update device after registration');
+      // Initialize FCM service for push notifications
+      fcmService = FcmService();
+      await fcmService.initialize();
+
+      // Get FCM token and update device
+      fcmToken = await fcmService.getToken();
+      if (fcmToken != null) {
+        debugPrint('[App] Got FCM token, will update device after registration');
+      }
+
+      // Listen for token refresh and update device
+      fcmService.tokenRefreshStream.listen((newToken) async {
+        debugPrint('[App] 🔄 FCM token refreshed, updating device...');
+        await deviceService.updateFcmToken(newToken);
+      });
+    } on Exception catch (e) {
+      debugPrint('[App] ⚠️  Firebase initialization skipped (not configured): $e');
+      debugPrint('[App] Push notifications will not work until Firebase is configured');
     }
-
-    // Listen for token refresh and update device
-    fcmService.tokenRefreshStream.listen((newToken) async {
-      debugPrint('[App] 🔄 FCM token refreshed, updating device...');
-      await deviceService.updateFcmToken(newToken);
-    });
 
     runApp(MyApp(
       authService: authService,
@@ -322,6 +334,14 @@ class _MyAppState extends State<MyApp> {
         defaultHotkey,
         _handleHotkeySpotlight,
       );
+    } else {
+      // Mobile: Check if user is already signed in
+      final currentUser = widget.authService.currentUser;
+      if (currentUser != null && !currentUser.isAnonymous) {
+        // User is already authenticated, skip welcome screen
+        _mobileAuthComplete = true;
+        debugPrint('[Mobile] User already signed in, skipping welcome screen');
+      }
     }
   }
 

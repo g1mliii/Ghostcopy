@@ -5,6 +5,7 @@ import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/impl/passphrase_sync_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -35,10 +36,117 @@ class MobileSettingsScreen extends StatefulWidget {
   State<MobileSettingsScreen> createState() => _MobileSettingsScreenState();
 }
 
-class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
-  // QR scanner state (removed - not needed in settings)
-  // Users should use welcome screen to link devices
+/// Stateful passphrase dialog with validation
+class _PassphraseDialogWidget extends StatefulWidget {
+  const _PassphraseDialogWidget({required this.isSetup});
 
+  final bool isSetup;
+
+  @override
+  State<_PassphraseDialogWidget> createState() =>
+      _PassphraseDialogWidgetState();
+}
+
+class _PassphraseDialogWidgetState extends State<_PassphraseDialogWidget> {
+  final _controller = TextEditingController();
+  String? _errorMessage;
+  static const int _minLength = 8;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final passphrase = _controller.text.trim();
+
+    // Validate passphrase
+    if (passphrase.isEmpty) {
+      setState(() => _errorMessage = 'Passphrase cannot be empty');
+      return;
+    }
+
+    if (passphrase.length < _minLength) {
+      setState(
+        () => _errorMessage =
+            'Passphrase must be at least $_minLength characters',
+      );
+      return;
+    }
+
+    // Valid - return passphrase
+    Navigator.of(context).pop(passphrase);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: GhostColors.surface,
+      title: Text(
+        widget.isSetup ? 'Set Encryption Passphrase' : 'Enter Passphrase',
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: GhostColors.textPrimary,
+        ),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            obscureText: true,
+            autofocus: true,
+            style: const TextStyle(color: GhostColors.textPrimary),
+            decoration: InputDecoration(
+              hintText: 'At least $_minLength characters',
+              hintStyle: TextStyle(
+                color: GhostColors.textMuted.withValues(alpha: 0.6),
+              ),
+              filled: true,
+              fillColor: GhostColors.background,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              errorText: _errorMessage,
+              errorStyle: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+            onSubmitted: (_) => _submit(),
+            onChanged: (_) {
+              // Clear error when user types
+              if (_errorMessage != null) {
+                setState(() => _errorMessage = null);
+              }
+            },
+          ),
+          if (widget.isSetup) ...[
+            const SizedBox(height: 12),
+            Text(
+              '⚠️ If you lose your passphrase, encrypted data cannot be recovered.',
+              style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          style: FilledButton.styleFrom(backgroundColor: GhostColors.primary),
+          child: const Text('Confirm'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   // Device list state
   List<Device> _devices = [];
   bool _devicesLoading = false;
@@ -70,7 +178,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     if (userId != null) {
       setState(() => _encryptionLoading = true);
 
-      _encryptionService = EncryptionService();
+      // Initialize with cloud backup support for authenticated users
+      _encryptionService = EncryptionService(
+        passphraseSyncService: PassphraseSyncService(),
+      );
       await _encryptionService!.initialize(userId);
 
       final enabled = await _encryptionService!.isEnabled();
@@ -121,7 +232,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   Future<void> _handleSignOut() async {
     final confirmed = await _showConfirmDialog(
       title: 'Sign Out',
-      message: 'Are you sure you want to sign out? You will need to sign in again to access your clipboard history.',
+      message:
+          'Are you sure you want to sign out? You will need to sign in again to access your clipboard history.',
       confirmText: 'Sign Out',
       isDestructive: true,
     );
@@ -172,29 +284,21 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     } else {
       // Disable encryption
       final confirmed = await _showConfirmDialog(
-        title: 'Disable Encryption',
-        message: 'This will remove encryption from future clipboard items. Existing encrypted items will remain encrypted.',
+        title: 'Disable Encryption?',
+        message:
+            'This will disable encryption for new clipboard items. Existing encrypted items will remain encrypted.',
         confirmText: 'Disable',
         isDestructive: true,
       );
 
       if (confirmed) {
         setState(() => _encryptionLoading = true);
-
         await _encryptionService!.clearPassphrase();
-
         if (mounted) {
           setState(() {
             _encryptionEnabled = false;
             _encryptionLoading = false;
           });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Encryption disabled'),
-              backgroundColor: GhostColors.success,
-            ),
-          );
         }
       }
     }
@@ -203,7 +307,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   Future<void> _handleRemoveDevice(String deviceId, String deviceName) async {
     final confirmed = await _showConfirmDialog(
       title: 'Remove Device',
-      message: 'Remove "$deviceName" from your account? This device will no longer receive clipboard items.',
+      message:
+          'Remove "$deviceName" from your account? This device will no longer receive clipboard items.',
       confirmText: 'Remove',
       isDestructive: true,
     );
@@ -235,7 +340,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     }
   }
 
-
   Future<bool> _showConfirmDialog({
     required String title,
     required String message,
@@ -256,10 +360,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
         content: Text(
           message,
-          style: const TextStyle(
-            fontSize: 14,
-            color: GhostColors.textSecondary,
-          ),
+          style: const TextStyle(fontSize: 14, color: GhostColors.textMuted),
         ),
         actions: [
           TextButton(
@@ -283,60 +384,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   }
 
   Future<String?> _showPassphraseDialog({bool isSetup = false}) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+    return showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: GhostColors.surface,
-        title: Text(
-          isSetup ? 'Set Encryption Passphrase' : 'Enter Passphrase',
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: GhostColors.textPrimary,
-          ),
-        ),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          autofocus: true,
-          style: const TextStyle(color: GhostColors.textPrimary),
-          decoration: InputDecoration(
-            hintText: 'Enter passphrase',
-            hintStyle: TextStyle(
-              color: GhostColors.textMuted.withValues(alpha: 0.6),
-            ),
-            filled: true,
-            fillColor: GhostColors.background,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final passphrase = controller.text.trim();
-              if (passphrase.isNotEmpty) {
-                Navigator.of(context).pop(passphrase);
-              }
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: GhostColors.primary,
-            ),
-            child: const Text('Confirm'),
-          ),
-        ],
-      ),
+      builder: (context) => _PassphraseDialogWidget(isSetup: isSetup),
     );
-
-    controller.dispose();
-    return result;
   }
 
   @override
@@ -445,17 +496,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           // Sign out button (only for authenticated users)
           if (!isAnonymous)
             ListTile(
-              leading: Icon(
-                Icons.logout,
-                color: Colors.red.shade400,
-                size: 20,
-              ),
+              leading: Icon(Icons.logout, color: Colors.red.shade400, size: 20),
               title: Text(
                 'Sign Out',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.red.shade400,
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
               ),
               onTap: _handleSignOut,
             ),
@@ -476,98 +520,92 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           ? const Padding(
               padding: EdgeInsets.all(32),
               child: Center(
-                child: CircularProgressIndicator(
-                  color: GhostColors.primary,
-                ),
+                child: CircularProgressIndicator(color: GhostColors.primary),
               ),
             )
           : _devices.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Center(
-                    child: Text(
-                      'No devices registered',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: GhostColors.textMuted,
-                      ),
-                    ),
-                  ),
-                )
-              : ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _devices.length,
-                  separatorBuilder: (context, index) => const Divider(
-                    height: 1,
-                    color: GhostColors.glassBorder,
-                  ),
-                  itemBuilder: (context, index) {
-                    final device = _devices[index];
-                    final isCurrent = device.id == widget.deviceService.getCurrentDeviceId();
+          ? const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(
+                child: Text(
+                  'No devices registered',
+                  style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
+                ),
+              ),
+            )
+          : ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _devices.length,
+              separatorBuilder: (context, index) =>
+                  const Divider(height: 1, color: GhostColors.glassBorder),
+              itemBuilder: (context, index) {
+                final device = _devices[index];
+                final isCurrent =
+                    device.id == widget.deviceService.getCurrentDeviceId();
 
-                    return ListTile(
-                      leading: Icon(
-                        _getDeviceIcon(device.deviceType),
-                        color: GhostColors.primary,
-                        size: 20,
-                      ),
-                      title: Row(
-                        children: [
-                          Text(
-                            device.displayName,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: GhostColors.textPrimary,
-                            ),
-                          ),
-                          if (isCurrent) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: GhostColors.success.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'This device',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: GhostColors.success,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      subtitle: Text(
-                        _capitalizeFirst(device.deviceType),
+                return ListTile(
+                  leading: Icon(
+                    _getDeviceIcon(device.deviceType),
+                    color: GhostColors.primary,
+                    size: 20,
+                  ),
+                  title: Row(
+                    children: [
+                      Text(
+                        device.displayName,
                         style: const TextStyle(
-                          fontSize: 12,
-                          color: GhostColors.textMuted,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: GhostColors.textPrimary,
                         ),
                       ),
-                      trailing: !isCurrent
-                          ? IconButton(
-                              icon: Icon(
-                                Icons.delete_outline,
-                                color: Colors.red.shade400,
-                                size: 20,
-                              ),
-                              onPressed: () => _handleRemoveDevice(
-                                device.id,
-                                device.displayName,
-                              ),
-                            )
-                          : null,
-                    );
-                  },
-                ),
+                      if (isCurrent) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: GhostColors.success.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'This device',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: GhostColors.success,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: Text(
+                    _capitalizeFirst(device.deviceType),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                  trailing: !isCurrent
+                      ? IconButton(
+                          icon: Icon(
+                            Icons.delete_outline,
+                            color: Colors.red.shade400,
+                            size: 20,
+                          ),
+                          onPressed: () => _handleRemoveDevice(
+                            device.id,
+                            device.displayName,
+                          ),
+                        )
+                      : null,
+                );
+              },
+            ),
     );
   }
 
@@ -587,17 +625,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
         title: const Text(
           'End-to-End Encryption',
-          style: TextStyle(
-            fontSize: 14,
-            color: GhostColors.textPrimary,
-          ),
+          style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
         ),
         subtitle: const Text(
           'Encrypt clipboard items with a passphrase',
-          style: TextStyle(
-            fontSize: 12,
-            color: GhostColors.textMuted,
-          ),
+          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         value: _encryptionEnabled,
         activeTrackColor: GhostColors.success,
@@ -638,10 +670,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
         subtitle: Text(
           _appVersion.isEmpty ? 'Loading...' : _appVersion,
-          style: const TextStyle(
-            fontSize: 12,
-            color: GhostColors.textMuted,
-          ),
+          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
       ),
     );

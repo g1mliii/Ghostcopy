@@ -9,6 +9,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/impl/passphrase_sync_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -169,6 +170,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   Widget _buildTabBar() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -177,8 +179,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         controller: _tabController,
         indicator: BoxDecoration(
           color: GhostColors.primary,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
         ),
+        indicatorSize: TabBarIndicatorSize.tab,
+        dividerColor: Colors.transparent,
         labelColor: Colors.white,
         unselectedLabelColor: GhostColors.textSecondary,
         labelStyle: GhostTypography.body.copyWith(
@@ -352,6 +356,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildLoginSignupToggle() {
     return Container(
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -361,16 +366,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           Expanded(
             child: InkWell(
               onTap: () => setState(() => _isLogin = true),
-              borderRadius: const BorderRadius.horizontal(
-                left: Radius.circular(12),
-              ),
+              borderRadius: BorderRadius.circular(8),
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 decoration: BoxDecoration(
                   color: _isLogin ? GhostColors.primary : Colors.transparent,
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(12),
-                  ),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -383,19 +384,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
               ),
             ),
           ),
+          const SizedBox(width: 4),
           Expanded(
             child: InkWell(
               onTap: () => setState(() => _isLogin = false),
-              borderRadius: const BorderRadius.horizontal(
-                right: Radius.circular(12),
-              ),
+              borderRadius: BorderRadius.circular(8),
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 decoration: BoxDecoration(
                   color: !_isLogin ? GhostColors.primary : Colors.transparent,
-                  borderRadius: const BorderRadius.horizontal(
-                    right: Radius.circular(12),
-                  ),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -640,7 +638,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       if (encryptedPassphrase != null) {
         debugPrint('[QR] Importing encrypted passphrase...');
         try {
-          final encryptionService = EncryptionService();
+          // Initialize with cloud backup support for authenticated users
+          final encryptionService = EncryptionService(
+            passphraseSyncService: PassphraseSyncService(),
+          );
           final userId = supabase.auth.currentUser?.id;
           if (userId != null) {
             await encryptionService.initialize(userId);

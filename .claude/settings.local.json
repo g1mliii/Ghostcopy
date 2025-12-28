@@ -63,7 +63,8 @@
       "Bash(cmdkey /list:*)",
       "Bash(taskkill:*)",
       "Bash(grep:*)",
-      "Bash(supabase db push:*)"
+      "Bash(supabase db push:*)",
+      "mcp__supabase__get_edge_function"
     ]
   },
   "enableAllProjectMcpServers": true,

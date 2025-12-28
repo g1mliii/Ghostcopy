@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "415247311354",
+    "project_id": "ghostcopy-a6ea2",
+    "storage_bucket": "ghostcopy-a6ea2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:415247311354:android:7c361e9eee8b7498320443",
+        "android_client_info": {
+          "package_name": "com.ghostcopy.ghostcopy"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "415247311354-tr36bp5451e8sm3rjhkb4jfq0dbrkrb9.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ghostcopy.ghostcopy",
+            "certificate_hash": "042f7b63ab9d0eac8c8670954cc698cc92dc7db6"
+          }
+        },
+        {
+          "client_id": "415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAjZ5DLyp4ikLy2_kVIPn1OvmkDaXI4-U4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ghostcopy.ghostcopy"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

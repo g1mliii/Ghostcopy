@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:hcaptcha/hcaptcha.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
@@ -365,28 +364,8 @@ class _AuthPanelState extends State<AuthPanel> {
     });
 
     try {
-      // Show hCaptcha and get verification token
-      final captchaDetails = await HCaptcha.show(context);
-
-      if (captchaDetails == null || !mounted) {
-        // User cancelled captcha
-        setState(() => _authLoading = false);
-        return;
-      }
-
-      // Extract token from captcha response
-      final captchaToken = captchaDetails['code'] as String?;
-
-      if (captchaToken == null) {
-        setState(() {
-          _authError = 'Captcha verification failed. Please try again.';
-          _authLoading = false;
-        });
-        return;
-      }
-
-      debugPrint('[Auth] hCaptcha verified, proceeding with authentication');
-
+      // Note: hCaptcha disabled for mobile compatibility
+      // Can be re-enabled on desktop if needed
       if (_isLogin) {
         // Sign in existing user - check if switching accounts
         final currentUserId = widget.authService.currentUserId;
@@ -410,7 +389,6 @@ class _AuthPanelState extends State<AuthPanel> {
         await widget.authService.signInWithEmail(
           _emailController.text,
           _passwordController.text,
-          captchaToken: captchaToken,
         );
 
         // Clean up old account data ONLY if it was anonymous

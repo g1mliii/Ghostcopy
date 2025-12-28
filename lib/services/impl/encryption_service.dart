@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -12,10 +13,7 @@ import '../passphrase_sync_service.dart';
 
 /// Parameters for background encryption
 class _EncryptParams {
-  const _EncryptParams({
-    required this.plaintext,
-    required this.keyBytes,
-  });
+  const _EncryptParams({required this.plaintext, required this.keyBytes});
 
   final String plaintext;
   final Uint8List keyBytes;
@@ -23,10 +21,7 @@ class _EncryptParams {
 
 /// Parameters for background decryption
 class _DecryptParams {
-  const _DecryptParams({
-    required this.ciphertext,
-    required this.keyBytes,
-  });
+  const _DecryptParams({required this.ciphertext, required this.keyBytes});
 
   final String ciphertext;
   final Uint8List keyBytes;
@@ -59,30 +54,22 @@ class EncryptionService implements IEncryptionService {
   EncryptionService({
     FlutterSecureStorage? secureStorage,
     IPassphraseSyncService? passphraseSyncService,
-  })  : _secureStorage = secureStorage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(
-                encryptedSharedPreferences: true,
-              ),
-            ),
-        _passphraseSync = passphraseSyncService;
+  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage(),
+       _passphraseSync = passphraseSyncService;
 
   final FlutterSecureStorage _secureStorage;
   final IPassphraseSyncService? _passphraseSync;
   Uint8List? _keyBytes;
   String? _userId;
   bool _initialized = false;
+  // Guard to prevent concurrent initializations across callers
+  Future<void>? _initFuture;
 
   // Storage keys
   static const _passphraseKey = 'encryption_passphrase';
   static const _verificationHashKey = 'encryption_verification_hash';
 
-  // PBKDF2 algorithm for key derivation
-  static final _pbkdf2 = crypto.Pbkdf2(
-    macAlgorithm: crypto.Hmac.sha256(),
-    iterations: 100000, // OWASP recommendation for PBKDF2-HMAC-SHA256
-    bits: 256, // 256-bit output for AES-256
-  );
+  // PBKDF2 algorithm for key derivation is created in-isolate when needed
 
   // Passphrase security requirements
   static const _minPassphraseLength = 8;
@@ -90,19 +77,43 @@ class EncryptionService implements IEncryptionService {
   @override
   Future<void> initialize(String userId) async {
     debugPrint('[EncryptionService] Starting initialization for user: $userId');
-    _userId = userId;
-    _initialized = true;
 
-    // Try to load and initialize with existing passphrase
-    final passphrase = await _secureStorage.read(key: _passphraseKey);
-    if (passphrase != null && passphrase.isNotEmpty) {
-      debugPrint('[EncryptionService] Found existing passphrase, deriving key...');
-      await _deriveKey(passphrase);
-    } else {
-      debugPrint('[EncryptionService] No existing passphrase found');
+    // If already initialized, nothing to do
+    if (_initialized) return;
+
+    // If another initialization is in-flight, wait for it
+    if (_initFuture != null) {
+      await _initFuture;
+      return;
     }
 
-    debugPrint('[EncryptionService] ✅ Initialized (encryption enabled: ${_keyBytes != null})');
+    _userId = userId;
+    final completer = Completer<void>();
+    _initFuture = completer.future;
+
+    try {
+      // Try to load and initialize with existing passphrase
+      final passphrase = await _secureStorage.read(key: _passphraseKey);
+      if (passphrase != null && passphrase.isNotEmpty) {
+        debugPrint(
+          '[EncryptionService] Found existing passphrase, deriving key...',
+        );
+        await _deriveKey(passphrase);
+      } else {
+        debugPrint('[EncryptionService] No existing passphrase found');
+      }
+
+      _initialized = true;
+      debugPrint(
+        '[EncryptionService] ✅ Initialized (encryption enabled: ${_keyBytes != null})',
+      );
+      completer.complete();
+    } catch (e, st) {
+      completer.completeError(e, st);
+      rethrow;
+    } finally {
+      _initFuture = null;
+    }
   }
 
   @override
@@ -124,17 +135,31 @@ class EncryptionService implements IEncryptionService {
 
     // Validate passphrase meets security requirements
     if (passphrase.length < _minPassphraseLength) {
-      debugPrint('Passphrase too short (minimum $_minPassphraseLength characters)');
+      debugPrint(
+        'Passphrase too short (minimum $_minPassphraseLength characters)',
+      );
       return false;
     }
 
     try {
       // Store passphrase in platform secure storage
+      debugPrint('[EncryptionService] Writing passphrase to secure storage...');
       await _secureStorage.write(key: _passphraseKey, value: passphrase);
 
+      // Verify it was written
+      final stored = await _secureStorage.read(key: _passphraseKey);
+      debugPrint(
+        '[EncryptionService] Passphrase stored: ${stored != null && stored.isNotEmpty}',
+      );
+
       // Create verification hash to validate passphrase later
-      final verificationHash = sha256.convert(utf8.encode(passphrase)).toString();
-      await _secureStorage.write(key: _verificationHashKey, value: verificationHash);
+      final verificationHash = sha256
+          .convert(utf8.encode(passphrase))
+          .toString();
+      await _secureStorage.write(
+        key: _verificationHashKey,
+        value: verificationHash,
+      );
 
       // Derive encryption key
       await _deriveKey(passphrase);
@@ -143,14 +168,16 @@ class EncryptionService implements IEncryptionService {
       if (_passphraseSync != null) {
         final canBackup = await _passphraseSync.canUseCloudBackup();
         if (canBackup) {
+          debugPrint('[EncryptionService] Backing up to cloud...');
           await _passphraseSync.uploadToCloud(passphrase);
         }
       }
 
-      debugPrint('Encryption enabled with user passphrase');
+      debugPrint('[EncryptionService] ✅ Encryption enabled successfully');
       return true;
     } on Exception catch (e) {
-      debugPrint('Failed to set passphrase: $e');
+      debugPrint('[EncryptionService] ❌ Failed to set passphrase: $e');
+      debugPrint('[EncryptionService] Stack trace: ${StackTrace.current}');
       return false;
     }
   }
@@ -214,7 +241,9 @@ class EncryptionService implements IEncryptionService {
       final iv = enc.IV.fromSecureRandom(16);
 
       // Encrypt passphrase
-      final encrypter = enc.Encrypter(enc.AES(oneTimeKey, mode: enc.AESMode.gcm));
+      final encrypter = enc.Encrypter(
+        enc.AES(oneTimeKey, mode: enc.AESMode.gcm),
+      );
       final encrypted = encrypter.encrypt(passphrase, iv: iv);
 
       // Combine: oneTimeKey + IV + encrypted
@@ -251,7 +280,9 @@ class EncryptionService implements IEncryptionService {
       final encryptedBytes = combined.sublist(48);
 
       // Decrypt passphrase
-      final encrypter = enc.Encrypter(enc.AES(oneTimeKey, mode: enc.AESMode.gcm));
+      final encrypter = enc.Encrypter(
+        enc.AES(oneTimeKey, mode: enc.AESMode.gcm),
+      );
       final encrypted = enc.Encrypted(encryptedBytes);
       final passphrase = encrypter.decrypt(encrypted, iv: iv);
 
@@ -275,19 +306,14 @@ class EncryptionService implements IEncryptionService {
     }
 
     try {
-      // Derive per-user salt from user ID
-      // This ensures each user has a unique salt, but it's deterministic
-      final saltBytes = sha256.convert(utf8.encode(_userId!)).bytes;
+      // Run PBKDF2 in a background isolate to avoid blocking the UI
+      final result = await compute(_deriveKeyIsolate, {
+        'passphrase': passphrase,
+        'userId': _userId!,
+        'iterations': 100000,
+      });
 
-      // Derive encryption key using PBKDF2 (100,000 iterations)
-      // This takes ~100ms on modern hardware (acceptable for initialization)
-      final secretKey = await _pbkdf2.deriveKey(
-        secretKey: crypto.SecretKey(utf8.encode(passphrase)),
-        nonce: saltBytes,
-      );
-
-      _keyBytes = Uint8List.fromList(await secretKey.extractBytes());
-
+      _keyBytes = Uint8List.fromList(List<int>.from(result));
       debugPrint('Encryption key derived via PBKDF2 (100k iterations)');
     } on Exception catch (e) {
       debugPrint('Failed to derive key: $e');
@@ -309,17 +335,16 @@ class EncryptionService implements IEncryptionService {
     try {
       // For small content (<5KB), encrypt directly to avoid isolate overhead
       if (plaintext.length < 5000) {
-        return _encryptSync(_EncryptParams(
-          plaintext: plaintext,
-          keyBytes: _keyBytes!,
-        ));
+        return _encryptSync(
+          _EncryptParams(plaintext: plaintext, keyBytes: _keyBytes!),
+        );
       }
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(_encryptSync, _EncryptParams(
-        plaintext: plaintext,
-        keyBytes: _keyBytes!,
-      ));
+      return await compute(
+        _encryptSync,
+        _EncryptParams(plaintext: plaintext, keyBytes: _keyBytes!),
+      );
     } on Exception catch (e) {
       debugPrint('Encryption failed: $e');
       throw EncryptionException('Failed to encrypt content: $e');
@@ -360,18 +385,18 @@ class EncryptionService implements IEncryptionService {
 
     try {
       // For small content (estimate based on ciphertext length), decrypt directly
-      if (ciphertext.length < 7000) { // ~5KB plaintext = ~7KB base64
-        return _decryptSync(_DecryptParams(
-          ciphertext: ciphertext,
-          keyBytes: _keyBytes!,
-        ));
+      if (ciphertext.length < 7000) {
+        // ~5KB plaintext = ~7KB base64
+        return _decryptSync(
+          _DecryptParams(ciphertext: ciphertext, keyBytes: _keyBytes!),
+        );
       }
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(_decryptSync, _DecryptParams(
-        ciphertext: ciphertext,
-        keyBytes: _keyBytes!,
-      ));
+      return await compute(
+        _decryptSync,
+        _DecryptParams(ciphertext: ciphertext, keyBytes: _keyBytes!),
+      );
     } on Exception catch (e) {
       debugPrint('Decryption failed: $e');
       throw EncryptionException('Failed to decrypt content: $e');
@@ -403,6 +428,29 @@ class EncryptionService implements IEncryptionService {
     }
   }
 
+  // Top-level helper that runs PBKDF2 derivation in an isolate.
+  // `compute` requires a top-level or static entrypoint.
+  Future<List<int>> _deriveKeyIsolate(Map<String, Object> params) async {
+    final passphrase = params['passphrase']! as String;
+    final userId = params['userId']! as String;
+    final iterations = params['iterations']! as int;
+
+    final saltBytes = sha256.convert(utf8.encode(userId)).bytes;
+
+    final pbkdf2 = crypto.Pbkdf2(
+      macAlgorithm: crypto.Hmac.sha256(),
+      iterations: iterations,
+      bits: 256,
+    );
+
+    final secretKey = await pbkdf2.deriveKey(
+      secretKey: crypto.SecretKey(utf8.encode(passphrase)),
+      nonce: saltBytes,
+    );
+
+    return secretKey.extractBytes();
+  }
+
   @override
   void dispose() {
     debugPrint('[EncryptionService] Disposing service...');
@@ -416,7 +464,9 @@ class EncryptionService implements IEncryptionService {
     _userId = null;
     _initialized = false;
 
-    debugPrint('[EncryptionService] ✅ Disposed - all sensitive data cleared from memory');
+    debugPrint(
+      '[EncryptionService] ✅ Disposed - all sensitive data cleared from memory',
+    );
   }
 }
 

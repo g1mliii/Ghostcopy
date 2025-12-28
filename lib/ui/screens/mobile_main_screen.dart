@@ -9,10 +9,13 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/impl/passphrase_sync_service.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../widgets/ghost_toast.dart';
+import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
 /// Mobile main screen with clipboard history and paste-to-send flow
@@ -22,15 +25,17 @@ import 'mobile_settings_screen.dart';
 /// - Cached device list
 /// - Staggered animations with proper disposal
 /// - const widgets where possible
-/// - Single stream subscription for realtime updates
+/// - Decryption and content detection caching
+/// - LRU cache cleanup (max 20 entries)
+/// - Stable ValueKeys for list items
 ///
 /// Features:
 /// - Paste area with prominent CTA
 /// - Device selector chips
 /// - Send button with target selection
-/// - History list with expand/collapse
+/// - History list (10 most recent items) with expand/collapse
 /// - Pull-to-refresh
-/// - Auto-copy on incoming items
+/// - Auto-copy on incoming items (temporary - will use FCM in production)
 class MobileMainScreen extends StatefulWidget {
   const MobileMainScreen({
     required this.authService,
@@ -71,6 +76,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   // Encryption service (lazy init)
   EncryptionService? _encryptionService;
 
+  // Performance optimization: Cache decrypted content and detection results
+  // Key: item.id, Value: decrypted content
+  final Map<String, String> _decryptedContentCache = {};
+  // Key: item.id, Value: detection result
+  final Map<String, ContentDetectionResult> _detectionCache = {};
+  static const int _maxCacheSize = 20; // Mobile: Small cache for 10 items + buffer
+
   @override
   void initState() {
     super.initState();
@@ -86,13 +98,21 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _pasteController.dispose();
     _historySubscription?.cancel();
     _encryptionService?.dispose();
+
+    // Clear caches
+    _decryptedContentCache.clear();
+    _detectionCache.clear();
+
     super.dispose();
   }
 
   Future<void> _initializeEncryption() async {
     final userId = widget.authService.currentUserId;
     if (userId != null) {
-      _encryptionService = EncryptionService();
+      // Initialize with cloud backup support for authenticated users
+      _encryptionService = EncryptionService(
+        passphraseSyncService: PassphraseSyncService(),
+      );
       await _encryptionService!.initialize(userId);
     }
   }
@@ -122,11 +142,15 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     setState(() => _historyLoading = true);
 
     try {
-      final items = await widget.clipboardRepository.getHistory(limit: 50);
+      // Mobile: Show only 10 most recent items in history tray (default limit)
+      final items = await widget.clipboardRepository.getHistory();
       if (mounted) {
         setState(() {
           _historyItems = items;
           _historyLoading = false;
+
+          // Cleanup cache to prevent unbounded growth
+          _cleanupCache();
         });
       }
     } on Exception catch (e) {
@@ -137,21 +161,53 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
+  /// Clean up cache to prevent memory leaks
+  /// Keeps only entries for current history items
+  void _cleanupCache() {
+    final currentIds = _historyItems.map((item) => item.id).toSet();
+
+    // Remove cache entries for items no longer in history
+    _decryptedContentCache.removeWhere((id, _) => !currentIds.contains(id));
+    _detectionCache.removeWhere((id, _) => !currentIds.contains(id));
+
+    // If cache is still too large, remove oldest entries (LRU)
+    if (_decryptedContentCache.length > _maxCacheSize) {
+      final entriesToRemove = _decryptedContentCache.length - _maxCacheSize;
+      final keysToRemove = _decryptedContentCache.keys.take(entriesToRemove).toList();
+      for (final key in keysToRemove) {
+        _decryptedContentCache.remove(key);
+        _detectionCache.remove(key);
+      }
+    }
+  }
+
   void _subscribeToRealtimeUpdates() {
+    // NOTE: This is a temporary solution for receiving clipboard items
+    // TODO: Replace with FCM push notifications for production
+    // FCM will trigger notifications when new clips are available
+    // and allow auto-copy when notification is tapped
+    //
+    // Current implementation uses Realtime subscriptions as a placeholder
+    // Mobile: Watch only 10 most recent items (default limit)
     _historySubscription = widget.clipboardRepository
-        .watchHistory(limit: 50)
+        .watchHistory()
         .listen((items) {
       if (mounted) {
+        final oldFirstId = _historyItems.isNotEmpty ? _historyItems.first.id : null;
+
         setState(() {
           _historyItems = items;
+
+          // Cleanup cache after update
+          _cleanupCache();
         });
 
         // Auto-copy latest item if it's from another device
         // Note: ClipboardItem doesn't have deviceId, so we auto-copy all new items
         if (items.isNotEmpty) {
           final latest = items.first;
-          // Check if this is a new item (not in our current list)
-          if (_historyItems.isEmpty || latest.id != _historyItems.first.id) {
+          // Check if this is a new item (different from previous first item)
+          if (oldFirstId == null || latest.id != oldFirstId) {
             _autoCopyToClipboard(latest.content);
           }
         }
@@ -172,15 +228,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       await Clipboard.setData(ClipboardData(text: finalContent));
       debugPrint('[MobileMain] ✅ Auto-copied to clipboard');
 
-      // Show snackbar notification
+      // Show toast notification (Requirement 8.3)
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Clipboard updated from another device'),
-            duration: const Duration(seconds: 2),
-            backgroundColor: GhostColors.success,
-            behavior: SnackBarBehavior.floating,
-          ),
+        showGhostToast(
+          context,
+          'Clipboard updated from another device',
+          icon: Icons.sync,
+          type: GhostToastType.success,
         );
       }
     } on Exception catch (e) {
@@ -222,11 +276,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       }
 
       // Create clipboard item to send
-      // Note: id, userId, deviceType will be set by the repository from context
+      // Note: id will be set by database
       final item = ClipboardItem(
         id: '', // Will be set by database
         userId: widget.authService.currentUserId ?? '',
-        deviceType: 'mobile', // Generic mobile type
+        deviceType: ClipboardRepository.getCurrentDeviceType(), // Platform-specific: 'android' or 'ios'
         content: finalContent,
         targetDeviceTypes: targetTypes,
         createdAt: DateTime.now(),
@@ -242,13 +296,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         _pasteController.clear();
         setState(() => _isSending = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sent successfully'),
-            duration: Duration(seconds: 2),
-            backgroundColor: GhostColors.success,
-            behavior: SnackBarBehavior.floating,
-          ),
+        showGhostToast(
+          context,
+          'Sent successfully',
+          icon: Icons.send,
+          type: GhostToastType.success,
         );
       }
     } on Exception catch (e) {
@@ -329,13 +381,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       await Clipboard.setData(ClipboardData(text: finalContent));
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Copied to clipboard'),
-            duration: Duration(seconds: 1),
-            backgroundColor: GhostColors.success,
-            behavior: SnackBarBehavior.floating,
-          ),
+        showGhostToast(
+          context,
+          'Copied to clipboard',
+          icon: Icons.copy,
+          type: GhostToastType.success,
+          duration: const Duration(seconds: 1),
         );
       }
     } on Exception catch (e) {
@@ -416,9 +467,32 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-                child: Text(
-                  'History',
-                  style: GhostTypography.headline.copyWith(fontSize: 16),
+                child: Row(
+                  children: [
+                    Text(
+                      'History',
+                      style: GhostTypography.headline.copyWith(fontSize: 16),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: GhostColors.primary.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: GhostColors.primary.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Text(
+                        '10 recent',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: GhostColors.primary.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -672,10 +746,28 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final item = _historyItems[index];
+
+            // Use cached decrypted content if available
+            final cachedDecrypted = _decryptedContentCache[item.id];
+            final cachedDetection = _detectionCache[item.id];
+
             return RepaintBoundary(
               child: _StaggeredHistoryItem(
+                key: ValueKey(item.id), // Stable key for performance
                 index: index,
                 item: item,
+                transformerService: widget.transformerService,
+                encryptionService: _encryptionService,
+                cachedDecryptedContent: cachedDecrypted,
+                cachedDetectionResult: cachedDetection,
+                onContentDecrypted: (content) {
+                  // Cache decrypted content
+                  _decryptedContentCache[item.id] = content;
+                },
+                onContentDetected: (result) {
+                  // Cache detection result
+                  _detectionCache[item.id] = result;
+                },
                 onTap: () => _handleHistoryItemTap(item),
               ),
             );
@@ -765,15 +857,35 @@ class _DeviceChip extends StatelessWidget {
 }
 
 /// Staggered history item with fade-in and slide animation
+/// Includes smart transformer detection and preview mode
+///
+/// Performance optimizations:
+/// - Uses cached decrypted content to avoid re-decryption
+/// - Uses cached detection results to avoid re-detection
+/// - Stable ValueKey for efficient list updates
+/// - RepaintBoundary wrapper prevents unnecessary repaints
 class _StaggeredHistoryItem extends StatefulWidget {
   const _StaggeredHistoryItem({
     required this.index,
     required this.item,
+    required this.transformerService,
     required this.onTap,
+    super.key,
+    this.encryptionService,
+    this.cachedDecryptedContent,
+    this.cachedDetectionResult,
+    this.onContentDecrypted,
+    this.onContentDetected,
   });
 
   final int index;
   final ClipboardItem item;
+  final ITransformerService transformerService;
+  final EncryptionService? encryptionService;
+  final String? cachedDecryptedContent;
+  final ContentDetectionResult? cachedDetectionResult;
+  final ValueChanged<String>? onContentDecrypted;
+  final ValueChanged<ContentDetectionResult>? onContentDetected;
   final VoidCallback onTap;
 
   @override
@@ -786,6 +898,11 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
   bool _isExpanded = false;
+
+  // Content detection and preview mode
+  ContentDetectionResult? _detectionResult;
+  String? _decryptedContent;
+  bool _isPreviewMode = false; // For large JSON/JWT payloads
 
   @override
   void initState() {
@@ -817,6 +934,72 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     ).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOut),
     );
+
+    // Detect content type and decrypt if needed
+    _initializeContentDetection();
+  }
+
+  Future<void> _initializeContentDetection() async {
+    // Performance: Use cached values if available
+    if (widget.cachedDecryptedContent != null) {
+      _decryptedContent = widget.cachedDecryptedContent;
+
+      if (widget.cachedDetectionResult != null) {
+        // Both cached, use directly
+        _detectionResult = widget.cachedDetectionResult;
+        _isPreviewMode = (widget.cachedDetectionResult!.type == ContentType.json ||
+                widget.cachedDetectionResult!.type == ContentType.jwt) &&
+            widget.cachedDecryptedContent!.length > 200;
+
+        if (mounted) {
+          setState(() {});
+        }
+        return;
+      }
+    }
+
+    // Decrypt content if encryption service is available and not cached
+    var content = widget.item.content;
+    if (_decryptedContent == null && widget.encryptionService != null) {
+      try {
+        content = await widget.encryptionService!.decrypt(content);
+        _decryptedContent = content;
+
+        // Notify parent to cache
+        widget.onContentDecrypted?.call(content);
+
+        if (mounted) {
+          setState(() {});
+        }
+      } on Exception catch (e) {
+        debugPrint('[HistoryItem] Failed to decrypt: $e');
+        _decryptedContent = content;
+      }
+    } else {
+      _decryptedContent = content;
+    }
+
+    // Detect content type (Requirements 7.1, 7.2, 7.3)
+    // Only if not cached
+    if (_detectionResult == null) {
+      final detectionResult = widget.transformerService.detectContentType(
+        _decryptedContent ?? content,
+      );
+
+      _detectionResult = detectionResult;
+
+      // Notify parent to cache
+      widget.onContentDetected?.call(detectionResult);
+
+      // Enable preview mode for JSON/JWT content longer than 200 chars
+      _isPreviewMode = (detectionResult.type == ContentType.json ||
+              detectionResult.type == ContentType.jwt) &&
+          (_decryptedContent ?? content).length > 200;
+
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   @override
@@ -852,6 +1035,9 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
 
   @override
   Widget build(BuildContext context) {
+    final displayContent = _decryptedContent ?? widget.item.content;
+    final shouldShowExpand = displayContent.length > 100;
+
     return FadeTransition(
       opacity: _fadeAnimation,
       child: SlideTransition(
@@ -873,25 +1059,62 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Content preview with expand button
+                  // Content preview with expand button and preview mode badge
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: Text(
-                          widget.item.content,
-                          maxLines: _isExpanded ? null : 2,
-                          overflow: _isExpanded
-                              ? TextOverflow.visible
-                              : TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: GhostColors.textPrimary,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Preview mode badge for large JSON/JWT
+                            if (_isPreviewMode && !_isExpanded)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _detectionResult?.type == ContentType.json
+                                          ? Icons.code
+                                          : Icons.lock_open,
+                                      size: 12,
+                                      color: GhostColors.primary.withValues(alpha: 0.8),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Preview Mode',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: GhostColors.primary.withValues(alpha: 0.8),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            // Content text
+                            Text(
+                              displayContent,
+                              maxLines: _isExpanded
+                                  ? null
+                                  : (_isPreviewMode ? 3 : 2),
+                              overflow: _isExpanded
+                                  ? TextOverflow.visible
+                                  : TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: GhostColors.textPrimary,
+                                fontFamily: _detectionResult?.type == ContentType.json ||
+                                        _detectionResult?.type == ContentType.jwt
+                                    ? 'JetBrainsMono'
+                                    : null,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       // Expand button (show if content is long)
-                      if (widget.item.content.length > 100) ...[
+                      if (shouldShowExpand) ...[
                         const SizedBox(width: 8),
                         GestureDetector(
                           onTap: () =>
@@ -909,6 +1132,15 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
                       ],
                     ],
                   ),
+
+                  // Smart Action Buttons (Requirements 7.1, 7.2, 7.3, 7.4)
+                  if (_detectionResult != null)
+                    SmartActionButtons(
+                      content: displayContent,
+                      detectionResult: _detectionResult!,
+                      transformerService: widget.transformerService,
+                    ),
+
                   const SizedBox(height: 10),
                   // Metadata row
                   Row(

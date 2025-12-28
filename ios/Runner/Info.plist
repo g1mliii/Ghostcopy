@@ -45,5 +45,19 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- Supabase deep linking for OAuth and password reset -->
+				<string>ghostcopy</string>
+				<!-- Google Sign-In REVERSED_CLIENT_ID -->
+				<string>com.googleusercontent.apps.415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
