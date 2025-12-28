@@ -14,9 +14,7 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
 
     // Initialize power monitor for system sleep/wake/lock events
-    if let messenger = flutterViewController.engine.binaryMessenger {
-      powerMonitor = PowerMonitor(messenger: messenger)
-    }
+    powerMonitor = PowerMonitor(messenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
   }

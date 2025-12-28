@@ -13,4 +13,23 @@ class AppDelegate: FlutterAppDelegate {
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
   }
+
+  override func applicationDidFinishLaunching(_ notification: Notification) {
+    // Check and prompt for Accessibility permissions (needed for global hotkeys)
+    // This will show the system permission dialog if not already granted
+    checkAccessibilityPermissions()
+  }
+
+  /// Check if Accessibility permissions are granted, prompt if not
+  private func checkAccessibilityPermissions() {
+    // Create options dictionary to show the system prompt
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+    let accessEnabled = AXIsProcessTrustedWithOptions(options)
+
+    if accessEnabled {
+      print("[AppDelegate] ✅ Accessibility permissions granted")
+    } else {
+      print("[AppDelegate] ⚠️ Accessibility permissions not granted - system prompt shown")
+    }
+  }
 }

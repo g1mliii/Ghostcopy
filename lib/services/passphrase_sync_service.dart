@@ -26,4 +26,7 @@ abstract class IPassphraseSyncService {
 
   /// Check if current user can use cloud backup (authenticated users only)
   Future<bool> canUseCloudBackup();
+  /// Get the decrypted passphrase from cloud backup
+  /// Returns null if no backup exists or decryption failed
+  Future<String?> getPassphraseFromCloud();
 }
