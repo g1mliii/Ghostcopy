@@ -27,17 +27,6 @@ Before you begin, ensure you have:
 4. **APNs certificates** from Apple Developer Portal
 
 ---
-
-## Step 1: Set Up Firebase Project
-
-### 1.1 Create Firebase Project
-
-1. Go to [Firebase Console](https://console.firebase.google.com)
-2. Click "Create a project"
-3. Enter project name: `GhostCopy`
-4. Click "Create project"
-5. Wait for project creation to complete
-
 ### 1.2 Add iOS App to Firebase
 
 1. In Firebase console, click **Settings** (gear icon) → **Project settings**
@@ -50,16 +39,6 @@ Before you begin, ensure you have:
 6. Download **GoogleService-Info.plist**
 7. Copy it to: `ios/Runner/GoogleService-Info.plist`
 
-### 1.3 Add Android App to Firebase
-
-1. In Firebase console, click **Add app** → **Android**
-2. Fill in:
-   - **Android Package Name**: `com.ghostcopy.ghostcopy`
-   - **App nickname**: (optional)
-   - **SHA-1 Fingerprint**: Get from running `flutter pub run flutter_config:config` (optional for now)
-3. Click **Register app**
-4. Download **google-services.json**
-5. Copy it to: `android/app/google-services.json`
 
 ---
 
@@ -171,21 +150,6 @@ Your FCM notification payload should have this format for iOS:
 
 ---
 
-## Step 5: Test FCM on Device
-
-### 5.1 Get FCM Token
-
-1. Build and run the app:
-   ```bash
-   flutter run -d ios
-   ```
-
-2. Check console output for:
-   ```
-   [App] Got FCM token: <token_here>
-   ```
-
-3. Copy this token (save for testing)
 
 ### 5.2 Send Test Notification
 
@@ -245,153 +209,10 @@ curl -X POST https://fcm.googleapis.com/v1/projects/<project-id>/messages:send \
 - ✅ Tapping notification opens app
 - ✅ Widget updates with new item
 
-### 5.3 Check Console Logs
 
-In Xcode Console, look for:
-```
-[FCM] Received message: <message-id>
-[Notification] 📬 Action: Copy to Clipboard
-✅ Copied to clipboard from Test Device
-[WidgetDataManager] ✅ Saved 1 items to shared storage
-[AppDelegate] ✅ Widget updated with FCM notification
-```
 
----
 
-## Step 6: Set Up Backend Integration
 
-Once FCM is working, update your backend (Supabase Edge Function) to send notifications:
-
-### 6.1 Firebase Admin SDK Setup
-
-Use Firebase Admin SDK in your backend to send notifications:
-
-**Python Example:**
-
-```python
-import firebase_admin
-from firebase_admin import credentials, messaging
-
-# Initialize Firebase (use service account key)
-cred = credentials.Certificate('path/to/serviceAccountKey.json')
-firebase_admin.initialize_app(cred)
-
-# Send notification
-message = messaging.MulticastMessage(
-    data={
-        'clipboard_id': str(item_id),
-        'clipboard_content': content,
-        'content_type': content_type,
-        'content_preview': preview,
-        'device_type': 'Desktop',
-        'is_encrypted': 'false',
-    },
-    tokens=fcm_tokens,  # List of user's device FCM tokens
-    notification=messaging.Notification(
-        title='New Clipboard Item',
-        body=f'From {device_name}: {preview}',
-    ),
-    apns=messaging.APNSConfig(
-        payload=messaging.APNSPayload(
-            aps=messaging.APNSMessage(
-                alert=messaging.APS_ALERT_UNKNOWN,
-                category='CLIPBOARD_SYNC',
-                mutable_content=True,
-                sound='default',
-            ),
-        ),
-    ),
-    android=messaging.AndroidConfig(
-        priority='high',
-        notification=messaging.AndroidNotification(
-            title='New Clipboard Item',
-            body=f'From {device_name}: {preview}',
-            channel_id='clipboard_sync',
-        ),
-    ),
-)
-
-response = messaging.send_multicast(message)
-print(f'Successfully sent {response.success_count} notifications')
-```
-
-**Node.js Example:**
-
-```javascript
-const admin = require('firebase-admin');
-const serviceAccount = require('./serviceAccountKey.json');
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
-
-const message = {
-  data: {
-    clipboard_id: itemId.toString(),
-    clipboard_content: content,
-    content_type: contentType,
-    content_preview: preview,
-    device_type: 'Desktop',
-    is_encrypted: 'false',
-  },
-  notification: {
-    title: 'New Clipboard Item',
-    body: `From ${deviceName}: ${preview}`,
-  },
-  apns: {
-    payload: {
-      aps: {
-        category: 'CLIPBOARD_SYNC',
-        'mutable-content': 1,
-        sound: 'default',
-      },
-    },
-  },
-  android: {
-    priority: 'high',
-    notification: {
-      title: 'New Clipboard Item',
-      body: `From ${deviceName}: ${preview}`,
-      channelId: 'clipboard_sync',
-    },
-  },
-};
-
-admin.messaging().sendMulticast({
-  tokens: fcmTokens, // Array of device FCM tokens
-  ...message,
-});
-```
-
-### 6.2 Store FCM Tokens in Database
-
-Make sure your app stores FCM tokens:
-
-In Supabase, add to `auth.users` metadata or create a `devices` table:
-
-```sql
--- Option 1: Store in user metadata (simple)
-UPDATE auth.users
-SET raw_user_meta_data = jsonb_set(
-  raw_user_meta_data,
-  '{fcm_token}',
-  to_jsonb($1)
-)
-WHERE id = $2;
-
--- Option 2: Create devices table
-CREATE TABLE devices (
-  id BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
-  user_id UUID REFERENCES auth.users NOT NULL,
-  fcm_token TEXT NOT NULL,
-  device_type TEXT, -- 'ios', 'android', 'windows', 'macos'
-  device_name TEXT,
-  last_updated TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, device_type)
-);
-```
-
----
 
 ## Troubleshooting
 
