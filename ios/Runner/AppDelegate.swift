@@ -119,23 +119,7 @@ import WidgetKit
   }
 
   private func registerNotificationCategories() {
-    // Define "Copy to Clipboard" action
-    let copyAction = UNNotificationAction(
-      identifier: "COPY_ACTION",
-      title: "Copy to Clipboard",
-      options: [.foreground] // Opens app briefly
-    )
-
-    // Define category with copy action
-    let clipboardCategory = UNNotificationCategory(
-      identifier: "CLIPBOARD_SYNC",
-      actions: [copyAction],
-      intentIdentifiers: [],
-      options: []
-    )
-
-    // Register category
-    UNUserNotificationCenter.current().setNotificationCategories([clipboardCategory])
+    ActionableNotificationManager.shared.registerCategories()
   }
 
   private func notifyFlutterOfSharedContent(_ content: String) {
@@ -165,6 +149,25 @@ import WidgetKit
     }
   }
 
+  private func notifyFlutterOfNotificationAction(_ clipboardId: String, action: String) {
+    guard let controller = window?.rootViewController as? FlutterViewController else { return }
+
+    let notificationChannel = FlutterMethodChannel(
+      name: "com.ghostcopy.ghostcopy/notifications",
+      binaryMessenger: controller.binaryMessenger
+    )
+
+    notificationChannel.invokeMethod("handleNotificationAction", arguments: [
+      "clipboardId": clipboardId,
+      "action": action,
+    ]) { [weak self] result in
+      // Notification action handled by Flutter
+      if let error = result as? FlutterError {
+        print("[AppDelegate] ⚠️ Notification action error: \(error.message ?? "unknown")")
+      }
+    }
+  }
+
   // Handle notification action response (when user taps action button or notification)
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
@@ -172,24 +175,46 @@ import WidgetKit
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let userInfo = response.notification.request.content.userInfo
+    let actionName = ActionableNotificationManager.shared.getActionName(response.actionIdentifier)
+
+    print("[Notification] 📬 Action: \(actionName)")
 
     // Extract clipboard content from FCM data payload
     let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
+    let clipboardId = userInfo["clipboard_id"] as? String ?? ""
     let deviceType = userInfo["device_type"] as? String ?? "Another device"
 
-    // Handle copy action (from action button)
-    if response.actionIdentifier == "COPY_ACTION" {
+    let notificationManager = ActionableNotificationManager.shared
+
+    // Handle copy action (from action button or long-press menu)
+    if notificationManager.isCopyAction(response.actionIdentifier) {
       if !clipboardContent.isEmpty {
         UIPasteboard.general.string = clipboardContent
         print("✅ Copied to clipboard from \(deviceType)")
+      } else if !clipboardId.isEmpty {
+        // For large content, clipboardId sent, fetch full content in app
+        notifyFlutterOfNotificationAction(clipboardId, action: "copy")
       }
+    }
+
+    // Handle dismiss action
+    if notificationManager.isDismissAction(response.actionIdentifier) {
+      print("👋 Notification dismissed")
+    }
+
+    // Handle details action
+    if notificationManager.isDetailsAction(response.actionIdentifier) {
+      if !clipboardId.isEmpty {
+        notifyFlutterOfNotificationAction(clipboardId, action: "details")
+      }
+      print("📖 Opening clipboard item details")
     }
 
     // Handle default action (notification tap)
     if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
       if !clipboardContent.isEmpty {
         UIPasteboard.general.string = clipboardContent
-        print("✅ Copied to clipboard from \(deviceType) (tap)")
+        print("✅ Copied to clipboard from \(deviceType) (notification tap)")
       }
     }
 
