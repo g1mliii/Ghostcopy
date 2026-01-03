@@ -86,12 +86,9 @@ class NotificationService implements INotificationService {
 
     // Create overlay entry
     _currentOverlay = OverlayEntry(
-      builder: (context) => RepaintBoundary(
-        // Isolate toast repaint from main UI
-        child: _ToastWidget(
-          message: message,
-          type: type,
-        ),
+      builder: (context) => _ToastWidget(
+        message: message,
+        type: type,
       ),
     );
 
@@ -164,17 +161,14 @@ class NotificationService implements INotificationService {
 
     // Create clickable overlay entry
     _currentOverlay = OverlayEntry(
-      builder: (context) => RepaintBoundary(
-        // Isolate toast repaint from main UI
-        child: _ClickableToastWidget(
-          message: message,
-          actionLabel: actionLabel,
-          onAction: () {
-            onAction();
-            _removeCurrentToast();
-          },
-          onDismiss: _removeCurrentToast,
-        ),
+      builder: (context) => _ClickableToastWidget(
+        message: message,
+        actionLabel: actionLabel,
+        onAction: () {
+          onAction();
+          _removeCurrentToast();
+        },
+        onDismiss: _removeCurrentToast,
       ),
     );
 

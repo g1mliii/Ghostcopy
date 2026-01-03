@@ -31,7 +31,7 @@ class SmartActionButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Don't show buttons for plain text
-    if (detectionResult.type == ContentType.plainText) {
+    if (detectionResult.type == TransformerContentType.plainText) {
       return const SizedBox.shrink();
     }
 
@@ -47,13 +47,13 @@ class SmartActionButtons extends StatelessWidget {
 
   List<Widget> _buildActionButtons(BuildContext context) {
     switch (detectionResult.type) {
-      case ContentType.json:
+      case TransformerContentType.json:
         return [_buildPrettifyButton(context)];
-      case ContentType.jwt:
+      case TransformerContentType.jwt:
         return [_buildDecodeButton(context)];
-      case ContentType.hexColor:
+      case TransformerContentType.hexColor:
         return [_buildCopyColorButton(context)];
-      case ContentType.plainText:
+      case TransformerContentType.plainText:
         return [];
     }
   }
@@ -100,7 +100,7 @@ class SmartActionButtons extends StatelessWidget {
   }
 
   Future<void> _handlePrettifyJson(BuildContext context) async {
-    final result = transformerService.transform(content, ContentType.json);
+    final result = transformerService.transform(content, TransformerContentType.json);
 
     if (result.error != null) {
       if (context.mounted) {
@@ -133,7 +133,7 @@ class SmartActionButtons extends StatelessWidget {
   }
 
   Future<void> _handleDecodeJwt(BuildContext context) async {
-    final result = transformerService.transform(content, ContentType.jwt);
+    final result = transformerService.transform(content, TransformerContentType.jwt);
 
     if (result.error != null) {
       if (context.mounted) {

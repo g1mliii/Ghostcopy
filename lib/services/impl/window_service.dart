@@ -26,7 +26,7 @@ import '../window_service.dart';
 /// - DO NOT register Realtime clipboard sync stream as Pausable!
 class WindowService implements IWindowService {
   WindowService({ILifecycleController? lifecycleController})
-      : _lifecycleController = lifecycleController;
+    : _lifecycleController = lifecycleController;
 
   final ILifecycleController? _lifecycleController;
   bool _isVisible = false;

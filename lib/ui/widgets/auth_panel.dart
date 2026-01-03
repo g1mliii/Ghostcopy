@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/clipboard_sync_service.dart';
+import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -15,12 +17,14 @@ class AuthPanel extends StatefulWidget {
   const AuthPanel({
     required this.authService,
     required this.notificationService,
+    required this.clipboardSyncService,
     required this.onClose,
     super.key,
   });
 
   final IAuthService authService;
   final INotificationService notificationService;
+  final IClipboardSyncService clipboardSyncService;
   final VoidCallback onClose;
 
   @override
@@ -37,8 +41,9 @@ class _AuthPanelState extends State<AuthPanel> {
   bool _authLoading = false;
   String? _authError;
 
-  // Repository instance (cached to prevent multiple allocations)
-  late final IClipboardRepository _clipboardRepository = ClipboardRepository();
+  // Repository instance (shared singleton)
+  late final IClipboardRepository _clipboardRepository =
+      ClipboardRepository.instance;
 
   @override
   void dispose() {
@@ -46,11 +51,43 @@ class _AuthPanelState extends State<AuthPanel> {
     try {
       _emailController.dispose();
       _passwordController.dispose();
-      _clipboardRepository.dispose();
+      // NOTE: ClipboardRepository is a singleton - do NOT dispose it here
     } on Exception catch (e) {
       debugPrint('Error disposing auth panel resources: $e');
     }
     super.dispose();
+  }
+
+  /// Shared post-login logic for all auth methods (Google, email, etc.)
+  Future<void> _handlePostLogin() async {
+    // Auto-restore passphrase from cloud backup if available
+    final userId = widget.authService.currentUserId;
+    if (userId != null) {
+      debugPrint('[AuthPanel] Post-login: restoring passphrase for user $userId');
+      final encryptionService = EncryptionService.instance;
+      await encryptionService.initialize(userId);
+
+      final restored = await encryptionService.autoRestoreFromCloud();
+      if (restored) {
+        debugPrint('[AuthPanel] ✅ Passphrase restored from cloud');
+        widget.notificationService.showToast(
+          message: 'Encryption passphrase restored from cloud',
+          type: NotificationType.success,
+        );
+      } else {
+        debugPrint('[AuthPanel] ⚠️ No cloud passphrase backup found');
+        final hasPassphrase = await encryptionService.isEnabled();
+        if (!hasPassphrase) {
+          widget.notificationService.showToast(
+            message: 'No encryption passphrase found. Enable encryption in Settings.',
+          );
+        }
+      }
+    }
+
+    // Reinitialize realtime subscription for new/upgraded user
+    widget.clipboardSyncService.reinitializeForUser();
+    debugPrint('[AuthPanel] ✅ Realtime subscription reinitialized');
   }
 
   @override
@@ -279,9 +316,7 @@ class _AuthPanelState extends State<AuthPanel> {
           decoration: BoxDecoration(
             color: Colors.red.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: Colors.red.withValues(alpha: 0.3),
-            ),
+            border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
           ),
           child: Row(
             children: [
@@ -290,9 +325,7 @@ class _AuthPanelState extends State<AuthPanel> {
               Expanded(
                 child: Text(
                   _authError!,
-                  style: GhostTypography.caption.copyWith(
-                    color: Colors.red,
-                  ),
+                  style: GhostTypography.caption.copyWith(color: Colors.red),
                 ),
               ),
             ],
@@ -373,12 +406,14 @@ class _AuthPanelState extends State<AuthPanel> {
 
         // Warn user if they're about to lose local data when switching accounts
         if (currentUserId != null) {
-          final clipboardCount = await _clipboardRepository.getClipboardCountForCurrentUser();
+          final clipboardCount = await _clipboardRepository
+              .getClipboardCountForCurrentUser();
 
           if (clipboardCount > 0) {
             // Show warning notification for both anonymous and permanent accounts
             widget.notificationService.showToast(
-              message: 'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
+              message:
+                  'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
               type: NotificationType.warning,
               duration: const Duration(seconds: 4),
             );
@@ -391,10 +426,19 @@ class _AuthPanelState extends State<AuthPanel> {
           _passwordController.text,
         );
 
-        // Clean up old account data ONLY if it was anonymous
-        // Permanent accounts should keep their data in Supabase
-        if (wasAnonymous && currentUserId != null && currentUserId != widget.authService.currentUserId) {
-          await widget.authService.cleanupOldAccountData(currentUserId);
+        // Clean up old account data and reset state if switching accounts
+        if (currentUserId != null &&
+            currentUserId != widget.authService.currentUserId) {
+          debugPrint('[AuthPanel] User ID changed, resetting state');
+          EncryptionService.instance.reset();
+          _clipboardRepository.reset();
+          widget.clipboardSyncService.reinitializeForUser();
+
+          // Clean up old account data ONLY if it was anonymous
+          // Permanent accounts should keep their data in Supabase
+          if (wasAnonymous) {
+            await widget.authService.cleanupOldAccountData(currentUserId);
+          }
         }
       } else {
         // Upgrade anonymous to permanent account
@@ -408,11 +452,14 @@ class _AuthPanelState extends State<AuthPanel> {
       if (mounted) {
         setState(() => _authLoading = false);
 
+        // Run shared post-login logic (passphrase restore + realtime reinit)
+        await _handlePostLogin();
+
         // Check if user email is confirmed
         final user = widget.authService.currentUser;
         final emailConfirmed = user?.emailConfirmedAt != null;
 
-        if (!emailConfirmed && !_isLogin) {
+        if (!emailConfirmed && !_isLogin && mounted) {
           // Email confirmation required - show message
           await showDialog<void>(
             context: context,
@@ -421,7 +468,10 @@ class _AuthPanelState extends State<AuthPanel> {
               backgroundColor: GhostColors.surfaceLight,
               title: Row(
                 children: [
-                  const Icon(Icons.mark_email_unread, color: GhostColors.primary),
+                  const Icon(
+                    Icons.mark_email_unread,
+                    color: GhostColors.primary,
+                  ),
                   const SizedBox(width: 12),
                   Text(
                     'Verify Your Email',
@@ -481,7 +531,7 @@ class _AuthPanelState extends State<AuthPanel> {
     });
 
     try {
-      final bool success;
+      bool success;
 
       if (_isLogin) {
         // Login mode: Sign in with existing Google account - check if switching accounts
@@ -490,25 +540,37 @@ class _AuthPanelState extends State<AuthPanel> {
 
         // Warn user if they're about to lose local data when switching accounts
         if (currentUserId != null) {
-          final clipboardCount = await _clipboardRepository.getClipboardCountForCurrentUser();
+          final clipboardCount = await _clipboardRepository
+              .getClipboardCountForCurrentUser();
 
           if (clipboardCount > 0) {
             // Show warning notification for both anonymous and permanent accounts
             widget.notificationService.showToast(
-              message: 'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
+              message:
+                  'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
               type: NotificationType.warning,
               duration: const Duration(seconds: 4),
             );
           }
         }
 
-        // Sign in with Google
+        // Sign in with Google (app_links handles the callback)
         success = await widget.authService.signInWithGoogle();
 
-        // Clean up old account data ONLY if it was anonymous
-        // Permanent accounts should keep their data in Supabase
-        if (success && wasAnonymous && currentUserId != null && currentUserId != widget.authService.currentUserId) {
-          await widget.authService.cleanupOldAccountData(currentUserId);
+        // Clean up old account data and reset state if switching accounts
+        if (success &&
+            currentUserId != null &&
+            currentUserId != widget.authService.currentUserId) {
+          debugPrint('[AuthPanel] User ID changed, resetting state');
+          EncryptionService.instance.reset();
+          _clipboardRepository.reset();
+          widget.clipboardSyncService.reinitializeForUser();
+
+          // Clean up old account data ONLY if it was anonymous
+          // Permanent accounts should keep their data in Supabase
+          if (wasAnonymous) {
+            await widget.authService.cleanupOldAccountData(currentUserId);
+          }
         }
       } else {
         // Sign Up mode: Upgrade anonymous user to Google account
@@ -517,6 +579,9 @@ class _AuthPanelState extends State<AuthPanel> {
 
       if (mounted) {
         if (success) {
+          // Run shared post-login logic (passphrase restore + realtime reinit)
+          await _handlePostLogin();
+
           // Success - close auth panel
           widget.onClose();
           setState(() => _authLoading = false);
@@ -570,7 +635,10 @@ class _AuthPanelState extends State<AuthPanel> {
                 backgroundColor: GhostColors.surfaceLight,
                 title: Row(
                   children: [
-                    const Icon(Icons.mark_email_read, color: GhostColors.success),
+                    const Icon(
+                      Icons.mark_email_read,
+                      color: GhostColors.success,
+                    ),
                     const SizedBox(width: 12),
                     Text(
                       'Email Sent',
@@ -601,7 +669,8 @@ class _AuthPanelState extends State<AuthPanel> {
           }
         } else {
           setState(() {
-            _authError = 'Failed to send reset email. Please check your email address.';
+            _authError =
+                'Failed to send reset email. Please check your email address.';
           });
         }
       }

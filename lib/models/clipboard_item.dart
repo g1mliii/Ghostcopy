@@ -1,3 +1,86 @@
+/// Content types supported by clipboard
+enum ContentType {
+  text('text'),
+  html('html'),
+  markdown('markdown'),
+  imagePng('image_png'),
+  imageJpeg('image_jpeg'),
+  imageGif('image_gif');
+
+  const ContentType(this.value);
+  final String value;
+
+  bool get isImage => this == imagePng || this == imageJpeg || this == imageGif;
+  bool get isRichText => this == html || this == markdown;
+  bool get requiresStorage => isImage;
+
+  static ContentType fromString(String value) {
+    return ContentType.values.firstWhere(
+      (e) => e.value == value,
+      orElse: () => ContentType.text,
+    );
+  }
+}
+
+/// Rich text format
+enum RichTextFormat {
+  html('html'),
+  markdown('markdown');
+
+  const RichTextFormat(this.value);
+  final String value;
+
+  static RichTextFormat? fromString(String? value) {
+    if (value == null) return null;
+    return RichTextFormat.values.firstWhere(
+      (e) => e.value == value,
+      orElse: () => RichTextFormat.html,
+    );
+  }
+}
+
+/// Metadata for clipboard items (images, rich text)
+class ClipboardMetadata {
+  const ClipboardMetadata({
+    this.width,
+    this.height,
+    this.thumbnailUrl,
+    this.originalFilename,
+  });
+
+  factory ClipboardMetadata.fromJson(Map<String, dynamic> json) {
+    return ClipboardMetadata(
+      width: json['width'] as int?,
+      height: json['height'] as int?,
+      thumbnailUrl: json['thumbnail_url'] as String?,
+      originalFilename: json['original_filename'] as String?,
+    );
+  }
+
+  final int? width;
+  final int? height;
+  final String? thumbnailUrl;
+  final String? originalFilename;
+
+  Map<String, dynamic> toJson() => {
+        if (width != null) 'width': width,
+        if (height != null) 'height': height,
+        if (thumbnailUrl != null) 'thumbnail_url': thumbnailUrl,
+        if (originalFilename != null) 'original_filename': originalFilename,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ClipboardMetadata &&
+      other.width == width &&
+      other.height == height &&
+      other.thumbnailUrl == thumbnailUrl &&
+      other.originalFilename == originalFilename;
+
+  @override
+  int get hashCode => Object.hash(width, height, thumbnailUrl, originalFilename);
+}
+
 /// Represents a clipboard item stored in the synchronization history
 class ClipboardItem {
   const ClipboardItem({
@@ -10,6 +93,12 @@ class ClipboardItem {
     this.targetDeviceTypes,
     this.isPublic = false,
     this.isEncrypted = false,
+    this.contentType = ContentType.text,
+    this.storagePath,
+    this.fileSizeBytes,
+    this.mimeType,
+    this.metadata,
+    this.richTextFormat,
   });
 
   /// Create from JSON from Supabase
@@ -36,18 +125,52 @@ class ClipboardItem {
       isPublic: json['is_public'] as bool? ?? false,
       isEncrypted: json['is_encrypted'] as bool? ?? false,
       createdAt: DateTime.parse(json['created_at'] as String),
+      contentType: ContentType.fromString(
+        json['content_type'] as String? ?? 'text',
+      ),
+      storagePath: json['storage_path'] as String?,
+      fileSizeBytes: json['file_size_bytes'] as int?,
+      mimeType: json['mime_type'] as String?,
+      metadata: json['metadata'] != null
+          ? ClipboardMetadata.fromJson(json['metadata'] as Map<String, dynamic>)
+          : null,
+      richTextFormat: RichTextFormat.fromString(
+        json['rich_text_format'] as String?,
+      ),
     );
   }
 
   final String id;
   final String userId;
-  final String content;
+  final String content; // Text content OR storage URL for images
   final String? deviceName;
   final String deviceType; // sender's device type: 'windows', 'macos', 'android', 'ios'
   final List<String>? targetDeviceTypes; // target device types filter: null = all devices, list = only those types
   final bool isPublic;
   final bool isEncrypted; // true if content is encrypted with user passphrase
   final DateTime createdAt;
+
+  // New fields for multi-format support
+  final ContentType contentType;
+  final String? storagePath; // Supabase Storage path for images
+  final int? fileSizeBytes;
+  final String? mimeType;
+  final ClipboardMetadata? metadata;
+  final RichTextFormat? richTextFormat;
+
+  // Helper methods
+  bool get isImage => contentType.isImage;
+  bool get isRichText => contentType.isRichText;
+  bool get requiresDownload => contentType.requiresStorage;
+
+  String get displaySize {
+    if (fileSizeBytes == null) return '';
+    if (fileSizeBytes! < 1024) return '${fileSizeBytes}B';
+    if (fileSizeBytes! < 1048576) {
+      return '${(fileSizeBytes! / 1024).toStringAsFixed(1)}KB';
+    }
+    return '${(fileSizeBytes! / 1048576).toStringAsFixed(1)}MB';
+  }
 
   /// Convert to JSON for Supabase
   Map<String, dynamic> toJson() {
@@ -61,6 +184,12 @@ class ClipboardItem {
       'is_public': isPublic,
       'is_encrypted': isEncrypted,
       'created_at': createdAt.toIso8601String(),
+      'content_type': contentType.value,
+      'storage_path': storagePath,
+      'file_size_bytes': fileSizeBytes,
+      'mime_type': mimeType,
+      'metadata': metadata?.toJson(),
+      'rich_text_format': richTextFormat?.value,
     };
   }
 
@@ -87,7 +216,13 @@ class ClipboardItem {
         listEquals(other.targetDeviceTypes, targetDeviceTypes) &&
         other.isPublic == isPublic &&
         other.isEncrypted == isEncrypted &&
-        other.createdAt == createdAt;
+        other.createdAt == createdAt &&
+        other.contentType == contentType &&
+        other.storagePath == storagePath &&
+        other.fileSizeBytes == fileSizeBytes &&
+        other.mimeType == mimeType &&
+        other.metadata == metadata &&
+        other.richTextFormat == richTextFormat;
   }
 
   @override
@@ -102,11 +237,17 @@ class ClipboardItem {
       isPublic,
       isEncrypted,
       createdAt,
+      contentType,
+      storagePath,
+      fileSizeBytes,
+      mimeType,
+      metadata,
+      richTextFormat,
     );
   }
 
   @override
   String toString() {
-    return 'ClipboardItem(id: $id, userId: $userId, content: ${content.substring(0, content.length > 20 ? 20 : content.length)}..., deviceName: $deviceName, deviceType: $deviceType, targetDeviceTypes: $targetDeviceTypes, isPublic: $isPublic, isEncrypted: $isEncrypted, createdAt: $createdAt)';
+    return 'ClipboardItem(id: $id, userId: $userId, content: ${content.substring(0, content.length > 20 ? 20 : content.length)}..., deviceName: $deviceName, deviceType: $deviceType, targetDeviceTypes: $targetDeviceTypes, contentType: ${contentType.value}, isPublic: $isPublic, isEncrypted: $isEncrypted, createdAt: $createdAt)';
   }
 }

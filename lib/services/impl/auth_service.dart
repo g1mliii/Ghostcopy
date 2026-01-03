@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
+import 'encryption_service.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
 class AuthService implements IAuthService {
@@ -110,6 +112,9 @@ class AuthService implements IAuthService {
       }
 
       // Use web-based OAuth flow for desktop platforms
+      // Uses custom URL scheme (ghostcopy://) for deep linking
+      // macOS: Configured in Info.plist
+      // Windows: Handled by app_links package
       final response = await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
@@ -233,6 +238,7 @@ class AuthService implements IAuthService {
       // Use linkIdentity to upgrade anonymous user to Google OAuth (desktop)
       // This preserves the user_id and all clipboard data
       // Opens browser/webview for Google authentication
+      // Uses custom URL scheme (ghostcopy://) for deep linking
       final response = await _client.auth.linkIdentity(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
@@ -372,7 +378,7 @@ class AuthService implements IAuthService {
   Future<bool> sendPasswordResetEmail(String email) async {
     try {
       // Supabase will send a password reset email with a link
-      // The link redirects to: ghostcopy://reset-password?token=...
+      // Uses custom URL scheme for deep linking
       await _client.auth.resetPasswordForEmail(
         email,
         redirectTo: kIsWeb ? null : 'ghostcopy://reset-password',
@@ -404,6 +410,11 @@ class AuthService implements IAuthService {
   @override
   Future<void> signOut() async {
     try {
+      // Reset encryption and repository state before signing out
+      EncryptionService.instance.reset();
+      ClipboardRepository.instance.reset();
+      debugPrint('[AuthService] Reset encryption and repository state');
+
       await _client.auth.signOut();
       debugPrint('[AuthService] Signed out successfully');
 

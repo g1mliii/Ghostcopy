@@ -19,12 +19,12 @@ class TransformerService implements ITransformerService {
   ContentDetectionResult detectContentType(String content) {
     // Early return for empty or very short content
     if (content.isEmpty || content.length < 3) {
-      return const ContentDetectionResult(type: ContentType.plainText);
+      return const ContentDetectionResult(type: TransformerContentType.plainText);
     }
 
     // Security: Reject very large content (DoS protection)
     if (content.length > _maxContentLength) {
-      return const ContentDetectionResult(type: ContentType.plainText);
+      return const ContentDetectionResult(type: TransformerContentType.plainText);
     }
 
     // Check in priority order (most specific to least specific)
@@ -32,7 +32,7 @@ class TransformerService implements ITransformerService {
     // 1. JWT tokens (very specific pattern)
     if (ContentPatterns.jwt.hasMatch(content)) {
       return const ContentDetectionResult(
-        type: ContentType.jwt,
+        type: TransformerContentType.jwt,
         metadata: {'format': 'JWT'},
       );
     }
@@ -40,7 +40,7 @@ class TransformerService implements ITransformerService {
     // 2. JSON (validate with parser for accuracy)
     if (_isJson(content)) {
       return const ContentDetectionResult(
-        type: ContentType.json,
+        type: TransformerContentType.json,
         metadata: {'valid': true},
       );
     }
@@ -50,24 +50,24 @@ class TransformerService implements ITransformerService {
     if (hexMatch != null) {
       final colorValue = hexMatch.group(0)!;
       return ContentDetectionResult(
-        type: ContentType.hexColor,
+        type: TransformerContentType.hexColor,
         metadata: {'color': colorValue, 'length': colorValue.length - 1},
       );
     }
 
     // Default: plain text
-    return const ContentDetectionResult(type: ContentType.plainText);
+    return const ContentDetectionResult(type: TransformerContentType.plainText);
   }
 
   @override
-  TransformationResult transform(String content, ContentType type) {
+  TransformationResult transform(String content, TransformerContentType type) {
     switch (type) {
-      case ContentType.json:
+      case TransformerContentType.json:
         return _transformJson(content);
-      case ContentType.jwt:
+      case TransformerContentType.jwt:
         return _transformJwt(content);
-      case ContentType.hexColor:
-      case ContentType.plainText:
+      case TransformerContentType.hexColor:
+      case TransformerContentType.plainText:
         return const TransformationResult(
           transformedContent: null,
           error: 'Transformation not yet implemented for this type',

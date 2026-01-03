@@ -58,6 +58,10 @@ abstract class IClipboardSyncService {
   /// Stop polling mode
   void stopPolling();
 
+  /// Reinitialize realtime subscription with new user ID
+  /// Call this when user logs in or switches accounts
+  void reinitializeForUser();
+
   /// Dispose resources
   void dispose();
 }

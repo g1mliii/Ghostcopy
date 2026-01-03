@@ -31,6 +31,10 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTT
 # Disable Windows macros that collide with C++ standard library functions.
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
+# Suppress LNK4099 warnings for missing PDB files in third-party libraries (e.g., Firebase)
+# These warnings are expected for prebuilt libraries without debug symbols
+target_link_options(${BINARY_NAME} PRIVATE "/ignore:4099")
+
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)

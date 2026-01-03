@@ -2,14 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
-import '../../services/impl/passphrase_sync_service.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
 import '../theme/colors.dart';
@@ -57,7 +58,7 @@ class MobileMainScreen extends StatefulWidget {
 }
 
 class _MobileMainScreenState extends State<MobileMainScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // Paste area state
   final TextEditingController _pasteController = TextEditingController();
   bool _isSending = false;
@@ -70,8 +71,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   // History state
   List<ClipboardItem> _historyItems = [];
+  List<ClipboardItem> _filteredHistoryItems = [];
   bool _historyLoading = false;
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
+  final TextEditingController _historySearchController = TextEditingController();
+  String _historySearchQuery = '';
 
   // Encryption service (lazy init)
   EncryptionService? _encryptionService;
@@ -86,6 +90,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   @override
   void initState() {
     super.initState();
+    // Register lifecycle observer to pause Realtime when app goes to background
+    WidgetsBinding.instance.addObserver(this);
+
     _initializeEncryption();
     _loadDevices();
     _loadHistory();
@@ -94,10 +101,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   @override
   void dispose() {
+    // Unregister lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+
     // Dispose all resources to prevent memory leaks
     _pasteController.dispose();
+    _historySearchController.dispose();
     _historySubscription?.cancel();
-    _encryptionService?.dispose();
+    // NOTE: EncryptionService is a singleton - do NOT dispose it here
 
     // Clear caches
     _decryptedContentCache.clear();
@@ -106,13 +117,25 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     super.dispose();
   }
 
+  /// Handle app lifecycle changes: pause Realtime when backgrounding, resume when returning
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      // App going to background: pause Realtime to conserve connection quota
+      debugPrint('[MobileMain] App backgrounded → Pausing Realtime subscription');
+      _historySubscription?.pause();
+    } else if (state == AppLifecycleState.resumed) {
+      // App coming to foreground: resume Realtime
+      debugPrint('[MobileMain] App resumed → Resuming Realtime subscription');
+      _historySubscription?.resume();
+    }
+  }
+
   Future<void> _initializeEncryption() async {
     final userId = widget.authService.currentUserId;
     if (userId != null) {
-      // Initialize with cloud backup support for authenticated users
-      _encryptionService = EncryptionService(
-        passphraseSyncService: PassphraseSyncService(),
-      );
+      // Use shared singleton instance
+      _encryptionService = EncryptionService.instance;
       await _encryptionService!.initialize(userId);
     }
   }
@@ -147,6 +170,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       if (mounted) {
         setState(() {
           _historyItems = items;
+          _filteredHistoryItems = items;
           _historyLoading = false;
 
           // Cleanup cache to prevent unbounded growth
@@ -158,6 +182,22 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       if (mounted) {
         setState(() => _historyLoading = false);
       }
+    }
+  }
+
+  /// Filter history based on search query (lightweight local search)
+  void _filterHistory(String query) {
+    _historySearchQuery = query;
+    if (query.trim().isEmpty) {
+      _filteredHistoryItems = _historyItems;
+    } else {
+      final lowerQuery = query.toLowerCase();
+      _filteredHistoryItems = _historyItems.where((item) {
+        if (item.content.toLowerCase().contains(lowerQuery)) return true;
+        if (item.deviceName != null && item.deviceName!.toLowerCase().contains(lowerQuery)) return true;
+        if (item.mimeType != null && item.mimeType!.toLowerCase().contains(lowerQuery)) return true;
+        return false;
+      }).toList();
     }
   }
 
@@ -197,6 +237,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
         setState(() {
           _historyItems = items;
+          _filterHistory(_historySearchQuery);
 
           // Cleanup cache after update
           _cleanupCache();
@@ -208,7 +249,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           final latest = items.first;
           // Check if this is a new item (different from previous first item)
           if (oldFirstId == null || latest.id != oldFirstId) {
-            _autoCopyToClipboard(latest.content);
+            _autoCopyToClipboard(latest);
           }
         }
       }
@@ -217,25 +258,71 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     });
   }
 
-  Future<void> _autoCopyToClipboard(String content) async {
+  Future<void> _autoCopyToClipboard(ClipboardItem item) async {
     try {
-      // Decrypt if needed
-      var finalContent = content;
-      if (_encryptionService != null) {
-        finalContent = await _encryptionService!.decrypt(content);
-      }
+      final clipboardService = ClipboardService.instance;
 
-      await Clipboard.setData(ClipboardData(text: finalContent));
-      debugPrint('[MobileMain] ✅ Auto-copied to clipboard');
+      if (item.isImage) {
+        // For images, download from storage and copy to clipboard
+        // Note: Images are NOT encrypted (too large for encryption)
+        final bytes = await widget.clipboardRepository.downloadFile(item);
+        if (bytes == null) {
+          throw Exception('Failed to download image');
+        }
 
-      // Show toast notification (Requirement 8.3)
-      if (mounted) {
-        showGhostToast(
-          context,
-          'Clipboard updated from another device',
-          icon: Icons.sync,
-          type: GhostToastType.success,
-        );
+        await clipboardService.writeImage(bytes);
+        debugPrint('[MobileMain] ✅ Auto-copied image to clipboard (${bytes.length} bytes)');
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            'Image copied from another device',
+            icon: Icons.image,
+            type: GhostToastType.success,
+          );
+        }
+      } else if (item.isRichText) {
+        // Rich text - decrypt if needed and copy with format
+        var finalContent = item.content;
+        if (_encryptionService != null) {
+          finalContent = await _encryptionService!.decrypt(item.content);
+        }
+
+        if (item.richTextFormat == RichTextFormat.html) {
+          await clipboardService.writeHtml(finalContent);
+        } else {
+          // Markdown - copy as plain text for now
+          await clipboardService.writeText(finalContent);
+        }
+
+        debugPrint('[MobileMain] ✅ Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard');
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            '${item.richTextFormat?.value ?? "Rich text"} copied from another device',
+            icon: Icons.sync,
+            type: GhostToastType.success,
+          );
+        }
+      } else {
+        // Plain text - decrypt if needed and copy
+        var finalContent = item.content;
+        if (_encryptionService != null) {
+          finalContent = await _encryptionService!.decrypt(item.content);
+        }
+
+        await clipboardService.writeText(finalContent);
+        debugPrint('[MobileMain] ✅ Auto-copied text to clipboard');
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            'Clipboard updated from another device',
+            icon: Icons.sync,
+            type: GhostToastType.success,
+          );
+        }
       }
     } on Exception catch (e) {
       debugPrint('[MobileMain] Failed to auto-copy: $e');
@@ -314,6 +401,74 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
+  Future<void> _handleImageUpload() async {
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2048,
+        maxHeight: 2048,
+      );
+
+      if (image == null) {
+        // User cancelled
+        return;
+      }
+
+      // Read image bytes
+      final bytes = await image.readAsBytes();
+
+      // Determine mime type and content type
+      String mimeType;
+      ContentType contentType;
+
+      final path = image.path.toLowerCase();
+      if (path.endsWith('.png')) {
+        mimeType = 'image/png';
+        contentType = ContentType.imagePng;
+      } else if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+        mimeType = 'image/jpeg';
+        contentType = ContentType.imageJpeg;
+      } else if (path.endsWith('.gif')) {
+        mimeType = 'image/gif';
+        contentType = ContentType.imageGif;
+      } else {
+        // Default to JPEG
+        mimeType = 'image/jpeg';
+        contentType = ContentType.imageJpeg;
+      }
+
+      // Upload image
+      await widget.clipboardRepository.insertImage(
+        userId: widget.authService.currentUserId ?? '',
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        deviceName: null,
+        imageBytes: bytes,
+        mimeType: mimeType,
+        contentType: contentType,
+      );
+
+      if (mounted) {
+        showGhostToast(
+          context,
+          'Image uploaded successfully',
+          icon: Icons.check_circle,
+          type: GhostToastType.success,
+        );
+      }
+    } on Exception catch (e) {
+      debugPrint('[MobileMain] Failed to upload image: $e');
+      if (mounted) {
+        showGhostToast(
+          context,
+          'Failed to upload image: $e',
+          icon: Icons.error,
+          type: GhostToastType.error,
+        );
+      }
+    }
+  }
+
   Future<bool> _showSensitiveDataWarning() async {
     final result = await showDialog<bool>(
       context: context,
@@ -372,25 +527,81 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   Future<void> _handleHistoryItemTap(ClipboardItem item) async {
     try {
-      // Decrypt if needed
-      var finalContent = item.content;
-      if (_encryptionService != null) {
-        finalContent = await _encryptionService!.decrypt(item.content);
-      }
+      final clipboardService = ClipboardService.instance;
 
-      await Clipboard.setData(ClipboardData(text: finalContent));
+      // Handle different content types
+      if (item.isImage) {
+        // For images, download from storage and copy to clipboard
+        // Note: Images are NOT encrypted (too large for encryption)
+        final bytes = await widget.clipboardRepository.downloadFile(item);
+        if (bytes == null) {
+          throw Exception('Failed to download image');
+        }
 
-      if (mounted) {
-        showGhostToast(
-          context,
-          'Copied to clipboard',
-          icon: Icons.copy,
-          type: GhostToastType.success,
-          duration: const Duration(seconds: 1),
-        );
+        await clipboardService.writeImage(bytes);
+        debugPrint('[MobileMain] Image copied to clipboard (${bytes.length} bytes)');
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            'Image copied to clipboard',
+            icon: Icons.image,
+            type: GhostToastType.success,
+            duration: const Duration(seconds: 1),
+          );
+        }
+      } else if (item.isRichText) {
+        // Rich text - decrypt if needed and copy with format
+        var finalContent = item.content;
+        if (_encryptionService != null) {
+          finalContent = await _encryptionService!.decrypt(item.content);
+        }
+
+        if (item.richTextFormat == RichTextFormat.html) {
+          await clipboardService.writeHtml(finalContent);
+        } else {
+          // Markdown - copy as plain text for now
+          await clipboardService.writeText(finalContent);
+        }
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            'Copied ${item.richTextFormat?.value ?? "rich text"}',
+            icon: Icons.copy,
+            type: GhostToastType.success,
+            duration: const Duration(seconds: 1),
+          );
+        }
+      } else {
+        // Plain text - decrypt if needed and copy
+        var finalContent = item.content;
+        if (_encryptionService != null) {
+          finalContent = await _encryptionService!.decrypt(item.content);
+        }
+
+        await clipboardService.writeText(finalContent);
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            'Copied to clipboard',
+            icon: Icons.copy,
+            type: GhostToastType.success,
+            duration: const Duration(seconds: 1),
+          );
+        }
       }
     } on Exception catch (e) {
       debugPrint('[MobileMain] Failed to copy: $e');
+      if (mounted) {
+        showGhostToast(
+          context,
+          'Failed to copy: $e',
+          icon: Icons.error,
+          type: GhostToastType.error,
+        );
+      }
     }
   }
 
@@ -497,6 +708,65 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ),
             ),
 
+            // Search bar
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: TextField(
+                  controller: _historySearchController,
+                  onChanged: (query) {
+                    setState(() => _filterHistory(query));
+                  },
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: GhostColors.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Search clips...',
+                    hintStyle: TextStyle(
+                      color: GhostColors.textMuted.withValues(alpha: 0.6),
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search,
+                      size: 18,
+                      color: GhostColors.textMuted,
+                    ),
+                    suffixIcon: _historySearchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              _historySearchController.clear();
+                              setState(() => _filterHistory(''));
+                            },
+                            color: GhostColors.textMuted,
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: GhostColors.surface,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: GhostColors.glassBorder),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: GhostColors.glassBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(
+                        color: GhostColors.primary,
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
             // History list
             _buildHistoryList(),
           ],
@@ -560,6 +830,23 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   setState(() => _sendError = null);
                 }
               },
+            ),
+          ),
+          // Upload button row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: _handleImageUpload,
+                  icon: const Icon(Icons.add_photo_alternate_outlined),
+                  color: GhostColors.primary,
+                  iconSize: 20,
+                  tooltip: 'Upload image',
+                  padding: const EdgeInsets.all(8),
+                  constraints: const BoxConstraints(),
+                ),
+              ],
             ),
           ),
           if (_sendError != null)
@@ -716,7 +1003,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       );
     }
 
-    if (_historyItems.isEmpty) {
+    if (_filteredHistoryItems.isEmpty) {
       return SliverFillRemaining(
         child: Center(
           child: Column(
@@ -729,7 +1016,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ),
               const SizedBox(height: 16),
               Text(
-                'No clipboard history yet',
+                _historySearchQuery.isNotEmpty
+                    ? 'No clips match your search'
+                    : 'No clipboard history yet',
                 style: GhostTypography.body.copyWith(
                   color: GhostColors.textMuted,
                 ),
@@ -745,7 +1034,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
-            final item = _historyItems[index];
+            final item = _filteredHistoryItems[index];
 
             // Use cached decrypted content if available
             final cachedDecrypted = _decryptedContentCache[item.id];
@@ -757,6 +1046,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 index: index,
                 item: item,
                 transformerService: widget.transformerService,
+                clipboardRepository: widget.clipboardRepository,
                 encryptionService: _encryptionService,
                 cachedDecryptedContent: cachedDecrypted,
                 cachedDetectionResult: cachedDetection,
@@ -772,7 +1062,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ),
             );
           },
-          childCount: _historyItems.length,
+          childCount: _filteredHistoryItems.length,
         ),
       ),
     );
@@ -869,6 +1159,7 @@ class _StaggeredHistoryItem extends StatefulWidget {
     required this.index,
     required this.item,
     required this.transformerService,
+    required this.clipboardRepository,
     required this.onTap,
     super.key,
     this.encryptionService,
@@ -881,6 +1172,7 @@ class _StaggeredHistoryItem extends StatefulWidget {
   final int index;
   final ClipboardItem item;
   final ITransformerService transformerService;
+  final IClipboardRepository clipboardRepository;
   final EncryptionService? encryptionService;
   final String? cachedDecryptedContent;
   final ContentDetectionResult? cachedDetectionResult;
@@ -903,6 +1195,10 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
   ContentDetectionResult? _detectionResult;
   String? _decryptedContent;
   bool _isPreviewMode = false; // For large JSON/JWT payloads
+
+  // Image loading state
+  Uint8List? _imageBytes;
+  bool _imageLoading = false;
 
   @override
   void initState() {
@@ -937,6 +1233,34 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
 
     // Detect content type and decrypt if needed
     _initializeContentDetection();
+
+    // Load image if this is an image item
+    if (widget.item.isImage) {
+      _loadImage();
+    }
+  }
+
+  Future<void> _loadImage() async {
+    if (_imageBytes != null) return; // Already loaded
+
+    setState(() => _imageLoading = true);
+
+    try {
+      final bytes = await widget.clipboardRepository.downloadFile(widget.item);
+      if (mounted && bytes != null) {
+        setState(() {
+          _imageBytes = bytes;
+          _imageLoading = false;
+        });
+      } else if (mounted) {
+        setState(() => _imageLoading = false);
+      }
+    } on Exception catch (e) {
+      debugPrint('[HistoryItem] Failed to load image: $e');
+      if (mounted) {
+        setState(() => _imageLoading = false);
+      }
+    }
   }
 
   Future<void> _initializeContentDetection() async {
@@ -947,8 +1271,8 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       if (widget.cachedDetectionResult != null) {
         // Both cached, use directly
         _detectionResult = widget.cachedDetectionResult;
-        _isPreviewMode = (widget.cachedDetectionResult!.type == ContentType.json ||
-                widget.cachedDetectionResult!.type == ContentType.jwt) &&
+        _isPreviewMode = (widget.cachedDetectionResult!.type == TransformerContentType.json ||
+                widget.cachedDetectionResult!.type == TransformerContentType.jwt) &&
             widget.cachedDecryptedContent!.length > 200;
 
         if (mounted) {
@@ -992,8 +1316,8 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       widget.onContentDetected?.call(detectionResult);
 
       // Enable preview mode for JSON/JWT content longer than 200 chars
-      _isPreviewMode = (detectionResult.type == ContentType.json ||
-              detectionResult.type == ContentType.jwt) &&
+      _isPreviewMode = (detectionResult.type == TransformerContentType.json ||
+              detectionResult.type == TransformerContentType.jwt) &&
           (_decryptedContent ?? content).length > 200;
 
       if (mounted) {
@@ -1014,6 +1338,151 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
 
   String _getDeviceLabel(String deviceType) {
     return deviceType[0].toUpperCase() + deviceType.substring(1);
+  }
+
+  /// Build content preview based on content type (text, image, or rich text)
+  Widget _buildContentPreview(String displayContent) {
+    // Image preview
+    if (widget.item.isImage) {
+      return _buildImagePreview();
+    }
+
+    // Rich text preview
+    if (widget.item.isRichText) {
+      return _buildRichTextPreview(displayContent);
+    }
+
+    // Normal text (with transformer detection)
+    return Text(
+      displayContent,
+      maxLines: _isExpanded
+          ? null
+          : (_isPreviewMode ? 3 : 2),
+      overflow: _isExpanded
+          ? TextOverflow.visible
+          : TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 14,
+        color: GhostColors.textPrimary,
+        fontFamily: _detectionResult?.type == TransformerContentType.json ||
+                _detectionResult?.type == TransformerContentType.jwt
+            ? 'JetBrainsMono'
+            : null,
+      ),
+    );
+  }
+
+  /// Build image preview widget
+  Widget _buildImagePreview() {
+    if (_imageLoading) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: GhostColors.surfaceLight,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: GhostColors.primary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_imageBytes == null) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: GhostColors.surfaceLight,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.broken_image_outlined,
+                size: 32,
+                color: GhostColors.textMuted.withValues(alpha: 0.5),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Failed to load image',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: GhostColors.textMuted.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.memory(
+        _imageBytes!,
+        fit: BoxFit.cover,
+        height: 120,
+        width: double.infinity,
+      ),
+    );
+  }
+
+  /// Build rich text preview widget
+  Widget _buildRichTextPreview(String content) {
+    final format = widget.item.richTextFormat;
+    final icon = format == RichTextFormat.html
+        ? Icons.code
+        : Icons.text_fields;
+    final label = format == RichTextFormat.html
+        ? 'HTML'
+        : 'Markdown';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Badge showing format type
+        Row(
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: GhostColors.primary.withValues(alpha: 0.8),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: GhostColors.primary.withValues(alpha: 0.8),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        // Content preview
+        Text(
+          content,
+          maxLines: _isExpanded ? null : 3,
+          overflow: _isExpanded
+              ? TextOverflow.visible
+              : TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 13,
+            color: GhostColors.textSecondary,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ],
+    );
   }
 
   IconData _getDeviceIcon(String deviceType) {
@@ -1074,7 +1543,7 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
                                 child: Row(
                                   children: [
                                     Icon(
-                                      _detectionResult?.type == ContentType.json
+                                      _detectionResult?.type == TransformerContentType.json
                                           ? Icons.code
                                           : Icons.lock_open,
                                       size: 12,
@@ -1092,24 +1561,8 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
                                   ],
                                 ),
                               ),
-                            // Content text
-                            Text(
-                              displayContent,
-                              maxLines: _isExpanded
-                                  ? null
-                                  : (_isPreviewMode ? 3 : 2),
-                              overflow: _isExpanded
-                                  ? TextOverflow.visible
-                                  : TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: GhostColors.textPrimary,
-                                fontFamily: _detectionResult?.type == ContentType.json ||
-                                        _detectionResult?.type == ContentType.jwt
-                                    ? 'JetBrainsMono'
-                                    : null,
-                              ),
-                            ),
+                            // Content preview (text, image, or rich text)
+                            _buildContentPreview(displayContent),
                           ],
                         ),
                       ),

@@ -13,6 +13,10 @@ abstract class IEncryptionService {
   /// Clear passphrase (disables encryption)
   Future<void> clearPassphrase();
 
+  /// Auto-restore passphrase from cloud backup (for Google OAuth sign-in)
+  /// Returns true if passphrase was restored, false if no backup or restore failed
+  Future<bool> autoRestoreFromCloud();
+
   /// Verify passphrase is correct
   Future<bool> verifyPassphrase(String passphrase);
 
@@ -35,6 +39,10 @@ abstract class IEncryptionService {
 
   /// Initialize encryption service with user-specific context
   Future<void> initialize(String userId);
+
+  /// Reset encryption state for user switch or sign out
+  /// Call this when user logs out or switches accounts
+  void reset();
 
   /// Dispose resources and clear sensitive data from memory
   void dispose();

@@ -159,6 +159,7 @@ class PassphraseSyncService implements IPassphraseSyncService {
 
   /// Get the decrypted passphrase from cloud backup
   /// Returns null if no backup or decryption failed
+  @override
   Future<String?> getPassphraseFromCloud() async {
     if (!await canUseCloudBackup()) {
       return null;

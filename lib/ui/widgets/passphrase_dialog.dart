@@ -12,10 +12,12 @@ import '../../services/encryption_service.dart';
 class PassphraseDialog extends StatefulWidget {
   const PassphraseDialog({
     required this.encryptionService,
+    required this.userId,
     super.key,
   });
 
   final IEncryptionService encryptionService;
+  final String userId;
 
   @override
   State<PassphraseDialog> createState() => _PassphraseDialogState();
@@ -92,6 +94,9 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
         });
         return;
       }
+
+      // Ensure encryption service is initialized before setting passphrase
+      await widget.encryptionService.initialize(widget.userId);
 
       // Set passphrase in encryption service
       final success = await widget.encryptionService.setPassphrase(passphrase);
@@ -263,12 +268,14 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
 Future<bool> showPassphraseDialog(
   BuildContext context,
   IEncryptionService encryptionService,
+  String userId,
 ) async {
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (context) => PassphraseDialog(
       encryptionService: encryptionService,
+      userId: userId,
     ),
   );
   return result ?? false;

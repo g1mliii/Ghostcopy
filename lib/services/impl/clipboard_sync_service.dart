@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:clipboard/clipboard.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
@@ -206,7 +206,7 @@ class ClipboardSyncService implements IClipboardSyncService {
           final content = history.first.content;
           final item = history.first;
 
-          await FlutterClipboard.copy(content);
+          await Clipboard.setData(ClipboardData(text: content));
           debugPrint('[ClipboardSyncService] Auto-copied from $deviceType');
 
           _lastClipboardModificationTime = now;
@@ -243,7 +243,7 @@ class ClipboardSyncService implements IClipboardSyncService {
             duration: const Duration(seconds: 5),
             onAction: () async {
               try {
-                await FlutterClipboard.copy(content);
+                await Clipboard.setData(ClipboardData(text: content));
                 debugPrint('[ClipboardSyncService] Copied from notification');
               } on Exception catch (e) {
                 debugPrint('[ClipboardSyncService] Failed to copy: $e');
@@ -290,7 +290,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Check clipboard and auto-send if changed
   Future<void> _checkClipboardForAutoSend() async {
     try {
-      final clipboardContent = await FlutterClipboard.paste();
+      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+      final clipboardContent = clipboardData?.text ?? '';
 
       // Skip if empty or unchanged
       if (clipboardContent.isEmpty ||
@@ -524,6 +525,20 @@ class ClipboardSyncService implements IClipboardSyncService {
     debugPrint('[ClipboardSync] 🛑 Stopping polling mode');
     _pollingTimer?.cancel();
     _pollingTimer = null;
+  }
+
+  /// Reinitialize realtime subscription with new user ID
+  /// Call this when user logs in or switches accounts
+  @override
+  void reinitializeForUser() {
+    debugPrint('[ClipboardSyncService] 🔄 Reinitializing for new user');
+
+    // Unsubscribe from old realtime channel
+    _realtimeChannel?.unsubscribe();
+    _realtimeChannel = null;
+
+    // Subscribe with new user ID (no need to disconnect - auth token updates automatically)
+    _subscribeToRealtimeUpdates();
   }
 
   /// Poll for new clipboard items

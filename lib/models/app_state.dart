@@ -17,7 +17,7 @@ class AppState {
   final bool isSpotlightVisible;
   final List<ClipboardItem> history;
   final ClipboardItem? currentItem;
-  final ContentType? detectedContentType;
+  final TransformerContentType? detectedContentType;
 
   AppState copyWith({
     bool? isSleeping,
@@ -25,7 +25,7 @@ class AppState {
     bool? isSpotlightVisible,
     List<ClipboardItem>? history,
     ClipboardItem? currentItem,
-    ContentType? detectedContentType,
+    TransformerContentType? detectedContentType,
   }) {
     return AppState(
       isSleeping: isSleeping ?? this.isSleeping,

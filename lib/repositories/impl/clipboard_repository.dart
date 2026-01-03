@@ -7,7 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
-import '../../services/impl/passphrase_sync_service.dart';
+import '../../services/storage_service.dart';
 import '../clipboard_repository.dart';
 
 /// Implementation of ClipboardRepository with security hardening
@@ -20,17 +20,42 @@ import '../clipboard_repository.dart';
 /// - RLS policy enforcement through Supabase auth
 /// - Client-side end-to-end encryption (AES-256-GCM)
 /// - Encrypted content stored in Supabase (admins cannot read)
+///
+/// **SINGLETON PATTERN**: Use ClipboardRepository.instance to prevent redundant
+/// EncryptionService initialization that causes UI jank (41 frame skips).
 class ClipboardRepository implements IClipboardRepository {
-  ClipboardRepository({
+  /// Factory constructor for backwards compatibility and testing
+  factory ClipboardRepository({
     SupabaseClient? client,
     IEncryptionService? encryptionService,
+    IStorageService? storageService,
+  }) {
+    // For testing with custom dependencies, create a new instance
+    if (client != null || encryptionService != null || storageService != null) {
+      return ClipboardRepository._internal(
+        client: client,
+        encryptionService: encryptionService,
+        storageService: storageService,
+      );
+    }
+    // Otherwise, return singleton
+    return instance;
+  }
+  // Private constructor for singleton
+  ClipboardRepository._internal({
+    SupabaseClient? client,
+    IEncryptionService? encryptionService,
+    IStorageService? storageService,
   }) : _client = client ?? Supabase.instance.client,
-       _encryptionService =
-           encryptionService ??
-           EncryptionService(passphraseSyncService: PassphraseSyncService());
+       _encryptionService = encryptionService ?? EncryptionService.instance,
+       _storageService = storageService ?? StorageService.instance;
+
+  // Singleton instance
+  static final ClipboardRepository instance = ClipboardRepository._internal();
 
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
+  final IStorageService _storageService;
   bool _encryptionInitialized = false;
 
   // Security constants
@@ -148,7 +173,276 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  Stream<List<ClipboardItem>> watchHistory({int limit = 10}) {
+  Future<ClipboardItem> insertImage({
+    required String userId,
+    required String deviceType,
+    required String? deviceName,
+    required Uint8List imageBytes,
+    required String mimeType,
+    required ContentType contentType,
+    int? width,
+    int? height,
+  }) async {
+    try {
+      // Validate user authentication
+      final currentUserId = _client.auth.currentUser?.id;
+      if (currentUserId == null) {
+        throw SecurityException(
+          'User must be authenticated to insert image items',
+        );
+      }
+
+      // Defense in depth: ensure userId matches authenticated user
+      if (userId != currentUserId) {
+        throw SecurityException('Cannot insert image for another user');
+      }
+
+      // Validate file size (10MB limit)
+      const maxImageSize = 10485760; // 10MB
+      if (imageBytes.length > maxImageSize) {
+        throw ValidationException(
+          'Image exceeds 10MB limit: ${imageBytes.length} bytes',
+        );
+      }
+
+      // Validate content type is an image
+      if (!contentType.isImage) {
+        throw ValidationException(
+          'Content type must be an image type, got: ${contentType.value}',
+        );
+      }
+
+      // 1. Insert placeholder to get clip ID
+      debugPrint(
+        '[Repository] ↑ Inserting image placeholder (${imageBytes.length} bytes)',
+      );
+
+      final response = await _client.from('clipboard').insert({
+        'user_id': userId,
+        'device_name': _sanitizeDeviceName(deviceName),
+        'device_type': _validateDeviceType(deviceType),
+        'content': '', // Placeholder, will be updated with URL
+        'content_type': contentType.value,
+        'mime_type': mimeType,
+        'file_size_bytes': imageBytes.length,
+        if (width != null || height != null)
+          'metadata': {
+            if (width != null) 'width': width,
+            if (height != null) 'height': height,
+          },
+        'is_encrypted': false, // Images NOT encrypted
+      }).select().single();
+
+      final clipId = response['id'].toString();
+
+      // 2. Upload to Storage
+      final filename = 'image.${_getExtension(mimeType)}';
+      debugPrint('[Repository] ↑ Uploading to storage: $userId/$clipId/$filename');
+
+      final uploadResult = await _storageService.uploadFile(
+        userId: userId,
+        clipboardId: clipId,
+        bytes: imageBytes,
+        filename: filename,
+        mimeType: mimeType,
+      );
+
+      // 3. Update with storage path and URL
+      await _client.from('clipboard').update({
+        'storage_path': uploadResult.storagePath,
+        'content': uploadResult.publicUrl, // URL in content field
+      }).eq('id', clipId);
+
+      debugPrint('[Repository] ✓ Image uploaded successfully');
+
+      return ClipboardItem(
+        id: clipId,
+        userId: userId,
+        content: uploadResult.publicUrl,
+        deviceName: deviceName,
+        deviceType: deviceType,
+        contentType: contentType,
+        storagePath: uploadResult.storagePath,
+        fileSizeBytes: imageBytes.length,
+        mimeType: mimeType,
+        metadata: ClipboardMetadata(width: width, height: height),
+        createdAt: DateTime.parse(response['created_at'] as String),
+      );
+    } on SecurityException {
+      rethrow;
+    } on ValidationException {
+      rethrow;
+    } on PostgrestException catch (e) {
+      debugPrint('[Repository] ✗ Database error: ${e.message}');
+      throw RepositoryException('Database error: ${e.message}');
+    } catch (e) {
+      debugPrint('[Repository] ✗ Failed to insert image: $e');
+      throw RepositoryException('Failed to insert image: $e');
+    }
+  }
+
+  @override
+  Future<ClipboardItem> insertRichText({
+    required String userId,
+    required String deviceType,
+    required String? deviceName,
+    required String content,
+    required RichTextFormat format,
+  }) async {
+    try {
+      // Validate user authentication
+      final currentUserId = _client.auth.currentUser?.id;
+      if (currentUserId == null) {
+        throw SecurityException(
+          'User must be authenticated to insert rich text items',
+        );
+      }
+
+      // Defense in depth: ensure userId matches authenticated user
+      if (userId != currentUserId) {
+        throw SecurityException('Cannot insert rich text for another user');
+      }
+
+      // Validate content
+      final sanitizedContent = _sanitizeContent(content);
+
+      // Initialize encryption
+      await _ensureEncryptionInitialized();
+
+      // Encrypt content if encryption is enabled
+      final isEncryptionEnabled = await _encryptionService.isEnabled();
+      final contentToStore = isEncryptionEnabled
+          ? await _encryptionService.encrypt(sanitizedContent)
+          : sanitizedContent;
+
+      // Determine content type and mime type
+      final contentType =
+          format == RichTextFormat.html ? ContentType.html : ContentType.markdown;
+      final mimeType =
+          format == RichTextFormat.html ? 'text/html' : 'text/markdown';
+
+      debugPrint(
+        '[Repository] ↑ Inserting rich text (${format.value}, ${sanitizedContent.length} chars)',
+      );
+
+      final response = await _client.from('clipboard').insert({
+        'user_id': userId,
+        'device_name': _sanitizeDeviceName(deviceName),
+        'device_type': _validateDeviceType(deviceType),
+        'content': contentToStore,
+        'content_type': contentType.value,
+        'mime_type': mimeType,
+        'rich_text_format': format.value,
+        'is_encrypted': isEncryptionEnabled,
+      }).select().single();
+
+      debugPrint('[Repository] ✓ Rich text inserted successfully');
+
+      return ClipboardItem(
+        id: response['id'].toString(),
+        userId: userId,
+        content: sanitizedContent, // Return original unencrypted content
+        deviceName: deviceName,
+        deviceType: deviceType,
+        contentType: contentType,
+        mimeType: mimeType,
+        richTextFormat: format,
+        isEncrypted: isEncryptionEnabled,
+        createdAt: DateTime.parse(response['created_at'] as String),
+      );
+    } on SecurityException {
+      rethrow;
+    } on ValidationException {
+      rethrow;
+    } on EncryptionException {
+      rethrow;
+    } on PostgrestException catch (e) {
+      debugPrint('[Repository] ✗ Database error: ${e.message}');
+      throw RepositoryException('Database error: ${e.message}');
+    } catch (e) {
+      debugPrint('[Repository] ✗ Failed to insert rich text: $e');
+      throw RepositoryException('Failed to insert rich text: $e');
+    }
+  }
+
+  @override
+  Future<Uint8List?> downloadFile(ClipboardItem item) async {
+    if (item.storagePath == null) {
+      debugPrint('[Repository] ○ No storage path for item ${item.id}');
+      return null;
+    }
+
+    try {
+      debugPrint('[Repository] ↓ Downloading: ${item.storagePath}');
+
+      final bytes = await _storageService.downloadFile(item.storagePath!);
+
+      debugPrint('[Repository] ✓ Downloaded: ${bytes.length} bytes');
+
+      return bytes;
+    } on Exception catch (e) {
+      debugPrint('[Repository] ✗ Download failed: $e');
+      return null;
+    }
+  }
+
+  @override
+  Future<List<ClipboardItem>> searchHistory(
+    String query, {
+    int limit = 15,
+  }) async {
+    // Return all history if query is empty
+    if (query.trim().isEmpty) {
+      return getHistory(limit: limit);
+    }
+
+    // Validate limit parameter
+    final safeLimit = _validateLimit(limit);
+
+    try {
+      debugPrint('[Repository] 🔍 Local search: "$query" (limit: $safeLimit)');
+
+      // Get all history items (they're cached locally via watchHistory stream)
+      final allItems = await getHistory(limit: 100); // Search more items locally
+
+      // Lightweight local search - case-insensitive substring match
+      final lowerQuery = query.toLowerCase();
+      final results = allItems.where((item) {
+        // Search in content
+        if (item.content.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+
+        // Search in device name if present
+        if (item.deviceName != null &&
+            item.deviceName!.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+
+        // Search in mime type if present (e.g., "image/png")
+        if (item.mimeType != null &&
+            item.mimeType!.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+
+        return false;
+      }).take(safeLimit).toList();
+
+      debugPrint('[Repository] ✓ Found ${results.length} results locally');
+
+      return results;
+    } on SecurityException {
+      rethrow;
+    } on ValidationException {
+      rethrow;
+    } catch (e) {
+      debugPrint('[Repository] ✗ Failed to search history: $e');
+      throw RepositoryException('Failed to search history: $e');
+    }
+  }
+
+  @override
+  Stream<List<ClipboardItem>> watchHistory({int limit = 15}) {
     // Validate limit parameter
     final safeLimit = _validateLimit(limit);
 
@@ -181,7 +475,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  Future<List<ClipboardItem>> getHistory({int limit = 10}) async {
+  Future<List<ClipboardItem>> getHistory({int limit = 15}) async {
     // Validate limit parameter
     final safeLimit = _validateLimit(limit);
 
@@ -248,7 +542,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  Future<void> cleanupOldItems({int keepCount = 10}) async {
+  Future<void> cleanupOldItems({int keepCount = 15}) async {
     try {
       // Get current authenticated user
       final userId = _client.auth.currentUser?.id;
@@ -425,6 +719,22 @@ class ClipboardRepository implements IClipboardRepository {
           }
         }
 
+        // Parse content_type (default to text for backwards compatibility)
+        final contentTypeStr = json['content_type'] as String? ?? 'text';
+        final contentType = ContentType.fromString(contentTypeStr);
+
+        // Parse rich_text_format if present
+        final richTextFormatStr = json['rich_text_format'] as String?;
+        final richTextFormat = richTextFormatStr != null
+            ? RichTextFormat.fromString(richTextFormatStr)
+            : null;
+
+        // Parse metadata if present
+        final metadataJson = json['metadata'] as Map<String, dynamic>?;
+        final metadata = metadataJson != null
+            ? ClipboardMetadata.fromJson(metadataJson)
+            : null;
+
         // Create ClipboardItem with content directly from clipboard table
         final item = ClipboardItem(
           id: json['id'].toString(),
@@ -435,6 +745,12 @@ class ClipboardRepository implements IClipboardRepository {
           targetDeviceTypes: targetDeviceTypes,
           isPublic: json['is_public'] as bool? ?? false,
           isEncrypted: json['is_encrypted'] as bool? ?? false,
+          contentType: contentType,
+          storagePath: json['storage_path'] as String?,
+          fileSizeBytes: json['file_size_bytes'] as int?,
+          mimeType: json['mime_type'] as String?,
+          metadata: metadata,
+          richTextFormat: richTextFormat,
           createdAt: DateTime.parse(json['created_at'] as String),
         );
 
@@ -467,6 +783,12 @@ class ClipboardRepository implements IClipboardRepository {
             deviceType: item.deviceType,
             targetDeviceTypes: item.targetDeviceTypes,
             isEncrypted: item.isEncrypted,
+            contentType: item.contentType,
+            storagePath: item.storagePath,
+            fileSizeBytes: item.fileSizeBytes,
+            mimeType: item.mimeType,
+            metadata: item.metadata,
+            richTextFormat: item.richTextFormat,
             createdAt: item.createdAt,
           ),
         );
@@ -487,10 +809,10 @@ class ClipboardRepository implements IClipboardRepository {
 
     try {
       final response = await _client
-        .from('clipboard')
-        .select('id')
-        .eq('user_id', userId)
-        .count();
+          .from('clipboard')
+          .select('id')
+          .eq('user_id', userId)
+          .count();
 
       // The count method returns a PostgrestQueryResponse with count property
       return response.count;
@@ -501,9 +823,19 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Dispose resources to prevent memory leaks
+  /// NOTE: Since this is a singleton, this should rarely be called.
+  /// EncryptionService is also a singleton and should not be disposed.
+  @override
+  /// Reset repository state for user switch or sign out
+  @override
+  void reset() {
+    debugPrint('[ClipboardRepository] Resetting repository state');
+    _encryptionInitialized = false;
+  }
+
   @override
   void dispose() {
-    _encryptionService.dispose();
+    // NOTE: EncryptionService is a singleton - do NOT dispose it here
     _encryptionInitialized = false;
   }
 
@@ -530,6 +862,20 @@ class ClipboardRepository implements IClipboardRepository {
     } on Exception {
       // Handle any exceptions when accessing hostname
       return null;
+    }
+  }
+
+  /// Get file extension from MIME type
+  String _getExtension(String mimeType) {
+    switch (mimeType) {
+      case 'image/png':
+        return 'png';
+      case 'image/jpeg':
+        return 'jpg';
+      case 'image/gif':
+        return 'gif';
+      default:
+        return 'bin';
     }
   }
 }

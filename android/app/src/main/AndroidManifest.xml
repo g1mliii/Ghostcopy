@@ -38,6 +38,16 @@
                 <data android:scheme="ghostcopy" android:host="reset-password" />
             </intent-filter>
         </activity>
+
+        <!-- Transparent copy activity for notifications -->
+        <activity
+            android:name=".CopyActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

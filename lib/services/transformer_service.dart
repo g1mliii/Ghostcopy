@@ -1,5 +1,5 @@
 /// Types of content that can be transformed
-enum ContentType {
+enum TransformerContentType {
   json,
   jwt,
   hexColor,
@@ -13,13 +13,13 @@ class ContentDetectionResult {
     this.metadata,
   });
 
-  final ContentType type;
+  final TransformerContentType type;
   final Map<String, dynamic>? metadata; // e.g., {"valid": true, "length": 123}
 
   bool get isTransformable =>
-      type == ContentType.json ||
-      type == ContentType.jwt ||
-      type == ContentType.hexColor;
+      type == TransformerContentType.json ||
+      type == TransformerContentType.jwt ||
+      type == TransformerContentType.hexColor;
 }
 
 /// Transformation result with enhanced content
@@ -74,5 +74,5 @@ abstract class ITransformerService {
   /// For Hex Color: Returns color value and RGB breakdown
   ///
   /// Will be implemented in tasks 15-16
-  TransformationResult transform(String content, ContentType type);
+  TransformationResult transform(String content, TransformerContentType type);
 }

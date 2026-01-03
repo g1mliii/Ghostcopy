@@ -137,9 +137,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
       }
     } else {
       // Enable encryption - show passphrase dialog
+      // Get current user ID
+      final userId = widget.authService.currentUserId;
+      if (userId == null) {
+        // User not authenticated - should not happen
+        debugPrint('[SettingsPanel] Cannot enable encryption: user not authenticated');
+        return;
+      }
+
       final success = await showPassphraseDialog(
         context,
         widget.encryptionService!,
+        userId,
       );
 
       if (success && mounted) {
@@ -221,6 +230,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 setState(() => _autoStartEnabled = value);
               }
             },
+          ),
+          const SizedBox(height: 10),
+        ],
+        // Encryption toggle (all platforms)
+        if (widget.encryptionService != null) ...[
+          _buildSettingToggle(
+            title: 'Enable encryption',
+            subtitle: _encryptionEnabled
+                ? 'Clipboard items are encrypted'
+                : 'Encrypt clipboard items with a passphrase',
+            value: _encryptionEnabled,
+            onChanged: (_) => _toggleEncryption(),
           ),
           const SizedBox(height: 10),
         ],

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -45,7 +46,8 @@ import 'ui/widgets/tray_menu_window.dart';
 // Configuration - These values are safe to be public
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
 const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-const _supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+const _supabaseAnonKey =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,11 +55,13 @@ Future<void> main(List<String> args) async {
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');
 
-  // Initialize Supabase
-  await Supabase.initialize(
-    url: _supabaseUrl,
-    anonKey: _supabaseAnonKey,
-  );
+  // Register custom URL scheme for OAuth callbacks (Windows only)
+  if (Platform.isWindows) {
+    await _registerWindowsUrlScheme();
+  }
+
+  // Initialize Supabase with session persistence
+  await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
 
   // Initialize AuthService
   final authService = AuthService();
@@ -87,7 +91,7 @@ Future<void> main(List<String> args) async {
     final toastWindowService = ToastWindowService();
     final settingsService = SettingsService();
     final autoStartService = AutoStartService();
-    final clipboardRepository = ClipboardRepository();
+    final clipboardRepository = ClipboardRepository.instance;
 
     // Initialize stateless utility services (singletons for consistency)
     final securityService = SecurityService();
@@ -130,7 +134,9 @@ Future<void> main(List<String> args) async {
     // to ensure it can be properly cancelled in dispose()
 
     // Initialize services with lifecycle support
-    final windowService = WindowService(lifecycleController: lifecycleController);
+    final windowService = WindowService(
+      lifecycleController: lifecycleController,
+    );
     final notificationService = NotificationService(
       windowService: windowService,
       toastWindowService: toastWindowService,
@@ -200,10 +206,34 @@ Future<void> main(List<String> args) async {
       fcmService = FcmService();
       await fcmService.initialize();
 
+      // Configure Android notification channel for clipboard sync
+      if (Platform.isAndroid) {
+        final channel = AndroidNotificationChannel(
+          'clipboard_sync', // Channel ID
+          'Clipboard Sync', // Channel name
+          description: 'Notifications for clipboard synchronization',
+          importance: Importance.high, // High importance for heads-up notifications
+          playSound: false, // Silent for invisible sync (adjust if needed)
+          enableVibration: false, // No vibration for invisible sync (adjust if needed)
+        );
+
+        final flutterLocalNotificationsPlugin =
+            FlutterLocalNotificationsPlugin();
+
+        await flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(channel);
+
+        debugPrint('[App] ✅ Android notification channel created: clipboard_sync');
+      }
+
       // Get FCM token and update device
       fcmToken = await fcmService.getToken();
       if (fcmToken != null) {
-        debugPrint('[App] Got FCM token, will update device after registration');
+        debugPrint(
+          '[App] Got FCM token, will update device after registration',
+        );
       }
 
       // Listen for token refresh and update device
@@ -212,16 +242,22 @@ Future<void> main(List<String> args) async {
         await deviceService.updateFcmToken(newToken);
       });
     } on Exception catch (e) {
-      debugPrint('[App] ⚠️  Firebase initialization skipped (not configured): $e');
-      debugPrint('[App] Push notifications will not work until Firebase is configured');
+      debugPrint(
+        '[App] ⚠️  Firebase initialization skipped (not configured): $e',
+      );
+      debugPrint(
+        '[App] Push notifications will not work until Firebase is configured',
+      );
     }
 
-    runApp(MyApp(
-      authService: authService,
-      deviceService: deviceService,
-      fcmService: fcmService,
-      fcmToken: fcmToken,
-    ));
+    runApp(
+      MyApp(
+        authService: authService,
+        deviceService: deviceService,
+        fcmService: fcmService,
+        fcmToken: fcmToken,
+      ),
+    );
   }
 }
 
@@ -306,24 +342,25 @@ class _MyAppState extends State<MyApp> {
       });
 
       // Wire up power events to lifecycle controller
-      _powerEventSubscription = widget.systemPowerService?.powerEventStream.listen((event) {
-        debugPrint('[Main] 🔌 Power event: ${event.type.name}');
+      _powerEventSubscription = widget.systemPowerService?.powerEventStream
+          .listen((event) {
+            debugPrint('[Main] 🔌 Power event: ${event.type.name}');
 
-        switch (event.type) {
-          case PowerEventType.systemSleep:
-            widget.lifecycleController?.onSystemSleep();
-            break;
-          case PowerEventType.systemWake:
-            widget.lifecycleController?.onSystemWake();
-            break;
-          case PowerEventType.screenLock:
-            widget.lifecycleController?.onScreenLock();
-            break;
-          case PowerEventType.screenUnlock:
-            widget.lifecycleController?.onScreenUnlock();
-            break;
-        }
-      });
+            switch (event.type) {
+              case PowerEventType.systemSleep:
+                widget.lifecycleController?.onSystemSleep();
+                break;
+              case PowerEventType.systemWake:
+                widget.lifecycleController?.onSystemWake();
+                break;
+              case PowerEventType.screenLock:
+                widget.lifecycleController?.onScreenLock();
+                break;
+              case PowerEventType.screenUnlock:
+                widget.lifecycleController?.onScreenUnlock();
+                break;
+            }
+          });
 
       // Set up tray right-click to show custom menu
       (widget.trayService as TrayService?)?.onRightClick = _showTrayMenu;
@@ -377,6 +414,7 @@ class _MyAppState extends State<MyApp> {
       widget.lifecycleController?.dispose();
       widget.settingsService?.dispose();
       widget.autoStartService?.dispose();
+      // NOTE: ClipboardRepository is a singleton - dispose is a no-op now
       widget.clipboardRepository?.dispose();
       widget.clipboardSyncService?.dispose();
       widget.systemPowerService?.dispose();
@@ -408,13 +446,22 @@ class _MyAppState extends State<MyApp> {
     await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setAsFrameless();
 
+    // macOS-specific: Set window to be transparent and ignore mouse events on transparent areas
+    if (Platform.isMacOS) {
+      await windowManager.setHasShadow(false); // Remove default window shadow
+    }
+
     // Wait for resize to complete
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    // Position menu above taskbar at bottom-right
-    // Use Alignment to position, but we'll use topRight anchored to bottom
-    // This positions it in bottom-right area but the menu extends upward
-    await windowManager.setAlignment(Alignment.bottomRight);
+    // Position menu based on platform:
+    // - macOS: Top-right (menu bar is at top)
+    // - Windows: Bottom-right (taskbar is at bottom)
+    if (Platform.isMacOS) {
+      await windowManager.setAlignment(Alignment.topRight);
+    } else {
+      await windowManager.setAlignment(Alignment.bottomRight);
+    }
 
     // Show with correct size and content
     await windowManager.show();
@@ -513,10 +560,55 @@ class _MyAppState extends State<MyApp> {
     return MobileMainScreen(
       authService: widget.authService,
       deviceService: widget.deviceService,
-      clipboardRepository: ClipboardRepository(),
+      clipboardRepository: ClipboardRepository.instance,
       securityService: SecurityService(),
       transformerService: TransformerService(),
     );
+  }
+}
+
+/// Register ghostcopy:// URL scheme in Windows Registry for OAuth callbacks
+Future<void> _registerWindowsUrlScheme() async {
+  try {
+    // Get the executable path
+    final exePath = Platform.resolvedExecutable;
+
+    // Register the URL protocol in Windows Registry
+    // This allows ghostcopy:// links to open the app
+    await Process.run('reg', [
+      'add',
+      r'HKCU\Software\Classes\ghostcopy',
+      '/ve',
+      '/d',
+      'URL:GhostCopy Protocol',
+      '/f',
+    ]);
+
+    await Process.run('reg', [
+      'add',
+      r'HKCU\Software\Classes\ghostcopy',
+      '/v',
+      'URL Protocol',
+      '/d',
+      '',
+      '/f',
+    ]);
+
+    await Process.run('reg', [
+      'add',
+      r'HKCU\Software\Classes\ghostcopy\shell\open\command',
+      '/ve',
+      '/d',
+      '"$exePath" "%1"',
+      '/f',
+    ]);
+
+    debugPrint(
+      '[Main] ✅ Registered ghostcopy:// URL scheme in Windows Registry',
+    );
+  } on Exception catch (e) {
+    debugPrint('[Main] ⚠️ Failed to register URL scheme: $e');
+    // Non-fatal - continue app startup
   }
 }
 

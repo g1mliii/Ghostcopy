@@ -5,7 +5,6 @@ import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
-import '../../services/impl/passphrase_sync_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -169,7 +168,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   @override
   void dispose() {
-    _encryptionService?.dispose();
+    // NOTE: EncryptionService is a singleton - do NOT dispose it here
     super.dispose();
   }
 
@@ -178,10 +177,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     if (userId != null) {
       setState(() => _encryptionLoading = true);
 
-      // Initialize with cloud backup support for authenticated users
-      _encryptionService = EncryptionService(
-        passphraseSyncService: PassphraseSyncService(),
-      );
+      // Use shared singleton instance
+      _encryptionService = EncryptionService.instance;
       await _encryptionService!.initialize(userId);
 
       final enabled = await _encryptionService!.isEnabled();

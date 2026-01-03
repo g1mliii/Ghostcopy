@@ -1,5 +1,5 @@
 # Project-level configuration.
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.19)
 project(ghostcopy LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
@@ -8,7 +8,13 @@ set(BINARY_NAME "ghostcopy")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
-cmake_policy(VERSION 3.14...3.25)
+cmake_policy(VERSION 3.19...3.25)
+
+# Set policy version for Firebase compatibility
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+# Suppress CMake deprecation warnings from third-party dependencies (e.g., Firebase)
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)

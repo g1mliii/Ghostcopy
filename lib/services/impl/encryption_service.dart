@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../encryption_service.dart';
 import '../passphrase_sync_service.dart';
+import 'passphrase_sync_service.dart';
 
 /// Parameters for background encryption
 class _EncryptParams {
@@ -50,12 +51,37 @@ class _DecryptParams {
 ///
 /// **CRITICAL SECURITY**: No shared secrets - each user controls their own passphrase.
 /// If passphrase is lost, encrypted data is permanently irrecoverable.
+///
+/// **SINGLETON PATTERN**: Use EncryptionService.instance to prevent redundant
+/// PBKDF2 key derivation that causes UI jank.
 class EncryptionService implements IEncryptionService {
-  EncryptionService({
+  /// Factory constructor for backwards compatibility and testing
+  factory EncryptionService({
+    FlutterSecureStorage? secureStorage,
+    IPassphraseSyncService? passphraseSyncService,
+  }) {
+    // For testing with custom dependencies, create a new instance
+    if (secureStorage != null || passphraseSyncService != null) {
+      return EncryptionService._internal(
+        secureStorage: secureStorage,
+        passphraseSyncService: passphraseSyncService,
+      );
+    }
+    // Otherwise, return singleton
+    return instance;
+  }
+  // Private constructor for singleton
+  EncryptionService._internal({
     FlutterSecureStorage? secureStorage,
     IPassphraseSyncService? passphraseSyncService,
   }) : _secureStorage = secureStorage ?? const FlutterSecureStorage(),
        _passphraseSync = passphraseSyncService;
+
+  // Singleton instance
+  // Singleton instance
+  static final EncryptionService instance = EncryptionService._internal(
+    passphraseSyncService: PassphraseSyncService(),
+  );
 
   final FlutterSecureStorage _secureStorage;
   final IPassphraseSyncService? _passphraseSync;
@@ -65,9 +91,9 @@ class EncryptionService implements IEncryptionService {
   // Guard to prevent concurrent initializations across callers
   Future<void>? _initFuture;
 
-  // Storage keys
-  static const _passphraseKey = 'encryption_passphrase';
-  static const _verificationHashKey = 'encryption_verification_hash';
+  // Storage keys - user-specific to prevent cross-user passphrase leakage
+  String get _passphraseKey => 'encryption_passphrase_$_userId';
+  String get _verificationHashKey => 'encryption_verification_hash_$_userId';
 
   // PBKDF2 algorithm for key derivation is created in-isolate when needed
 
@@ -205,6 +231,67 @@ class EncryptionService implements IEncryptionService {
     } on Exception catch (e) {
       debugPrint('Failed to clear passphrase: $e');
       rethrow;
+    }
+  }
+
+  /// Reset encryption state for user switch or sign out
+  /// Call this when user logs out or switches accounts
+  @override
+  void reset() {
+    debugPrint('[EncryptionService] Resetting encryption state');
+    _initialized = false;
+    _userId = null;
+    _keyBytes = null;
+    _initFuture = null;
+    // Note: _passphraseSync is final and cannot be reset
+  }
+
+  /// Auto-restore passphrase from cloud backup after Google OAuth sign-in
+  /// Returns true if passphrase was restored, false if no backup or restore failed
+  @override
+  Future<bool> autoRestoreFromCloud() async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+
+    // Check if passphrase already exists locally
+    final existingPassphrase = await _secureStorage.read(key: _passphraseKey);
+    if (existingPassphrase != null && existingPassphrase.isNotEmpty) {
+      debugPrint(
+        '[EncryptionService] Passphrase already exists locally, skipping restore',
+      );
+      return false;
+    }
+
+    // Try to get passphrase from cloud backup
+    if (_passphraseSync == null) {
+      debugPrint('[EncryptionService] PassphraseSync not available');
+      return false;
+    }
+
+    try {
+      final cloudPassphrase = await _passphraseSync.getPassphraseFromCloud();
+      if (cloudPassphrase == null || cloudPassphrase.isEmpty) {
+        debugPrint('[EncryptionService] No cloud backup found');
+        return false;
+      }
+
+      debugPrint('[EncryptionService] Found cloud backup, restoring...');
+
+      // Store the passphrase locally
+      final success = await setPassphrase(cloudPassphrase);
+      if (success) {
+        debugPrint('[EncryptionService] ✅ Passphrase auto-restored from cloud');
+      } else {
+        debugPrint(
+          '[EncryptionService] ❌ Failed to restore passphrase from cloud',
+        );
+      }
+
+      return success;
+    } on Exception catch (e) {
+      debugPrint('[EncryptionService] Failed to auto-restore from cloud: $e');
+      return false;
     }
   }
 
@@ -428,32 +515,16 @@ class EncryptionService implements IEncryptionService {
     }
   }
 
-  // Top-level helper that runs PBKDF2 derivation in an isolate.
-  // `compute` requires a top-level or static entrypoint.
-  Future<List<int>> _deriveKeyIsolate(Map<String, Object> params) async {
-    final passphrase = params['passphrase']! as String;
-    final userId = params['userId']! as String;
-    final iterations = params['iterations']! as int;
-
-    final saltBytes = sha256.convert(utf8.encode(userId)).bytes;
-
-    final pbkdf2 = crypto.Pbkdf2(
-      macAlgorithm: crypto.Hmac.sha256(),
-      iterations: iterations,
-      bits: 256,
-    );
-
-    final secretKey = await pbkdf2.deriveKey(
-      secretKey: crypto.SecretKey(utf8.encode(passphrase)),
-      nonce: saltBytes,
-    );
-
-    return secretKey.extractBytes();
-  }
-
+  /// Dispose resources and clear sensitive data from memory
+  ///
+  /// ⚠️ WARNING: This is a SINGLETON service and should NEVER be disposed.
+  /// This method exists only for testing purposes with custom instances.
+  /// Calling dispose() on the singleton will break encryption for the entire app!
   @override
   void dispose() {
-    debugPrint('[EncryptionService] Disposing service...');
+    debugPrint(
+      '[EncryptionService] ⚠️ WARNING: Disposing EncryptionService (should only happen in tests!)',
+    );
 
     // Clear sensitive key material from memory
     if (_keyBytes != null) {
@@ -468,6 +539,29 @@ class EncryptionService implements IEncryptionService {
       '[EncryptionService] ✅ Disposed - all sensitive data cleared from memory',
     );
   }
+}
+
+/// Top-level function for PBKDF2 key derivation in isolate
+/// Must be top-level or static to avoid serializing the EncryptionService instance
+Future<List<int>> _deriveKeyIsolate(Map<String, Object> params) async {
+  final passphrase = params['passphrase']! as String;
+  final userId = params['userId']! as String;
+  final iterations = params['iterations']! as int;
+
+  final saltBytes = sha256.convert(utf8.encode(userId)).bytes;
+
+  final pbkdf2 = crypto.Pbkdf2(
+    macAlgorithm: crypto.Hmac.sha256(),
+    iterations: iterations,
+    bits: 256,
+  );
+
+  final secretKey = await pbkdf2.deriveKey(
+    secretKey: crypto.SecretKey(utf8.encode(passphrase)),
+    nonce: saltBytes,
+  );
+
+  return secretKey.extractBytes();
 }
 
 /// Exception thrown when encryption/decryption operations fail

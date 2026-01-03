@@ -4,10 +4,13 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
+  file_selector_windows
   firebase_core
   flutter_secure_storage_windows
   hotkey_manager_windows
+  irondash_engine_context
   screen_retriever_windows
+  super_native_extensions
   system_tray
   url_launcher_windows
   window_manager

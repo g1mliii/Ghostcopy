@@ -59,5 +59,10 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Photo Library Permissions for saving clipboard images -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>GhostCopy needs access to save clipboard images to your photo library.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>GhostCopy needs access to save clipboard images to your photo library.</string>
 </dict>
 </plist>

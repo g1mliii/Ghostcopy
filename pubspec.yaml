@@ -26,7 +26,6 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
-  clipboard: ^3.0.8
   crypto: ^3.0.3
   cryptography: ^2.7.0
   cupertino_icons: ^1.0.8
@@ -41,12 +40,14 @@ dependencies:
   google_sign_in: ^6.2.2
   home_widget: ^0.8.1
   hotkey_manager: ^0.2.0
+  image_picker: ^1.0.7
   launch_at_startup: ^0.5.1
   mobile_scanner: ^7.1.4
   package_info_plus: ^9.0.0
   qr_flutter: ^4.1.0
   shared_preferences: ^2.2.2
   supabase_flutter: ^2.0.0
+  super_clipboard: ^0.3.0+2
   system_tray: ^2.0.3
   timeago: ^3.7.0
   window_manager: ^0.5.1

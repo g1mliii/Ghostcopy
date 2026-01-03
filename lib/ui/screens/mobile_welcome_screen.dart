@@ -5,11 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../main.dart';
-import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
-import '../../services/impl/passphrase_sync_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -54,10 +52,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   bool _qrScanning = false;
   String? _qrError;
 
-  // Repository instance (cached to prevent multiple allocations)
-  late final IClipboardRepository _clipboardRepository =
-      ClipboardRepository();
-
   @override
   void initState() {
     super.initState();
@@ -74,7 +68,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     _scannerController?.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _clipboardRepository.dispose();
+    // NOTE: ClipboardRepository is a singleton - do NOT dispose it here
     super.dispose();
   }
 
@@ -638,10 +632,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       if (encryptedPassphrase != null) {
         debugPrint('[QR] Importing encrypted passphrase...');
         try {
-          // Initialize with cloud backup support for authenticated users
-          final encryptionService = EncryptionService(
-            passphraseSyncService: PassphraseSyncService(),
-          );
+          // Use shared singleton instance
+          final encryptionService = EncryptionService.instance;
           final userId = supabase.auth.currentUser?.id;
           if (userId != null) {
             await encryptionService.initialize(userId);
@@ -651,7 +643,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             } else {
               debugPrint('[QR] ⚠️ Failed to import passphrase');
             }
-            encryptionService.dispose();
+            // NOTE: EncryptionService is a singleton - do NOT dispose it
           }
         } on Exception catch (e) {
           debugPrint('[QR] ⚠️ Passphrase import error: $e');
@@ -717,6 +709,26 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       // Success - register device with FCM token before navigating
       if (mounted) {
+        // Auto-restore passphrase from cloud backup if available
+        final userId = widget.authService.currentUserId;
+        if (userId != null) {
+          final encryptionService = EncryptionService.instance;
+          await encryptionService.initialize(userId);
+          final restored = await encryptionService.autoRestoreFromCloud();
+          if (restored) {
+            debugPrint('[Mobile] ✅ Encryption passphrase auto-restored from cloud');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Encryption passphrase restored from cloud'),
+                  backgroundColor: GhostColors.success,
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            }
+          }
+        }
+
         // Register device
         await widget.deviceService.registerCurrentDevice();
 
@@ -769,6 +781,27 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       if (mounted) {
         if (success) {
+          // Auto-restore passphrase from cloud backup if available
+          final userId = widget.authService.currentUserId;
+          if (userId != null) {
+            final encryptionService = EncryptionService.instance;
+            await encryptionService.initialize(userId);
+            final restored = await encryptionService.autoRestoreFromCloud();
+            if (restored) {
+              debugPrint('[Mobile] ✅ Encryption passphrase auto-restored from cloud');
+              // Show a toast/snackbar to inform user
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Encryption passphrase restored from cloud'),
+                    backgroundColor: GhostColors.success,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              }
+            }
+          }
+
           // Success - register device with FCM token before navigating
           await widget.deviceService.registerCurrentDevice();
 
