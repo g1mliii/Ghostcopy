@@ -40,11 +40,14 @@ dependencies:
   google_sign_in: ^6.2.2
   home_widget: ^0.8.1
   hotkey_manager: ^0.2.0
+  image: ^4.0.17
   image_picker: ^1.0.7
   launch_at_startup: ^0.5.1
   mobile_scanner: ^7.1.4
   package_info_plus: ^9.0.0
+  path_provider: ^2.1.1
   qr_flutter: ^4.1.0
+  receive_sharing_intent: ^1.8.0
   shared_preferences: ^2.2.2
   supabase_flutter: ^2.0.0
   super_clipboard: ^0.3.0+2

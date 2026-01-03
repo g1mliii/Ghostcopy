@@ -142,11 +142,11 @@ Deno.serve(async (req: Request) => {
     }
 
     // ------------------------------------------------------------------
-    // FETCH CLIPBOARD ITEM TO DETERMINE CONTENT TYPE
+    // FETCH CLIPBOARD ITEM TO DETERMINE CONTENT TYPE & CONTENT
     // ------------------------------------------------------------------
     const { data: clipboardItem, error: clipboardError } = await supabaseClient
       .from('clipboard')
-      .select('id, content_type, rich_text_format, file_size_bytes')
+      .select('id, content_type, rich_text_format, file_size_bytes, content')
       .eq('id', clipboard_id)
       .eq('user_id', user.id)  // Security: ensure user owns this item
       .single();
@@ -165,6 +165,14 @@ Deno.serve(async (req: Request) => {
     const contentType = clipboardItem.content_type || 'text';
     const isImage = contentType.startsWith('image_');
     const isRichText = contentType === 'html' || contentType === 'markdown';
+
+    // For FCM data payload, include content if it's small enough (< 4KB max FCM payload)
+    // Large content will be fetched by app using clipboard_id after notification tap
+    let clipboardContent = '';
+    if (!isImage && clipboardItem.content && clipboardItem.content.length < 4096) {
+      clipboardContent = clipboardItem.content;
+    }
+    // If content is too large or is an image, app will fetch via clipboard_id
 
     // Determine notification title and body based on content type
     let notificationTitle: string;
@@ -270,15 +278,28 @@ Deno.serve(async (req: Request) => {
             content_type: contentType,
             // For images, app will fetch from storage using clipboard_id
             is_image: isImage ? 'true' : 'false',
+            // Include content if small enough for native handlers
+            clipboard_content: clipboardContent,
           },
-          // Android priority for better delivery
+          // Android configuration with click intent
           android: {
             priority: 'high' as const,
+            notification: {
+              // Click action triggers CopyActivity
+              clickAction: 'com.ghostcopy.ghostcopy.COPY_ACTION',
+            },
           },
-          // APNs priority
+          // APNs configuration for iOS with category for notification actions
           apns: {
             headers: {
               'apns-priority': '10',
+            },
+            payload: {
+              aps: {
+                // Category must match UNNotificationCategory in AppDelegate.swift
+                category: 'CLIPBOARD_SYNC',
+                'mutable-content': 1,
+              },
             },
           },
         }));

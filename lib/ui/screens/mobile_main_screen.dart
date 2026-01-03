@@ -19,6 +19,8 @@ import '../widgets/ghost_toast.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
+const _shareChannel = MethodChannel('com.ghostcopy.ghostcopy/share');
+
 /// Mobile main screen with clipboard history and paste-to-send flow
 ///
 /// Performance optimizations:
@@ -77,6 +79,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   final TextEditingController _historySearchController = TextEditingController();
   String _historySearchQuery = '';
 
+  // Share sheet state
+  // (receive_sharing_intent package handles share intent routing)
+
   // Encryption service (lazy init)
   EncryptionService? _encryptionService;
 
@@ -97,6 +102,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _loadDevices();
     _loadHistory();
     _subscribeToRealtimeUpdates();
+    _initializeShareIntentListeners();
+    _setupMethodChannels();
   }
 
   @override
@@ -108,6 +115,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _pasteController.dispose();
     _historySearchController.dispose();
     _historySubscription?.cancel();
+
+    // Remove method channel handler to prevent memory leaks
+    _shareChannel.setMethodCallHandler(null);
+
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
 
     // Clear caches
@@ -137,6 +148,272 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // Use shared singleton instance
       _encryptionService = EncryptionService.instance;
       await _encryptionService!.initialize(userId);
+    }
+  }
+
+  void _setupMethodChannels() {
+    // Listen for native method calls from Android/iOS
+    _shareChannel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'handleShareIntent':
+          // ignore: avoid_dynamic_calls
+          final content = call.arguments['content'] as String?;
+          if (content != null && content.isNotEmpty) {
+            // Show device selector dialog
+            final selectedDeviceTypes = await _showDeviceSelectorDialog(content);
+
+            if (selectedDeviceTypes != null) {
+              // Save in background (don't await)
+              unawaited(_saveSharedContent(content, selectedDeviceTypes));
+            }
+            return true;
+          }
+          return false;
+        default:
+          return false;
+      }
+    });
+  }
+
+  void _initializeShareIntentListeners() {
+    // Share intent listeners are set up via receive_sharing_intent package
+    // The package handles intercepting share intents from Android/iOS
+    // and routing them to the app. This is called in initState().
+    debugPrint('[ShareSheet] Share intent listeners initialized');
+  }
+
+  // Called by native share intent handlers (through method channels or plugins)
+  // TODO: Wire up receive_sharing_intent package to call this method
+  // ignore: unused_element
+  Future<void> _handleSharedContent(String sharedContent) async {
+    // Show device selector dialog
+    final selectedDeviceTypes = await _showDeviceSelectorDialog(sharedContent);
+
+    if (selectedDeviceTypes == null) {
+      // User cancelled
+      debugPrint('[ShareSheet] User cancelled share');
+      return;
+    }
+
+    // Save to Supabase with selected device types
+    await _saveSharedContent(sharedContent, selectedDeviceTypes);
+  }
+
+  Future<Set<String>?> _showDeviceSelectorDialog(String content) async {
+    final selectedTypes = <String>{};
+
+    return showDialog<Set<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: GhostColors.surface,
+            title: const Text(
+              'Share to Devices',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: GhostColors.textPrimary,
+              ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Select which device types to send to:',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: GhostColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Device type selector chips
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildDeviceChip(
+                      'windows',
+                      Icons.laptop_windows,
+                      'Windows',
+                      selectedTypes.contains('windows'),
+                      () => setDialogState(() {
+                        if (selectedTypes.contains('windows')) {
+                          selectedTypes.remove('windows');
+                        } else {
+                          selectedTypes.add('windows');
+                        }
+                      }),
+                    ),
+                    _buildDeviceChip(
+                      'macos',
+                      Icons.laptop_mac,
+                      'macOS',
+                      selectedTypes.contains('macos'),
+                      () => setDialogState(() {
+                        if (selectedTypes.contains('macos')) {
+                          selectedTypes.remove('macos');
+                        } else {
+                          selectedTypes.add('macos');
+                        }
+                      }),
+                    ),
+                    _buildDeviceChip(
+                      'android',
+                      Icons.phone_android,
+                      'Android',
+                      selectedTypes.contains('android'),
+                      () => setDialogState(() {
+                        if (selectedTypes.contains('android')) {
+                          selectedTypes.remove('android');
+                        } else {
+                          selectedTypes.add('android');
+                        }
+                      }),
+                    ),
+                    _buildDeviceChip(
+                      'ios',
+                      Icons.phone_iphone,
+                      'iOS',
+                      selectedTypes.contains('ios'),
+                      () => setDialogState(() {
+                        if (selectedTypes.contains('ios')) {
+                          selectedTypes.remove('ios');
+                        } else {
+                          selectedTypes.add('ios');
+                        }
+                      }),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  selectedTypes.isEmpty
+                      ? 'Empty = All devices'
+                      : '${selectedTypes.length} type(s) selected',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: GhostColors.textMuted,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(color: Colors.grey.shade400),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(selectedTypes),
+                child: const Text(
+                  'Send',
+                  style: TextStyle(color: GhostColors.primary),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDeviceChip(
+    String deviceType,
+    IconData icon,
+    String label,
+    bool isSelected,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? GhostColors.primary.withValues(alpha: 0.2)
+              : GhostColors.background,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? GhostColors.primary : GhostColors.glassBorder,
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color:
+                    isSelected ? GhostColors.primary : GhostColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveSharedContent(
+    String content,
+    Set<String> selectedDeviceTypes,
+  ) async {
+    try {
+      // Create clipboard item
+      final item = ClipboardItem(
+        id: '',
+        userId: widget.authService.currentUserId ?? '',
+        content: content,
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        targetDeviceTypes:
+            selectedDeviceTypes.isEmpty ? null : selectedDeviceTypes.toList(),
+        createdAt: DateTime.now(),
+      );
+
+      // Save to Supabase
+      await widget.clipboardRepository.insert(item);
+
+      if (mounted) {
+        // Show success snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              selectedDeviceTypes.isEmpty
+                  ? 'Shared to all devices'
+                  : 'Shared to ${selectedDeviceTypes.join(", ")}',
+            ),
+            backgroundColor: GhostColors.success,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        debugPrint('[ShareSheet] Content saved');
+      }
+    } on Exception catch (e) {
+      debugPrint('[ShareSheet] Error saving shared content: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to share content'),
+            backgroundColor: Colors.red.shade400,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 

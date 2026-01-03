@@ -48,4 +48,10 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // WorkManager for background tasks (widget refresh)
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
+
+    // Gson for JSON serialization (widget data persistence)
+    implementation("com.google.code.gson:gson:2.10.1")
 }

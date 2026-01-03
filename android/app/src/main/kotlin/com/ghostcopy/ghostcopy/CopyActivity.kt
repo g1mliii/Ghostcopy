@@ -17,7 +17,7 @@ class CopyActivity : AppCompatActivity() {
 
         // Extract clipboard content from notification intent
         val clipboardContent = intent.getStringExtra("clipboard_content") ?: ""
-        val deviceName = intent.getStringExtra("device_name") ?: "Another device"
+        val deviceType = intent.getStringExtra("device_type") ?: "Another device"
 
         if (clipboardContent.isNotEmpty()) {
             // Copy to system clipboard
@@ -28,7 +28,7 @@ class CopyActivity : AppCompatActivity() {
             // Optional: Brief toast confirmation (can remove for truly invisible sync)
             Toast.makeText(
                 this,
-                "Copied from $deviceName",
+                "Copied from $deviceType",
                 Toast.LENGTH_SHORT
             ).show()
         }

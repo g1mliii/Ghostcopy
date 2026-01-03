@@ -37,6 +37,17 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="ghostcopy" android:host="reset-password" />
             </intent-filter>
+            <!-- Share sheet intent filters for receiving shared content -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
         </activity>
 
         <!-- Transparent copy activity for notifications -->
@@ -46,7 +57,41 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:noHistory="true"
             android:excludeFromRecents="true"
-            android:launchMode="singleTask" />
+            android:launchMode="singleTask">
+            <!-- Receives notification click action from FCM -->
+            <intent-filter>
+                <action android:name="com.ghostcopy.ghostcopy.COPY_ACTION" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Firebase Messaging Service for handling push notifications -->
+        <service
+            android:name=".FirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Clipboard Widget Provider -->
+        <receiver
+            android:name=".widget.ClipboardWidget"
+            android:exported="true"
+            android:label="GhostCopy">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/clipboard_widget_info" />
+        </receiver>
+
+        <!-- Widget ListView Data Service -->
+        <service
+            android:name=".widget.ClipboardWidgetService"
+            android:permission="android.permission.BIND_REMOTEVIEWS"
+            android:exported="false" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

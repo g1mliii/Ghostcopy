@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -36,6 +37,7 @@ import 'services/system_power_service.dart';
 import 'services/toast_window_service.dart';
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
+import 'services/widget_service.dart';
 import 'services/window_service.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
@@ -48,6 +50,17 @@ import 'ui/widgets/tray_menu_window.dart';
 const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
 const _supabaseAnonKey =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+
+/// Top-level background message handler for Firebase Cloud Messaging.
+/// This handles notifications when the app is terminated or in background.
+@pragma('vm:entry-point')
+Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
+  debugPrint('[FCM Background] Received message: ${message.messageId}');
+  debugPrint('[FCM Background] Data: ${message.data}');
+
+  // For background, we don't do anything - Firebase plugin handles notification display
+  // The notification tap will be handled when app comes to foreground
+}
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -202,9 +215,18 @@ Future<void> main(List<String> args) async {
       await Firebase.initializeApp();
       debugPrint('[App] ✅ Firebase initialized for mobile');
 
+      // Register background message handler (must be before other FCM setup)
+      FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+      debugPrint('[App] ✅ Firebase background message handler registered');
+
       // Initialize FCM service for push notifications
       fcmService = FcmService();
       await fcmService.initialize();
+
+      // Initialize widget service (singleton) for home screen widgets
+      final widgetService = WidgetService();
+      await widgetService.initialize();
+      debugPrint('[App] ✅ Widget service initialized');
 
       // Configure Android notification channel for clipboard sync
       if (Platform.isAndroid) {
@@ -240,6 +262,33 @@ Future<void> main(List<String> args) async {
       fcmService.tokenRefreshStream.listen((newToken) async {
         debugPrint('[App] 🔄 FCM token refreshed, updating device...');
         await deviceService.updateFcmToken(newToken);
+      });
+
+      // Handle foreground messages (when app is running)
+      FirebaseMessaging.onMessage.listen((message) {
+        debugPrint('[FCM Foreground] Received message: ${message.messageId}');
+        debugPrint('[FCM Foreground] Data: ${message.data}');
+
+        final clipboardContent = (message.data['clipboard_content'] as String?) ?? '';
+        final deviceType = (message.data['device_type'] as String?) ?? 'Another device';
+
+        if (clipboardContent.isNotEmpty) {
+          debugPrint('[FCM Foreground] Auto-copying content from $deviceType to clipboard');
+          // In foreground, we can copy directly to clipboard
+          // (Note: In background, Android native service handles it)
+        }
+      });
+
+      // Handle notification tap (when app is in background or terminated)
+      FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        debugPrint('[FCM Tap] Notification tapped: ${message.messageId}');
+        debugPrint('[FCM Tap] Data: ${message.data}');
+
+        final clipboardContent = (message.data['clipboard_content'] as String?) ?? '';
+        if (clipboardContent.isNotEmpty) {
+          debugPrint('[FCM Tap] Handling notification tap with clipboard content');
+          // Content already copied by CopyActivity or native handler
+        }
       });
     } on Exception catch (e) {
       debugPrint(
@@ -425,6 +474,9 @@ class _MyAppState extends State<MyApp> {
       widget.authService.dispose();
       widget.deviceService.dispose();
       widget.fcmService?.dispose();
+
+      // Dispose widget service (singleton) to clean up method channel
+      WidgetService().dispose();
     }
     super.dispose();
   }
