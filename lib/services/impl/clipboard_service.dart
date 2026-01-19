@@ -137,7 +137,10 @@ class ClipboardService implements IClipboardService {
       final item = DataWriterItem()
         ..add(Formats.plainText(''));
 
-      await ClipboardWriter.instance.write([item]);
+      final clipboard = SystemClipboard.instance;
+      if (clipboard != null) {
+        await clipboard.write([item]);
+      }
       debugPrint('[ClipboardService] ✓ Clipboard cleared');
     } on Exception catch (e) {
       debugPrint('[ClipboardService] ✗ Clear failed: $e');
