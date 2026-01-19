@@ -17,6 +17,9 @@ class FcmService implements IFcmService {
   final StreamController<String> _tokenRefreshController =
       StreamController<String>.broadcast();
 
+  // Subscription for token refresh listener (must be cancelled to prevent memory leak)
+  StreamSubscription<String>? _tokenRefreshSubscription;
+
   @override
   Future<void> initialize() async {
     if (_initialized) {
@@ -27,8 +30,8 @@ class FcmService implements IFcmService {
     try {
       debugPrint('[FcmService] Starting initialization...');
 
-      // Listen for token refresh events
-      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+      // Listen for token refresh events (store subscription for cleanup)
+      _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
         debugPrint('[FcmService] 🔄 Token refreshed: ${newToken.substring(0, 20)}...');
         _tokenRefreshController.add(newToken);
       });
@@ -100,6 +103,11 @@ class FcmService implements IFcmService {
   @override
   void dispose() {
     debugPrint('[FcmService] Disposing service...');
+
+    // Cancel token refresh subscription to prevent memory leak
+    _tokenRefreshSubscription?.cancel();
+    _tokenRefreshSubscription = null;
+
     _tokenRefreshController.close();
     _initialized = false;
     debugPrint('[FcmService] ✅ Disposed');

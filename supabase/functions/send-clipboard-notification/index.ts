@@ -28,8 +28,9 @@ const corsHeaders = {
 };
 
 // Server-side rate limiting (in-memory)
+// Higher limit accounts for deduplication filtering out duplicates
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-const RATE_LIMIT_MAX_CALLS = 60; // Max 60 calls per minute per user
+const RATE_LIMIT_MAX_CALLS = 100; // Max 100 calls per minute per user (dedup reduces actual notifications)
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 
 /**
@@ -112,13 +113,35 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Parse request body
-    const {
-      content_preview,
-      device_type,
-      target_device_types,
-      clipboard_id,
-    } = await req.json();
+    // Parse request body - supports both client invocation and webhook payload
+    const body = await req.json();
+
+    // Handle webhook payload vs client invocation
+    let clipboard_id: number;
+    let device_type: string;
+    let target_device_types: string[] | null;
+    let content_preview: string | null = null;
+    let clipboardItemFromWebhook: any = null;
+
+    if (body.record) {
+      // Webhook payload format from database
+      const record = body.record;
+      clipboard_id = record.id;
+      device_type = record.device_type;
+      target_device_types = record.target_device_type; // Can be null, array, or single string
+      clipboardItemFromWebhook = record; // We'll use this data directly
+
+      // Generate content_preview from content if not in webhook
+      if (record.content && !content_preview) {
+        content_preview = record.content.substring(0, 100);
+      }
+    } else {
+      // Client invocation format (deprecated after webhook migration)
+      clipboard_id = body.clipboard_id;
+      device_type = body.device_type;
+      target_device_types = body.target_device_types;
+      content_preview = body.content_preview;
+    }
 
     // Validate required fields
     if (!device_type || !clipboard_id) {
@@ -141,25 +164,36 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Note: Desktop-only filtering is now handled by database trigger.
+    // This edge function is only called if mobile devices are targeted.
+    // See: supabase/migrations/20260104000002_replace_webhook_with_smart_trigger.sql
+
     // ------------------------------------------------------------------
     // FETCH CLIPBOARD ITEM TO DETERMINE CONTENT TYPE & CONTENT
     // ------------------------------------------------------------------
-    const { data: clipboardItem, error: clipboardError } = await supabaseClient
-      .from('clipboard')
-      .select('id, content_type, rich_text_format, file_size_bytes, content')
-      .eq('id', clipboard_id)
-      .eq('user_id', user.id)  // Security: ensure user owns this item
-      .single();
+    let clipboardItem = clipboardItemFromWebhook;
 
-    if (clipboardError || !clipboardItem) {
-      console.error('[Notification] Failed to fetch clipboard item:', clipboardError);
-      return new Response(
-        JSON.stringify({ error: 'Clipboard item not found' }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+    // Only fetch from DB if not from webhook
+    if (!clipboardItem) {
+      const { data: dbItem, error: clipboardError } = await supabaseClient
+        .from('clipboard')
+        .select('id, content_type, rich_text_format, file_size_bytes, content')
+        .eq('id', clipboard_id)
+        .eq('user_id', user.id)  // Security: ensure user owns this item
+        .single();
+
+      if (clipboardError || !dbItem) {
+        console.error('[Notification] Failed to fetch clipboard item:', clipboardError);
+        return new Response(
+          JSON.stringify({ error: 'Clipboard item not found' }),
+          {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      clipboardItem = dbItem;
     }
 
     const contentType = clipboardItem.content_type || 'text';
@@ -211,7 +245,8 @@ Deno.serve(async (req: Request) => {
     let query = supabaseClient
       .from('devices')
       .select('id, device_type, device_name, fcm_token')
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .neq('device_type', device_type);  // Skip self-notifications: don't send to sending device type
 
     // Filter by target device types if specified
     if (target_device_types && target_device_types.length > 0) {
@@ -276,6 +311,8 @@ Deno.serve(async (req: Request) => {
             clipboard_id: clipboard_id.toString(),
             device_type: device_type,
             content_type: contentType,
+            // Rich text format (needed to display HTML vs Markdown correctly on mobile)
+            rich_text_format: clipboardItem.rich_text_format || '',
             // For images, app will fetch from storage using clipboard_id
             is_image: isImage ? 'true' : 'false',
             // Include content if small enough for native handlers

@@ -12,7 +12,8 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
     private companion object {
-        private const val CHANNEL = "com.ghostcopy.ghostcopy/share"
+        private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
+        private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -21,7 +22,7 @@ class MainActivity : FlutterActivity() {
         // Method channel for share sheet operations
         io.flutter.embedding.engine.systemchannels.MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            CHANNEL
+            SHARE_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "shareComplete" -> {
@@ -79,13 +80,100 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleCopyAction(intent: Intent) {
-        val clipboardContent = intent.getStringExtra("clipboard_content") ?: return
-        if (clipboardContent.isEmpty()) return
+        val clipboardContent = intent.getStringExtra("clipboard_content") ?: ""
+        val clipboardId = intent.getStringExtra("clipboard_id") ?: ""
+        val contentType = intent.getStringExtra("content_type") ?: "text"
+        val richTextFormat = intent.getStringExtra("rich_text_format") ?: ""
+        val deviceType = intent.getStringExtra("device_type") ?: "Another device"
+        val fromNotification = intent.getBooleanExtra("from_notification", false)
 
-        // Copy to clipboard
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("GhostCopy", clipboardContent)
-        clipboard.setPrimaryClip(clip)
+        if (clipboardContent.isNotEmpty()) {
+            // Direct copy from small content in FCM payload
+            copyToClipboard(clipboardContent, contentType, richTextFormat, deviceType)
+        } else if (clipboardId.isNotEmpty() && fromNotification) {
+            // Fallback: Fetch full content from database using clipboard_id
+            Log.d(TAG, "📥 Fetching clipboard item $clipboardId from database")
+            fetchAndCopyClipboardItem(clipboardId, contentType, deviceType)
+        }
+    }
+
+    /**
+     * Copy content to system clipboard based on content type.
+     * Supports: text, html, markdown, images
+     */
+    private fun copyToClipboard(
+        content: String,
+        contentType: String,
+        richTextFormat: String,
+        deviceType: String
+    ) {
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+
+            when {
+                contentType == "html" -> {
+                    // Copy HTML with plain text fallback
+                    val plainText = content.replace(Regex("<[^>]*>"), "")
+                    val clip = ClipData.newHtmlText("HTML", plainText, content)
+                    clipboard.setPrimaryClip(clip)
+                    Log.d(TAG, "✅ Copied HTML to clipboard")
+                }
+                contentType == "markdown" -> {
+                    // Copy Markdown as plain text
+                    val clip = ClipData.newPlainText("Markdown", content)
+                    clipboard.setPrimaryClip(clip)
+                    Log.d(TAG, "✅ Copied Markdown as plain text")
+                }
+                else -> {
+                    // Plain text (default)
+                    val clip = ClipData.newPlainText("GhostCopy", content)
+                    clipboard.setPrimaryClip(clip)
+                    Log.d(TAG, "✅ Copied text to clipboard")
+                }
+            }
+
+            Toast.makeText(this, "Copied from $deviceType", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to copy to clipboard: ${e.message}", e)
+            Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Fetch clipboard item from Supabase database and copy to clipboard.
+     * Called when content is too large to fit in FCM payload.
+     *
+     * Uses the notifications method channel for consistency with iOS.
+     */
+    private fun fetchAndCopyClipboardItem(
+        clipboardId: String,
+        expectedContentType: String,
+        deviceType: String
+    ) {
+        try {
+            // Get Flutter engine to call Dart code for database fetch
+            val channel = io.flutter.embedding.engine.systemchannels.MethodChannel(
+                flutterEngine!!.dartExecutor.binaryMessenger,
+                NOTIFICATION_CHANNEL
+            )
+
+            // Invoke Flutter method to fetch clipboard item and copy to clipboard
+            // Same method call that iOS uses via AppDelegate
+            channel.invokeMethod("handleNotificationAction", mapOf(
+                "clipboardId" to clipboardId,
+                "action" to "copy"
+            )) { result ->
+                if (result != null && result is Boolean && result) {
+                    Log.d(TAG, "✅ Fetched and copied clipboard item $clipboardId")
+                } else {
+                    Log.e(TAG, "❌ Failed to fetch and copy clipboard item $clipboardId")
+                    Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)
+            Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**

@@ -50,6 +50,14 @@ abstract class ISettingsService {
   /// Set auto-receive behavior
   Future<void> setAutoReceiveBehavior(AutoReceiveBehavior behavior);
 
+  /// Get clipboard auto-clear duration in seconds (default: 30)
+  /// Returns 0 if auto-clear is disabled
+  Future<int> getClipboardAutoClearSeconds();
+
+  /// Set clipboard auto-clear duration in seconds
+  /// Pass 0 to disable auto-clear
+  Future<void> setClipboardAutoClearSeconds(int seconds);
+
   // ========== FEATURE FLAGS ==========
 
   /// Check if hybrid mode is enabled (from Supabase app_config table)

@@ -8,10 +8,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../clipboard_service.dart';
 import '../clipboard_sync_service.dart';
 import '../game_mode_service.dart';
 import '../notification_service.dart';
-import '../push_notification_service.dart';
 import '../security_service.dart';
 import '../settings_service.dart';
 
@@ -27,20 +27,20 @@ class ClipboardSyncService implements IClipboardSyncService {
     required IClipboardRepository clipboardRepository,
     required ISettingsService settingsService,
     required ISecurityService securityService,
-    required IPushNotificationService pushNotificationService,
+    IClipboardService? clipboardService,
     INotificationService? notificationService,
     IGameModeService? gameModeService,
   })  : _clipboardRepository = clipboardRepository,
         _settingsService = settingsService,
         _securityService = securityService,
-        _pushNotificationService = pushNotificationService,
+        _clipboardService = clipboardService ?? ClipboardService.instance,
         _notificationService = notificationService,
         _gameModeService = gameModeService;
 
   final IClipboardRepository _clipboardRepository;
   final ISettingsService _settingsService;
   final ISecurityService _securityService;
-  final IPushNotificationService _pushNotificationService;
+  final IClipboardService _clipboardService;
   final INotificationService? _notificationService;
   final IGameModeService? _gameModeService;
 
@@ -66,13 +66,6 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Rate limiting for send operations
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
-
-  // Edge Function rate limiting
-  DateTime? _lastEdgeFunctionCallTime;
-  static const Duration _minEdgeFunctionInterval = Duration(seconds: 1);
-  int _edgeFunctionCallCount = 0;
-  DateTime? _edgeFunctionCallCountResetTime;
-  static const int _maxEdgeFunctionCallsPerMinute = 30;
 
   // Content deduplication
   String _lastSentContentHash = '';
@@ -178,7 +171,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     );
   }
 
-  /// Handle smart auto-receive logic
+  /// Handle smart auto-receive logic with support for multiple content types
   Future<void> _handleSmartAutoReceive(Map<String, dynamic> record) async {
     try {
       final deviceType = record['device_type'] as String? ?? 'unknown';
@@ -203,22 +196,29 @@ class ClipboardSyncService implements IClipboardSyncService {
         final history = await _clipboardRepository.getHistory(limit: 1);
 
         if (history.isNotEmpty) {
-          final content = history.first.content;
           final item = history.first;
 
-          await Clipboard.setData(ClipboardData(text: content));
-          debugPrint('[ClipboardSyncService] Auto-copied from $deviceType');
+          try {
+            await _copyItemToClipboard(item);
+            debugPrint('[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType');
 
-          _lastClipboardModificationTime = now;
+            _lastClipboardModificationTime = now;
 
-          // Show notification or queue if Game Mode active
-          if (_gameModeService?.isActive ?? false) {
-            _gameModeService?.queueNotification(item);
-            debugPrint('[ClipboardSyncService] Notification queued (Game Mode)');
-          } else {
+            // Show notification or queue if Game Mode active
+            if (_gameModeService?.isActive ?? false) {
+              _gameModeService?.queueNotification(item);
+              debugPrint('[ClipboardSyncService] Notification queued (Game Mode)');
+            } else {
+              _notificationService?.showToast(
+                message: 'Auto-copied ${item.isImage ? 'image' : 'content'} from $deviceType',
+                type: NotificationType.success,
+              );
+            }
+          } on Exception catch (e) {
+            debugPrint('[ClipboardSyncService] Failed to auto-copy: $e');
             _notificationService?.showToast(
-              message: 'Auto-copied from $deviceType',
-              type: NotificationType.success,
+              message: 'Failed to auto-copy from $deviceType',
+              type: NotificationType.error,
             );
           }
         }
@@ -229,13 +229,13 @@ class ClipboardSyncService implements IClipboardSyncService {
         final history = await _clipboardRepository.getHistory(limit: 1);
         if (history.isEmpty) return;
 
-        final content = history.first.content;
-        final truncated = content.length > 40
-            ? '${content.substring(0, 40)}...'
-            : content;
+        final item = history.first;
+        final truncated = item.content.length > 40
+            ? '${item.content.substring(0, 40)}...'
+            : item.content;
 
         if (_gameModeService?.isActive ?? false) {
-          _gameModeService?.queueNotification(history.first);
+          _gameModeService?.queueNotification(item);
         } else {
           _notificationService?.showClickableToast(
             message: 'New clip from $deviceType: "$truncated"',
@@ -243,7 +243,7 @@ class ClipboardSyncService implements IClipboardSyncService {
             duration: const Duration(seconds: 5),
             onAction: () async {
               try {
-                await Clipboard.setData(ClipboardData(text: content));
+                await _copyItemToClipboard(item);
                 debugPrint('[ClipboardSyncService] Copied from notification');
               } on Exception catch (e) {
                 debugPrint('[ClipboardSyncService] Failed to copy: $e');
@@ -260,6 +260,54 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-receive failed: $e');
+    }
+  }
+
+  /// Copy a clipboard item to the system clipboard, supporting multiple content types
+  ///
+  /// Uses super_clipboard for full format support:
+  /// - Plain text (copied as plain text)
+  /// - Rich text (HTML/Markdown - HTML copied with plain text fallback)
+  /// - Images (PNG/JPEG/GIF - downloaded from storage and copied as image)
+  /// - Encrypted content (already decrypted by repository)
+  Future<void> _copyItemToClipboard(ClipboardItem item) async {
+    switch (item.contentType) {
+      case ContentType.text:
+        // Plain text - copy directly
+        await _clipboardService.writeText(item.content);
+
+      case ContentType.html:
+        // HTML - copy with plain text fallback (super_clipboard handles both)
+        await _clipboardService.writeHtml(item.content);
+        debugPrint('[ClipboardSyncService] Copied HTML to clipboard');
+
+      case ContentType.markdown:
+        // Markdown - copy as plain text (markdown isn't standard clipboard format)
+        await _clipboardService.writeText(item.content);
+        debugPrint('[ClipboardSyncService] Copied Markdown as plain text');
+
+      case ContentType.imagePng:
+      case ContentType.imageJpeg:
+      case ContentType.imageGif:
+        // Image - download from storage and copy to clipboard
+        if (item.storagePath == null) {
+          throw RepositoryException(
+            'Image item ${item.id} missing storage_path',
+          );
+        }
+
+        final imageBytes = await _clipboardRepository.downloadFile(item);
+        if (imageBytes == null || imageBytes.isEmpty) {
+          throw RepositoryException(
+            'Failed to download image from storage path: ${item.storagePath}',
+          );
+        }
+
+        // Copy image to clipboard using super_clipboard (full native support)
+        await _clipboardService.writeImage(imageBytes);
+        debugPrint(
+          '[ClipboardSyncService] Copied image (${item.displaySize}) to clipboard',
+        );
     }
   }
 
@@ -350,9 +398,6 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
       final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-      final contentPreview = content.length > 50
-          ? content.substring(0, 50)
-          : content;
 
       // Convert Set to List (null if empty = all devices)
       final targetDevicesList = targetDevices.isEmpty ? null : targetDevices.toList();
@@ -369,13 +414,8 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       final result = await _clipboardRepository.insert(item);
 
-      // Send push notification
-      await _sendEdgeFunctionNotification(
-        clipboardId: int.tryParse(result.id) ?? 0,
-        contentPreview: contentPreview,
-        deviceType: currentDeviceType,
-        targetDeviceTypes: targetDevicesList,
-      );
+      // Push notification now triggered by database webhook (send-clipboard-notification)
+      // No client-side edge function invocation needed
 
       _lastSendTime = DateTime.now();
 
@@ -405,58 +445,6 @@ class ClipboardSyncService implements IClipboardSyncService {
         type: NotificationType.error,
       );
     }
-  }
-
-  /// Send Edge Function notification with rate limiting
-  Future<void> _sendEdgeFunctionNotification({
-    required int clipboardId,
-    required String contentPreview,
-    required String deviceType,
-    List<String>? targetDeviceTypes,
-  }) async {
-    if (!_canCallEdgeFunction()) {
-      debugPrint('[ClipboardSyncService] Edge Function rate limited');
-      return;
-    }
-
-    _lastEdgeFunctionCallTime = DateTime.now();
-    _edgeFunctionCallCount++;
-
-    unawaited(
-      _pushNotificationService.sendClipboardNotification(
-        clipboardId: clipboardId,
-        contentPreview: contentPreview,
-        deviceType: deviceType,
-        targetDeviceTypes: targetDeviceTypes,
-      ),
-    );
-  }
-
-  /// Check Edge Function rate limit
-  bool _canCallEdgeFunction() {
-    final now = DateTime.now();
-
-    // Reset counter every minute
-    if (_edgeFunctionCallCountResetTime == null ||
-        now.difference(_edgeFunctionCallCountResetTime!) >= const Duration(minutes: 1)) {
-      _edgeFunctionCallCount = 0;
-      _edgeFunctionCallCountResetTime = now;
-    }
-
-    // Check per-minute limit
-    if (_edgeFunctionCallCount >= _maxEdgeFunctionCallsPerMinute) {
-      return false;
-    }
-
-    // Check minimum interval
-    if (_lastEdgeFunctionCallTime != null) {
-      final timeSinceLastCall = now.difference(_lastEdgeFunctionCallTime!);
-      if (timeSinceLastCall < _minEdgeFunctionInterval) {
-        return false;
-      }
-    }
-
-    return true;
   }
 
   /// Calculate SHA-256 hash for content deduplication

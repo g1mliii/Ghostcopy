@@ -5,6 +5,7 @@ import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/settings_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -25,11 +26,13 @@ class MobileSettingsScreen extends StatefulWidget {
   const MobileSettingsScreen({
     required this.authService,
     required this.deviceService,
+    required this.settingsService,
     super.key,
   });
 
   final IAuthService authService;
   final IDeviceService deviceService;
+  final ISettingsService settingsService;
 
   @override
   State<MobileSettingsScreen> createState() => _MobileSettingsScreenState();
@@ -155,6 +158,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _encryptionEnabled = false;
   bool _encryptionLoading = false;
 
+  // Clipboard auto-clear state
+  int _autoClearSeconds = 30;
+  bool _autoClearLoading = false;
+
   // App info
   String _appVersion = '';
 
@@ -164,6 +171,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     _initializeEncryption();
     _loadDevices();
     _loadAppInfo();
+    _loadAutoClearSetting();
   }
 
   @override
@@ -606,6 +614,61 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
   }
 
+  Future<void> _loadAutoClearSetting() async {
+    setState(() => _autoClearLoading = true);
+    try {
+      final seconds = await widget.settingsService.getClipboardAutoClearSeconds();
+      if (mounted) {
+        setState(() {
+          _autoClearSeconds = seconds;
+          _autoClearLoading = false;
+        });
+      }
+    } on Exception catch (e) {
+      debugPrint('Failed to load auto-clear setting: $e');
+      if (mounted) {
+        setState(() => _autoClearLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleAutoClearChange(int? newValue) async {
+    if (newValue == null) return;
+
+    setState(() => _autoClearLoading = true);
+    try {
+      await widget.settingsService.setClipboardAutoClearSeconds(newValue);
+      if (mounted) {
+        setState(() {
+          _autoClearSeconds = newValue;
+          _autoClearLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              newValue == 0
+                  ? 'Clipboard auto-clear disabled'
+                  : 'Clipboard will auto-clear after $newValue seconds',
+            ),
+            backgroundColor: GhostColors.success,
+          ),
+        );
+      }
+    } on Exception catch (e) {
+      debugPrint('Failed to update auto-clear setting: $e');
+      if (mounted) {
+        setState(() => _autoClearLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to update setting'),
+            backgroundColor: Colors.red.shade400,
+          ),
+        );
+      }
+    }
+  }
+
   Widget _buildSecuritySection() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -614,23 +677,70 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: GhostColors.glassBorder),
       ),
-      child: SwitchListTile(
-        secondary: const Icon(
-          Icons.lock_outline,
-          color: GhostColors.primary,
-          size: 20,
-        ),
-        title: const Text(
-          'End-to-End Encryption',
-          style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
-        ),
-        subtitle: const Text(
-          'Encrypt clipboard items with a passphrase',
-          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        value: _encryptionEnabled,
-        activeTrackColor: GhostColors.success,
-        onChanged: _encryptionLoading ? null : _handleEncryptionToggle,
+      child: Column(
+        children: [
+          // Encryption toggle
+          SwitchListTile(
+            secondary: const Icon(
+              Icons.lock_outline,
+              color: GhostColors.primary,
+              size: 20,
+            ),
+            title: const Text(
+              'End-to-End Encryption',
+              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+            ),
+            subtitle: const Text(
+              'Encrypt clipboard items with a passphrase',
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+            ),
+            value: _encryptionEnabled,
+            activeTrackColor: GhostColors.success,
+            onChanged: _encryptionLoading ? null : _handleEncryptionToggle,
+          ),
+
+          const Divider(height: 1, color: GhostColors.glassBorder),
+
+          // Clipboard auto-clear dropdown
+          ListTile(
+            leading: const Icon(
+              Icons.auto_delete,
+              color: GhostColors.primary,
+              size: 20,
+            ),
+            title: const Text(
+              'Auto-Clear Clipboard',
+              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+            ),
+            subtitle: const Text(
+              'Clear clipboard after sending for security',
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+            ),
+            trailing: _autoClearLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : DropdownButton<int>(
+                    value: _autoClearSeconds,
+                    dropdownColor: GhostColors.surface,
+                    style: const TextStyle(
+                      color: GhostColors.textPrimary,
+                      fontSize: 13,
+                    ),
+                    underline: Container(),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('Off')),
+                      DropdownMenuItem(value: 5, child: Text('5s')),
+                      DropdownMenuItem(value: 10, child: Text('10s')),
+                      DropdownMenuItem(value: 30, child: Text('30s')),
+                      DropdownMenuItem(value: 60, child: Text('60s')),
+                    ],
+                    onChanged: _handleAutoClearChange,
+                  ),
+          ),
+        ],
       ),
     );
   }

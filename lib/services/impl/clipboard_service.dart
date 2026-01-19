@@ -128,6 +128,21 @@ class ClipboardService implements IClipboardService {
       throw ClipboardException('Failed to write image: $e');
     }
   }
+
+  @override
+  Future<void> clear() async {
+    try {
+      // Write empty text to clear the clipboard
+      final item = DataWriterItem()
+        ..add(Formats.plainText(''));
+
+      await ClipboardWriter.instance.write([item]);
+      debugPrint('[ClipboardService] ✓ Clipboard cleared');
+    } on Exception catch (e) {
+      debugPrint('[ClipboardService] ✗ Clear failed: $e');
+      // Don't throw - clearing is best effort
+    }
+  }
 }
 
 /// Exception thrown by ClipboardService operations

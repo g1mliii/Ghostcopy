@@ -12,14 +12,19 @@ import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/security_service.dart';
+import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../widgets/cached_clipboard_image.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
 const _shareChannel = MethodChannel('com.ghostcopy.ghostcopy/share');
+const _notificationChannel = MethodChannel(
+  'com.ghostcopy.ghostcopy/notifications',
+);
 
 /// Mobile main screen with clipboard history and paste-to-send flow
 ///
@@ -46,6 +51,7 @@ class MobileMainScreen extends StatefulWidget {
     required this.clipboardRepository,
     required this.securityService,
     required this.transformerService,
+    required this.settingsService,
     super.key,
   });
 
@@ -54,6 +60,7 @@ class MobileMainScreen extends StatefulWidget {
   final IClipboardRepository clipboardRepository;
   final ISecurityService securityService;
   final ITransformerService transformerService;
+  final ISettingsService settingsService;
 
   @override
   State<MobileMainScreen> createState() => _MobileMainScreenState();
@@ -76,7 +83,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   List<ClipboardItem> _filteredHistoryItems = [];
   bool _historyLoading = false;
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
-  final TextEditingController _historySearchController = TextEditingController();
+  final TextEditingController _historySearchController =
+      TextEditingController();
   String _historySearchQuery = '';
 
   // Share sheet state
@@ -85,12 +93,21 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   // Encryption service (lazy init)
   EncryptionService? _encryptionService;
 
+  // Clipboard auto-clear timer (for security)
+  Timer? _clipboardClearTimer;
+  bool _lastSendWasFromPaste = false;
+
+  // Search debouncing timer (performance optimization)
+  Timer? _searchDebounceTimer;
+  static const Duration _searchDebounceDelay = Duration(milliseconds: 200);
+
   // Performance optimization: Cache decrypted content and detection results
   // Key: item.id, Value: decrypted content
   final Map<String, String> _decryptedContentCache = {};
   // Key: item.id, Value: detection result
   final Map<String, ContentDetectionResult> _detectionCache = {};
-  static const int _maxCacheSize = 20; // Mobile: Small cache for 10 items + buffer
+  static const int _maxCacheSize =
+      20; // Mobile: Small cache for 10 items + buffer
 
   @override
   void initState() {
@@ -100,8 +117,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
     _initializeEncryption();
     _loadDevices();
-    _loadHistory();
+
+    // Set loading state, then subscribe to realtime stream
+    // Stream provides initial snapshot, eliminating need for separate getHistory() call
+    setState(() => _historyLoading = true);
     _subscribeToRealtimeUpdates();
+
     _initializeShareIntentListeners();
     _setupMethodChannels();
   }
@@ -115,9 +136,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _pasteController.dispose();
     _historySearchController.dispose();
     _historySubscription?.cancel();
+    _clipboardClearTimer?.cancel();
+    _searchDebounceTimer?.cancel();
 
-    // Remove method channel handler to prevent memory leaks
+    // Remove method channel handlers to prevent memory leaks
     _shareChannel.setMethodCallHandler(null);
+    _notificationChannel.setMethodCallHandler(null);
 
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
 
@@ -133,8 +157,15 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       // App going to background: pause Realtime to conserve connection quota
-      debugPrint('[MobileMain] App backgrounded → Pausing Realtime subscription');
+      debugPrint(
+        '[MobileMain] App backgrounded → Pausing Realtime subscription',
+      );
       _historySubscription?.pause();
+
+      // Security: Clear clipboard if user recently pasted and sent content
+      if (_lastSendWasFromPaste) {
+        _clearClipboardNow();
+      }
     } else if (state == AppLifecycleState.resumed) {
       // App coming to foreground: resume Realtime
       debugPrint('[MobileMain] App resumed → Resuming Realtime subscription');
@@ -152,7 +183,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   void _setupMethodChannels() {
-    // Listen for native method calls from Android/iOS
+    // Share intent handler
     _shareChannel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'handleShareIntent':
@@ -160,7 +191,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           final content = call.arguments['content'] as String?;
           if (content != null && content.isNotEmpty) {
             // Show device selector dialog
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(content);
+            final selectedDeviceTypes = await _showDeviceSelectorDialog(
+              content,
+            );
 
             if (selectedDeviceTypes != null) {
               // Save in background (don't await)
@@ -169,10 +202,109 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             return true;
           }
           return false;
+
         default:
           return false;
       }
     });
+
+    // Notification action handler (for FCM notification taps)
+    // Handles both iOS (from AppDelegate) and Android (from CopyActivity/MainActivity)
+    // Memory leak prevention: Handler is removed in dispose()
+    _notificationChannel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'handleNotificationAction':
+          return _handleNotificationAction(call);
+
+        default:
+          return false;
+      }
+    });
+  }
+
+  /// Handle notification action from native code (iOS/Android)
+  ///
+  /// Called when:
+  /// - iOS: User taps notification action button or copy button
+  /// - Android: CopyActivity/MainActivity needs to fetch large content from DB
+  ///
+  /// Memory safety: No hanging references, all await calls properly handled
+  Future<bool> _handleNotificationAction(MethodCall call) async {
+    try {
+      // ignore: avoid_dynamic_calls
+      final clipboardId = call.arguments['clipboardId'] as String?;
+      // ignore: avoid_dynamic_calls
+      final action = call.arguments['action'] as String?;
+
+      if (clipboardId == null || clipboardId.isEmpty) {
+        debugPrint('[MobileMain] ⚠️ Notification action: empty clipboardId');
+        return false;
+      }
+
+      debugPrint(
+        '[MobileMain] 📬 Notification action: $action for clipboard $clipboardId',
+      );
+
+      // Fetch full clipboard item from database
+      // Limit to 100 items to ensure we find it in reasonable time
+      final items = await widget.clipboardRepository.getHistory(limit: 100);
+
+      // Find the item with matching ID
+      ClipboardItem? item;
+      for (final i in items) {
+        if (i.id == clipboardId) {
+          item = i;
+          break;
+        }
+      }
+
+      if (item == null) {
+        debugPrint('[MobileMain] ❌ Clipboard item $clipboardId not found');
+        return false;
+      }
+
+      // Copy to clipboard based on content type
+      final clipboardService = ClipboardService.instance;
+
+      switch (item.contentType) {
+        case ContentType.html:
+          await clipboardService.writeHtml(item.content);
+          debugPrint('[MobileMain] ✅ Copied HTML to clipboard');
+
+        case ContentType.markdown:
+          await clipboardService.writeText(item.content);
+          debugPrint('[MobileMain] ✅ Copied Markdown to clipboard');
+
+        case ContentType.imagePng:
+        case ContentType.imageJpeg:
+        case ContentType.imageGif:
+          if (item.storagePath != null) {
+            final imageBytes = await widget.clipboardRepository.downloadFile(
+              item,
+            );
+            if (imageBytes != null) {
+              await clipboardService.writeImage(imageBytes);
+              debugPrint('[MobileMain] ✅ Copied image to clipboard');
+            } else {
+              debugPrint('[MobileMain] ❌ Failed to download image');
+              return false;
+            }
+          } else {
+            debugPrint('[MobileMain] ❌ Image has no storage path');
+            return false;
+          }
+
+        default:
+          // Plain text (text, or any other type)
+          await clipboardService.writeText(item.content);
+          debugPrint('[MobileMain] ✅ Copied text to clipboard');
+      }
+
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[MobileMain] ❌ Error handling notification action: $e');
+      return false;
+    }
   }
 
   void _initializeShareIntentListeners() {
@@ -358,8 +490,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color:
-                    isSelected ? GhostColors.primary : GhostColors.textMuted,
+                color: isSelected ? GhostColors.primary : GhostColors.textMuted,
               ),
             ),
           ],
@@ -379,8 +510,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         userId: widget.authService.currentUserId ?? '',
         content: content,
         deviceType: ClipboardRepository.getCurrentDeviceType(),
-        targetDeviceTypes:
-            selectedDeviceTypes.isEmpty ? null : selectedDeviceTypes.toList(),
+        targetDeviceTypes: selectedDeviceTypes.isEmpty
+            ? null
+            : selectedDeviceTypes.toList(),
         createdAt: DateTime.now(),
       );
 
@@ -462,7 +594,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
-  /// Filter history based on search query (lightweight local search)
+  /// Filter history based on search query with debouncing (performance optimization)
+  /// Note: This method should be called within setState() by the caller
   void _filterHistory(String query) {
     _historySearchQuery = query;
     if (query.trim().isEmpty) {
@@ -470,12 +603,30 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     } else {
       final lowerQuery = query.toLowerCase();
       _filteredHistoryItems = _historyItems.where((item) {
-        if (item.content.toLowerCase().contains(lowerQuery)) return true;
-        if (item.deviceName != null && item.deviceName!.toLowerCase().contains(lowerQuery)) return true;
-        if (item.mimeType != null && item.mimeType!.toLowerCase().contains(lowerQuery)) return true;
+        if (item.content.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+        if (item.deviceName != null &&
+            item.deviceName!.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+        if (item.mimeType != null &&
+            item.mimeType!.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
         return false;
       }).toList();
     }
+  }
+
+  /// Debounced wrapper for _filterHistory to reduce setState calls during typing
+  void _filterHistoryDebounced(String query) {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(_searchDebounceDelay, () {
+      if (mounted) {
+        setState(() => _filterHistory(query));
+      }
+    });
   }
 
   /// Clean up cache to prevent memory leaks
@@ -490,7 +641,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     // If cache is still too large, remove oldest entries (LRU)
     if (_decryptedContentCache.length > _maxCacheSize) {
       final entriesToRemove = _decryptedContentCache.length - _maxCacheSize;
-      final keysToRemove = _decryptedContentCache.keys.take(entriesToRemove).toList();
+      final keysToRemove = _decryptedContentCache.keys
+          .take(entriesToRemove)
+          .toList();
       for (final key in keysToRemove) {
         _decryptedContentCache.remove(key);
         _detectionCache.remove(key);
@@ -506,33 +659,44 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     //
     // Current implementation uses Realtime subscriptions as a placeholder
     // Mobile: Watch only 10 most recent items (default limit)
-    _historySubscription = widget.clipboardRepository
-        .watchHistory()
-        .listen((items) {
-      if (mounted) {
-        final oldFirstId = _historyItems.isNotEmpty ? _historyItems.first.id : null;
+    // Supabase .stream() emits initial snapshot immediately, then updates on changes
+    _historySubscription = widget.clipboardRepository.watchHistory().listen(
+      (items) {
+        if (mounted) {
+          final oldFirstId = _historyItems.isNotEmpty
+              ? _historyItems.first.id
+              : null;
 
-        setState(() {
-          _historyItems = items;
-          _filterHistory(_historySearchQuery);
+          setState(() {
+            _historyItems = items;
+            _filterHistory(_historySearchQuery);
 
-          // Cleanup cache after update
-          _cleanupCache();
-        });
+            // Clear loading state (stream has emitted initial data)
+            _historyLoading = false;
 
-        // Auto-copy latest item if it's from another device
-        // Note: ClipboardItem doesn't have deviceId, so we auto-copy all new items
-        if (items.isNotEmpty) {
-          final latest = items.first;
-          // Check if this is a new item (different from previous first item)
-          if (oldFirstId == null || latest.id != oldFirstId) {
-            _autoCopyToClipboard(latest);
+            // Cleanup cache after update
+            _cleanupCache();
+          });
+
+          // Auto-copy latest item if it's from another device
+          // Note: ClipboardItem doesn't have deviceId, so we auto-copy all new items
+          if (items.isNotEmpty) {
+            final latest = items.first;
+            // Check if this is a new item (different from previous first item)
+            if (oldFirstId == null || latest.id != oldFirstId) {
+              _autoCopyToClipboard(latest);
+            }
           }
         }
-      }
-    }, onError: (Object error) {
-      debugPrint('[MobileMain] Realtime subscription error: $error');
-    });
+      },
+      onError: (Object error) {
+        debugPrint('[MobileMain] Realtime subscription error: $error');
+        // Clear loading state on error
+        if (mounted) {
+          setState(() => _historyLoading = false);
+        }
+      },
+    );
   }
 
   Future<void> _autoCopyToClipboard(ClipboardItem item) async {
@@ -548,7 +712,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         }
 
         await clipboardService.writeImage(bytes);
-        debugPrint('[MobileMain] ✅ Auto-copied image to clipboard (${bytes.length} bytes)');
+        debugPrint(
+          '[MobileMain] ✅ Auto-copied image to clipboard (${bytes.length} bytes)',
+        );
 
         if (mounted) {
           showGhostToast(
@@ -572,7 +738,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           await clipboardService.writeText(finalContent);
         }
 
-        debugPrint('[MobileMain] ✅ Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard');
+        debugPrint(
+          '[MobileMain] ✅ Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard',
+        );
 
         if (mounted) {
           showGhostToast(
@@ -628,8 +796,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     try {
       // Encrypt if enabled
       var finalContent = content;
-      if (_encryptionService != null &&
-          await _encryptionService!.isEnabled()) {
+      if (_encryptionService != null && await _encryptionService!.isEnabled()) {
         finalContent = await _encryptionService!.encrypt(content);
       }
 
@@ -644,7 +811,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       final item = ClipboardItem(
         id: '', // Will be set by database
         userId: widget.authService.currentUserId ?? '',
-        deviceType: ClipboardRepository.getCurrentDeviceType(), // Platform-specific: 'android' or 'ios'
+        deviceType:
+            ClipboardRepository.getCurrentDeviceType(), // Platform-specific: 'android' or 'ios'
         content: finalContent,
         targetDeviceTypes: targetTypes,
         createdAt: DateTime.now(),
@@ -666,6 +834,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           icon: Icons.send,
           type: GhostToastType.success,
         );
+
+        // Security: Schedule clipboard auto-clear
+        _lastSendWasFromPaste = true;
+        await _scheduleClipboardClear();
       }
     } on Exception catch (e) {
       debugPrint('[MobileMain] Failed to send: $e');
@@ -676,6 +848,37 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         });
       }
     }
+  }
+
+  /// Schedule clipboard clearing based on user settings
+  Future<void> _scheduleClipboardClear() async {
+    // Cancel any existing timer
+    _clipboardClearTimer?.cancel();
+
+    // Get user's auto-clear duration setting
+    final clearSeconds = await widget.settingsService
+        .getClipboardAutoClearSeconds();
+
+    if (clearSeconds == 0) {
+      debugPrint('[MobileMain] Clipboard auto-clear disabled');
+      return;
+    }
+
+    debugPrint(
+      '[MobileMain] Clipboard will be cleared in $clearSeconds seconds',
+    );
+
+    _clipboardClearTimer = Timer(
+      Duration(seconds: clearSeconds),
+      _clearClipboardNow,
+    );
+  }
+
+  /// Immediately clear the system clipboard
+  void _clearClipboardNow() {
+    ClipboardService.instance.clear();
+    _lastSendWasFromPaste = false;
+    debugPrint('[MobileMain] System clipboard cleared for security');
   }
 
   Future<void> _handleImageUpload() async {
@@ -771,10 +974,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         ),
         content: const Text(
           'This content may contain sensitive information (passwords, API keys, etc.). Are you sure you want to sync it?',
-          style: TextStyle(
-            fontSize: 14,
-            color: GhostColors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 14, color: GhostColors.textSecondary),
         ),
         actions: [
           TextButton(
@@ -796,10 +996,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleRefresh() async {
-    await Future.wait([
-      _loadDevices(forceRefresh: true),
-      _loadHistory(),
-    ]);
+    await Future.wait([_loadDevices(forceRefresh: true), _loadHistory()]);
   }
 
   Future<void> _handleHistoryItemTap(ClipboardItem item) async {
@@ -816,7 +1013,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         }
 
         await clipboardService.writeImage(bytes);
-        debugPrint('[MobileMain] Image copied to clipboard (${bytes.length} bytes)');
+        debugPrint(
+          '[MobileMain] Image copied to clipboard (${bytes.length} bytes)',
+        );
 
         if (mounted) {
           showGhostToast(
@@ -888,6 +1087,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         builder: (context) => MobileSettingsScreen(
           authService: widget.authService,
           deviceService: widget.deviceService,
+          settingsService: widget.settingsService,
         ),
       ),
     );
@@ -937,19 +1137,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         child: CustomScrollView(
           slivers: [
             // Paste area section
-            SliverToBoxAdapter(
-              child: _buildPasteArea(),
-            ),
+            SliverToBoxAdapter(child: _buildPasteArea()),
 
             // Device selector chips
-            SliverToBoxAdapter(
-              child: _buildDeviceSelector(),
-            ),
+            SliverToBoxAdapter(child: _buildDeviceSelector()),
 
             // Send button
-            SliverToBoxAdapter(
-              child: _buildSendButton(),
-            ),
+            SliverToBoxAdapter(child: _buildSendButton()),
 
             // History section header
             SliverToBoxAdapter(
@@ -963,7 +1157,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: GhostColors.primary.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
@@ -991,9 +1188,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                 child: TextField(
                   controller: _historySearchController,
-                  onChanged: (query) {
-                    setState(() => _filterHistory(query));
-                  },
+                  onChanged: _filterHistoryDebounced,
                   style: const TextStyle(
                     fontSize: 14,
                     color: GhostColors.textPrimary,
@@ -1026,11 +1221,15 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: GhostColors.glassBorder),
+                      borderSide: const BorderSide(
+                        color: GhostColors.glassBorder,
+                      ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: GhostColors.glassBorder),
+                      borderSide: const BorderSide(
+                        color: GhostColors.glassBorder,
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -1058,9 +1257,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       decoration: BoxDecoration(
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: GhostColors.glassBorder,
-        ),
+        border: Border.all(color: GhostColors.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1187,7 +1384,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   itemCount: _devices.length + 1, // +1 for "All Devices"
-                  separatorBuilder: (context, index) => const SizedBox(width: 8),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     if (index == 0) {
                       // "All Devices" chip
@@ -1200,8 +1398,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     }
 
                     final device = _devices[index - 1];
-                    final isSelected =
-                        _selectedDeviceTypes.contains(device.deviceType);
+                    final isSelected = _selectedDeviceTypes.contains(
+                      device.deviceType,
+                    );
 
                     return _DeviceChip(
                       label: device.displayName,
@@ -1273,9 +1472,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     if (_historyLoading) {
       return const SliverFillRemaining(
         child: Center(
-          child: CircularProgressIndicator(
-            color: GhostColors.primary,
-          ),
+          child: CircularProgressIndicator(color: GhostColors.primary),
         ),
       );
     }
@@ -1309,38 +1506,35 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     return SliverPadding(
       padding: const EdgeInsets.only(bottom: 20),
       sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final item = _filteredHistoryItems[index];
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final item = _filteredHistoryItems[index];
 
-            // Use cached decrypted content if available
-            final cachedDecrypted = _decryptedContentCache[item.id];
-            final cachedDetection = _detectionCache[item.id];
+          // Use cached decrypted content if available
+          final cachedDecrypted = _decryptedContentCache[item.id];
+          final cachedDetection = _detectionCache[item.id];
 
-            return RepaintBoundary(
-              child: _StaggeredHistoryItem(
-                key: ValueKey(item.id), // Stable key for performance
-                index: index,
-                item: item,
-                transformerService: widget.transformerService,
-                clipboardRepository: widget.clipboardRepository,
-                encryptionService: _encryptionService,
-                cachedDecryptedContent: cachedDecrypted,
-                cachedDetectionResult: cachedDetection,
-                onContentDecrypted: (content) {
-                  // Cache decrypted content
-                  _decryptedContentCache[item.id] = content;
-                },
-                onContentDetected: (result) {
-                  // Cache detection result
-                  _detectionCache[item.id] = result;
-                },
-                onTap: () => _handleHistoryItemTap(item),
-              ),
-            );
-          },
-          childCount: _filteredHistoryItems.length,
-        ),
+          return RepaintBoundary(
+            child: _StaggeredHistoryItem(
+              key: ValueKey(item.id), // Stable key for performance
+              index: index,
+              item: item,
+              transformerService: widget.transformerService,
+              clipboardRepository: widget.clipboardRepository,
+              encryptionService: _encryptionService,
+              cachedDecryptedContent: cachedDecrypted,
+              cachedDetectionResult: cachedDetection,
+              onContentDecrypted: (content) {
+                // Cache decrypted content
+                _decryptedContentCache[item.id] = content;
+              },
+              onContentDetected: (result) {
+                // Cache detection result
+                _detectionCache[item.id] = result;
+              },
+              onTap: () => _handleHistoryItemTap(item),
+            ),
+          );
+        }, childCount: _filteredHistoryItems.length),
       ),
     );
   }
@@ -1388,14 +1582,10 @@ class _DeviceChip extends StatelessWidget {
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected
-                ? GhostColors.primary
-                : GhostColors.surface,
+            color: isSelected ? GhostColors.primary : GhostColors.surface,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: isSelected
-                  ? GhostColors.primary
-                  : GhostColors.glassBorder,
+              color: isSelected ? GhostColors.primary : GhostColors.glassBorder,
             ),
           ),
           child: Row(
@@ -1473,10 +1663,6 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
   String? _decryptedContent;
   bool _isPreviewMode = false; // For large JSON/JWT payloads
 
-  // Image loading state
-  Uint8List? _imageBytes;
-  bool _imageLoading = false;
-
   @override
   void initState() {
     super.initState();
@@ -1497,47 +1683,18 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       },
     );
 
-    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+    _fadeAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, 0.2), // Slide up slightly
       end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     // Detect content type and decrypt if needed
     _initializeContentDetection();
-
-    // Load image if this is an image item
-    if (widget.item.isImage) {
-      _loadImage();
-    }
-  }
-
-  Future<void> _loadImage() async {
-    if (_imageBytes != null) return; // Already loaded
-
-    setState(() => _imageLoading = true);
-
-    try {
-      final bytes = await widget.clipboardRepository.downloadFile(widget.item);
-      if (mounted && bytes != null) {
-        setState(() {
-          _imageBytes = bytes;
-          _imageLoading = false;
-        });
-      } else if (mounted) {
-        setState(() => _imageLoading = false);
-      }
-    } on Exception catch (e) {
-      debugPrint('[HistoryItem] Failed to load image: $e');
-      if (mounted) {
-        setState(() => _imageLoading = false);
-      }
-    }
   }
 
   Future<void> _initializeContentDetection() async {
@@ -1548,8 +1705,11 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       if (widget.cachedDetectionResult != null) {
         // Both cached, use directly
         _detectionResult = widget.cachedDetectionResult;
-        _isPreviewMode = (widget.cachedDetectionResult!.type == TransformerContentType.json ||
-                widget.cachedDetectionResult!.type == TransformerContentType.jwt) &&
+        _isPreviewMode =
+            (widget.cachedDetectionResult!.type ==
+                    TransformerContentType.json ||
+                widget.cachedDetectionResult!.type ==
+                    TransformerContentType.jwt) &&
             widget.cachedDecryptedContent!.length > 200;
 
         if (mounted) {
@@ -1593,7 +1753,8 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       widget.onContentDetected?.call(detectionResult);
 
       // Enable preview mode for JSON/JWT content longer than 200 chars
-      _isPreviewMode = (detectionResult.type == TransformerContentType.json ||
+      _isPreviewMode =
+          (detectionResult.type == TransformerContentType.json ||
               detectionResult.type == TransformerContentType.jwt) &&
           (_decryptedContent ?? content).length > 200;
 
@@ -1632,16 +1793,13 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     // Normal text (with transformer detection)
     return Text(
       displayContent,
-      maxLines: _isExpanded
-          ? null
-          : (_isPreviewMode ? 3 : 2),
-      overflow: _isExpanded
-          ? TextOverflow.visible
-          : TextOverflow.ellipsis,
+      maxLines: _isExpanded ? null : (_isPreviewMode ? 3 : 2),
+      overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
       style: TextStyle(
         fontSize: 14,
         color: GhostColors.textPrimary,
-        fontFamily: _detectionResult?.type == TransformerContentType.json ||
+        fontFamily:
+            _detectionResult?.type == TransformerContentType.json ||
                 _detectionResult?.type == TransformerContentType.jwt
             ? 'JetBrainsMono'
             : null,
@@ -1651,76 +1809,20 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
 
   /// Build image preview widget
   Widget _buildImagePreview() {
-    if (_imageLoading) {
-      return Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: GhostColors.surfaceLight,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: GhostColors.primary,
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (_imageBytes == null) {
-      return Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: GhostColors.surfaceLight,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.broken_image_outlined,
-                size: 32,
-                color: GhostColors.textMuted.withValues(alpha: 0.5),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Failed to load image',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: GhostColors.textMuted.withValues(alpha: 0.7),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Image.memory(
-        _imageBytes!,
-        fit: BoxFit.cover,
-        height: 120,
-        width: double.infinity,
-      ),
+    // Use CDN-backed widget with automatic fallback to storage download
+    return CachedClipboardImage(
+      item: widget.item,
+      clipboardRepository: widget.clipboardRepository,
+      height: 120,
+      width: double.infinity,
     );
   }
 
   /// Build rich text preview widget
   Widget _buildRichTextPreview(String content) {
     final format = widget.item.richTextFormat;
-    final icon = format == RichTextFormat.html
-        ? Icons.code
-        : Icons.text_fields;
-    final label = format == RichTextFormat.html
-        ? 'HTML'
-        : 'Markdown';
+    final icon = format == RichTextFormat.html ? Icons.code : Icons.text_fields;
+    final label = format == RichTextFormat.html ? 'HTML' : 'Markdown';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1749,9 +1851,7 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
         Text(
           content,
           maxLines: _isExpanded ? null : 3,
-          overflow: _isExpanded
-              ? TextOverflow.visible
-              : TextOverflow.ellipsis,
+          overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
           style: const TextStyle(
             fontSize: 13,
             color: GhostColors.textSecondary,
@@ -1798,9 +1898,7 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
               decoration: BoxDecoration(
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: GhostColors.glassBorder,
-                ),
+                border: Border.all(color: GhostColors.glassBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1820,11 +1918,14 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
                                 child: Row(
                                   children: [
                                     Icon(
-                                      _detectionResult?.type == TransformerContentType.json
+                                      _detectionResult?.type ==
+                                              TransformerContentType.json
                                           ? Icons.code
                                           : Icons.lock_open,
                                       size: 12,
-                                      color: GhostColors.primary.withValues(alpha: 0.8),
+                                      color: GhostColors.primary.withValues(
+                                        alpha: 0.8,
+                                      ),
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
@@ -1832,7 +1933,9 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
                                       style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w600,
-                                        color: GhostColors.primary.withValues(alpha: 0.8),
+                                        color: GhostColors.primary.withValues(
+                                          alpha: 0.8,
+                                        ),
                                       ),
                                     ),
                                   ],

@@ -30,6 +30,9 @@ class LifecycleController implements ILifecycleController {
   final Set<Pausable> _pausables = {};
   bool _isInTrayMode = false;
 
+  // Safety limit to prevent unbounded memory growth if widgets don't properly dispose
+  static const int _maxPausables = 100;
+
   @override
   bool get isInTrayMode => _isInTrayMode;
 
@@ -148,6 +151,16 @@ class LifecycleController implements ILifecycleController {
 
   @override
   void addPausable(Pausable pausable) {
+    // Defensive check: warn if pausables set is growing too large
+    if (_pausables.length >= _maxPausables) {
+      debugPrint(
+        '[Lifecycle] ⚠️  WARNING: Pausables set has reached ${_pausables.length} items! '
+        'This may indicate widgets are not properly calling removePausable() in dispose(). '
+        'Limit: $_maxPausables',
+      );
+      // Continue adding anyway, but log the issue for investigation
+    }
+
     _pausables.add(pausable);
 
     // If already in tray mode, pause the newly added resource immediately

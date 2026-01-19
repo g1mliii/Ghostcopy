@@ -310,13 +310,6 @@ Ensure token is valid:
 
 ## Security Considerations
 
-### 1. Sensitive Data in FCM
-
-⚠️ **Don't send sensitive data**:
-- Passwords
-- Encryption keys
-- Personal financial data
-- Health information
 
 ✅ **Safe to send**:
 - Clipboard previews (truncated)

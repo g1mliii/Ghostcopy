@@ -37,19 +37,6 @@ This guide walks you through setting up Google Sign-In with Supabase for GhostCo
 
 ### 1.3 Create OAuth 2.0 Credentials
 
-You'll need to create separate credentials for each platform:
-
-#### Web (Desktop: Windows, macOS, Linux)
-1. Go to **APIs & Services > Credentials**
-2. Click **Create Credentials > OAuth client ID**
-3. Choose **Web application**
-4. Name: "GhostCopy Web"
-5. Add **Authorized redirect URIs**:
-   ```
-   https://xhbggxftvnlkotvehwmj.supabase.co/auth/v1/callback
-   ```
-   (Replace with your actual Supabase project URL)
-6. Click **Create** and save the **Client ID**
 
 #### iOS
 1. Click **Create Credentials > OAuth client ID**
@@ -76,65 +63,6 @@ You'll need to create separate credentials for each platform:
 
 ## Step 2: Supabase Configuration
 
-### 2.1 Enable Google Provider
-1. Go to your [Supabase Dashboard](https://supabase.com/dashboard)
-2. Select your project: **xhbggxftvnlkotvehwmj**
-3. Navigate to **Authentication > Providers**
-4. Find **Google** and click to expand
-5. Enable the provider
-6. Enter your **Web Client ID** (from Google Cloud Console)
-7. Enter your **Client Secret** (from Google Cloud Console - Web application credentials)
-8. (Optional) Configure additional client IDs:
-   - If you have iOS and Android client IDs, add them in the "Additional Client IDs" section
-   - Format: Comma-separated list with Web ID first
-   ```
-   web-client-id.apps.googleusercontent.com,ios-client-id.apps.googleusercontent.com,android-client-id.apps.googleusercontent.com
-   ```
-9. Click **Save**
-
-### 2.2 Verify Redirect URL
-Make sure your redirect URL in Supabase matches what you configured in Google Cloud Console:
-- URL: `https://xhbggxftvnlkotvehwmj.supabase.co/auth/v1/callback`
-
-## Step 3: Update GhostCopy Environment Variables
-
-1. Open `.env` file in your project root
-2. Update the `GOOGLE_CLIENT_ID` variable:
-   ```
-   GOOGLE_CLIENT_ID=your-web-client-id-here.apps.googleusercontent.com
-   ```
-   ⚠️ Use the **Web Client ID** here, not iOS or Android
-
-## Step 4: Configure Deep Linking (Mobile Only)
-
-### iOS Deep Link Setup
-1. Open `ios/Runner/Info.plist`
-2. Add URL scheme for deep linking:
-   ```xml
-   <key>CFBundleURLTypes</key>
-   <array>
-     <dict>
-       <key>CFBundleTypeRole</key>
-       <string>Editor</string>
-       <key>CFBundleURLSchemes</key>
-       <array>
-         <string>ghostcopy</string>
-       </array>
-     </dict>
-   </array>
-   ```
-
-### Android Deep Link Setup
-1. Open `android/app/src/main/AndroidManifest.xml`
-2. Add intent filter inside the `<activity>` tag:
-   ```xml
-   <intent-filter>
-     <action android:name="android.intent.action.VIEW" />
-     <category android:name="android.intent.category.DEFAULT" />
-     <category android:name="android.intent.category.BROWSABLE" />
-     <data android:scheme="ghostcopy" android:host="auth-callback" />
-   </intent-filter>
-   ```
 
 ## Step 5: Test the Integration
 

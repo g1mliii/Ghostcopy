@@ -1,17 +1,5 @@
 # Complete Xcode Setup Guide for GhostCopy iOS
 
-This document covers **ALL** Xcode setup required for GhostCopy iOS (not just widgets).
-
-## Overview
-
-You need Xcode setup for:
-1. ✅ Code signing and provisioning profiles
-2. ✅ App Groups entitlements (app + widget communication)
-3. ✅ Push notifications capability (for FCM)
-4. ✅ Widget Extension target
-5. ✅ GoogleService-Info.plist integration
-
----
 
 ## Part 1: Code Signing & Team Configuration
 
@@ -78,7 +66,6 @@ App Groups allow the main app and widget to share data via UserDefaults.
 
 **Result**: Both targets should now have identical App Group identifiers.
 
----
 
 ## Part 3: Push Notifications Capability
 
@@ -99,7 +86,6 @@ For FCM to work, enable push notifications.
 
 Widget extensions cannot receive push notifications directly. The main app receives notifications and updates the widget.
 
----
 
 ## Part 4: Create Widget Extension Target
 

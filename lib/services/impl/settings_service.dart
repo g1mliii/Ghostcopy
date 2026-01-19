@@ -19,6 +19,7 @@ class SettingsService implements ISettingsService {
   static const String _keyAutoSendTargetDevices = 'auto_send_target_devices';
   static const String _keyAutoStartEnabled = 'auto_start_enabled';
   static const String _keyAutoReceiveBehavior = 'auto_receive_behavior';
+  static const String _keyClipboardAutoClearSeconds = 'clipboard_auto_clear_seconds';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
@@ -26,6 +27,7 @@ class SettingsService implements ISettingsService {
   static const Set<String> _defaultAutoSendTargetDevices = {}; // Empty = all devices
   static const bool _defaultAutoStartEnabled = false;
   static const AutoReceiveBehavior _defaultAutoReceiveBehavior = AutoReceiveBehavior.smart;
+  static const int _defaultClipboardAutoClearSeconds = 30; // 30 seconds default
 
   @override
   Future<void> initialize() async {
@@ -137,6 +139,29 @@ class SettingsService implements ISettingsService {
     _ensureInitialized();
     await _prefs!.setString(_keyAutoReceiveBehavior, behavior.name);
     debugPrint('Auto-receive behavior set to: ${behavior.label}');
+  }
+
+  @override
+  Future<int> getClipboardAutoClearSeconds() async {
+    _ensureInitialized();
+    return _prefs!.getInt(_keyClipboardAutoClearSeconds) ?? _defaultClipboardAutoClearSeconds;
+  }
+
+  @override
+  Future<void> setClipboardAutoClearSeconds(int seconds) async {
+    _ensureInitialized();
+
+    // Validate range (0-300 seconds, where 0 = disabled)
+    if (seconds < 0 || seconds > 300) {
+      throw ArgumentError('Auto-clear duration must be between 0-300 seconds');
+    }
+
+    await _prefs!.setInt(_keyClipboardAutoClearSeconds, seconds);
+    if (seconds == 0) {
+      debugPrint('Clipboard auto-clear disabled');
+    } else {
+      debugPrint('Clipboard auto-clear set to $seconds seconds');
+    }
   }
 
   // ========== FEATURE FLAGS ==========

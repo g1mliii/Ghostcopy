@@ -122,7 +122,6 @@ Future<void> main(List<String> args) async {
       clipboardRepository: clipboardRepository,
       settingsService: settingsService,
       securityService: securityService,
-      pushNotificationService: pushNotificationService,
       gameModeService: gameModeService,
     );
 
@@ -210,6 +209,17 @@ Future<void> main(List<String> args) async {
     // Mobile app - initialize Firebase and FCM (optional)
     FcmService? fcmService;
     String? fcmToken;
+    // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
+    StreamSubscription<String>? tokenRefreshSubscription;
+    // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
+    StreamSubscription<RemoteMessage>? foregroundMessageSubscription;
+    // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
+    StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
+
+    // Initialize Settings Service (needed for clipboard auto-clear and other settings)
+    final settingsService = SettingsService();
+    await settingsService.initialize();
+    debugPrint('[App] ✅ Settings service initialized for mobile');
 
     try {
       await Firebase.initializeApp();
@@ -258,14 +268,14 @@ Future<void> main(List<String> args) async {
         );
       }
 
-      // Listen for token refresh and update device
-      fcmService.tokenRefreshStream.listen((newToken) async {
+      // Listen for token refresh and update device (store subscription for cleanup)
+      tokenRefreshSubscription = fcmService.tokenRefreshStream.listen((newToken) async {
         debugPrint('[App] 🔄 FCM token refreshed, updating device...');
         await deviceService.updateFcmToken(newToken);
       });
 
-      // Handle foreground messages (when app is running)
-      FirebaseMessaging.onMessage.listen((message) {
+      // Handle foreground messages (when app is running) - store subscription
+      foregroundMessageSubscription = FirebaseMessaging.onMessage.listen((message) {
         debugPrint('[FCM Foreground] Received message: ${message.messageId}');
         debugPrint('[FCM Foreground] Data: ${message.data}');
 
@@ -279,8 +289,8 @@ Future<void> main(List<String> args) async {
         }
       });
 
-      // Handle notification tap (when app is in background or terminated)
-      FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      // Handle notification tap (when app is in background or terminated) - store subscription
+      messageOpenedAppSubscription = FirebaseMessaging.onMessageOpenedApp.listen((message) {
         debugPrint('[FCM Tap] Notification tapped: ${message.messageId}');
         debugPrint('[FCM Tap] Data: ${message.data}');
 
@@ -303,8 +313,12 @@ Future<void> main(List<String> args) async {
       MyApp(
         authService: authService,
         deviceService: deviceService,
+        settingsService: settingsService,
         fcmService: fcmService,
         fcmToken: fcmToken,
+        tokenRefreshSubscription: tokenRefreshSubscription,
+        foregroundMessageSubscription: foregroundMessageSubscription,
+        messageOpenedAppSubscription: messageOpenedAppSubscription,
       ),
     );
   }
@@ -339,6 +353,9 @@ class MyApp extends StatefulWidget {
     this.systemPowerService,
     this.fcmService,
     this.fcmToken,
+    this.tokenRefreshSubscription,
+    this.foregroundMessageSubscription,
+    this.messageOpenedAppSubscription,
     this.launchedAtStartup = false,
     super.key,
   });
@@ -362,6 +379,9 @@ class MyApp extends StatefulWidget {
   final ISystemPowerService? systemPowerService;
   final IFcmService? fcmService;
   final String? fcmToken;
+  final StreamSubscription<String>? tokenRefreshSubscription;
+  final StreamSubscription<RemoteMessage>? foregroundMessageSubscription;
+  final StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
   final bool launchedAtStartup;
 
   @override
@@ -471,6 +491,12 @@ class _MyAppState extends State<MyApp> {
       // are stateless and don't need disposal
     } else {
       // Mobile disposal
+
+      // Cancel FCM stream subscriptions to prevent memory leaks
+      widget.tokenRefreshSubscription?.cancel();
+      widget.foregroundMessageSubscription?.cancel();
+      widget.messageOpenedAppSubscription?.cancel();
+
       widget.authService.dispose();
       widget.deviceService.dispose();
       widget.fcmService?.dispose();
@@ -615,6 +641,7 @@ class _MyAppState extends State<MyApp> {
       clipboardRepository: ClipboardRepository.instance,
       securityService: SecurityService(),
       transformerService: TransformerService(),
+      settingsService: widget.settingsService!,
     );
   }
 }

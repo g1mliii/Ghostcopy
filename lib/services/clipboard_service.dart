@@ -64,4 +64,7 @@ abstract class IClipboardService {
 
   /// Write image to clipboard
   Future<void> writeImage(Uint8List bytes);
+
+  /// Clear the clipboard
+  Future<void> clear();
 }

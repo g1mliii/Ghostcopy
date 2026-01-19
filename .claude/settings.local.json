@@ -64,7 +64,10 @@
       "Bash(taskkill:*)",
       "Bash(grep:*)",
       "Bash(supabase db push:*)",
-      "mcp__supabase__get_edge_function"
+      "mcp__supabase__get_edge_function",
+      "Bash(cmd /c \"if not exist test\\\\integration\\\\desktop mkdir test\\\\integration\\\\desktop && if not exist test\\\\integration\\\\mobile mkdir test\\\\integration\\\\mobile\")",
+      "mcp__supabase__get_logs",
+      "Skill(react-best-practices)"
     ]
   },
   "enableAllProjectMcpServers": true,
