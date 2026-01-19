@@ -17,6 +17,9 @@ abstract class IEncryptionService {
   /// Returns true if passphrase was restored, false if no backup or restore failed
   Future<bool> autoRestoreFromCloud();
 
+  /// Check if a cloud backup exists for the current user
+  Future<bool> hasCloudBackup();
+
   /// Verify passphrase is correct
   Future<bool> verifyPassphrase(String passphrase);
 

@@ -31,6 +31,8 @@ class SettingsPanel extends StatefulWidget {
     required this.onAutoSendChanged,
     required this.onStaleDurationChanged,
     required this.onAutoReceiveBehaviorChanged,
+
+    this.onEncryptionChanged,
     this.autoStartService,
     this.hotkeyService,
     this.deviceService,
@@ -52,6 +54,7 @@ class SettingsPanel extends StatefulWidget {
   final ValueChanged<bool> onAutoSendChanged;
   final ValueChanged<int> onStaleDurationChanged;
   final ValueChanged<AutoReceiveBehavior> onAutoReceiveBehaviorChanged;
+  final VoidCallback? onEncryptionChanged;
 
   @override
   State<SettingsPanel> createState() => _SettingsPanelState();
@@ -61,6 +64,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Set<String> _autoSendTargetDevices = {};
   bool _autoStartEnabled = false;
   bool _encryptionEnabled = false;
+  bool _hasBackup = false;
   HotKey _currentHotkey = const HotKey(key: 's', ctrl: true, shift: true);
 
   // Cache expensive computations
@@ -97,9 +101,40 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Future<void> _loadEncryptionStatus() async {
     if (widget.encryptionService == null) return;
 
-    final enabled = await widget.encryptionService!.isEnabled();
+    var enabled = await widget.encryptionService!.isEnabled();
+    
+    // Check for backup if encryption is disabled
+    bool hasBackup = false;
+    
+    if (!enabled && widget.authService.currentUser != null) {
+      // Ensure service is initialized with user ID
+      await widget.encryptionService!.initialize(widget.authService.currentUser!.id);
+      
+      hasBackup = await widget.encryptionService!.hasCloudBackup();
+      
+      // If we have a backup, try to auto-restore immediately (user convenience)
+      if (hasBackup) {
+        debugPrint('[SettingsPanel] Backup found, attempting auto-restore on load...');
+        try {
+          final restored = await widget.encryptionService!.autoRestoreFromCloud();
+          if (restored) {
+             // If restored successfully, we are now enabled!
+             enabled = true;
+             // Notify parent to refresh history
+             widget.onEncryptionChanged?.call();
+          }
+        } catch (e) {
+          debugPrint('[SettingsPanel] Auto-restore on load failed: $e');
+          // Silent failure on load - let user click Restore button to retry/manual
+        }
+      }
+    }
+
     if (mounted) {
-      setState(() => _encryptionEnabled = enabled);
+      setState(() {
+        _encryptionEnabled = enabled;
+        _hasBackup = hasBackup;
+      });
     }
   }
 
@@ -133,6 +168,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
         await widget.encryptionService!.clearPassphrase();
         if (mounted) {
           setState(() => _encryptionEnabled = false);
+          widget.onEncryptionChanged?.call();
         }
       }
     } else {
@@ -153,7 +189,76 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
       if (success && mounted) {
         setState(() => _encryptionEnabled = true);
+        widget.onEncryptionChanged?.call();
       }
+    }
+  }
+
+  Future<void> _restoreFromBackup() async {
+    if (widget.encryptionService == null) return;
+
+    // Show loading indicator in dialog (non-blocking)
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // 1. Attempt auto-restore from cloud
+      final success = await widget.encryptionService!.autoRestoreFromCloud();
+      
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        
+        if (success) {
+          setState(() {
+            _encryptionEnabled = true;
+            _hasBackup = true; 
+          });
+          
+          widget.onEncryptionChanged?.call();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Encryption passphrase restored!')),
+          );
+        } else {
+          // 2. Fallback to manual entry if restore fails
+          if (mounted) {
+            _showManualRestoreDialog();
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        // Fallback to manual entry on error too
+        _showManualRestoreDialog();
+      }
+    }
+  }
+
+  Future<void> _showManualRestoreDialog() async {
+    final userId = widget.authService.currentUserId;
+    if (userId == null) return;
+
+    // We reuse the set passphrase dialog but change the title/intent conceptually
+    // In this app reuse context, setting the passphrase again IS restoring it manually
+    // because it derives the same key if the passphrase is the same.
+    final success = await showPassphraseDialog(
+      context,
+      widget.encryptionService!,
+      userId,
+      isRestoreMode: true,
+    );
+
+    if (success && mounted) {
+      setState(() => _encryptionEnabled = true);
+      widget.onEncryptionChanged?.call();
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Passphrase set manually. History decrypted.')),
+      );
     }
   }
 
@@ -706,7 +811,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     Text(
                       _encryptionEnabled
                           ? 'Clipboard encrypted with your passphrase'
-                          : 'Protect clipboard with passphrase',
+                          : _hasBackup
+                              ? 'Backup found - restore to decrypt items'
+                              : 'Protect clipboard with passphrase',
                       style: GhostTypography.caption.copyWith(
                         color: GhostColors.textMuted,
                       ),
@@ -714,20 +821,34 @@ class _SettingsPanelState extends State<SettingsPanel> {
                   ],
                 ),
               ),
-              FilledButton(
-                onPressed: _toggleEncryption,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _encryptionEnabled
-                      ? GhostColors.textMuted
-                      : GhostColors.primary,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  minimumSize: Size.zero,
+              if (!_encryptionEnabled && _hasBackup)
+                FilledButton(
+                  onPressed: _restoreFromBackup,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: GhostColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: Size.zero,
+                  ),
+                  child: const Text(
+                    'Restore',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                )
+              else
+                FilledButton(
+                  onPressed: _toggleEncryption,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _encryptionEnabled
+                        ? GhostColors.textMuted
+                        : GhostColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: Size.zero,
+                  ),
+                  child: Text(
+                    _encryptionEnabled ? 'Disable' : 'Enable',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
-                child: Text(
-                  _encryptionEnabled ? 'Disable' : 'Enable',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ),
             ],
           ),
           if (!_encryptionEnabled) ...[

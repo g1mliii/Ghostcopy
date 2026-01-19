@@ -51,6 +51,16 @@ class AuthService implements IAuthService {
       }
     }
 
+    // Initialize EncryptionService with current user
+    if (currentUser != null) {
+      await EncryptionService.instance.initialize(currentUser.id);
+      
+      // Auto-restore passphrase from cloud if authenticated and no local passphrase
+      if (!currentUser.isAnonymous) {
+        await EncryptionService.instance.autoRestoreFromCloud();
+      }
+    }
+
     _initialized = true;
   }
 

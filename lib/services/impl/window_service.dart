@@ -51,7 +51,7 @@ class WindowService implements IWindowService {
     const windowOptions = WindowOptions(
       size: Size(_windowWidth, _windowHeight),
       center: true,
-      backgroundColor: Color(0xFF1A1A1D), // Solid surface color
+      backgroundColor: Colors.transparent, // Start transparent to support tray menu
       skipTaskbar: true,
       titleBarStyle: TitleBarStyle.hidden, // Borderless window
       windowButtonVisibility: false,

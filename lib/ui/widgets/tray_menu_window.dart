@@ -30,9 +30,9 @@ class TrayMenuWindow extends StatelessWidget {
         ? const EdgeInsets.only(right: 16, top: 8) // Top padding for macOS menu bar
         : const EdgeInsets.only(right: 16, bottom: 60); // Bottom padding for Windows taskbar
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: GestureDetector(
+    return Material(
+      type: MaterialType.transparency,
+      child: GestureDetector(
         onTap: onClose, // Close when clicking outside
         child: Container(
           color: Colors.transparent,

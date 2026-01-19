@@ -296,6 +296,12 @@ class EncryptionService implements IEncryptionService {
   }
 
   @override
+  Future<bool> hasCloudBackup() async {
+    if (_passphraseSync == null) return false;
+    return await _passphraseSync!.hasCloudBackup();
+  }
+
+  @override
   Future<bool> verifyPassphrase(String passphrase) async {
     final storedHash = await _secureStorage.read(key: _verificationHashKey);
     if (storedHash == null) return false;

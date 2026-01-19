@@ -9,6 +9,7 @@ class MainFlutterWindow: NSWindow {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
+    flutterViewController.backgroundColor = .clear // Ensure Flutter view is transparent
     self.setFrame(windowFrame, display: true)
 
     // Enable transparency for tray menu window
