@@ -1,15 +1,13 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:system_tray/system_tray.dart';
+
+import 'package:tray_manager/tray_manager.dart';
 import '../tray_service.dart';
 
-/// Concrete implementation of ITrayService using system_tray package
+/// Concrete implementation of ITrayService using tray_manager package
 ///
 /// Manages the system tray icon and context menu for desktop platforms.
 /// Uses custom window for menu to match app styling.
-class TrayService implements ITrayService {
-  final SystemTray _systemTray = SystemTray();
-
+class TrayService with TrayListener implements ITrayService {
   // Callback for when tray icon is right-clicked
   void Function()? onRightClick;
 
@@ -20,31 +18,26 @@ class TrayService implements ITrayService {
       return;
     }
 
-    await _systemTray.initSystemTray(
-      title: 'GhostCopy',
-      iconPath: _getTrayIconPath(),
-    );
+    // Add listener for tray events
+    trayManager.addListener(this);
 
-    // Register right-click handler to show custom menu
-    _systemTray.registerSystemTrayEventHandler((eventName) {
-      if (eventName == kSystemTrayEventClick) {
-        // Left click - could show spotlight
-      } else if (eventName == kSystemTrayEventRightClick) {
-        // Right click - trigger custom menu
-        onRightClick?.call();
-      }
-    });
+    await trayManager.setIcon(
+      _getTrayIconPath(),
+    );
+    
+    // On macOS, the title is usually not shown in tray for icon-only apps, 
+    // but we can set it if needed. Leaving empty for now for icon-only feel.
   }
 
   @override
   Future<void> setIcon(String iconPath) async {
     if (!_isDesktop()) return;
-    await _systemTray.setImage(iconPath);
+    await trayManager.setIcon(iconPath);
   }
 
   @override
   Future<void> setContextMenu(List<TrayMenuItem> items) async {
-    // No-op - we use custom window for menu
+    // No-op - we use custom window for menu, handled via event
   }
 
   @override
@@ -53,13 +46,39 @@ class TrayService implements ITrayService {
 
     // Clean up callback to prevent memory leak
     onRightClick = null;
+    
+    // Remove listener
+    trayManager.removeListener(this);
+    
+    // There isn't a strict 'destroy' method for trayManager exposed usually,
+    // but removing the listener helps.
+  }
 
-    try {
-      await _systemTray.destroy();
-    } on Object catch (e, st) {
-      // Avoid throwing during app shutdown
-      debugPrint('TrayService.dispose error: $e\n$st');
-    }
+  // --- TrayListener overrides ---
+
+  @override
+  void onTrayIconMouseDown() {
+    // Left click - could show spotlight or toggle window
+    // implementing if needed
+  }
+
+  @override
+  void onTrayIconRightMouseDown() {
+    // Right click - trigger custom menu
+    onRightClick?.call();
+    
+    // Also support native menu popping up if we set one, 
+    // but here we are using custom window callback.
+  }
+
+  @override
+  void onTrayIconRightMouseUp() {
+    // Some platforms might trigger on up or down, handling down usually suffices for menus
+  }
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) {
+    // Handle native menu item clicks if used
   }
 
   /// Get platform-specific tray icon path

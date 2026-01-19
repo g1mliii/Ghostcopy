@@ -13,17 +13,20 @@ class PassphraseDialog extends StatefulWidget {
   const PassphraseDialog({
     required this.encryptionService,
     required this.userId,
+    this.isRestoreMode = false,
     super.key,
   });
 
   final IEncryptionService encryptionService;
   final String userId;
+  final bool isRestoreMode;
 
   @override
   State<PassphraseDialog> createState() => _PassphraseDialogState();
 }
 
 class _PassphraseDialogState extends State<PassphraseDialog> {
+  // ... existing state ...
   late final TextEditingController _passphraseController;
   late final TextEditingController _confirmController;
   late final FocusNode _passphraseFocus;
@@ -35,7 +38,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
   String? _errorMessage;
 
   static const int _minLength = 8;
-
+  
   @override
   void initState() {
     super.initState();
@@ -87,7 +90,8 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
         return;
       }
 
-      if (passphrase != confirm) {
+      // Only check confirmation if NOT in restore mode
+      if (!widget.isRestoreMode && passphrase != confirm) {
         setState(() {
           _errorMessage = 'Passphrases do not match';
           _isLoading = false;
@@ -111,7 +115,9 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
         Navigator.of(context).pop(true);
       } else {
         setState(() {
-          _errorMessage = 'Failed to set passphrase. Please try again.';
+          _errorMessage = widget.isRestoreMode 
+              ? 'Failed to restore passphrase. Please try again.'
+              : 'Failed to set passphrase. Please try again.';
           _isLoading = false;
         });
       }
@@ -128,27 +134,30 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Set Encryption Passphrase'),
+      title: Text(widget.isRestoreMode ? 'Enter Encryption Passphrase' : 'Set Encryption Passphrase'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Protect your clipboard with end-to-end encryption. '
-              'Your passphrase is stored securely in your system keychain.',
-              style: TextStyle(fontSize: 14),
+            Text(
+              widget.isRestoreMode
+                  ? 'Enter your existing passphrase to restore access to your encrypted clipboard history.'
+                  : 'Protect your clipboard with end-to-end encryption. Your passphrase is stored securely in your system keychain.',
+              style: const TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 16),
-            const Text(
-              '⚠️ If you lose your passphrase, encrypted data cannot be recovered.',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange,
-                fontWeight: FontWeight.w600,
+            if (!widget.isRestoreMode) ...[
+              const Text(
+                '⚠️ If you lose your passphrase, encrypted data cannot be recovered.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
+            ],
 
             // Passphrase field
             TextField(
@@ -175,40 +184,48 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                 ),
               ),
               onSubmitted: (_) {
-                _confirmFocus.requestFocus();
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // Confirm passphrase field
-            TextField(
-              controller: _confirmController,
-              focusNode: _confirmFocus,
-              obscureText: _obscureConfirm,
-              enabled: !_isLoading,
-              decoration: InputDecoration(
-                labelText: 'Confirm Passphrase',
-                hintText: 'Re-enter passphrase',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscureConfirm
-                        ? Icons.visibility
-                        : Icons.visibility_off,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscureConfirm = !_obscureConfirm;
-                    });
-                  },
-                ),
-              ),
-              onSubmitted: (_) {
-                if (!_isLoading) {
-                  _setPassphrase();
+                if (widget.isRestoreMode) {
+                  // Submit immediately in restore mode
+                  if (!_isLoading) _setPassphrase();
+                } else {
+                  // Focus confirm field in set mode
+                  _confirmFocus.requestFocus();
                 }
               },
             ),
+            
+            // Confirm passphrase field (only in Set mode)
+            if (!widget.isRestoreMode) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _confirmController,
+                focusNode: _confirmFocus,
+                obscureText: _obscureConfirm,
+                enabled: !_isLoading,
+                decoration: InputDecoration(
+                  labelText: 'Confirm Passphrase',
+                  hintText: 'Re-enter passphrase',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscureConfirm
+                          ? Icons.visibility
+                          : Icons.visibility_off,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _obscureConfirm = !_obscureConfirm;
+                      });
+                    },
+                  ),
+                ),
+                onSubmitted: (_) {
+                  if (!_isLoading) {
+                    _setPassphrase();
+                  }
+                },
+              ),
+            ],
 
             // Error message
             if (_errorMessage != null) ...[
@@ -257,7 +274,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Enable Encryption'),
+              : Text(widget.isRestoreMode ? 'Restore Access' : 'Enable Encryption'),
         ),
       ],
     );
@@ -268,14 +285,16 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
 Future<bool> showPassphraseDialog(
   BuildContext context,
   IEncryptionService encryptionService,
-  String userId,
-) async {
+  String userId, {
+  bool isRestoreMode = false,
+}) async {
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (context) => PassphraseDialog(
       encryptionService: encryptionService,
       userId: userId,
+      isRestoreMode: isRestoreMode,
     ),
   );
   return result ?? false;

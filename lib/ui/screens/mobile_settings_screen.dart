@@ -8,6 +8,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../widgets/passphrase_dialog.dart';
 
 /// Mobile settings screen
 ///
@@ -38,115 +39,7 @@ class MobileSettingsScreen extends StatefulWidget {
   State<MobileSettingsScreen> createState() => _MobileSettingsScreenState();
 }
 
-/// Stateful passphrase dialog with validation
-class _PassphraseDialogWidget extends StatefulWidget {
-  const _PassphraseDialogWidget({required this.isSetup});
 
-  final bool isSetup;
-
-  @override
-  State<_PassphraseDialogWidget> createState() =>
-      _PassphraseDialogWidgetState();
-}
-
-class _PassphraseDialogWidgetState extends State<_PassphraseDialogWidget> {
-  final _controller = TextEditingController();
-  String? _errorMessage;
-  static const int _minLength = 8;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final passphrase = _controller.text.trim();
-
-    // Validate passphrase
-    if (passphrase.isEmpty) {
-      setState(() => _errorMessage = 'Passphrase cannot be empty');
-      return;
-    }
-
-    if (passphrase.length < _minLength) {
-      setState(
-        () => _errorMessage =
-            'Passphrase must be at least $_minLength characters',
-      );
-      return;
-    }
-
-    // Valid - return passphrase
-    Navigator.of(context).pop(passphrase);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: GhostColors.surface,
-      title: Text(
-        widget.isSetup ? 'Set Encryption Passphrase' : 'Enter Passphrase',
-        style: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-          color: GhostColors.textPrimary,
-        ),
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            controller: _controller,
-            obscureText: true,
-            autofocus: true,
-            style: const TextStyle(color: GhostColors.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'At least $_minLength characters',
-              hintStyle: TextStyle(
-                color: GhostColors.textMuted.withValues(alpha: 0.6),
-              ),
-              filled: true,
-              fillColor: GhostColors.background,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
-              ),
-              errorText: _errorMessage,
-              errorStyle: const TextStyle(color: Colors.red, fontSize: 12),
-            ),
-            onSubmitted: (_) => _submit(),
-            onChanged: (_) {
-              // Clear error when user types
-              if (_errorMessage != null) {
-                setState(() => _errorMessage = null);
-              }
-            },
-          ),
-          if (widget.isSetup) ...[
-            const SizedBox(height: 12),
-            Text(
-              '⚠️ If you lose your passphrase, encrypted data cannot be recovered.',
-              style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
-            ),
-          ],
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          style: FilledButton.styleFrom(backgroundColor: GhostColors.primary),
-          child: const Text('Confirm'),
-        ),
-      ],
-    );
-  }
-}
 
 class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   // Device list state
@@ -157,6 +50,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   EncryptionService? _encryptionService;
   bool _encryptionEnabled = false;
   bool _encryptionLoading = false;
+  bool _hasBackup = false;
 
   // Clipboard auto-clear state
   int _autoClearSeconds = 30;
@@ -189,11 +83,30 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       _encryptionService = EncryptionService.instance;
       await _encryptionService!.initialize(userId);
 
-      final enabled = await _encryptionService!.isEnabled();
+      var enabled = await _encryptionService!.isEnabled();
+      var hasBackup = false;
+
+      // Check for backup if encryption is disabled
+      if (!enabled) {
+        hasBackup = await _encryptionService!.hasCloudBackup();
+        
+        // Auto-restore attempt on load (same as desktop)
+        if (hasBackup) {
+          try {
+            final restored = await _encryptionService!.autoRestoreFromCloud();
+            if (restored) {
+              enabled = true;
+            }
+          } on Exception catch (e) {
+            debugPrint('[MobileSettings] Auto-restore on load failed: $e');
+          }
+        }
+      }
 
       if (mounted) {
         setState(() {
           _encryptionEnabled = enabled;
+          _hasBackup = hasBackup;
           _encryptionLoading = false;
         });
       }
@@ -256,35 +169,30 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     if (_encryptionService == null) return;
 
     if (enabled) {
-      // Show passphrase setup dialog
-      final passphrase = await _showPassphraseDialog(isSetup: true);
-      if (passphrase != null) {
-        setState(() => _encryptionLoading = true);
+      final userId = widget.authService.currentUserId;
+      if (userId == null) return;
+      
+      // If we have a backup, try restore flow first
+      if (_hasBackup) {
+        await _restoreFromBackup();
+        return; // _restoreFromBackup handles UI updates
+      }
 
-        final success = await _encryptionService!.setPassphrase(passphrase);
+      // Show passphrase setup dialog (Set Mode)
+      final success = await showPassphraseDialog(
+        context,
+        _encryptionService!,
+        userId,
+      );
 
-        if (mounted) {
-          setState(() {
-            _encryptionEnabled = success;
-            _encryptionLoading = false;
-          });
-
-          if (success) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Encryption enabled'),
-                backgroundColor: GhostColors.success,
-              ),
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Failed to enable encryption'),
-                backgroundColor: Colors.red.shade400,
-              ),
-            );
-          }
-        }
+      if (success && mounted) {
+         setState(() => _encryptionEnabled = true);
+         ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Encryption enabled'),
+              backgroundColor: GhostColors.success,
+            ),
+          );
       }
     } else {
       // Disable encryption
@@ -305,6 +213,54 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             _encryptionLoading = false;
           });
         }
+      }
+    }
+  }
+
+  Future<void> _restoreFromBackup() async {
+    if (_encryptionService == null) return;
+
+    // Show loading indicator
+    setState(() => _encryptionLoading = true);
+
+    try {
+      // 1. Attempt auto-restore
+      final success = await _encryptionService!.autoRestoreFromCloud();
+      
+      if (mounted) {
+        setState(() => _encryptionLoading = false);
+        
+        if (success) {
+          setState(() => _encryptionEnabled = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Passphrase restored!')),
+          );
+        } else {
+          // 2. Fallback to manual entry
+          final userId = widget.authService.currentUserId;
+          if (userId != null) {
+            final manualSuccess = await showPassphraseDialog(
+              context,
+              _encryptionService!,
+              userId,
+              isRestoreMode: true,
+            );
+            
+            if (manualSuccess && mounted) {
+              setState(() => _encryptionEnabled = true);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Passphrase restored manually!')),
+              );
+            }
+          }
+        }
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(() => _encryptionLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
       }
     }
   }
@@ -388,12 +344,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     return result ?? false;
   }
 
-  Future<String?> _showPassphraseDialog({bool isSetup = false}) async {
-    return showDialog<String>(
-      context: context,
-      builder: (context) => _PassphraseDialogWidget(isSetup: isSetup),
-    );
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -698,6 +649,31 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             activeTrackColor: GhostColors.success,
             onChanged: _encryptionLoading ? null : _handleEncryptionToggle,
           ),
+
+          // Explicit "Restore" button if has backup but currently disabled
+          if (!_encryptionEnabled && _hasBackup) ...[
+            const Divider(height: 1, color: GhostColors.glassBorder),
+            ListTile(
+              leading: const Icon(
+                Icons.restore,
+                color: GhostColors.primary,
+                size: 20,
+              ),
+              title: const Text(
+                'Restore from Backup',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: GhostColors.primary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              subtitle: const Text(
+                'Unlock history using your existing passphrase',
+                style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+              ),
+              onTap: _encryptionLoading ? null : _restoreFromBackup,
+            ),
+          ],
 
           const Divider(height: 1, color: GhostColors.glassBorder),
 

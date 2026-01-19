@@ -9,7 +9,8 @@ class MainFlutterWindow: NSWindow {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
-    self.setFrame(windowFrame, display: true)
+    flutterViewController.backgroundColor = .clear // Ensure Flutter view is transparent
+    self.setFrame(windowFrame, display: false)
 
     // Enable transparency for tray menu window
     self.isOpaque = false
@@ -22,5 +23,9 @@ class MainFlutterWindow: NSWindow {
     powerMonitor = PowerMonitor(messenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
+    
+    // Ensure window is hidden at launch (prevents ghost window)
+    // Flutter code (window_manager) will show it when ready
+    self.orderOut(nil)
   }
 }

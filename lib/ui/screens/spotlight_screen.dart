@@ -1485,6 +1485,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                     hotkeyService: widget.hotkeyService,
                     deviceService: widget.deviceService,
                     encryptionService: EncryptionService.instance,
+                    onEncryptionChanged: _loadHistory,
                     onClose: () async {
                       await _settingsSlideController.reverse();
                       setState(() => _showSettings = false);

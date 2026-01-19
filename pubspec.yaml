@@ -51,9 +51,9 @@ dependencies:
   receive_sharing_intent: ^1.8.0
   shared_preferences: ^2.2.2
   supabase_flutter: ^2.0.0
-  super_clipboard: ^0.3.0+2
-  system_tray: ^2.0.3
+  super_clipboard: ^0.9.0
   timeago: ^3.7.0
+  tray_manager: ^0.2.4
   window_manager: ^0.5.1
 
 dev_dependencies:
