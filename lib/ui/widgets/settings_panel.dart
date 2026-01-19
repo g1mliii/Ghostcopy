@@ -339,18 +339,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
           ),
           const SizedBox(height: 10),
         ],
-        // Encryption toggle (all platforms)
-        if (widget.encryptionService != null) ...[
-          _buildSettingToggle(
-            title: 'Enable encryption',
-            subtitle: _encryptionEnabled
-                ? 'Clipboard items are encrypted'
-                : 'Encrypt clipboard items with a passphrase',
-            value: _encryptionEnabled,
-            onChanged: (_) => _toggleEncryption(),
-          ),
-          const SizedBox(height: 10),
-        ],
         // Hotkey customization (desktop only)
         if (isDesktop && widget.hotkeyService != null) ...[
           HotkeyCapture(
