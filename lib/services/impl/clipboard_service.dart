@@ -15,7 +15,8 @@ class ClipboardService implements IClipboardService {
   @override
   Future<ClipboardContent> read() async {
     try {
-      final reader = await ClipboardReader.readClipboard();
+      final reader = await SystemClipboard.instance?.read();
+      if (reader == null) return const ClipboardContent.empty();
 
       // Try to read PNG image first (highest priority)
       if (reader.canProvide(Formats.png)) {
@@ -89,7 +90,7 @@ class ClipboardService implements IClipboardService {
       final item = DataWriterItem()
         ..add(Formats.plainText(text));
 
-      await ClipboardWriter.instance.write([item]);
+      await SystemClipboard.instance?.write([item]);
       debugPrint('[ClipboardService] ↑ Wrote text: ${text.length} chars');
     } on Exception catch (e) {
       debugPrint('[ClipboardService] ✗ Write text failed: $e');
@@ -107,7 +108,7 @@ class ClipboardService implements IClipboardService {
         ..add(Formats.htmlText(html))
         ..add(Formats.plainText(plainText));
 
-      await ClipboardWriter.instance.write([item]);
+      await SystemClipboard.instance?.write([item]);
       debugPrint('[ClipboardService] ↑ Wrote HTML: ${html.length} chars');
     } on Exception catch (e) {
       debugPrint('[ClipboardService] ✗ Write HTML failed: $e');
@@ -121,7 +122,7 @@ class ClipboardService implements IClipboardService {
       final item = DataWriterItem()
         ..add(Formats.png(bytes)); // PNG format (lossless)
 
-      await ClipboardWriter.instance.write([item]);
+      await SystemClipboard.instance?.write([item]);
       debugPrint('[ClipboardService] ↑ Wrote image: ${bytes.length} bytes');
     } on Exception catch (e) {
       debugPrint('[ClipboardService] ✗ Write image failed: $e');

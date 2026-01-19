@@ -298,7 +298,7 @@ class EncryptionService implements IEncryptionService {
   @override
   Future<bool> hasCloudBackup() async {
     if (_passphraseSync == null) return false;
-    return await _passphraseSync!.hasCloudBackup();
+    return _passphraseSync.hasCloudBackup();
   }
 
   @override

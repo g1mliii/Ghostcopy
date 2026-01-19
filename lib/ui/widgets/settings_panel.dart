@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -104,7 +105,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     var enabled = await widget.encryptionService!.isEnabled();
     
     // Check for backup if encryption is disabled
-    bool hasBackup = false;
+    var hasBackup = false;
     
     if (!enabled && widget.authService.currentUser != null) {
       // Ensure service is initialized with user ID
@@ -123,7 +124,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
              // Notify parent to refresh history
              widget.onEncryptionChanged?.call();
           }
-        } catch (e) {
+        } on Exception catch (e) {
           debugPrint('[SettingsPanel] Auto-restore on load failed: $e');
           // Silent failure on load - let user click Restore button to retry/manual
         }
@@ -197,8 +198,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Future<void> _restoreFromBackup() async {
     if (widget.encryptionService == null) return;
 
-    // Show loading indicator in dialog (non-blocking)
-    showDialog(
+    await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator()),
@@ -225,15 +225,16 @@ class _SettingsPanelState extends State<SettingsPanel> {
         } else {
           // 2. Fallback to manual entry if restore fails
           if (mounted) {
-            _showManualRestoreDialog();
+            unawaited(_showManualRestoreDialog());
           }
         }
       }
-    } catch (e) {
+    } on Exception catch (e) {
       if (mounted) {
         Navigator.pop(context); // Close loading dialog
         // Fallback to manual entry on error too
-        _showManualRestoreDialog();
+        unawaited(_showManualRestoreDialog());
+        debugPrint('Auto-restore failed: $e');
       }
     }
   }

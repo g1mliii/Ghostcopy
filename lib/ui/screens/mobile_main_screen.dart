@@ -882,8 +882,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
-  void _navigateToSettings() {
-    Navigator.of(context).push(
+  Future<void> _navigateToSettings() async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => MobileSettingsScreen(
           authService: widget.authService,
@@ -891,6 +891,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         ),
       ),
     );
+
+    // Refresh history when returning from settings (encryption keys may have changed)
+    if (mounted) {
+      // Clear caches to force re-decryption with new keys
+      _decryptedContentCache.clear();
+      _detectionCache.clear();
+      await _loadHistory();
+    }
   }
 
   @override
@@ -1476,6 +1484,17 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
   // Image loading state
   Uint8List? _imageBytes;
   bool _imageLoading = false;
+
+  @override
+  void didUpdateWidget(_StaggeredHistoryItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-run detection if content, cache, or encryption service changes
+    if (widget.item.content != oldWidget.item.content ||
+        widget.cachedDecryptedContent != oldWidget.cachedDecryptedContent ||
+        widget.encryptionService != oldWidget.encryptionService) {
+      _initializeContentDetection();
+    }
+  }
 
   @override
   void initState() {
