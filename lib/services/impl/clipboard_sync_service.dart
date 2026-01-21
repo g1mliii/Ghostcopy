@@ -12,8 +12,11 @@ import '../clipboard_service.dart';
 import '../clipboard_sync_service.dart';
 import '../game_mode_service.dart';
 import '../notification_service.dart';
+import '../obsidian_service.dart';
 import '../security_service.dart';
 import '../settings_service.dart';
+import '../url_shortener_service.dart';
+import '../webhook_service.dart';
 
 /// Background service for clipboard synchronization
 ///
@@ -30,12 +33,18 @@ class ClipboardSyncService implements IClipboardSyncService {
     IClipboardService? clipboardService,
     INotificationService? notificationService,
     IGameModeService? gameModeService,
+    IUrlShortenerService? urlShortenerService,
+    IWebhookService? webhookService,
+    IObsidianService? obsidianService,
   })  : _clipboardRepository = clipboardRepository,
         _settingsService = settingsService,
         _securityService = securityService,
         _clipboardService = clipboardService ?? ClipboardService.instance,
         _notificationService = notificationService,
-        _gameModeService = gameModeService;
+        _gameModeService = gameModeService,
+        _urlShortenerService = urlShortenerService,
+        _webhookService = webhookService,
+        _obsidianService = obsidianService;
 
   final IClipboardRepository _clipboardRepository;
   final ISettingsService _settingsService;
@@ -43,6 +52,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   final IClipboardService _clipboardService;
   final INotificationService? _notificationService;
   final IGameModeService? _gameModeService;
+  final IUrlShortenerService? _urlShortenerService;
+  final IWebhookService? _webhookService;
+  final IObsidianService? _obsidianService;
 
   // Realtime subscription
   RealtimeChannel? _realtimeChannel;
@@ -385,8 +397,18 @@ class ClipboardSyncService implements IClipboardSyncService {
       final userId = Supabase.instance.client.auth.currentUser?.id;
       if (userId == null) return;
 
+      // URL shortening (if enabled)
+      var processedContent = content;
+      final urlShortener = _urlShortenerService;
+      if (urlShortener != null) {
+        final autoShortenEnabled = await _settingsService.getAutoShortenUrls();
+        if (autoShortenEnabled && urlShortener.isUrl(content)) {
+          processedContent = await urlShortener.shortenUrl(content);
+        }
+      }
+
       // Content deduplication
-      final contentHash = _calculateContentHash(content);
+      final contentHash = _calculateContentHash(processedContent);
       if (contentHash == _lastSentContentHash) {
         debugPrint('[ClipboardSyncService] Skipping duplicate content');
         return;
@@ -405,7 +427,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       final item = ClipboardItem(
         id: '0',
         userId: userId,
-        content: content,
+        content: processedContent,
         deviceName: currentDeviceName,
         deviceType: currentDeviceType,
         targetDeviceTypes: targetDevicesList,
@@ -416,6 +438,12 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Push notification now triggered by database webhook (send-clipboard-notification)
       // No client-side edge function invocation needed
+
+      // Fire webhook (if enabled) - non-blocking
+      _fireWebhook(processedContent, currentDeviceType);
+
+      // Append to Obsidian (if enabled) - non-blocking
+      _appendToObsidian(processedContent);
 
       _lastSendTime = DateTime.now();
 
@@ -565,6 +593,68 @@ class ClipboardSyncService implements IClipboardSyncService {
     } on Exception catch (e) {
       debugPrint('[ClipboardSync] ❌ Polling error: $e');
     }
+  }
+
+  /// Fire webhook (non-blocking, fire-and-forget)
+  void _fireWebhook(String content, String deviceType) {
+    final webhook = _webhookService;
+    if (webhook == null) return;
+
+    // Fire in background (don't await)
+    () async {
+      try {
+        final webhookEnabled = await _settingsService.getWebhookEnabled();
+        if (!webhookEnabled) return;
+
+        final webhookUrl = await _settingsService.getWebhookUrl();
+        if (webhookUrl == null || webhookUrl.isEmpty) {
+          debugPrint('[ClipboardSyncService] ⚠️  Webhook enabled but no URL configured');
+          return;
+        }
+
+        final payload = {
+          'content': content,
+          'deviceType': deviceType,
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+
+        await webhook.sendWebhook(webhookUrl, payload);
+      } on Exception catch (e) {
+        debugPrint('[ClipboardSyncService] ❌ Webhook error: $e');
+        // Silent failure - don't block clipboard operations
+      }
+    }();
+  }
+
+  /// Append to Obsidian vault (non-blocking, fire-and-forget)
+  void _appendToObsidian(String content) {
+    final obsidian = _obsidianService;
+    if (obsidian == null) return;
+
+    // Fire in background (don't await)
+    () async {
+      try {
+        final obsidianEnabled = await _settingsService.getObsidianEnabled();
+        if (!obsidianEnabled) return;
+
+        final vaultPath = await _settingsService.getObsidianVaultPath();
+        if (vaultPath == null || vaultPath.isEmpty) {
+          debugPrint('[ClipboardSyncService] ⚠️  Obsidian enabled but no vault path configured');
+          return;
+        }
+
+        final fileName = await _settingsService.getObsidianFileName();
+
+        await obsidian.appendToVault(
+          vaultPath: vaultPath,
+          fileName: fileName,
+          content: content,
+        );
+      } on Exception catch (e) {
+        debugPrint('[ClipboardSyncService] ❌ Obsidian error: $e');
+        // Silent failure - don't block clipboard operations
+      }
+    }();
   }
 
   @override

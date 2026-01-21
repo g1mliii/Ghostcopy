@@ -41,6 +41,7 @@ dependencies:
   google_sign_in: ^6.2.2
   home_widget: ^0.8.1
   hotkey_manager: ^0.2.0
+  http: ^1.2.0
   image: ^4.0.17
   image_picker: ^1.0.7
   launch_at_startup: ^0.5.1

@@ -58,6 +58,44 @@ abstract class ISettingsService {
   /// Pass 0 to disable auto-clear
   Future<void> setClipboardAutoClearSeconds(int seconds);
 
+  // ========== FEATURE TOGGLES ==========
+
+  /// Get auto-shorten URLs enabled setting (default: false)
+  Future<bool> getAutoShortenUrls();
+
+  /// Set auto-shorten URLs enabled setting
+  Future<void> setAutoShortenUrls({required bool enabled});
+
+  /// Get webhook enabled setting (default: false)
+  Future<bool> getWebhookEnabled();
+
+  /// Set webhook enabled setting
+  Future<void> setWebhookEnabled({required bool enabled});
+
+  /// Get webhook URL setting (default: null)
+  Future<String?> getWebhookUrl();
+
+  /// Set webhook URL setting
+  Future<void> setWebhookUrl(String? url);
+
+  /// Get Obsidian enabled setting (default: false)
+  Future<bool> getObsidianEnabled();
+
+  /// Set Obsidian enabled setting
+  Future<void> setObsidianEnabled({required bool enabled});
+
+  /// Get Obsidian vault path setting (default: null)
+  Future<String?> getObsidianVaultPath();
+
+  /// Set Obsidian vault path setting
+  Future<void> setObsidianVaultPath(String? path);
+
+  /// Get Obsidian file name setting (default: "clipboard.md")
+  Future<String> getObsidianFileName();
+
+  /// Set Obsidian file name setting
+  Future<void> setObsidianFileName(String fileName);
+
   // ========== FEATURE FLAGS ==========
 
   /// Check if hybrid mode is enabled (from Supabase app_config table)

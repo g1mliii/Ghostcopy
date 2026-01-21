@@ -66,7 +66,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
   bool _autoStartEnabled = false;
   bool _encryptionEnabled = false;
   bool _hasBackup = false;
+  bool _autoShortenUrls = false;
+  bool _webhookEnabled = false;
+  String _webhookUrl = '';
+  bool _obsidianEnabled = false;
+  String _obsidianVaultPath = '';
+  String _obsidianFileName = 'clipboard.md';
   HotKey _currentHotkey = const HotKey(key: 's', ctrl: true, shift: true);
+
+  // Text controllers
+  final _webhookUrlController = TextEditingController();
+  final _obsidianVaultPathController = TextEditingController();
+  final _obsidianFileNameController = TextEditingController();
 
   // Cache expensive computations
   String? _cachedDeviceText;
@@ -78,6 +89,17 @@ class _SettingsPanelState extends State<SettingsPanel> {
     _loadTargetDevices();
     _loadAutoStartSetting();
     _loadEncryptionStatus();
+    _loadUrlShorteningStatus();
+    _loadWebhookStatus();
+    _loadObsidianStatus();
+  }
+
+  @override
+  void dispose() {
+    _webhookUrlController.dispose();
+    _obsidianVaultPathController.dispose();
+    _obsidianFileNameController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadTargetDevices() async {
@@ -103,16 +125,16 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (widget.encryptionService == null) return;
 
     var enabled = await widget.encryptionService!.isEnabled();
-    
+
     // Check for backup if encryption is disabled
     var hasBackup = false;
-    
+
     if (!enabled && widget.authService.currentUser != null) {
       // Ensure service is initialized with user ID
       await widget.encryptionService!.initialize(widget.authService.currentUser!.id);
-      
+
       hasBackup = await widget.encryptionService!.hasCloudBackup();
-      
+
       // If we have a backup, try to auto-restore immediately (user convenience)
       if (hasBackup) {
         debugPrint('[SettingsPanel] Backup found, attempting auto-restore on load...');
@@ -135,6 +157,40 @@ class _SettingsPanelState extends State<SettingsPanel> {
       setState(() {
         _encryptionEnabled = enabled;
         _hasBackup = hasBackup;
+      });
+    }
+  }
+
+  Future<void> _loadUrlShorteningStatus() async {
+    final enabled = await widget.settingsService.getAutoShortenUrls();
+    if (mounted) {
+      setState(() => _autoShortenUrls = enabled);
+    }
+  }
+
+  Future<void> _loadWebhookStatus() async {
+    final enabled = await widget.settingsService.getWebhookEnabled();
+    final url = await widget.settingsService.getWebhookUrl();
+    if (mounted) {
+      setState(() {
+        _webhookEnabled = enabled;
+        _webhookUrl = url ?? '';
+        _webhookUrlController.text = _webhookUrl;
+      });
+    }
+  }
+
+  Future<void> _loadObsidianStatus() async {
+    final enabled = await widget.settingsService.getObsidianEnabled();
+    final vaultPath = await widget.settingsService.getObsidianVaultPath();
+    final fileName = await widget.settingsService.getObsidianFileName();
+    if (mounted) {
+      setState(() {
+        _obsidianEnabled = enabled;
+        _obsidianVaultPath = vaultPath ?? '';
+        _obsidianFileName = fileName;
+        _obsidianVaultPathController.text = _obsidianVaultPath;
+        _obsidianFileNameController.text = _obsidianFileName;
       });
     }
   }
@@ -318,6 +374,73 @@ class _SettingsPanelState extends State<SettingsPanel> {
           _buildDeviceSelector(),
           const SizedBox(height: 10),
         ],
+        // URL shortening toggle
+        _buildSettingToggle(
+          title: 'Auto-shorten URLs',
+          subtitle: 'Automatically shorten long URLs before sending',
+          value: _autoShortenUrls,
+          onChanged: (value) async {
+            await widget.settingsService.setAutoShortenUrls(enabled: value);
+            if (mounted) {
+              setState(() => _autoShortenUrls = value);
+            }
+          },
+        ),
+        const SizedBox(height: 10),
+        // Webhook toggle
+        _buildSettingToggle(
+          title: 'Webhook Integration',
+          subtitle: 'Send clipboard data to external services',
+          value: _webhookEnabled,
+          onChanged: (value) async {
+            await widget.settingsService.setWebhookEnabled(enabled: value);
+            if (mounted) {
+              setState(() => _webhookEnabled = value);
+            }
+          },
+        ),
+        if (_webhookEnabled) ...[
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: 'Webhook URL',
+            controller: _webhookUrlController,
+            onChanged: (value) async {
+              await widget.settingsService.setWebhookUrl(value);
+            },
+          ),
+        ],
+        const SizedBox(height: 10),
+        // Obsidian toggle
+        _buildSettingToggle(
+          title: 'Obsidian Integration',
+          subtitle: 'Auto-append to Obsidian vault',
+          value: _obsidianEnabled,
+          onChanged: (value) async {
+            await widget.settingsService.setObsidianEnabled(enabled: value);
+            if (mounted) {
+              setState(() => _obsidianEnabled = value);
+            }
+          },
+        ),
+        if (_obsidianEnabled) ...[
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: 'Vault Path',
+            controller: _obsidianVaultPathController,
+            onChanged: (value) async {
+              await widget.settingsService.setObsidianVaultPath(value);
+            },
+          ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: 'File Name',
+            controller: _obsidianFileNameController,
+            onChanged: (value) async {
+              await widget.settingsService.setObsidianFileName(value);
+            },
+          ),
+        ],
+        const SizedBox(height: 10),
         // Desktop-only settings
         if (isDesktop && widget.autoStartService != null) ...[
           // Auto-start toggle
@@ -463,6 +586,38 @@ class _SettingsPanelState extends State<SettingsPanel> {
           activeTrackColor: GhostColors.primary,
           thumbColor: WidgetStateProperty.all(GhostColors.primary),
           contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextField({
+    required String label,
+    required TextEditingController controller,
+    required ValueChanged<String> onChanged,
+  }) {
+    return RepaintBoundary(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: GhostColors.surface,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: TextField(
+          controller: controller,
+          style: GhostTypography.body.copyWith(
+            fontSize: 12,
+            color: GhostColors.textPrimary,
+          ),
+          decoration: InputDecoration(
+            labelText: label,
+            labelStyle: GhostTypography.caption.copyWith(
+              color: GhostColors.textMuted,
+            ),
+            border: InputBorder.none,
+            contentPadding: EdgeInsets.zero,
+          ),
+          onChanged: onChanged,
         ),
       ),
     );

@@ -30,6 +30,7 @@ import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
 import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
+import 'services/obsidian_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
@@ -37,6 +38,8 @@ import 'services/system_power_service.dart';
 import 'services/toast_window_service.dart';
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
+import 'services/url_shortener_service.dart';
+import 'services/webhook_service.dart';
 import 'services/widget_service.dart';
 import 'services/window_service.dart';
 import 'ui/screens/mobile_main_screen.dart';
@@ -110,6 +113,9 @@ Future<void> main(List<String> args) async {
     final securityService = SecurityService();
     final transformerService = TransformerService();
     final pushNotificationService = PushNotificationService();
+    final urlShortenerService = UrlShortenerService();
+    final webhookService = WebhookService();
+    final obsidianService = ObsidianService();
 
     // Initialize settings service first
     await settingsService.initialize();
@@ -123,6 +129,9 @@ Future<void> main(List<String> args) async {
       settingsService: settingsService,
       securityService: securityService,
       gameModeService: gameModeService,
+      urlShortenerService: urlShortenerService,
+      webhookService: webhookService,
+      obsidianService: obsidianService,
     );
 
     // Initialize clipboard sync service (starts realtime subscription and monitoring)
@@ -201,6 +210,9 @@ Future<void> main(List<String> args) async {
         securityService: securityService,
         transformerService: transformerService,
         pushNotificationService: pushNotificationService,
+        urlShortenerService: urlShortenerService,
+        webhookService: webhookService,
+        obsidianService: obsidianService,
         systemPowerService: systemPowerService,
         launchedAtStartup: launchedAtStartup,
       ),
@@ -350,6 +362,9 @@ class MyApp extends StatefulWidget {
     this.securityService,
     this.transformerService,
     this.pushNotificationService,
+    this.urlShortenerService,
+    this.webhookService,
+    this.obsidianService,
     this.systemPowerService,
     this.fcmService,
     this.fcmToken,
@@ -376,6 +391,9 @@ class MyApp extends StatefulWidget {
   final ISecurityService? securityService;
   final ITransformerService? transformerService;
   final IPushNotificationService? pushNotificationService;
+  final IUrlShortenerService? urlShortenerService;
+  final IWebhookService? webhookService;
+  final IObsidianService? obsidianService;
   final ISystemPowerService? systemPowerService;
   final IFcmService? fcmService;
   final String? fcmToken;
@@ -486,6 +504,9 @@ class _MyAppState extends State<MyApp> {
       // NOTE: ClipboardRepository is a singleton - dispose is a no-op now
       widget.clipboardRepository?.dispose();
       widget.clipboardSyncService?.dispose();
+      widget.urlShortenerService?.dispose();
+      widget.webhookService?.dispose();
+      widget.obsidianService?.dispose();
       widget.systemPowerService?.dispose();
       // Note: securityService, transformerService, pushNotificationService
       // are stateless and don't need disposal

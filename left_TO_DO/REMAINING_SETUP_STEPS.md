@@ -103,10 +103,6 @@ Check troubleshooting in `MACOS_SETUP_VERIFICATION.md`
 - [ ] Clean build: **Cmd+Shift+K** then **Cmd+B**
 - [ ] Test on simulator: **Cmd+R**
 
-### Detailed Steps:
-Follow `XCODE_COMPLETE_SETUP.md` Parts 1-7
-
----
 
 ## Phase 4: Set Up Firebase Project & FCM
 
@@ -176,14 +172,6 @@ Follow `XCODE_COMPLETE_SETUP.md` Parts 1-7
 8. Add FCM token
 9. Click **Test**
 
-### Expected Result:
-- ✅ Notification arrives on device
-- ✅ Action buttons appear (long-press)
-- ✅ Copy action writes to clipboard
-- ✅ Widget updates with new item
-- ✅ No crashes
-
----
 
 ## Phase 5: Configure Backend (Supabase Edge Function)
 
@@ -225,21 +213,6 @@ See `FIREBASE_FCM_SETUP.md` - Section "Step 6: Backend Integration"
 - Python example
 - Node.js example
 
----
-
-## Summary Checklist
-
-### ✅ Already Done (Code Complete):
-- [x] Flutter widget service implementation
-- [x] Android widget implementation
-- [x] iOS widget Swift files created
-- [x] iOS actionable notifications
-- [x] AppDelegate integration
-- [x] macOS implementation
-- [x] All lint errors fixed
-- [x] Documentation created
-
-### ⏳ Still To Do:
 
 #### Testing Phase:
 - [ ] **macOS Test** (30 min)

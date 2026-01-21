@@ -20,6 +20,12 @@ class SettingsService implements ISettingsService {
   static const String _keyAutoStartEnabled = 'auto_start_enabled';
   static const String _keyAutoReceiveBehavior = 'auto_receive_behavior';
   static const String _keyClipboardAutoClearSeconds = 'clipboard_auto_clear_seconds';
+  static const String _keyAutoShortenUrls = 'auto_shorten_urls';
+  static const String _keyWebhookEnabled = 'webhook_enabled';
+  static const String _keyWebhookUrl = 'webhook_url';
+  static const String _keyObsidianEnabled = 'obsidian_enabled';
+  static const String _keyObsidianVaultPath = 'obsidian_vault_path';
+  static const String _keyObsidianFileName = 'obsidian_file_name';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
@@ -28,6 +34,10 @@ class SettingsService implements ISettingsService {
   static const bool _defaultAutoStartEnabled = false;
   static const AutoReceiveBehavior _defaultAutoReceiveBehavior = AutoReceiveBehavior.smart;
   static const int _defaultClipboardAutoClearSeconds = 30; // 30 seconds default
+  static const bool _defaultAutoShortenUrls = false;
+  static const bool _defaultWebhookEnabled = false;
+  static const bool _defaultObsidianEnabled = false;
+  static const String _defaultObsidianFileName = 'clipboard.md';
 
   @override
   Future<void> initialize() async {
@@ -162,6 +172,96 @@ class SettingsService implements ISettingsService {
     } else {
       debugPrint('Clipboard auto-clear set to $seconds seconds');
     }
+  }
+
+  // ========== FEATURE TOGGLES ==========
+
+  @override
+  Future<bool> getAutoShortenUrls() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keyAutoShortenUrls) ?? _defaultAutoShortenUrls;
+  }
+
+  @override
+  Future<void> setAutoShortenUrls({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyAutoShortenUrls, enabled);
+    debugPrint('Auto-shorten URLs ${enabled ? "enabled" : "disabled"}');
+  }
+
+  @override
+  Future<bool> getWebhookEnabled() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keyWebhookEnabled) ?? _defaultWebhookEnabled;
+  }
+
+  @override
+  Future<void> setWebhookEnabled({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyWebhookEnabled, enabled);
+    debugPrint('Webhook ${enabled ? "enabled" : "disabled"}');
+  }
+
+  @override
+  Future<String?> getWebhookUrl() async {
+    _ensureInitialized();
+    return _prefs!.getString(_keyWebhookUrl);
+  }
+
+  @override
+  Future<void> setWebhookUrl(String? url) async {
+    _ensureInitialized();
+    if (url == null || url.isEmpty) {
+      await _prefs!.remove(_keyWebhookUrl);
+      debugPrint('Webhook URL cleared');
+    } else {
+      await _prefs!.setString(_keyWebhookUrl, url);
+      debugPrint('Webhook URL set');
+    }
+  }
+
+  @override
+  Future<bool> getObsidianEnabled() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keyObsidianEnabled) ?? _defaultObsidianEnabled;
+  }
+
+  @override
+  Future<void> setObsidianEnabled({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyObsidianEnabled, enabled);
+    debugPrint('Obsidian ${enabled ? "enabled" : "disabled"}');
+  }
+
+  @override
+  Future<String?> getObsidianVaultPath() async {
+    _ensureInitialized();
+    return _prefs!.getString(_keyObsidianVaultPath);
+  }
+
+  @override
+  Future<void> setObsidianVaultPath(String? path) async {
+    _ensureInitialized();
+    if (path == null || path.isEmpty) {
+      await _prefs!.remove(_keyObsidianVaultPath);
+      debugPrint('Obsidian vault path cleared');
+    } else {
+      await _prefs!.setString(_keyObsidianVaultPath, path);
+      debugPrint('Obsidian vault path set');
+    }
+  }
+
+  @override
+  Future<String> getObsidianFileName() async {
+    _ensureInitialized();
+    return _prefs!.getString(_keyObsidianFileName) ?? _defaultObsidianFileName;
+  }
+
+  @override
+  Future<void> setObsidianFileName(String fileName) async {
+    _ensureInitialized();
+    await _prefs!.setString(_keyObsidianFileName, fileName);
+    debugPrint('Obsidian file name set to: $fileName');
   }
 
   // ========== FEATURE FLAGS ==========
