@@ -59,9 +59,13 @@ class WindowService implements IWindowService {
 
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
       // App launches hidden by default (Acceptance Criteria #1)
+      // The callback is called after window is initialized but before show
       await windowManager.hide();
       _isVisible = false;
     });
+
+    // Explicitly ensure window is hidden to prevent brief blank window on startup
+    await windowManager.hide();
   }
 
   @override

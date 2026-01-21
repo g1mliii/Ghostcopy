@@ -549,6 +549,12 @@ class _MyAppState extends State<MyApp> {
   void _hideTrayMenu() {
     setState(() => _showingTrayMenu = false);
     widget.windowService?.hideSpotlight();
+
+    // Test toast notification when minimizing to tray
+    widget.notificationService?.showToast(
+      message: 'App closed to tray',
+      duration: const Duration(seconds: 3),
+    );
   }
 
   Future<void> _openSettingsFromTray() async {
