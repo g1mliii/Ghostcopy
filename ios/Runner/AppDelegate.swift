@@ -7,6 +7,24 @@ import WidgetKit
 @objc class AppDelegate: FlutterAppDelegate {
   private let SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
   private let WIDGET_CHANNEL = "com.ghostcopy.ghostcopy/widget"
+  private var blurView: UIVisualEffectView?
+
+  override func applicationWillResignActive(_ application: UIApplication) {
+    if let window = window {
+      let blurEffect = UIBlurEffect(style: .systemThinMaterial)
+      blurView = UIVisualEffectView(effect: blurEffect)
+      blurView?.frame = window.bounds
+      blurView?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      window.addSubview(blurView!)
+    }
+    super.applicationWillResignActive(application)
+  }
+
+  override func applicationDidBecomeActive(_ application: UIApplication) {
+    blurView?.removeFromSuperview()
+    blurView = nil
+    super.applicationDidBecomeActive(application)
+  }
 
   override func application(
     _ application: UIApplication,

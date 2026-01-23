@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>GhostCopy - Privacy Protocol</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@300;400;700;900&amp;family=Noto+Sans:wght@400;500;700&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#e77255", // Burnt Sienna
+                        "slate-deep": "#1a1a1d",
+                        "stone-dark": "#211f1e",
+                        "stone-heavy": "#151413",
+                        "stone-light": "#2d2a28",
+                        "gold-light": "#C5A059",
+                        "gold-dark": "#9A7B4F",
+                    },
+                    fontFamily: {
+                        "display": ["Noto Serif", "serif"],
+                        "sans": ["Noto Sans", "sans-serif"],
+                    },
+                    backgroundImage: {
+                        'weathered-gold': 'linear-gradient(180deg, #b08d55 0%, #8a6d45 100%)',
+                        'weathered-gold-hover': 'linear-gradient(180deg, #c5a059 0%, #9a7b4f 100%)',
+                        'heat-haze': 'linear-gradient(to top, rgba(231, 114, 85, 0.05), transparent 40%)',
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar {
+            width: 8px
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1a1d
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px
+        }
+    </style>
+</head>
+
+<body class="bg-slate-deep text-[#d6d3d1] font-display antialiased overflow-x-hidden">
+    <div class="relative min-h-screen flex flex-col bg-slate-deep bg-heat-haze">
+        <header class="sticky top-0 z-40 w-full border-b border-[#3a3532] bg-slate-deep/90 backdrop-blur-md">
+            <div class="max-w-[1200px] mx-auto px-6 h-20 flex items-center justify-between">
+                <a href="index.html" class="flex items-center gap-3 group cursor-pointer">
+                    <div class="p-1.5 bg-primary/10 rounded border border-primary/20 text-primary">
+                        <span class="material-symbols-outlined text-2xl">diamond</span>
+                    </div>
+                    <h1 class="text-white text-xl font-black tracking-widest uppercase">GhostCopy</h1>
+                </a>
+                <nav class="hidden md:flex items-center gap-8">
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="index.html">Home</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="index.html#origins">Origins</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="download.html">Artifacts</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="docs.html">Codex</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="support.html">Access</a>
+                </nav>
+            </div>
+        </header>
+        <main class="flex-grow py-20 px-6 font-sans">
+            <div class="max-w-3xl mx-auto">
+                <h1 class="text-4xl md:text-5xl font-black text-white uppercase tracking-tight mb-8 font-display">
+                    Privacy Protocol</h1>
+                <p class="text-[#888] mb-12 text-sm uppercase tracking-widest border-b border-[#333] pb-6">Effective
+                    Date: January 1, 2026</p>
+                <div class="space-y-12 text-[#ccc] leading-relaxed">
+                    <section>
+                        <h2 class="text-xl font-bold text-white mb-4">1. Data Minimization</h2>
+                        <p>GhostCopy adheres to the principle of minimal knowledge. We do not collect, store, or analyze
+                            the content of your clipboard ("Transmissions"). Your data is encrypted locally before
+                            transmission and decrypted only upon receipt by your authorized device.</p>
+                    </section>
+                    <section>
+                        <h2 class="text-xl font-bold text-white mb-4">2. The Ephemeral Tunnel</h2>
+                        <p>Transmissions pass through our secure relay server ("The Oasis"). This server retains no
+                            memory. Once a transmission is successfully delivered, it is immediately purged from
+                            volatile memory. If delivery fails within 5 minutes, the packet dissolves.</p>
+                    </section>
+                    <section>
+                        <h2 class="text-xl font-bold text-white mb-4">3. Device Identification</h2>
+                        <p>To facilitate connection, we store a hash of your Device ID and a user-generated Public Key.
+                            We do not store personal identifiers, email addresses (unless provided for Support), or
+                            location data.</p>
+                    </section>
+                    <section>
+                        <h2 class="text-xl font-bold text-white mb-4">4. Imperial Decree (Compliance)</h2>
+                        <p>We comply with all major data protection regulations (GDPR, CCPA). You have the right to
+                            delete your account keys at any time via the app settings, which irrevocably severs your
+                            connection to the network.</p>
+                    </section>
+                    <section>
+                        <h2 class="text-xl font-bold text-white mb-4">5. Third-Party Sentries</h2>
+                        <p>We may employ third-party companies and individuals due to the following reasons: to
+                            facilitate our Service;
+                            to provide the Service on our behalf; to perform Service-related services; or to assist us
+                            in analyzing how our Service is used.
+                            These third parties have access to your hidden data only to perform these tasks on our
+                            behalf.</p>
+                    </section>
+                    <section>
+                        <h2 class="text-xl font-bold text-white mb-4">6. Security Protocols</h2>
+                        <p>The security of your Personal Information is important to us, but remember that no method of
+                            transmission over
+                            the Internet, or method of electronic storage is 100% secure. While we strive to use
+                            commercially acceptable means
+                            to protect your Personal Information, we cannot guarantee its absolute security.</p>
+                    </section>
+                </div>
+            </div>
+        </main>
+        <footer class="border-t border-[#3a3532] bg-[#171514] py-12 relative z-10">
+            <div class="max-w-[960px] mx-auto px-6 text-center">
+                <p class="text-[#444] text-xs font-sans">© 2024 GhostCopy Imperial Archives. All rights reserved.</p>
+            </div>
+        </footer>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>GhostCopy Downloads: Download Central</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@300;400;700;900&amp;family=Noto+Sans:wght@400;500;700&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#e77255", // Burnt Sienna
+                        "slate-deep": "#1a1a1d",
+                        "stone-dark": "#211f1e",
+                        "stone-heavy": "#151413",
+                        "stone-light": "#2d2a28",
+                        "gold-light": "#C5A059",
+                        "gold-dark": "#9A7B4F",
+                    },
+                    fontFamily: {
+                        "display": ["Noto Serif", "serif"],
+                        "sans": ["Noto Sans", "sans-serif"],
+                    },
+                    backgroundImage: {
+                        'weathered-gold': 'linear-gradient(180deg, #b08d55 0%, #8a6d45 100%)',
+                        'weathered-gold-hover': 'linear-gradient(180deg, #c5a059 0%, #9a7b4f 100%)',
+                        'heat-haze': 'linear-gradient(to top, rgba(231, 114, 85, 0.05), transparent 40%)',
+                    },
+                    boxShadow: {
+                        'glow': '0 0 20px rgba(231, 114, 85, 0.1)',
+                        'stone': '0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3)',
+                        'decree': 'inset 0 0 40px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05)',
+                    }
+                },
+            },
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar {
+            width: 8px
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1a1d
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px
+        }
+
+        .film-grain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 50;
+            opacity: 0.03;
+            background-image: url(https://lh3.googleusercontent.com/aida-public/AB6AXuBmOAuUTA8ub64cZv9TUCeg_yIuJg-gNEgGXt43HhNHz_W6wFJU7B2cYrnwt3Bqcb3HpOuVnVFpyE27PX6PkYnKQ4Bv1zxLCSjy_MMSlaTszUOuSApIE79Nz6Gz8Fj5lkpg8Fl5pyNpIm8Vo-ytKMmcTelbqMT5zTMY2vT-SjlOPystnmo5h01tutYyoHv9t5Z5Lp9IlySH-7VWdFDI2sY1MqvG5QKkYMroB4nIRf_RZGtlJf8xapxxCwyls6hZEZnATaMR_aYSDCO_)
+        }
+    </style>
+</head>
+
+<body
+    class="bg-slate-deep text-[#d6d3d1] font-display antialiased selection:bg-primary selection:text-white overflow-x-hidden">
+    <div class="film-grain"></div>
+    <div class="relative min-h-screen flex flex-col bg-slate-deep bg-heat-haze">
+        <header class="sticky top-0 z-40 w-full border-b border-[#3a3532] bg-slate-deep/90 backdrop-blur-md">
+            <div class="max-w-[1200px] mx-auto px-6 h-20 flex items-center justify-between">
+                <a href="index.html" class="flex items-center gap-3 group cursor-pointer">
+                    <div class="p-1.5 bg-primary/10 rounded border border-primary/20 text-primary">
+                        <span class="material-symbols-outlined text-2xl">diamond</span>
+                    </div>
+                    <h1 class="text-white text-xl font-black tracking-widest uppercase">GhostCopy</h1>
+                </a>
+                <nav class="hidden md:flex items-center gap-8">
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="index.html">Home</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="index.html#origins">Origins</a>
+                    <a class="text-sm font-bold text-primary transition-colors tracking-widest uppercase relative after:content-[''] after:absolute after:-bottom-2 after:left-0 after:w-full after:h-0.5 after:bg-primary"
+                        href="download.html">Artifacts</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="docs.html">Codex</a>
+                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
+                        href="support.html">Access</a>
+                </nav>
+                <button class="md:hidden text-white">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
+            </div>
+        </header>
+        <main class="flex-grow flex flex-col items-center py-12 px-6 relative z-10">
+            <div class="text-center max-w-4xl mb-16 space-y-4">
+                <div
+                    class="inline-flex items-center gap-2 px-3 py-1 rounded border border-[#e77255]/30 bg-[#e77255]/5 text-[#e77255] text-xs font-bold tracking-[0.15em] uppercase mb-4">
+                    <span class="material-symbols-outlined text-sm">lock</span>
+                    Secure Access Terminal
+                </div>
+                <h1
+                    class="text-5xl md:text-7xl font-black text-white leading-tight tracking-tight drop-shadow-lg uppercase">
+                    Download Central
+                </h1>
+                <p class="text-lg md:text-xl text-[#888] font-sans font-medium tracking-wide max-w-2xl mx-auto">
+                    GhostCopy Utility v4.2.0 // Select your destination platform to begin transmutation.
+                </p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-[1200px] mb-24">
+                <div
+                    class="group relative flex flex-col bg-stone-heavy border-4 border-[#3a3532] hover:border-primary/50 transition-all duration-300 shadow-stone hover:shadow-glow overflow-hidden">
+                    <div class="p-6 flex-grow flex flex-col z-10">
+                        <div class="flex justify-between items-center mb-6 border-b border-[#333] pb-4">
+                            <div class="flex items-center gap-3">
+                                <span class="material-symbols-outlined text-3xl text-[#ccc]">window</span>
+                                <h2 class="text-xl font-black text-white uppercase tracking-wider">Windows</h2>
+                            </div>
+                            <span
+                                class="px-2 py-0.5 bg-[#2a2522] border border-[#e77255]/40 text-[#e77255] text-[10px] font-bold uppercase tracking-widest rounded-sm">Latest</span>
+                        </div>
+                        <div
+                            class="w-full h-32 bg-[#111] border border-[#444] mb-6 relative overflow-hidden shadow-inner group-hover:border-primary/30 transition-colors">
+                            <div
+                                class="absolute inset-0 flex flex-col p-2 font-mono text-[8px] text-emerald-500/70 leading-tight">
+                                <div class="flex justify-between border-b border-emerald-900/50 pb-1 mb-1">
+                                    <span>GHOST_WIN.EXE</span>
+                                    <span>[ACTIVE]</span>
+                                </div>
+                                <div>&gt; MOUNT_SYS_ROOT</div>
+                                <div>&gt; SCANNING_SECTORS... 100%</div>
+                                <div>&gt; TARGET_ACQUIRED: C:/</div>
+                                <div class="mt-auto h-2 bg-emerald-900/30 w-3/4"></div>
+                            </div>
+                            <div class="absolute inset-0 bg-amber-600/10 mix-blend-overlay pointer-events-none"></div>
+                            <div class="absolute inset-0 bg-black/20 pointer-events-none"
+                                style="box-shadow: inset 0 0 20px rgba(0,0,0,0.8);"></div>
+                        </div>
+                        <h3 class="text-sm text-[#888] font-bold uppercase tracking-widest mb-1">"The Iron Gate"</h3>
+                        <div class="flex items-baseline gap-2 mb-6 font-sans">
+                            <span class="text-3xl font-black text-white">v4.2.0</span>
+                            <span class="text-xs text-[#666] font-mono border border-[#444] px-1 rounded">.EXE</span>
+                        </div>
+                        <ul class="space-y-2 mb-8 text-xs text-[#aaa] font-sans font-medium uppercase tracking-wide">
+                            <li class="flex items-center gap-3 py-1 border-b border-[#333]/50">
+                                <span class="material-symbols-outlined text-primary text-sm">check</span>
+                                Windows 10/11 (64-bit)
+                            </li>
+                            <li class="flex items-center gap-3 py-1 border-b border-[#333]/50">
+                                <span class="material-symbols-outlined text-primary text-sm">check</span>
+                                High-Performance Mode
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="p-6 pt-0 mt-auto z-10">
+                        <button
+                            class="w-full h-14 bg-weathered-gold hover:bg-weathered-gold-hover text-[#1a1a1d] font-black text-base uppercase tracking-widest shadow-lg transition-all flex items-center justify-center gap-2 group/btn border-t border-[#ffffff]/10">
+                            Download
+                            <span
+                                class="material-symbols-outlined group-hover/btn:translate-y-1 transition-transform">download</span>
+                        </button>
+                    </div>
+                </div>
+                <div
+                    class="group relative flex flex-col bg-stone-heavy border-4 border-[#3a3532] hover:border-primary/50 transition-all duration-300 shadow-stone hover:shadow-glow overflow-hidden">
+                    <div class="p-6 flex-grow flex flex-col z-10">
+                        <div class="flex justify-between items-center mb-6 border-b border-[#333] pb-4">
+                            <div class="flex items-center gap-3">
+                                <span class="material-symbols-outlined text-3xl text-[#ccc]">laptop_mac</span>
+                                <h2 class="text-xl font-black text-white uppercase tracking-wider">macOS</h2>
+                            </div>
+                            <span
+                                class="px-2 py-0.5 bg-[#2a2522] border border-[#e77255]/40 text-[#e77255] text-[10px] font-bold uppercase tracking-widest rounded-sm">Stable</span>
+                        </div>
+                        <div
+                            class="w-full h-32 bg-[#111] border border-[#444] mb-6 relative overflow-hidden shadow-inner group-hover:border-primary/30 transition-colors">
+                            <div
+                                class="absolute inset-0 flex flex-col p-2 font-mono text-[8px] text-sky-500/70 leading-tight">
+                                <div class="flex justify-between border-b border-sky-900/50 pb-1 mb-1">
+                                    <span>GHOST_MAC.DMG</span>
+                                    <span>[READY]</span>
+                                </div>
+                                <div>$ sudo ghost_init</div>
+                                <div>&gt; Password: *******</div>
+                                <div>&gt; Verifying Signature... OK</div>
+                                <div class="mt-auto flex gap-1">
+                                    <div class="h-1.5 w-1.5 rounded-full bg-red-500/50"></div>
+                                    <div class="h-1.5 w-1.5 rounded-full bg-yellow-500/50"></div>
+                                    <div class="h-1.5 w-1.5 rounded-full bg-green-500/50"></div>
+                                </div>
+                            </div>
+                            <div class="absolute inset-0 bg-amber-600/10 mix-blend-overlay pointer-events-none"></div>
+                            <div class="absolute inset-0 bg-black/20 pointer-events-none"
+                                style="box-shadow: inset 0 0 20px rgba(0,0,0,0.8);"></div>
+                        </div>
+                        <h3 class="text-sm text-[#888] font-bold uppercase tracking-widest mb-1">"The Glass Spire"</h3>
+                        <div class="flex items-baseline gap-2 mb-6 font-sans">
+                            <span class="text-3xl font-black text-white">v4.2.0</span>
+                            <span class="text-xs text-[#666] font-mono border border-[#444] px-1 rounded">.DMG</span>
+                        </div>
+                        <ul class="space-y-2 mb-8 text-xs text-[#aaa] font-sans font-medium uppercase tracking-wide">
+                            <li class="flex items-center gap-3 py-1 border-b border-[#333]/50">
+                                <span class="material-symbols-outlined text-primary text-sm">check</span>
+                                Apple Silicon / Intel
+                            </li>
+                            <li class="flex items-center gap-3 py-1 border-b border-[#333]/50">
+                                <span class="material-symbols-outlined text-primary text-sm">check</span>
+                                Monterey 12+
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="p-6 pt-0 mt-auto z-10">
+                        <button
+                            class="w-full h-14 bg-weathered-gold hover:bg-weathered-gold-hover text-[#1a1a1d] font-black text-base uppercase tracking-widest shadow-lg transition-all flex items-center justify-center gap-2 group/btn border-t border-[#ffffff]/10">
+                            Download
+                            <span
+                                class="material-symbols-outlined group-hover/btn:translate-y-1 transition-transform">download</span>
+                        </button>
+                    </div>
+                </div>
+                <div
+                    class="group relative flex flex-col bg-stone-heavy border-4 border-[#3a3532] hover:border-primary/50 transition-all duration-300 shadow-stone hover:shadow-glow overflow-hidden">
+                    <div class="p-6 flex-grow flex flex-col z-10">
+                        <div class="flex justify-between items-center mb-6 border-b border-[#333] pb-4">
+                            <div class="flex items-center gap-3">
+                                <span class="material-symbols-outlined text-3xl text-[#ccc]">smartphone</span>
+                                <h2 class="text-xl font-black text-white uppercase tracking-wider">Mobile</h2>
+                            </div>
+                            <span
+                                class="px-2 py-0.5 bg-[#2a2522] border border-[#e77255]/40 text-[#e77255] text-[10px] font-bold uppercase tracking-widest rounded-sm">Portable</span>
+                        </div>
+                        <div
+                            class="w-full h-32 bg-[#111] border border-[#444] mb-6 relative overflow-hidden shadow-inner group-hover:border-primary/30 transition-colors flex justify-center py-2">
+                            <div
+                                class="w-12 h-full border border-zinc-700 bg-zinc-900 rounded-lg relative overflow-hidden">
+                                <div
+                                    class="absolute inset-0 flex flex-col items-center justify-center gap-1 opacity-70">
+                                    <div
+                                        class="w-6 h-6 rounded-full border border-primary/50 flex items-center justify-center text-primary text-[6px]">
+                                        GC</div>
+                                    <div class="w-8 h-0.5 bg-zinc-700 rounded-full"></div>
+                                    <div class="w-6 h-0.5 bg-zinc-700 rounded-full"></div>
+                                </div>
+                            </div>
+                            <div class="absolute inset-0 bg-amber-600/10 mix-blend-overlay pointer-events-none"></div>
+                            <div class="absolute inset-0 bg-black/20 pointer-events-none"
+                                style="box-shadow: inset 0 0 20px rgba(0,0,0,0.8);"></div>
+                        </div>
+                        <h3 class="text-sm text-[#888] font-bold uppercase tracking-widest mb-1">"The Tethered Slate"
+                        </h3>
+                        <div class="flex items-baseline gap-2 mb-6 font-sans">
+                            <span class="text-3xl font-black text-white">v4.2.0</span>
+                            <span class="text-xs text-[#666] font-mono border border-[#444] px-1 rounded">APP</span>
+                        </div>
+                        <ul class="space-y-2 mb-8 text-xs text-[#aaa] font-sans font-medium uppercase tracking-wide">
+                            <li class="flex items-center gap-3 py-1 border-b border-[#333]/50">
+                                <span class="material-symbols-outlined text-primary text-sm">check</span>
+                                iOS 15+ / Android 12+
+                            </li>
+                            <li class="flex items-center gap-3 py-1 border-b border-[#333]/50">
+                                <span class="material-symbols-outlined text-primary text-sm">check</span>
+                                Secure Cloud Sync
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="p-6 pt-0 mt-auto z-10">
+                        <button
+                            class="w-full h-14 bg-weathered-gold hover:bg-weathered-gold-hover text-[#1a1a1d] font-black text-base uppercase tracking-widest shadow-lg transition-all flex items-center justify-center gap-2 group/btn border-t border-[#ffffff]/10">
+                            Get App
+                            <span
+                                class="material-symbols-outlined group-hover/btn:translate-y-1 transition-transform">install_mobile</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+    </div>
+    <div class="w-full bg-[#1a1a1d] border-y-4 border-[#2c2926] p-10 relative shadow-stone overflow-hidden">
+        <div class="absolute inset-0 pointer-events-none shadow-decree"></div>
+        <div
+            class="absolute top-3 left-3 w-2.5 h-2.5 rounded-full bg-[#0a0a0a] shadow-[0_1px_0_rgba(255,255,255,0.1)] border border-[#222]">
+        </div>
+        <div
+            class="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-[#0a0a0a] shadow-[0_1px_0_rgba(255,255,255,0.1)] border border-[#222]">
+        </div>
+        <div
+            class="absolute bottom-3 left-3 w-2.5 h-2.5 rounded-full bg-[#0a0a0a] shadow-[0_1px_0_rgba(255,255,255,0.1)] border border-[#222]">
+        </div>
+        <div
+            class="absolute bottom-3 right-3 w-2.5 h-2.5 rounded-full bg-[#0a0a0a] shadow-[0_1px_0_rgba(255,255,255,0.1)] border border-[#222]">
+        </div>
+        <div class="flex flex-col md:flex-row gap-12 items-center relative z-10">
+            <div
+                class="md:w-1/3 text-center md:text-left border-b md:border-b-0 md:border-r border-[#333] pb-6 md:pb-0 md:pr-6">
+                <div class="inline-block mb-3 text-primary opacity-80">
+                    <span class="material-symbols-outlined text-5xl drop-shadow-md">policy</span>
+                </div>
+                <h2 class="text-2xl font-black text-[#d6d3d1] uppercase tracking-widest mb-2 drop-shadow-md"
+                    style="text-shadow: 0 2px 4px rgba(0,0,0,0.8);">System Mandates</h2>
+                <p class="text-[#666] font-sans text-sm italic">"Adherence to these parameters ensures optimal
+                    resonance."</p>
+            </div>
+            <div class="md:w-2/3 grid grid-cols-1 sm:grid-cols-3 gap-8">
+                <div class="flex flex-col items-center md:items-start text-center md:text-left gap-2 group">
+                    <div class="text-[#444] group-hover:text-primary transition-colors">
+                        <span class="material-symbols-outlined text-3xl">memory</span>
+                    </div>
+                    <h3 class="text-[#a8a29e] font-bold uppercase text-xs tracking-[0.2em]">Footprint</h3>
+                    <p class="text-[#555] text-xs font-sans font-medium">50MB RAM Idle<br />Zero-CPU Sleep Mode</p>
+                </div>
+                <div class="flex flex-col items-center md:items-start text-center md:text-left gap-2 group">
+                    <div class="text-[#444] group-hover:text-primary transition-colors">
+                        <span class="material-symbols-outlined text-3xl">desktop_windows</span>
+                    </div>
+                    <h3 class="text-[#a8a29e] font-bold uppercase text-xs tracking-[0.2em]">Desktop</h3>
+                    <p class="text-[#555] text-xs font-sans font-medium">Windows 10/11<br />macOS Monterey+</p>
+                </div>
+                <div class="flex flex-col items-center md:items-start text-center md:text-left gap-2 group">
+                    <div class="text-[#444] group-hover:text-primary transition-colors">
+                        <span class="material-symbols-outlined text-3xl">smartphone</span>
+                    </div>
+                    <h3 class="text-[#a8a29e] font-bold uppercase text-xs tracking-[0.2em]">Mobile</h3>
+                    <p class="text-[#555] text-xs font-sans font-medium">iOS 15 / Android 12<br />Notifications Enabled
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    </main>
+    <footer class="border-t border-[#3a3532] bg-[#171514] py-12 relative z-10">
+        <div class="max-w-[960px] mx-auto px-6 text-center">
+            <div class="flex flex-wrap justify-center gap-8 mb-8 text-sm font-bold uppercase tracking-widest">
+                <a class="text-[#666] hover:text-primary transition-colors" href="support.html">Imperial Support</a>
+                <a class="text-[#666] hover:text-primary transition-colors" href="#">Changelog</a>
+                <a class="text-[#666] hover:text-primary transition-colors" href="privacy.html">Privacy Protocol</a>
+            </div>
+            <div class="flex items-center justify-center gap-2 mb-4 opacity-30">
+                <span class="material-symbols-outlined text-lg">token</span>
+            </div>
+            <p class="text-[#444] text-xs font-sans">© 2024 GhostCopy Imperial Archives. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu"
+        class="fixed inset-0 z-[60] bg-black/95 backdrop-blur-xl transform translate-x-full transition-transform duration-300 md:hidden flex flex-col justify-center items-center gap-8">
+        <button id="close-menu" class="absolute top-6 right-6 text-primary">
+            <span class="material-symbols-outlined text-4xl">close</span>
+        </button>
+        <a href="index.html"
+            class="font-display text-2xl font-bold text-white uppercase tracking-[0.2em] mb-4">GhostCopy</a>
+        <a href="index.html#origins"
+            class="font-display text-xl text-stone-400 hover:text-primary uppercase tracking-widest transition-colors">Origins</a>
+        <a href="docs.html"
+            class="font-display text-xl text-stone-400 hover:text-primary uppercase tracking-widest transition-colors">Codex</a>
+        <a href="support.html"
+            class="font-display text-xl text-stone-400 hover:text-primary uppercase tracking-widest transition-colors">Access</a>
+    </div>
+
+    <script>
+        const menuBtn = document.querySelector('button .material-symbols-outlined[class*="menu"]').parentElement;
+        const closeBtn = document.getElementById('close-menu');
+        const mobileMenu = document.getElementById('mobile-menu');
+
+        if (menuBtn) {
+            menuBtn.addEventListener('click', () => {
+                mobileMenu.classList.remove('translate-x-full');
+            });
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                mobileMenu.classList.add('translate-x-full');
+            });
+        }
+    </script>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <meta name="description"
+        content="GhostCopy - The ultimate cross-device clipboard tool. Copy on desktop, paste on mobile instantly with zero latency." />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' https://cdn.tailwindcss.com https://fonts.googleapis.com https://fonts.gstatic.com https://lh3.googleusercontent.com https://www.transparenttextures.com data:; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https://lh3.googleusercontent.com https://www.transparenttextures.com data:;">
+    <title>GhostCopy - Cinematic Masterpiece</title>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,100..900;1,100..900&amp;family=Noto+Sans:ital,wght@0,100..900;1,100..900&amp;family=Cinzel:wght@400..900&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ff8c00",
+                        "primary-dark": "#b54e35",
+                        "gold-weathered": "#e6c288",
+                        "sand-dark": "#1a120f",
+                        "sand-medium": "#462c25",
+                        "bronze": "#8c6b5d",
+                        "slate-deep": "#0c0c0e",
+                    },
+                    fontFamily: {
+                        "display": ["Cinzel", "serif"],
+                        "serif": ["Noto Serif", "serif"],
+                        "sans": ["Noto Sans", "sans-serif"],
+                    },
+                    backgroundImage: {
+                        'film-grain': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noise%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noise)%22 opacity=%220.08%22/%3E%3C/svg%3E')",
+                    },
+                    animation: {
+                        'heat-haze': 'heatHaze 8s infinite linear',
+                    },
+                    keyframes: {
+                        heatHaze: {
+                            '0%': { transform: 'translateY(0) skewX(0)' },
+                            '25%': { transform: 'translateY(-2px) skewX(1deg)' },
+                            '50%': { transform: 'translateY(-4px) skewX(-1deg)' },
+                            '75%': { transform: 'translateY(-2px) skewX(0.5deg)' },
+                            '100%': { transform: 'translateY(0) skewX(0)' },
+                        }
+                    }
+                },
+            },
+        }
+    </script>
+    <style>
+        .text-shadow-cinematic {
+            text-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 80px rgba(230, 194, 136, 0.2);
+        }
+
+        .text-split-lighting {
+            background: linear-gradient(115deg, #ffdfba 30%, #5e4b35 70%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+        }
+
+        .heat-distortion {
+            filter: url('#heatWave');
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a120f;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #462c25;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #e6c288;
+        }
+    </style>
+</head>
+
+<body class="bg-sand-dark text-white overflow-x-hidden antialiased font-serif">
+    <svg class="hidden">
+        <defs>
+            <filter id="heatWave">
+                <feTurbulence baseFrequency="0.01 0.02" numOctaves="1" result="turbulence" type="turbulence">
+                    <animate attributeName="baseFrequency" dur="10s" repeatCount="indefinite"
+                        values="0.01 0.02;0.01 0.05;0.01 0.02"></animate>
+                </feTurbulence>
+                <feDisplacementMap in="SourceGraphic" in2="turbulence" scale="10" xChannelSelector="R"
+                    yChannelSelector="G"></feDisplacementMap>
+            </filter>
+        </defs>
+    </svg>
+    <nav
+        class="absolute top-0 left-0 w-full z-50 border-b border-white/5 bg-gradient-to-b from-black/90 to-transparent backdrop-blur-sm">
+        <div class="max-w-[1440px] mx-auto px-6 lg:px-12">
+            <div class="flex items-center justify-between h-24">
+                <div class="flex items-center gap-4">
+                    <span class="material-symbols-outlined text-gold-weathered text-3xl opacity-80">content_copy</span>
+                    <h2
+                        class="font-display text-2xl font-bold tracking-[0.2em] text-gold-weathered uppercase border-l border-white/20 pl-4">
+                        GhostCopy</h2>
+                </div>
+                <div class="hidden md:flex items-center gap-10">
+                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
+                        href="#origins">The Saga</a>
+                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
+                        href="download.html">Artifacts</a>
+                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
+                        href="docs.html">Codex</a>
+                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
+                        href="support.html">Access</a>
+                    <button onclick="window.location.href='download.html'"
+                        class="relative group bg-[#2a1d1a] border border-gold-weathered/30 hover:border-gold-weathered text-gold-weathered text-xs font-display font-bold uppercase tracking-[0.15em] px-8 py-3 transition-all duration-500 rounded-sm overflow-hidden">
+                        <div
+                            class="absolute inset-0 bg-gold-weathered/10 translate-y-full group-hover:translate-y-0 transition-transform duration-500">
+                        </div>
+                        <span class="relative z-10">Beta Access</span>
+                    </button>
+                </div>
+                <button class="md:hidden text-gold-weathered">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+    <header class="relative w-full min-h-screen flex items-end md:items-center overflow-hidden pb-20 pt-32 md:py-0">
+        <div class="absolute inset-0 z-0 bg-slate-deep">
+            <div class="absolute inset-0 bg-[#0c0c0e]"></div>
+            <div
+                class="absolute top-[-20%] right-[-10%] w-[80%] h-[80%] bg-[radial-gradient(circle,rgba(255,200,120,0.15)_0%,rgba(181,78,53,0.05)_40%,transparent_70%)] blur-[150px]">
+            </div>
+            <div
+                class="absolute bottom-0 left-0 w-full h-full bg-gradient-to-tr from-black via-slate-deep/90 to-transparent z-10">
+            </div>
+            <div class="absolute inset-0 opacity-[0.2] mix-blend-overlay bg-cover bg-center"
+                style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCsCF3XKnDdktkj05K5OxRXYevTg3aav-fQ5BWPOTNS4WN160PpKvhTIU5ySkmSNXdIhiDAMSmseJil3fs9MOZkRIg_9m14wZuzG4YHXB7si71TFzz6gFQ6DMUZIQrg762g4Af7-0LRL1qNAJOfITEoERLMEOGG0tG5sywsydeU5-T2-SWR_1sE5RTQUiy0cSMO6TW7uK-4ZyXd0Rg7mzIp85NCnedOnPfCqXcSMf8OfkknCyrS6fmB_CIngYDU14lcl_qj-yS_y9z3");'>
+            </div>
+            <div class="absolute inset-0 backdrop-blur-[1px] opacity-30 pointer-events-none"
+                style="filter: url(#heatWave)"></div>
+            <div class="absolute inset-0 bg-film-grain opacity-40 mix-blend-overlay pointer-events-none z-20"></div>
+            <div
+                class="absolute top-0 right-[20%] w-[1px] h-[150vh] bg-gradient-to-b from-transparent via-gold-weathered/20 to-transparent rotate-[25deg] blur-[2px]">
+            </div>
+            <div
+                class="absolute top-0 right-[25%] w-[2px] h-[150vh] bg-gradient-to-b from-transparent via-gold-weathered/10 to-transparent rotate-[25deg] blur-[4px]">
+            </div>
+        </div>
+        <div class="relative z-30 container mx-auto px-6 md:px-12 h-full flex flex-col justify-center">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center h-full">
+                <div class="lg:col-span-8 relative z-20 pt-20 lg:pt-0">
+                    <div class="mb-8 opacity-0 animate-[fadeIn_1s_ease-out_forwards_0.5s] flex items-center gap-4">
+                        <div class="h-[1px] w-24 bg-gradient-to-r from-transparent to-gold-weathered"></div>
+                        <span class="font-display text-gold-weathered/80 uppercase tracking-[0.4em] text-xs">Seamless
+                            Continuity</span>
+                    </div>
+                    <h1
+                        class="font-display text-6xl md:text-8xl lg:text-[7rem] font-black uppercase leading-[0.9] tracking-tighter mb-10 opacity-0 animate-[fadeIn_1s_ease-out_forwards_0.8s] relative">
+                        <span class="block text-split-lighting drop-shadow-2xl">Copy on</span>
+                        <span class="block text-split-lighting pl-4 md:pl-16">Desktop.</span>
+                        <span
+                            class="block text-stone-500 drop-shadow-lg transform -translate-x-2 md:-translate-x-4 mix-blend-hard-light relative z-0">
+                            Paste on
+                        </span>
+                        <span class="block text-gold-weathered relative z-10 pl-8 md:pl-32">Mobile.</span>
+                        <span
+                            class="block text-primary text-4xl md:text-5xl font-serif italic tracking-normal mt-4 text-right pr-4 md:pr-20 opacity-80">
+                            — Instantly.
+                        </span>
+                    </h1>
+                    <div
+                        class="absolute top-[40%] right-[-10%] md:right-[-5%] w-[400px] h-full bg-gradient-to-l from-black via-black/90 to-transparent z-30 pointer-events-none hidden lg:block rotate-[-5deg] blur-sm">
+                    </div>
+                    <div
+                        class="absolute bottom-[-20%] left-[-10%] w-[120%] h-[30%] bg-gradient-to-t from-black to-transparent z-30 pointer-events-none">
+                    </div>
+                    <p
+                        class="font-serif text-lg md:text-xl text-stone-400 max-w-xl leading-relaxed mb-12 opacity-0 animate-[fadeIn_1s_ease-out_forwards_1.2s] border-l-2 border-primary/30 pl-6 ml-2 md:ml-16">
+                        A digital bridge across the abyss. The clipboard utility forged to conquer the distance between
+                        your devices with cinematic speed.
+                    </p>
+                    <div class="opacity-0 animate-[fadeIn_1s_ease-out_forwards_1.5s] ml-2 md:ml-16">
+                        <button onclick="window.location.href='download.html'"
+                            class="group relative inline-flex items-center justify-center px-10 py-6 bg-[#4a3b32] overflow-hidden rounded-sm shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] border border-[#6d5446]">
+                            <span
+                                class="absolute w-0 h-0 transition-all duration-500 ease-out bg-[#8c6b5d] rounded-full group-hover:w-96 group-hover:h-96 opacity-30"></span>
+                            <span class="relative flex items-center gap-4">
+                                <span
+                                    class="font-display font-bold text-base uppercase tracking-[0.25em] text-[#d4c5a3] group-hover:text-white transition-colors">Start
+                                    the Journey</span>
+                                <span
+                                    class="material-symbols-outlined text-[#d4c5a3] group-hover:translate-x-1 transition-transform duration-300">arrow_forward</span>
+                            </span>
+                            <div
+                                class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent skew-x-12 opacity-0 group-hover:opacity-100 group-hover:animate-[shimmer_1s_infinite] transition-opacity">
+                            </div>
+                        </button>
+                    </div>
+                </div>
+                <div
+                    class="lg:col-span-4 h-full relative z-10 hidden lg:flex items-end justify-center perspective-1000">
+                    <div
+                        class="w-full h-[120%] bg-gradient-to-br from-[#1c1c1e] to-black transform rotate-y-12 rotate-z-3 translate-y-20 border-l border-white/5 shadow-2xl relative overflow-hidden">
+                        <div
+                            class="absolute top-0 left-0 w-full h-full bg-[url('https://lh3.googleusercontent.com/aida-public/AB6AXuCsCF3XKnDdktkj05K5OxRXYevTg3aav-fQ5BWPOTNS4WN160PpKvhTIU5ySkmSNXdIhiDAMSmseJil3fs9MOZkRIg_9m14wZuzG4YHXB7si71TFzz6gFQ6DMUZIQrg762g4Af7-0LRL1qNAJOfITEoERLMEOGG0tG5sywsydeU5-T2-SWR_1sE5RTQUiy0cSMO6TW7uK-4ZyXd0Rg7mzIp85NCnedOnPfCqXcSMf8OfkknCyrS6fmB_CIngYDU14lcl_qj-yS_y9z3')] opacity-10 bg-cover mix-blend-overlay">
+                        </div>
+                        <div
+                            class="absolute top-0 left-0 w-[1px] h-full bg-gradient-to-b from-gold-weathered/60 via-transparent to-transparent shadow-[0_0_15px_rgba(230,194,136,0.3)]">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="absolute bottom-10 left-12 z-40 hidden md:flex items-center gap-4 opacity-40">
+            <span
+                class="font-mono text-[10px] uppercase tracking-widest text-gold-weathered rotate-[-90deg]">Scroll</span>
+            <div class="w-[1px] h-16 bg-gold-weathered/50"></div>
+        </div>
+    </header>
+    </header>
+
+    <div id="origins"></div>
+    <section class="relative py-20 md:py-32 overflow-hidden bg-sand-dark">
+        <div
+            class="absolute right-0 top-1/2 -translate-y-1/2 w-1/2 h-[120%] bg-stone-900 skew-x-[-12deg] opacity-90 z-0 origin-bottom shadow-2xl border-l border-stone-800 hidden lg:block">
+            <img loading="lazy" alt="Texture"
+                class="absolute inset-0 w-full h-full object-cover opacity-20 mix-blend-overlay"
+                src="https://lh3.googleusercontent.com/aida-public/AB6AXuBvKtyjd42tbPxnRdddjmg4sOmztV3_ucRUO_Z_HE4LWNJcvDl8PVrIpj2di5PSMgq1yyZ74CNbd4l-E6r39V7IK0W_VSsQE9XDkQnSZqrnaX8DNgbQpZZdVfvT2eN7lTZ1jSUsfDmtZVrHYkB4E0Mofnw32HvtgavyGfbtf1U1rRac7PNoU_n14DEs8L9Y5Y_nCc6yR7lRqPt8Q9pMX-0RLx4omj52-2FBcvbOxlcP_jMVJh2DjIryxRjgMFOAdrCP5fR5uOxT0-s4" />
+        </div>
+        <div class="container mx-auto px-6 relative z-10">
+            <div class="flex flex-col lg:flex-row items-center gap-16 lg:gap-24">
+                <div class="lg:w-1/2">
+                    <div class="flex items-center gap-4 mb-8">
+                        <div class="h-[1px] w-12 bg-primary"></div>
+                        <span class="text-primary font-display tracking-[0.3em] text-sm">MONOLITH I</span>
+                    </div>
+                    <h2 class="text-5xl md:text-7xl font-display font-bold text-white mb-8 leading-none">
+                        Smart <br /><span
+                            class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-amber-700">Transformers</span>
+                    </h2>
+                    <p class="text-stone-400 text-lg font-serif leading-relaxed mb-10 max-w-md">
+                        Like ancient inscriptions revealing hidden truths, our engine transmutes your syntax in
+                        real-time. It adapts to patterns in the shifting sands of your codebase without compromising
+                        structural integrity.
+                    </p>
+                    <div class="grid grid-cols-2 gap-8 border-t border-white/10 pt-8">
+                        <div>
+                            <span class="block text-3xl font-display text-white mb-2">0.01s</span>
+                            <span class="text-xs uppercase tracking-widest text-stone-500">Transformation
+                                Time</span>
+                        </div>
+                        <div>
+                            <span class="block text-3xl font-display text-white mb-2">100%</span>
+                            <span class="text-xs uppercase tracking-widest text-stone-500">Syntax Retention</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="lg:w-1/2 perspective-1000 w-full">
+                    <div
+                        class="relative transform rotate-y-[-5deg] rotate-x-[5deg] bg-black/40 backdrop-blur-sm border border-cyan-500/20 p-8 rounded shadow-2xl">
+                        <div class="absolute -top-10 -right-10 w-40 h-40 bg-cyan-500/20 rounded-full blur-[60px]">
+                        </div>
+                        <div class="font-mono text-sm leading-7 relative z-10">
+                            <div class="flex gap-2 mb-4 opacity-50">
+                                <div class="w-2 h-2 rounded-full bg-red-500"></div>
+                                <div class="w-2 h-2 rounded-full bg-yellow-500"></div>
+                                <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                            </div>
+                            <p class="text-cyan-200/60">// Initiating ancient protocols...</p>
+                            <p class="text-[#a5f3fc] drop-shadow-[0_0_5px_#00d4ff]">
+                                <span class="text-purple-400">const</span> <span
+                                    class="text-yellow-200">transmute</span> = <span
+                                    class="text-purple-400">async</span> (shard) =&gt; {<br />
+                                  <span class="text-purple-400">await</span> shard.<span
+                                    class="text-blue-400">align</span>({<br />
+                                    mode: <span class="text-green-400">'SAND_SHIFT'</span>,<br />
+                                    power: <span class="text-orange-400">INFINITY</span><br />
+                                  });<br />
+                                };
+                            </p>
+                        </div>
+                        <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-500"></div>
+                        <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-500"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="relative min-h-screen flex items-center bg-sand-dark py-16 overflow-hidden">
+        <div class="absolute inset-0 z-0">
+            <img loading="lazy" alt="Weathered stone texture"
+                class="w-full h-full object-cover opacity-30 grayscale contrast-125"
+                src="https://lh3.googleusercontent.com/aida-public/AB6AXuA1quSsiBGuPgQKrT_dKF-16yab2q1YVL5zmEVs5aMNmlBXfNf-UsBldGrRNPhu8v0CD5k6WbuYRdSPpeVIA0Zk1hI6mr9J53Bq31uu7Q4Dr8Paz2JkMhrI-EpTD-Als5iyJRhckTt536YOultpJ0JUcGMfSdxduFTkNSM50zajNVxHifhqFQZy-z8tUDq9xL-55htjhDwStNzhcmlIAM0Nmi679jW1wmbFgLYvvikflmzreGJKJDg53K5_8SfOsnjSvW9ziRiJ17iK" />
+            <div class="absolute inset-0 bg-gradient-to-r from-sand-dark via-sand-dark/90 to-transparent"></div>
+        </div>
+        <div class="container mx-auto px-6 relative z-10 w-full">
+            <div class="flex flex-col-reverse lg:flex-row items-center">
+                <div class="lg:w-7/12 relative">
+                    <div class="relative p-10 md:p-20 border-[12px] border-stone-800 bg-stone-900/80 shadow-2xl">
+                        <div
+                            class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cracked-concrete.png')] opacity-20 mix-blend-multiply">
+                        </div>
+                        <div class="relative z-10">
+                            <h3
+                                class="text-[120px] md:text-[200px] font-display font-black text-stone-800 leading-none select-none absolute -top-16 -left-10 opacity-50 blur-[2px]">
+                                ZERO</h3>
+                            <div class="flex items-baseline gap-4 mb-4">
+                                <span
+                                    class="text-8xl md:text-9xl font-black font-display text-stone-300 drop-shadow-md">0%</span>
+                                <span class="text-2xl md:text-4xl font-serif italic text-primary">Idle Usage</span>
+                            </div>
+                            <p class="text-stone-400 font-serif text-lg md:text-xl border-l-4 border-primary pl-6 py-2">
+                                "The machine sleeps as the desert sleeps. Silent. Still. Consuming nothing until the
+                                moment of awakening."
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="lg:w-5/12 lg:pl-20 mb-16 lg:mb-0">
+                    <div class="flex items-center gap-4 mb-8">
+                        <div class="h-[1px] w-12 bg-primary"></div>
+                        <span class="text-primary font-display tracking-[0.3em] text-sm">CORE SYSTEM</span>
+                    </div>
+                    <h2 class="text-5xl md:text-6xl font-display font-bold text-white mb-6">
+                        Invisible <br />Utility
+                    </h2>
+                    <p class="text-stone-400 mb-10 leading-relaxed font-serif">
+                        Engineered for zero disruption. The application runs silently in the background using minimal
+                        resources,
+                        waking only when summoned via Global Hotkey.
+                    </p>
+                    <div class="space-y-6">
+                        <div class="flex items-center gap-6 group">
+                            <div
+                                class="w-12 h-12 flex items-center justify-center border border-stone-700 bg-stone-800 group-hover:border-primary/50 transition-colors">
+                                <span
+                                    class="material-symbols-outlined text-stone-400 group-hover:text-primary transition-colors">keyboard_command_key</span>
+                            </div>
+                            <div>
+                                <h4 class="font-display text-white text-lg tracking-wider">Global Hotkey</h4>
+                                <p class="text-sm text-stone-500 uppercase tracking-widest">Ctrl + Shift + S</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-6 group">
+                            <div
+                                class="w-12 h-12 flex items-center justify-center border border-stone-700 bg-stone-800 group-hover:border-primary/50 transition-colors">
+                                <span
+                                    class="material-symbols-outlined text-stone-400 group-hover:text-primary transition-colors">nights_stay</span>
+                            </div>
+                            <div>
+                                <h4 class="font-display text-white text-lg tracking-wider">Zero-CPU Sleep</h4>
+                                <p class="text-sm text-stone-500 uppercase tracking-widest">No Performance Impact</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="relative py-20 md:py-32 overflow-hidden bg-[#0c0a09]">
+        <div class="container mx-auto px-6 relative z-10">
+            <div class="text-center mb-24">
+                <div class="inline-flex items-center gap-4 mb-4 opacity-70">
+                    <span class="h-[1px] w-16 bg-blue-500"></span>
+                    <span class="text-blue-400 font-display tracking-[0.4em] text-sm uppercase">SUPABASE</span>
+                    <span class="h-[1px] w-16 bg-blue-500"></span>
+                </div>
+                <h2
+                    class="text-5xl md:text-7xl font-display font-bold text-white mb-6 drop-shadow-[0_0_25px_rgba(59,130,246,0.3)]">
+                    Real-time Sync
+                </h2>
+                <p class="text-stone-400 max-w-2xl mx-auto font-serif text-lg">
+                    Powered by Supabase Realtime architecture. Clipboard changes are instantly replicated to all
+                    connected devices via secure listeners.
+                </p>
+            </div>
+            <div class="relative max-w-5xl mx-auto h-[600px] md:h-[500px] flex items-end justify-center">
+                <div
+                    class="w-48 md:w-64 h-full bg-slate-900 border-x border-t border-blue-500/30 relative z-20 flex flex-col items-center justify-end overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+                    <div
+                        class="absolute top-10 w-20 h-20 border-2 border-blue-500/50 rotate-45 flex items-center justify-center animate-pulse shadow-glow">
+                        <span class="material-symbols-outlined text-4xl text-blue-400 rotate-[-45deg]">sync</span>
+                    </div>
+                    <div
+                        class="w-full h-full absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/circuit-board.png')] opacity-10">
+                    </div>
+                </div>
+                <!-- Simplified decorative elements for citadel -->
+                <div class="absolute bottom-0 w-full h-1 bg-blue-500 shadow-[0_0_30px_#3b82f6]"></div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-16 max-w-4xl mx-auto">
+                <div
+                    class="bg-slate-900/50 border border-slate-800 p-6 text-center hover:border-blue-500/30 transition-colors">
+                    <span class="material-symbols-outlined text-blue-500 mb-4 text-3xl">bolt</span>
+                    <h3 class="text-white font-display text-lg mb-2">Instant Push</h3>
+                </div>
+                <div
+                    class="bg-slate-900/50 border border-slate-800 p-6 text-center hover:border-blue-500/30 transition-colors">
+                    <span class="material-symbols-outlined text-blue-500 mb-4 text-3xl">database</span>
+                    <h3 class="text-white font-display text-lg mb-2">PostgreSQL</h3>
+                </div>
+                <div
+                    class="bg-slate-900/50 border border-slate-800 p-6 text-center hover:border-blue-500/30 transition-colors">
+                    <span class="material-symbols-outlined text-blue-500 mb-4 text-3xl">lock</span>
+                    <h3 class="text-white font-display text-lg mb-2">Row-Level Security</h3>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bg-[#0f0b0b] py-16 md:py-24 relative overflow-hidden border-t border-white/5">
+        <div
+            class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMjExNTEyIi8+CjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiMzMzIyMWUiLz4KPC9zdmc+')] opacity-[0.07] pointer-events-none mix-blend-luminosity">
+        </div>
+        <div class="container mx-auto px-6 md:px-12 relative z-10">
+            <div class="flex flex-col items-center mb-24 text-center">
+                <span class="material-symbols-outlined text-4xl mb-6 text-primary/80">psychology</span>
+                <h3
+                    class="font-display text-4xl md:text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-gold-weathered to-[#5e4b35] mb-6">
+                    Smart Transformers</h3>
+                <p class="font-serif text-xl text-stone-500 max-w-2xl italic">"The utility understands what you copy.
+                    JSON is prettified. JWTs are decoded. Hex codes are visualized."</p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 auto-rows-[350px]">
+                <div
+                    class="md:col-span-2 relative group overflow-hidden bg-[#151110] border border-white/5 shadow-2xl transition-all duration-700 hover:border-gold-weathered/30">
+                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-60 grayscale group-hover:grayscale-0"
+                        data-alt="Laptop sitting on sand dune displaying code editor"
+                        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCpd0THzJUHqRMOSkKVhM_W1Gcw2lIH4mwvLHWffJ4-LZkFySPHR53RQuIafXC1aoOJQj-XT8mFJpvi5h9528ZfvXgEdnpSmUn6m3a7DwLMpPSvLVyui_SgQ_oDQctMejDrzc7CXGoqgC66zQJvzz0g0wPy9lU3ING2bXW0J5iuLiKmiUDEOcW7xHMWLUL2y787o2S3KtPWY1XX6LjPKGaApFLRv8n8UVNYC7pZQwgq3mORVjQ1BI0llCwWmUzvo5CaaubbY2HxS4sc");'>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-r from-black via-black/40 to-transparent"></div>
+                    <div class="absolute bottom-0 left-0 p-10 z-10 max-w-md">
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
+                            <span class="font-mono text-xs text-primary uppercase tracking-widest">Transmitting</span>
+                        </div>
+                        <h4 class="font-display text-3xl font-bold text-white mb-2 tracking-wide">Desktop Command</h4>
+                        <p class="font-serif text-stone-400 leading-relaxed">Copy text, images, or files. The
+                            propagation is immediate and absolute.</p>
+                    </div>
+                </div>
+                <div
+                    class="md:row-span-2 relative group overflow-hidden bg-[#151110] border border-white/5 shadow-2xl transition-all duration-700 hover:border-gold-weathered/30">
+                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-60 grayscale group-hover:grayscale-0"
+                        data-alt="Smartphone half buried in golden sand displaying notification"
+                        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDw460snA-IHP6rfHLY-hF_NRznsNCQPFbO7zZDkjr_3mQ7DI4lLpZ-B0k_8SvbbHOUiTBJhRX2F3AgujPF2wKDAqe4jmnbW7VqZT9etd3DbFoxFgt5WK4EWndBWHbv0GfuJwRUq93UXdt_s0DYKL6yMCHaKW6zx0r44IeDdRrqd0GCMG7TD7-83MKSsHCF164_By8GV9PRfmSEp9XlVoKH7ZW_6B5p-LaL0qyp47xvQ2Q0nT0Bz88K4oBESEBEksWrZJ_KgV_-bAR0");'>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
+                    <div class="absolute bottom-0 left-0 p-10 z-10">
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                            <span class="font-mono text-xs text-green-500 uppercase tracking-widest">Receiving</span>
+                        </div>
+                        <h4 class="font-display text-3xl font-bold text-white mb-2 tracking-wide">Mobile Receiver</h4>
+                        <p class="font-serif text-stone-400 leading-relaxed">Paste on your phone before your hand leaves
+                            the keyboard. Magic realized.</p>
+                    </div>
+                </div>
+                <div
+                    class="relative group overflow-hidden bg-[#1c1412] border border-white/5 flex flex-col justify-center items-center p-8 text-center hover:bg-[#261b18] transition-colors duration-500">
+                    <div
+                        class="mb-6 p-6 rounded-full border border-primary/20 bg-primary/5 text-primary group-hover:border-primary/50 group-hover:bg-primary/10 transition-all duration-500">
+                        <span class="material-symbols-outlined text-5xl font-light">enhanced_encryption</span>
+                    </div>
+                    <h4 class="font-display text-2xl font-bold text-gold-weathered mb-3 tracking-wider">End-to-End
+                        Encrypted</h4>
+                    <p class="font-serif text-stone-500 leading-relaxed max-w-xs">Your data travels through a secure
+                        tunnel, invisible to prying eyes like a shadow in the night.</p>
+                </div>
+                <div class="relative group overflow-hidden bg-black border border-white/5">
+                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-40 mix-blend-overlay"
+                        data-alt="Abstract macro shot of sand grains resembling data particles"
+                        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAhCuoS82GSl-Gd26kItO8I9kDHipz5P-ySKwUYoYak4yOp9i_SwX19vt9sX7gbR2EdDgCGWYzAt-XV0GE1BVLtSR4_UluLcGQ0nw-xMYKgoRP2998DbEJffJ0gJS-CXPvWD_vlB_ryvocvUXaBu3CWWng4D16QW746LaEvVpJKuVpgZasdCX0Gr2He0sozysJIwp-rWXE8a_6evihqVa0URHaz987V_5KiwQa_GbewR0jFlBd_BVq56FFNuD6AeP-cJoeUtZuzEUyp");'>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-tr from-black to-slate-deep/50"></div>
+                    <div class="absolute inset-0 flex flex-col justify-center items-center p-6 text-center z-10">
+                        <span class="font-display text-7xl font-bold text-white mb-2 tracking-tighter">0.2<span
+                                class="text-3xl text-stone-500">s</span></span>
+                        <div class="h-[1px] w-12 bg-primary mb-4"></div>
+                        <span
+                            class="font-display text-xs uppercase tracking-[0.3em] text-primary font-bold">Latency</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <footer class="bg-[#050505] border-t border-white/10 pt-16 pb-10 relative">
+        <div
+            class="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent">
+        </div>
+        <div class="container mx-auto px-6 md:px-12">
+            <div class="flex flex-col md:flex-row justify-between items-start gap-12 mb-20">
+                <div class="max-w-md">
+                    <div class="flex items-center gap-4 mb-8">
+                        <span
+                            class="material-symbols-outlined text-gold-weathered text-3xl opacity-70">content_copy</span>
+                        <h2 class="font-display text-2xl font-bold tracking-[0.2em] text-white uppercase">GhostCopy</h2>
+                    </div>
+                    <p class="font-serif text-stone-500 leading-relaxed text-lg">
+                        Born from the need for speed. GhostCopy is the essential artifact for the modern nomad
+                        traversing the digital expanse.
+                    </p>
+                </div>
+                <div class="flex flex-wrap gap-16 md:gap-24">
+                    <div class="flex flex-col gap-6">
+                        <h4
+                            class="font-display text-gold-weathered text-xs font-bold uppercase tracking-[0.2em] border-b border-white/10 pb-2 mb-2">
+                            Platform</h4>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="#">Mac &amp; iOS</a>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="#">Windows &amp; Android</a>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="#">Linux (Beta)</a>
+                    </div>
+                    <div class="flex flex-col gap-6">
+                        <h4
+                            class="font-display text-gold-weathered text-xs font-bold uppercase tracking-[0.2em] border-b border-white/10 pb-2 mb-2">
+                            Company</h4>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="#">Manifesto</a>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="support.html">Contact</a>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="privacy.html">Privacy</a>
+                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
+                            href="terms.html">Terms</a>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-col md:flex-row justify-between items-center pt-10 border-t border-white/5 gap-6">
+                <p class="text-xs text-stone-600 font-mono tracking-widest uppercase">© 2024 GhostCopy Inc.</p>
+                <div class="flex gap-8">
+                    <a class="text-stone-600 hover:text-gold-weathered transition-colors" href="#"
+                        rel="noopener noreferrer" target="_blank">
+                        <span class="sr-only">Twitter</span>
+                        <span class="material-symbols-outlined text-xl">public</span>
+                    </a>
+                    <a class="text-stone-600 hover:text-gold-weathered transition-colors" href="#"
+                        rel="noopener noreferrer" target="_blank">
+                        <span class="sr-only">GitHub</span>
+                        <span class="material-symbols-outlined text-xl">code</span>
+                    </a>
+                    <a class="text-stone-600 hover:text-gold-weathered transition-colors" href="#"
+                        rel="noopener noreferrer" target="_blank">
+                        <span class="sr-only">Discord</span>
+                        <span class="material-symbols-outlined text-xl">forum</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu"
+        class="fixed inset-0 z-[60] bg-black/95 backdrop-blur-xl transform translate-x-full transition-transform duration-300 md:hidden flex flex-col justify-center items-center gap-8">
+        <button id="close-menu" class="absolute top-6 right-6 text-gold-weathered">
+            <span class="material-symbols-outlined text-4xl">close</span>
+        </button>
+        <a href="index.html"
+            class="font-display text-2xl font-bold text-white uppercase tracking-[0.2em] mb-4">GhostCopy</a>
+        <a href="#origins"
+            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Origins</a>
+        <a href="download.html"
+            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Artifacts</a>
+        <a href="docs.html"
+            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Codex</a>
+        <a href="support.html"
+            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Access</a>
+    </div>
+
+    <script>
+        const menuBtn = document.querySelector('button .material-symbols-outlined[class*="menu"]').parentElement; // Targeting the menu button
+        const closeBtn = document.getElementById('close-menu');
+        const mobileMenu = document.getElementById('mobile-menu');
+
+        menuBtn.addEventListener('click', () => {
+            mobileMenu.classList.remove('translate-x-full');
+        });
+
+        closeBtn.addEventListener('click', () => {
+            mobileMenu.classList.add('translate-x-full');
+        });
+    </script>
+    <style>
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes shimmer {
+            0% {
+                transform: translateX(-100%) skewX(12deg);
+            }
+
+            100% {
+                transform: translateX(200%) skewX(12deg);
+            }
+        }
+    </style>
+</body>
+
+</html>

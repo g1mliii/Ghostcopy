@@ -247,17 +247,27 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     widget.lifecycleController?.addPausable(_pausableAuthSlideController);
 
     // Listen to text changes and detect content type
+    // Debounced to prevent expensive regex/JSON operations on every keystroke
     _textControllerListener = () {
-      setState(() {
-        _content = _textController.text;
+      final text = _textController.text;
+      
+      // Update basic state immediately
+      setState(() => _content = text);
 
-        // Detect content type (JSON, JWT, hex color, etc.)
-        _detectedContentType = widget.transformerService.detectContentType(
-          _content,
-        );
-
-        // Clear previous transformation result when content changes
-        _transformationResult = null;
+      // Cancel previous debounce detection
+      _searchDebounceTimer?.cancel();
+      
+      // Debounce heavy transformer detection
+      _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        
+        setState(() {
+          // Detect content type (JSON, JWT, hex color, etc.)
+          _detectedContentType = widget.transformerService.detectContentType(text);
+          
+          // Clear previous transformation result when content changes
+          _transformationResult = null;
+        });
       });
     };
     _textController.addListener(_textControllerListener);

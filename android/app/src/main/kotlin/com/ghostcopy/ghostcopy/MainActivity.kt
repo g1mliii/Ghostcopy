@@ -22,6 +22,12 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // Security: Prevent screenshots and recents preview
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
+
         // Method channel for share sheet operations
         io.flutter.embedding.engine.systemchannels.MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

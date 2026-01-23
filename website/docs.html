@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <meta name="description"
+        content="Official documentation for GhostCopy. Learn about architecture, zero-cpu protocol, and configuration." />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' https://cdn.tailwindcss.com https://fonts.googleapis.com https://fonts.gstatic.com data:; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;">
+    <title>GhostCopy Docs: The Great Archive</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&amp;family=Noto+Serif:ital,wght@0,400;0,700;1,400&amp;family=JetBrains+Mono:wght@400&amp;display=swap"
+        rel="stylesheet" />
+    <!-- Material Symbols -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#e77255",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#211411", // Keeping theme base, but overriding specific areas
+                        "sidebar-bg": "#1a2332", // Dark slate blue
+                        "parchment": "#fdfbf7",
+                        "parchment-dark": "#eaddcf",
+                        "sienna": "#8a3324",
+                        "sienna-light": "#c69f95",
+                    },
+                    fontFamily: {
+                        "display": ["Noto Serif", "serif"],
+                        "heading": ["Cinzel", "serif"],
+                        "mono": ["JetBrains Mono", "monospace"],
+                    },
+                    borderRadius: { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" },
+                    backgroundImage: {
+                        'parchment-texture': "url('data:image/svg+xml,%3Csvg width=\\'100%\\' height=\\'100%\\' viewBox=\\'0 0 100 100\\' xmlns=\\'http://www.w3.org/2000/svg\\'%3E%3Cfilter id=\\'noiseFilter\\'%3E%3CfeTurbulence type=\\'fractalNoise\\' baseFrequency=\\'0.8\\' numOctaves=\\'3\\' stitchTiles=\\'stitch\\'/%3E%3C/filter%3E%3Crect width=\\'100%25\\' height=\\'100%25\\' filter=\\'url(%23noiseFilter)\\' opacity=\\'0.05\\'/%3E%3C/svg%3E')",
+                    }
+                },
+            },
+        }
+    </script>
+    <style>
+        /* Custom scrollbar for the archive feel */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a2332;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4a5d75;
+            border: 2px solid #1a2332;
+            border-radius: 2px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #e77255;
+        }
+
+        .chiseled-code {
+            box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.5), inset -1px -1px 2px rgba(255, 255, 255, 0.05);
+            border: 1px solid #334155;
+        }
+
+        .desaturated-film {
+            filter: grayscale(80%) contrast(120%) brightness(0.9);
+            transition: filter 0.3s ease;
+        }
+
+        .desaturated-film:hover {
+            filter: grayscale(0%) contrast(100%) brightness(100%);
+        }
+    </style>
+</head>
+
+<body class="font-display bg-sidebar-bg text-slate-800 antialiased h-screen overflow-hidden flex">
+    <!-- Sidebar Navigation -->
+    <aside
+        class="fixed inset-y-0 left-0 z-50 w-72 bg-sidebar-bg border-r border-slate-700/50 flex flex-col h-full shrink-0 transform -translate-x-full transition-transform duration-300 md:translate-x-0 md:static md:z-auto shadow-xl">
+        <!-- Logo Header -->
+        <div class="p-6 border-b border-slate-700/50 bg-[#151b26] flex items-center justify-between">
+            <a href="index.html" class="flex gap-3 items-center group">
+                <div
+                    class="bg-gradient-to-br from-primary to-sienna aspect-square rounded size-10 flex items-center justify-center shadow-lg ring-1 ring-white/10 group-hover:scale-105 transition-transform">
+                    <span class="material-symbols-outlined text-white text-2xl">history_edu</span>
+                </div>
+                <div class="flex flex-col">
+                    <h1
+                        class="text-gray-100 text-lg font-heading font-bold leading-tight tracking-wider group-hover:text-primary transition-colors">
+                        GhostCopy</h1>
+                    <p class="text-slate-400 text-xs font-mono uppercase tracking-widest">The Great Archive</p>
+                </div>
+            </a>
+            <button id="close-sidebar" class="md:hidden text-slate-400 hover:text-white">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <!-- Search Bar -->
+        <div class="px-4 py-4 border-b border-slate-700/30">
+            <div class="relative group">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-focus-within:text-primary transition-colors">search</span>
+                </div>
+                <input
+                    class="block w-full pl-10 pr-3 py-2 border border-slate-700 rounded bg-[#131a24] text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary sm:text-sm font-mono shadow-inner transition-all duration-200"
+                    placeholder="Search the scrolls..." type="text" />
+            </div>
+        </div>
+        <!-- Nav Links -->
+        <nav class="flex-1 overflow-y-auto py-4 px-2 space-y-1 custom-scrollbar">
+            <!-- Section 1 -->
+            <div class="px-3 mb-2 mt-2">
+                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest font-heading mb-2">Initiation</h3>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#architecture-zero-cpu">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">architecture</span>
+                    <span class="text-sm font-medium">Architecture</span>
+                </a>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#supabase-config">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">menu_book</span>
+                    <span class="text-sm font-medium">Overview</span>
+                </a>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#initializing-client">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">build</span>
+                    <span class="text-sm font-medium">Prerequisites</span>
+                </a>
+            </div>
+            <!-- Section 2: Active -->
+            <div class="px-3 mb-2 mt-6">
+                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest font-heading mb-2">Protocol</h3>
+                <a class="flex items-center gap-3 px-3 py-2 bg-primary/20 text-white rounded border-l-2 border-primary shadow-[0_0_15px_rgba(231,114,85,0.1)]"
+                    href="#supabase-config">
+                    <span class="material-symbols-outlined text-primary text-[20px] fill-current">database</span>
+                    <span class="text-sm font-medium">Supabase Config</span>
+                </a>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#schema-consecration">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">table_view</span>
+                    <span class="text-sm font-medium">Schema Setup</span>
+                </a>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#client-setup">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">terminal</span>
+                    <span class="text-sm font-medium">Client Setup</span>
+                </a>
+            </div>
+            </div>
+            <!-- Section 3 -->
+            <div class="px-3 mb-2 mt-6">
+                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest font-heading mb-2">Features</h3>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#smart-transformers">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">psychology</span>
+                    <span class="text-sm font-medium">Smart Transformers</span>
+                </a>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#mobile-integration">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">smartphone</span>
+                    <span class="text-sm font-medium">Mobile Protocol</span>
+                </a>
+                <a class="flex items-center gap-3 px-3 py-2 text-slate-300 hover:bg-white/5 hover:text-white rounded transition-all group"
+                    href="#advanced-config">
+                    <span
+                        class="material-symbols-outlined text-slate-500 group-hover:text-primary text-[20px]">settings_suggest</span>
+                    <span class="text-sm font-medium">Advanced Config</span>
+                </a>
+            </div>
+        </nav>
+        <!-- Sidebar Footer -->
+        <div class="p-4 border-t border-slate-700/50 bg-[#151b26]">
+            <a href="index.html"
+                class="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-xs uppercase tracking-widest text-center justify-center">
+                <span class="material-symbols-outlined text-sm">arrow_back</span>
+                Return to Base
+            </a>
+        </div>
+    </aside>
+    <!-- Main Content Area -->
+    <main class="flex-1 h-full overflow-y-auto relative bg-parchment bg-parchment-texture">
+        <!-- Top Bar / Breadcrumbs -->
+        <header
+            class="sticky top-0 z-10 backdrop-blur-md bg-parchment/80 border-b border-sienna/10 px-8 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-2 text-sm">
+                <button id="open-sidebar" class="md:hidden text-slate-500 mr-2 hover:text-sienna">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
+                <a class="text-slate-500 hover:text-sienna transition-colors font-medium" href="index.html">Home</a>
+                <span class="material-symbols-outlined text-slate-400 text-[16px]">chevron_right</span>
+                <a class="text-slate-500 hover:text-sienna transition-colors font-medium" href="#">Setup</a>
+                <span class="material-symbols-outlined text-slate-400 text-[16px]">chevron_right</span>
+                <span class="text-sienna font-bold">Supabase Config</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <button class="text-slate-500 hover:text-sienna transition-colors" title="Toggle Light/Dark">
+                    <span class="material-symbols-outlined">contrast</span>
+                </button>
+                <a class="text-xs font-mono text-sienna border border-sienna/30 px-3 py-1 rounded hover:bg-sienna hover:text-white transition-all uppercase tracking-wider"
+                    href="#">
+                    v2.4.0-stable
+                </a>
+            </div>
+        </header>
+        <!-- Content Container -->
+        <div class="max-w-4xl mx-auto px-8 py-12 pb-32">
+            <!-- Page Title -->
+            <div class="mb-12 border-b-2 border-sienna/20 pb-8 scroll-mt-28" id="supabase-config">
+                <div class="flex items-center gap-3 mb-4">
+                    <span
+                        class="bg-sienna/10 text-sienna px-2 py-1 rounded text-xs font-mono uppercase tracking-widest font-bold border border-sienna/20">Configuration</span>
+                    <span class="text-slate-400 text-xs font-mono">EST. 15 mins</span>
+                </div>
+                <h1 class="text-5xl font-heading font-black text-sienna mb-4 leading-tight tracking-tight">Supabase
+                    Configuration: <br /><span class="text-slate-800">The Iron Foundation</span></h1>
+                <p class="text-xl text-slate-600 leading-relaxed max-w-2xl font-display">
+                    Establishing the immutable data layer for your legion's operations. This guide details the schema
+                    consecration required for the GhostCopy protocol.
+                </p>
+            </div>
+            <!-- Body Text -->
+            <div class="prose prose-slate prose-lg max-w-none">
+                <p class="mb-8 text-slate-700 leading-loose">
+                    To begin the initialization of the GhostCopy stack, we must first consecrate the database
+                    connection. The Supabase instance acts as the central vault for all operative intelligence. The
+                    following configuration establishes the primary link between the local client and the remote
+                    archives. Ensure your environment variables are set correctly in your <code
+                        class="text-sienna bg-sienna/5 border border-sienna/20 px-1 py-0.5 rounded text-sm font-mono">.env.local</code>
+                    file before proceeding.
+                </p>
+                <!-- Warning Callout -->
+                <div
+                    class="my-10 p-6 bg-amber-50 border-l-4 border-amber-500 rounded-r shadow-sm flex gap-4 items-start relative overflow-hidden">
+                    <div class="absolute -right-4 -top-4 opacity-10 pointer-events-none">
+                        <span class="material-symbols-outlined text-amber-900 text-[100px]">warning</span>
+                    </div>
+                    <span class="material-symbols-outlined text-amber-600 text-3xl shrink-0 mt-1">warning</span>
+                    <div>
+                        <h4 class="text-amber-900 font-heading font-bold text-lg mb-1">Security Protocol Alpha</h4>
+                        <p class="text-amber-800 text-sm leading-relaxed">
+                            Do not commit your service keys to the public repository. Treat these credentials with the
+                            same secrecy as the Emperor's seal. Use environment variables exclusively.
+                        </p>
+                    </div>
+                </div>
+                <!-- Step 1 -->
+                <h2 class="text-3xl font-heading font-bold text-slate-800 mt-12 mb-6 flex items-center gap-3 scroll-mt-28"
+                    id="initializing-client">
+                    <span
+                        class="flex items-center justify-center size-8 rounded bg-slate-800 text-white text-base font-serif font-bold">I</span>
+                    Initializing the Client
+                </h2>
+                <p class="mb-6 text-slate-700">
+                    Before initializing the GhostCopy protocol, ensure your local environment meets the standard
+                    requirements.
+                    The core system runs on <strong class="text-sienna">Flutter (Stable)</strong> and creates a secure
+                    uplink to <strong class="text-sienna">Supabase</strong>.
+                </p>
+                <!-- Code Block Component -->
+                <div
+                    class="my-8 rounded overflow-hidden chiseled-code bg-[#0f141d] text-gray-300 font-mono text-sm relative group">
+                    <div class="flex items-center justify-between px-4 py-2 bg-[#1a2332] border-b border-slate-700">
+                        <span class="text-slate-400 text-xs uppercase tracking-wider">Prerequisites</span>
+                    </div>
+                    <div class="p-6 overflow-x-auto">
+                        <ul class="list-disc pl-4 space-y-2 marker:text-sienna">
+                            <li><strong>Flutter SDK:</strong> Version 3.x or higher (Stable Channel)</li>
+                            <li><strong>Supabase Account:</strong> Free tier is sufficient for personal archives</li>
+                            <li><strong>Git:</strong> For cloning the repository</li>
+                        </ul>
+                    </div>
+                </div>
+                <!-- Code Block Component -->
+                <div
+                    class="my-8 rounded overflow-hidden chiseled-code bg-[#0f141d] text-gray-300 font-mono text-sm relative group">
+                    <div class="flex items-center justify-between px-4 py-2 bg-[#1a2332] border-b border-slate-700">
+                        <span class="text-slate-400 text-xs uppercase tracking-wider">typescript</span>
+                        <button
+                            class="flex items-center gap-2 text-xs text-slate-400 hover:text-primary transition-colors">
+                            <span class="material-symbols-outlined text-[14px]">content_copy</span>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="p-6 overflow-x-auto">
+                        <pre><code><span class="text-purple-400">import</span> { createClient } <span class="text-purple-400">from</span> <span class="text-green-400">'@supabase/supabase-js'</span>
+
+<span class="text-slate-500">// Retrieve environment variables</span>
+<span class="text-purple-400">const</span> supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+<span class="text-purple-400">const</span> supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+<span class="text-purple-400">if</span> (!supabaseUrl || !supabaseKey) {
+  <span class="text-yellow-300">throw</span> <span class="text-purple-400">new</span> Error(<span class="text-green-400">'Missing Supabase environment variables.'</span>)
+}
+
+<span class="text-slate-500">// Initialize the legion client</span>
+<span class="text-purple-400">export const</span> supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: <span class="text-blue-400">true</span>,
+    autoRefreshToken: <span class="text-blue-400">true</span>,
+  }
+})</code></pre>
+                    </div>
+                </div>
+                <!-- Architecture Section -->
+                <h2 class="text-3xl font-heading font-bold text-slate-800 mt-12 mb-6 flex items-center gap-3 scroll-mt-28"
+                    id="architecture-zero-cpu">
+                    <span
+                        class="flex items-center justify-center size-8 rounded bg-slate-800 text-white text-base font-serif font-bold">0</span>
+                    Architecture & Zero-CPU
+                </h2>
+                <div class="prose prose-slate max-w-none mb-12">
+                    <p>
+                        GhostCopy runs on the "Invisible Window" architecture. Unlike traditional applications, the main
+                        interface is a borderless, transparent window that exists in a suspended state until summoned.
+                    </p>
+                    <h3 class="text-xl font-bold text-slate-800 mt-6 mb-3">The "Zero-CPU" Sleep Protocol</h3>
+                    <p>
+                        To ensure zero impact on gaming performance (specifically targeting 1% lows in FPS), we
+                        implement
+                        aggressive resource throttling:
+                    </p>
+                    <ul class="list-disc pl-4 space-y-2 marker:text-sienna">
+                        <li><strong>Hibernation:</strong> When the window is hidden (blur event), the flutter engine
+                            pauses all <code>TickerProvider</code> animations.</li>
+                        <li><strong>Wake Lock:</strong> The app releases all GPU handles, dropping VRAM usage to
+                            near-zero.</li>
+                        <li><strong>Instant Wake:</strong> Upon <code>Ctrl+Shift+S</code>, the
+                            <code>hotkey_manager</code> sends a wake signal that restores the UI in &#60;50ms.
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Step 1 -->
+                <h2 class="text-3xl font-heading font-bold text-slate-800 mt-16 mb-6 flex items-center gap-3 scroll-mt-28"
+                    id="schema-consecration">
+                    <span
+                        class="flex items-center justify-center size-8 rounded bg-slate-800 text-white text-base font-serif font-bold">II</span>
+                    Schema Consecration
+                </h2>
+                <p class="mb-6 text-slate-700">
+                    The data structure must be rigid yet flexible. Execute the following SQL query in your Supabase SQL
+                    Editor to construct the <code class="font-bold text-sienna">ghost_agents</code> table. This table
+                    tracks all active operatives.
+                </p>
+                <!-- Code Block Component SQL -->
+                <div
+                    class="my-8 rounded overflow-hidden chiseled-code bg-[#0f141d] text-gray-300 font-mono text-sm relative group">
+                    <div class="flex items-center justify-between px-4 py-2 bg-[#1a2332] border-b border-slate-700">
+                        <span class="text-slate-400 text-xs uppercase tracking-wider">SQL Query</span>
+                        <button
+                            class="flex items-center gap-2 text-xs text-slate-400 hover:text-primary transition-colors">
+                            <span class="material-symbols-outlined text--[14px]">content_copy</span>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="p-6 overflow-x-auto">
+                        <pre><code><span class="text-blue-400">create table</span> public.clipboard (
+  id <span class="text-yellow-300">bigint</span> <span class="text-blue-400">generated by default as identity primary key</span>,
+  user_id <span class="text-yellow-300">uuid</span> <span class="text-blue-400">references</span> auth.users <span class="text-blue-400">not null</span>,
+  content <span class="text-yellow-300">text</span> <span class="text-blue-400">not null</span>,
+  device_name <span class="text-yellow-300">text</span>,
+  device_type <span class="text-yellow-300">text</span> <span class="text-blue-400">not null</span>,
+  is_public <span class="text-yellow-300">boolean</span> <span class="text-blue-400">default false</span>,
+  created_at <span class="text-yellow-300">timestamptz</span> <span class="text-blue-400">default</span> timezone(<span class="text-green-400">'utc'</span>::text, now())
+);
+
+<span class="text-slate-500">-- Enable Row Level Security (RLS)</span>
+<span class="text-blue-400">alter table</span> public.clipboard enable row level security;
+
+<span class="text-slate-500">-- Policies</span>
+<span class="text-blue-400">create policy</span> "Users can view own items" <span class="text-blue-400">on</span> clipboard
+  <span class="text-blue-400">for select using</span> (auth.uid() = user_id);
+
+<span class="text-blue-400">create policy</span> "Users can insert own items" <span class="text-blue-400">on</span> clipboard
+  <span class="text-blue-400">for insert with check</span> (auth.uid() = user_id);</code></pre>
+                    </div>
+                </div>
+                <!-- Step 3 -->
+                <h2 class="text-3xl font-heading font-bold text-slate-800 mt-16 mb-6 flex items-center gap-3 scroll-mt-28"
+                    id="client-setup">
+                    <span
+                        class="flex items-center justify-center size-8 rounded bg-slate-800 text-white text-base font-serif font-bold">III</span>
+                    Client Consecration
+                </h2>
+                <p class="mb-6 text-slate-700">
+                    With the schema established, you must now bind the Flutter client to the Supabase instance.
+                    Configure your local environment variables in <span
+                        class="font-mono text-xs bg-slate-200 px-1 rounded">.env</span> (do not commit this file).
+                </p>
+                <!-- Code Block Component -->
+                <div
+                    class="my-8 rounded overflow-hidden chiseled-code bg-[#0f141d] text-gray-300 font-mono text-sm relative group">
+                    <div class="flex items-center justify-between px-4 py-2 bg-[#1a2332] border-b border-slate-700">
+                        <span class="text-slate-400 text-xs uppercase tracking-wider">.env</span>
+                        <button
+                            class="flex items-center gap-2 text-xs text-slate-400 hover:text-primary transition-colors">
+                            <span class="material-symbols-outlined text-[14px]">content_copy</span>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="p-6 overflow-x-auto">
+                        <pre><code><span class="text-purple-400">SUPABASE_URL</span>=https://your-project.supabase.co
+<span class="text-purple-400">SUPABASE_ANON_KEY</span>=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...</code></pre>
+                    </div>
+                </div>
+
+                <h3 class="text-xl font-heading font-bold text-slate-800 mt-12 mb-4 scroll-mt-28"
+                    id="smart-transformers">Smart
+                    Transformers</h3>
+                <p class="mb-6 text-slate-700">
+                    The client is equipped with intelligent detection algorithms. Data copied to the clipboard is
+                    analyzed for specific structures:
+                </p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="p-6 border border-slate-200 bg-white rounded shadow-sm">
+                        <h4 class="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-sienna">code</span> JSON Prettifier
+                        </h4>
+                        <p class="text-sm text-slate-600">Detects valid JSON strings and offers immediate
+                            formatting/indentation.</p>
+                    </div>
+                    <div class="p-6 border border-slate-200 bg-white rounded shadow-sm">
+                        <h4 class="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-sienna">token</span> JWT Decoder
+                        </h4>
+                        <p class="text-sm text-slate-600">Identifies JWT tokens (Header.Payload.Signature) and decodes
+                            the payload for inspection.</p>
+                    </div>
+                </div>
+            </div>
+
+            <h3 class="text-xl font-heading font-bold text-slate-800 mt-12 mb-4 scroll-mt-28" id="mobile-integration">
+                Mobile
+                Protocol</h3>
+            <p class="mb-6 text-slate-700">
+                The GhostCopy mobile interface creates an encrypted tunnel to your desktop legion. To initiate the
+                link, ensure both devices are on the same secure network or authenticated via the Supabase cloud
+                relay.
+            </p>
+            <div class="p-6 border border-slate-200 bg-white rounded shadow-sm mb-8">
+                <h4 class="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sienna">sync_lock</span> End-to-End Encryption
+                </h4>
+                <p class="text-sm text-slate-600">All clipboard data traversing the void between devices is
+                    encrypted using AES-256 before transmission. Your secrets remain yours.</p>
+            </div>
+
+            <h3 class="text-xl font-heading font-bold text-slate-800 mt-12 mb-4 scroll-mt-28" id="advanced-config">
+                Advanced
+                Configuration</h3>
+            <p class="mb-6 text-slate-700">
+                For the artificers who demand granular control, the <code
+                    class="text-sienna bg-sienna/5 border border-sienna/20 px-1 py-0.5 rounded text-sm font-mono">.env.local</code>
+                file offers additional tuning parameters.
+            </p>
+            <div class="bg-[#0f141d] rounded overflow-hidden chiseled-code p-6 font-mono text-sm text-gray-300">
+                <div class="mb-2"><span class="text-purple-400">GC_POLL_INTERVAL</span>=500 <span
+                        class="text-slate-500">// Ms between clipboard checks</span></div>
+                <div class="mb-2"><span class="text-purple-400">GC_MAX_HISTORY</span>=100 <span
+                        class="text-slate-500">// Items to keep in local cache</span></div>
+                <div><span class="text-purple-400">GC_AUTO_SYNC</span>=true <span class="text-slate-500">//
+                        Automatically
+                        push to cloud</span></div>
+            </div>
+        </div>
+        <!-- Page Navigation Footer -->
+        <div class="mt-20 pt-8 border-t border-sienna/20 flex justify-between items-center gap-4">
+            <a class="group flex flex-col items-start p-4 rounded-lg hover:bg-white/40 border border-transparent hover:border-sienna/10 transition-all w-1/2"
+                href="#">
+                <span
+                    class="text-xs text-slate-500 font-mono uppercase tracking-widest mb-1 group-hover:text-primary transition-colors">Previous</span>
+                <span
+                    class="text-lg font-heading font-bold text-slate-800 group-hover:text-sienna flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sm">arrow_back</span>
+                    Legion Setup
+                </span>
+            </a>
+        </div>
+        <!-- Site Footer -->
+        <footer class="mt-20 text-center border-t border-slate-200 pt-8 pb-4">
+            <p class="text-slate-400 text-sm font-display italic">
+                "The Archive remembers what the world forgets."
+            </p>
+            <div class="flex justify-center gap-6 mt-4">
+                <a class="text-slate-400 hover:text-sienna transition-colors" href="#"><span
+                        class="material-symbols-outlined">code</span></a>
+                <a class="text-slate-400 hover:text-sienna transition-colors" href="#"><span
+                        class="material-symbols-outlined">alternate_email</span></a>
+                <a class="text-slate-400 hover:text-sienna transition-colors" href="#"><span
+                        class="material-symbols-outlined">bug_report</span></a>
+            </div>
+            <p class="text-slate-300 text-xs mt-4 font-mono">© 2023 GhostCopy Inc. All rights reserved.</p>
+        </footer>
+        </div>
+    </main>
+    <script>
+        const sidebar = document.querySelector('aside');
+        const openBtn = document.getElementById('open-sidebar');
+        const closeBtn = document.getElementById('close-sidebar');
+        const searchInput = document.querySelector('input[type="text"]');
+        const navSections = document.querySelectorAll('nav > div');
+
+        if (openBtn) {
+            openBtn.addEventListener('click', () => {
+                sidebar.classList.remove('-translate-x-full');
+            });
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                sidebar.classList.add('-translate-x-full');
+            });
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase();
+
+                navSections.forEach(section => {
+                    const links = section.querySelectorAll('a');
+                    let hasVisibleLinks = false;
+
+                    links.forEach(link => {
+                        const text = link.innerText.toLowerCase();
+                        if (text.includes(term)) {
+                            link.style.display = 'flex';
+                            hasVisibleLinks = true;
+                        } else {
+                            link.style.display = 'none';
+                        }
+                    });
+
+                    // Hide section header if no links match
+                    if (hasVisibleLinks) {
+                        section.style.display = 'block';
+                    } else {
+                        section.style.display = 'none';
+                    }
+                });
+            });
+        }
+    </script>
+</body>
+
+</html>
