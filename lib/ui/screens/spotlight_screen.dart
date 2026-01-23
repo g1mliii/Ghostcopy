@@ -278,6 +278,22 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         _openSettings();
       });
     }
+
+    // Fix for empty UI on first launch:
+    // Check if window is already focused when widget mounts.
+    // If so, trigger the entry animation manually because onWindowFocus listener
+    // might have been registered after the focus event already fired.
+    windowManager.isFocused().then((isFocused) {
+      if (isFocused && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _animationController.forward(from: 0);
+            _populateFromClipboard();
+            _textFieldFocusNode.requestFocus();
+          }
+        });
+      }
+    });
   }
 
   @override
@@ -493,6 +509,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   void onWindowBlur() {
     // Hide window when it loses focus (user clicks outside)
     widget.windowService.hideSpotlight();
+
+    // Clear clipboard content to prevent memory leak (especially for large images)
+    if (mounted) {
+      setState(() {
+        _clipboardContent = null;
+      });
+    }
   }
 
   /// Populate text field from system clipboard
@@ -540,6 +563,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             TextPosition(offset: displayText.length),
           );
         });
+
+        // Precache image to avoid re-decoding on rebuilds
+        if (clipboardContent.hasImage && mounted) {
+          unawaited(
+            precacheImage(
+              MemoryImage(clipboardContent.imageBytes!),
+              context,
+            ),
+          );
+        }
 
         // Notify sync service that clipboard was modified (for staleness tracking)
         widget.clipboardSyncService.updateClipboardModificationTime();
@@ -994,12 +1027,72 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   /// Build text field for clipboard content with upload button
+  /// Build image preview (shown when clipboard contains image)
+  Widget? _buildImagePreview() {
+    if (_clipboardContent?.hasImage != true) return null;
+
+    final imageBytes = _clipboardContent!.imageBytes!;
+    final mimeType = _clipboardContent!.mimeType ?? 'unknown';
+    final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: GhostColors.primary.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Image thumbnail
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxHeight: 80,
+              ),
+              child: Image.memory(
+                imageBytes,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    height: 80,
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.broken_image,
+                      size: 40,
+                      color: GhostColors.textMuted,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Image info
+          Text(
+            '${mimeType.split('/').last.toUpperCase()} • $sizeKB KB',
+            style: GhostTypography.caption.copyWith(
+              color: GhostColors.textMuted,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTextField() {
     return RepaintBoundary(
       // Isolate text field repaints
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Image preview (if clipboard has image)
+          if (_buildImagePreview() != null) _buildImagePreview()!,
           TextField(
             controller: _textController,
             focusNode: _textFieldFocusNode,

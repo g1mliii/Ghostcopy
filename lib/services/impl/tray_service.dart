@@ -58,8 +58,7 @@ class TrayService with TrayListener implements ITrayService {
 
   @override
   void onTrayIconMouseDown() {
-    // Left click - could show spotlight or toggle window
-    // implementing if needed
+    // Left click - could show spotlight or toggle window if needed
   }
 
   @override

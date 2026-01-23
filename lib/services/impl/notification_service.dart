@@ -1,37 +1,164 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../../ui/theme/colors.dart';
 import '../../ui/theme/typography.dart';
+import '../game_mode_service.dart';
 import '../notification_service.dart';
-import '../toast_window_service.dart';
 import '../window_service.dart';
-import 'toast_window_service.dart';
 
 /// Concrete implementation of universal notification service
 ///
 /// Uses TWO approaches depending on window state:
 /// 1. Spotlight VISIBLE: Flutter overlay (current window)
-/// 2. Spotlight HIDDEN: Dedicated toast window (independent)
+/// 2. Spotlight HIDDEN: Native System Notifications (Windows/macOS)
 ///
 /// This ensures toasts are always visible, even when app is in tray.
 class NotificationService implements INotificationService {
-  NotificationService({IWindowService? windowService, IToastWindowService? toastWindowService})
-      : _windowService = windowService,
-        _toastWindowService = toastWindowService;
+  NotificationService({
+    IWindowService? windowService,
+    IGameModeService? gameModeService,
+  }) : _windowService = windowService,
+       _gameModeService = gameModeService;
 
   final IWindowService? _windowService;
-  final IToastWindowService? _toastWindowService;
+  final IGameModeService? _gameModeService;
+  final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   GlobalKey<NavigatorState>? _navigatorKey;
   OverlayEntry? _currentOverlay;
   Timer? _dismissTimer;
 
+  // Track pending actions for system notifications
+  final Map<int, VoidCallback> _pendingActions = {};
+  final Map<int, String> _actionPayloads =
+      {}; // Track payload for each action ID
+  final Map<int, DateTime> _actionTimestamps =
+      {}; // Track when action was created
+  int _notificationIdCounter = 0;
+
+  // Timer to periodically clean up stale actions (memory leak prevention)
+  Timer? _actionCleanupTimer;
+
   @override
   void initialize(GlobalKey<NavigatorState> navigatorKey) {
     _navigatorKey = navigatorKey;
+    _initializeLocalNotifications();
   }
+
+  Future<void> _initializeLocalNotifications() async {
+    // Android initialization
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+
+    // iOS/macOS initialization
+    const darwinSettings = DarwinInitializationSettings();
+
+    // Linux initialization
+    const linuxSettings = LinuxInitializationSettings(
+      defaultActionName: 'Open notification',
+    );
+
+    // Windows initialization
+    // Note: In debug mode with 'flutter run', notifications might not appear
+    // if a correct AppUserModelID/Shortcut is not set up on the OS.
+    // We try to use minimal settings here.
+    const windowsSettings = WindowsInitializationSettings(
+      appName: 'GhostCopy',
+      guid: '2c295777-6228-48b4-82a9-7b7c25c78d06',
+      appUserModelId: 'com.ghostcopy.app',
+    );
+
+    final initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: darwinSettings,
+      macOS: darwinSettings,
+      linux: linuxSettings,
+      windows: windowsSettings,
+    );
+
+    await _flutterLocalNotificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onNotificationResponse,
+    );
+
+    debugPrint('[NotificationService] Local notifications initialized');
+
+    // Start periodic cleanup of stale actions (every 5 minutes)
+    // This prevents memory leaks from dismissed notifications
+    _actionCleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      _cleanupStaleActions();
+    });
+  }
+
+  /// Clean up pending actions older than 5 minutes (dismissed notifications)
+  void _cleanupStaleActions() {
+    final now = DateTime.now();
+    final staleIds = <int>[];
+
+    for (final entry in _actionTimestamps.entries) {
+      if (now.difference(entry.value).inMinutes >= 5) {
+        staleIds.add(entry.key);
+      }
+    }
+
+    if (staleIds.isNotEmpty) {
+      for (final id in staleIds) {
+        _pendingActions.remove(id);
+        _actionPayloads.remove(id);
+        _actionTimestamps.remove(id);
+      }
+      debugPrint(
+        '[NotificationService] Cleaned up ${staleIds.length} stale action(s)',
+      );
+    }
+  }
+
+  void _onNotificationResponse(NotificationResponse response) {
+    debugPrint(
+      '[NotificationService] Notification response: ${response.notificationResponseType}, ID: ${response.id}, Payload: ${response.payload}',
+    );
+
+    // Try ID-based lookup first (works on some platforms)
+    if (response.id != null && _pendingActions.containsKey(response.id)) {
+      final action = _pendingActions[response.id];
+      if (action != null) {
+        debugPrint(
+          '[NotificationService] Executing pending action for ID: ${response.id}',
+        );
+        action();
+        _pendingActions.remove(response.id);
+        _actionPayloads.remove(response.id);
+        _actionTimestamps.remove(response.id);
+        return;
+      }
+    }
+
+    // Fallback: Use payload-based lookup (for Windows where ID is null)
+    if (response.payload != null && response.payload!.isNotEmpty) {
+      // Find action by searching for matching payload
+      final matchingEntry = _pendingActions.entries.firstWhere(
+        (entry) => _actionPayloads[entry.key] == response.payload,
+        orElse: () => MapEntry(-1, () {}),
+      );
+
+      if (matchingEntry.key != -1) {
+        debugPrint(
+          '[NotificationService] Executing action via payload: ${response.payload}',
+        );
+        matchingEntry.value();
+        _pendingActions.remove(matchingEntry.key);
+        _actionPayloads.remove(matchingEntry.key);
+        _actionTimestamps.remove(matchingEntry.key);
+      }
+    }
+  }
+
+  // ...
 
   @override
   void showToast({
@@ -39,15 +166,25 @@ class NotificationService implements INotificationService {
     NotificationType type = NotificationType.info,
     Duration duration = const Duration(seconds: 2),
   }) {
+    // 1. Check Game Mode
+    if (_gameModeService?.isActive ?? false) {
+      debugPrint(
+        '🔕 [NotificationService] Suppressed toast (Game Mode active)',
+      );
+      return;
+    }
+
     debugPrint('🔔 [NotificationService] showToast: "$message"');
 
     // Check if Spotlight window is visible
     final isSpotlightVisible = _windowService?.isVisible ?? false;
 
-    if (!isSpotlightVisible && _toastWindowService != null) {
-      // Use dedicated toast window when Spotlight is hidden
-      debugPrint('🔔 [NotificationService] Using toast window (Spotlight hidden)');
-      _showToastInToastWindow(message, type, duration);
+    if (!isSpotlightVisible) {
+      // Use system notification when Spotlight is hidden
+      debugPrint(
+        '🔔 [NotificationService] Using system notification (Spotlight hidden)',
+      );
+      _showSystemNotification(message: message, type: type);
     } else {
       // Use overlay when Spotlight is visible
       debugPrint('🔔 [NotificationService] Using overlay (Spotlight visible)');
@@ -55,18 +192,103 @@ class NotificationService implements INotificationService {
     }
   }
 
-  /// Show toast using dedicated toast window (when Spotlight is hidden)
-  void _showToastInToastWindow(
-    String message,
-    NotificationType type,
-    Duration duration,
-  ) {
-    final toastWidget = ToastWidget(
-      message: message,
-      type: type,
+  Future<void> _showSystemNotification({
+    required String message,
+    NotificationType type = NotificationType.info,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) async {
+    // Double check Game Mode (in case called directly)
+    if (_gameModeService?.isActive ?? false) {
+      debugPrint(
+        '🔕 [NotificationService] Suppressed system notification (Game Mode active)',
+      );
+      return;
+    }
+
+    final id = _notificationIdCounter++;
+
+    // Store action if provided
+    if (onAction != null) {
+      _pendingActions[id] = onAction;
+      _actionTimestamps[id] = DateTime.now(); // Track creation time for cleanup
+      if (actionLabel != null) {
+        _actionPayloads[id] =
+            actionLabel; // Store payload for Windows ID-less responses
+      }
+    }
+
+    // Configure platform specific details
+    const androidDetails = AndroidNotificationDetails(
+      'ghostcopy_notifications',
+      'GhostCopy Notifications',
+      channelDescription: 'General app notifications',
+      importance: Importance.high,
+      priority: Priority.high,
     );
 
-    _toastWindowService?.showToast(toastWidget, duration: duration);
+    const darwinDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const linuxDetails = LinuxNotificationDetails(
+      urgency: LinuxNotificationUrgency.normal,
+    );
+
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: darwinDetails,
+      macOS: darwinDetails,
+      linux: linuxDetails,
+      windows: const WindowsNotificationDetails(),
+    );
+
+    // Title based on type
+    var title = 'GhostCopy';
+    switch (type) {
+      case NotificationType.success:
+        title = 'Success';
+        break;
+      case NotificationType.error:
+        title = 'Error';
+        break;
+      case NotificationType.warning:
+        title = 'Warning';
+        break;
+      case NotificationType.info:
+        title = 'GhostCopy'; // Default app name
+        break;
+    }
+
+    // Append action hint to body if there's an action but current platform
+    // might not support buttons effectively or for clarity
+    var body = message;
+    if (actionLabel != null) {
+      body = '$message\n(Tap to $actionLabel)';
+    }
+
+    try {
+      debugPrint(
+        '[NotificationService] Attempting to show system notification ID: $id',
+      );
+      await _flutterLocalNotificationsPlugin.show(
+        id,
+        title,
+        body,
+        details,
+        payload: actionLabel,
+      );
+      debugPrint(
+        '[NotificationService] System notification command sent successfully for ID: $id',
+      );
+    } on Exception catch (e, stack) {
+      debugPrint(
+        '❌ [NotificationService] Failed to show system notification: $e',
+      );
+      debugPrintStack(stackTrace: stack);
+    }
   }
 
   /// Show toast using Flutter overlay (when Spotlight is visible)
@@ -86,10 +308,7 @@ class NotificationService implements INotificationService {
 
     // Create overlay entry
     _currentOverlay = OverlayEntry(
-      builder: (context) => _ToastWidget(
-        message: message,
-        type: type,
-      ),
+      builder: (context) => _ToastWidget(message: message, type: type),
     );
 
     // Insert into overlay
@@ -127,15 +346,16 @@ class NotificationService implements INotificationService {
     // Check if Spotlight window is visible
     final isSpotlightVisible = _windowService?.isVisible ?? false;
 
-    if (!isSpotlightVisible && _toastWindowService != null) {
-      // For now, show simple toast in toast window (clickable not supported yet)
-      // TODO: Implement clickable toast widget for toast window
-      debugPrint('🔔 [NotificationService] Showing simplified toast in toast window');
-      final toastWidget = ToastWidget(
-        message: '$message - $actionLabel',
-        type: NotificationType.info,
+    if (!isSpotlightVisible) {
+      // Use system notification with action
+      debugPrint(
+        '🔔 [NotificationService] Using system notification with action',
       );
-      _toastWindowService.showToast(toastWidget, duration: duration);
+      _showSystemNotification(
+        message: message,
+        actionLabel: actionLabel,
+        onAction: onAction,
+      );
     } else {
       // Use clickable overlay when Spotlight is visible
       debugPrint('🔔 [NotificationService] Using clickable overlay');
@@ -191,17 +411,19 @@ class NotificationService implements INotificationService {
   @override
   void dispose() {
     _removeCurrentToast();
+    _actionCleanupTimer?.cancel();
+    _actionCleanupTimer = null;
     _navigatorKey = null;
+    _pendingActions.clear();
+    _actionPayloads.clear();
+    _actionTimestamps.clear();
   }
 }
 
 /// Toast widget with slide-in animation
 /// Shows in TOP-MIDDLE when Spotlight is open (doesn't block UI)
 class _ToastWidget extends StatefulWidget {
-  const _ToastWidget({
-    required this.message,
-    required this.type,
-  });
+  const _ToastWidget({required this.message, required this.type});
 
   final String message;
   final NotificationType type;
@@ -229,18 +451,12 @@ class _ToastWidgetState extends State<_ToastWidget>
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, -1), // Start above (hidden)
       end: Offset.zero, // End at position
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     _fadeAnimation = Tween<double>(
       begin: 0,
       end: 1,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     _controller.forward();
   }
@@ -267,8 +483,10 @@ class _ToastWidgetState extends State<_ToastWidget>
               color: Colors.transparent,
               child: Container(
                 constraints: const BoxConstraints(maxWidth: 320),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   // Glassmorphism matching app theme
                   color: GhostColors.surface.withValues(alpha: 0.95),
@@ -341,18 +559,12 @@ class _ClickableToastWidgetState extends State<_ClickableToastWidget>
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, 1), // Start below
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     _fadeAnimation = Tween<double>(
       begin: 0,
       end: 1,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     _controller.forward();
   }

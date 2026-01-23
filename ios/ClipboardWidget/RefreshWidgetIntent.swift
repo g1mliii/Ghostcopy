@@ -1,5 +1,6 @@
 import AppIntents
 import WidgetKit
+import UIKit
 
 /// App Intent for manual widget refresh
 /// Triggered when user taps the refresh button on the widget
@@ -119,13 +120,29 @@ struct CopyToClipboardIntent: AppIntent {
 
     @Parameter(title: "Clipboard ID") var clipboardId: String
     @Parameter(title: "Content") var content: String
+    @Parameter(title: "Content Type") var contentType: String
+    @Parameter(title: "Thumbnail Path") var thumbnailPath: String
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        print("[CopyToClipboardIntent] 📋 Copying to clipboard: \(content.prefix(50))...")
+        print("[CopyToClipboardIntent] 📋 Copying: type=\(contentType), content=\(content.prefix(50))...")
 
-        // Copy to system clipboard
-        UIPasteboard.general.string = content
+        // Check if it's an image type
+        if contentType.lowercased().contains("image") && !thumbnailPath.isEmpty {
+            // Copy image from thumbnail file
+            if let image = UIImage(contentsOfFile: thumbnailPath) {
+                UIPasteboard.general.image = image
+                print("[CopyToClipboardIntent] ✅ Copied image to clipboard")
+            } else {
+                // Fallback to text if image fails to load
+                print("[CopyToClipboardIntent] ⚠️ Image failed to load, copying text preview")
+                UIPasteboard.general.string = content
+            }
+        } else {
+            // Copy text content for non-images
+            UIPasteboard.general.string = content
+            print("[CopyToClipboardIntent] ✅ Copied text to clipboard")
+        }
 
         // Open app so user can see confirmation
         // (openAppWhenRun = true handles this automatically)

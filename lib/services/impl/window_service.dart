@@ -100,6 +100,7 @@ class WindowService implements IWindowService {
     if (!_isDesktop()) return;
 
     await windowManager.hide();
+    debugPrint('[WindowService] Hiding spotlight window');
     _isVisible = false;
 
     // Enter Tray Mode AFTER hiding window to pause UI animations

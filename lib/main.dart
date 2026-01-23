@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -24,7 +25,7 @@ import 'services/impl/lifecycle_controller.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/security_service.dart';
 import 'services/impl/system_power_service.dart';
-import 'services/impl/toast_window_service.dart';
+
 import 'services/impl/transformer_service.dart';
 import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
@@ -35,7 +36,7 @@ import 'services/push_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
 import 'services/system_power_service.dart';
-import 'services/toast_window_service.dart';
+
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
 import 'services/url_shortener_service.dart';
@@ -104,7 +105,6 @@ Future<void> main(List<String> args) async {
     final trayService = TrayService();
     final hotkeyService = HotkeyService();
     final gameModeService = GameModeService();
-    final toastWindowService = ToastWindowService();
     final settingsService = SettingsService();
     final autoStartService = AutoStartService();
     final clipboardRepository = ClipboardRepository.instance;
@@ -119,9 +119,6 @@ Future<void> main(List<String> args) async {
 
     // Initialize settings service first
     await settingsService.initialize();
-
-    // Initialize toast window service
-    await toastWindowService.initialize();
 
     // Initialize background clipboard sync service
     final clipboardSyncService = ClipboardSyncService(
@@ -160,7 +157,7 @@ Future<void> main(List<String> args) async {
     );
     final notificationService = NotificationService(
       windowService: windowService,
-      toastWindowService: toastWindowService,
+      gameModeService: gameModeService,
     );
 
     // Note: ClipboardSyncService was initialized with notificationService: null
@@ -202,7 +199,6 @@ Future<void> main(List<String> args) async {
         gameModeService: gameModeService,
         lifecycleController: lifecycleController,
         notificationService: notificationService,
-        toastWindowService: toastWindowService,
         settingsService: settingsService,
         autoStartService: autoStartService,
         clipboardRepository: clipboardRepository,
@@ -354,7 +350,6 @@ class MyApp extends StatefulWidget {
     this.gameModeService,
     this.lifecycleController,
     this.notificationService,
-    this.toastWindowService,
     this.settingsService,
     this.autoStartService,
     this.clipboardRepository,
@@ -383,7 +378,6 @@ class MyApp extends StatefulWidget {
   final IGameModeService? gameModeService;
   final ILifecycleController? lifecycleController;
   final INotificationService? notificationService;
-  final IToastWindowService? toastWindowService;
   final ISettingsService? settingsService;
   final IAutoStartService? autoStartService;
   final IClipboardRepository? clipboardRepository;
@@ -410,6 +404,7 @@ class _MyAppState extends State<MyApp> {
   bool _showingTrayMenu = false;
   bool _openSettingsOnShow = false;
   bool _mobileAuthComplete = false;
+  bool _servicesDisposed = false;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<PowerEvent>? _powerEventSubscription;
 
@@ -419,6 +414,26 @@ class _MyAppState extends State<MyApp> {
     if (_isDesktop()) {
       // Initialize notification service with navigator key
       widget.notificationService?.initialize(_navigatorKey);
+      
+      // Warm up shaders to reduce UI jank on first animations
+      // This precompiles common shaders used in the app
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        debugPrint('[Main] Warming up shaders...');
+        final canvas = Canvas(PictureRecorder());
+        final paint = Paint()..color = Colors.white;
+        
+        // Warm up common shader operations used in app
+        canvas
+          ..drawRect(const Rect.fromLTWH(0, 0, 100, 100), paint) // Rectangles
+          ..drawRRect(RRect.fromRectAndRadius(
+            const Rect.fromLTWH(0, 0, 100, 100),
+            const Radius.circular(12),
+          ), paint); // Rounded corners
+        paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 10); // Blur effects
+        canvas.drawRect(const Rect.fromLTWH(0, 0, 100, 100), paint);
+        
+        debugPrint('[Main] Shader warmup complete');
+      });
 
       // Wire up Game Mode notification callback (Requirement 6.3)
       widget.gameModeService?.setNotificationCallback((item) {
@@ -484,6 +499,14 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
+    _disposeServices();
+    super.dispose();
+  }
+
+  void _disposeServices() {
+    if (_servicesDisposed) return;
+    _servicesDisposed = true;
+
     if (_isDesktop()) {
       // Cancel stream subscription to prevent memory leaks
       _powerEventSubscription?.cancel();
@@ -493,7 +516,6 @@ class _MyAppState extends State<MyApp> {
       widget.authService.dispose();
       widget.deviceService.dispose();
       widget.notificationService?.dispose();
-      widget.toastWindowService?.dispose();
       widget.trayService?.dispose();
       widget.hotkeyService?.dispose();
       widget.gameModeService?.dispose();
@@ -525,7 +547,13 @@ class _MyAppState extends State<MyApp> {
       // Dispose widget service (singleton) to clean up method channel
       WidgetService().dispose();
     }
-    super.dispose();
+  }
+
+  Future<void> _handleQuit() async {
+    debugPrint('[App] 🛑 Quit requested - starting cleanup...');
+    _disposeServices();
+    debugPrint('[App] ✅ Manual cleanup complete');
+    await windowManager.destroy();
   }
 
   Future<void> _showTrayMenu() async {
@@ -541,7 +569,8 @@ class _MyAppState extends State<MyApp> {
     ); // One frame at 60fps
 
     // Configure window for tray menu
-    await windowManager.setSize(const Size(250, 300));
+    // Increase size to handling overflow issues on different DPIs
+    await windowManager.setSize(const Size(320, 450));
     await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setAsFrameless();
 
@@ -571,11 +600,13 @@ class _MyAppState extends State<MyApp> {
     setState(() => _showingTrayMenu = false);
     widget.windowService?.hideSpotlight();
 
-    // Test toast notification when minimizing to tray
-    widget.notificationService?.showToast(
-      message: 'App closed to tray',
-      duration: const Duration(seconds: 3),
-    );
+    // Test toast notification when minimizing to tray (with delay to ensure window is hidden)
+    Future.delayed(const Duration(milliseconds: 500), () {
+      widget.notificationService?.showToast(
+        message: 'App closed to tray',
+        duration: const Duration(seconds: 3),
+      );
+    });
   }
 
   Future<void> _openSettingsFromTray() async {
@@ -612,6 +643,7 @@ class _MyAppState extends State<MyApp> {
               gameModeService: widget.gameModeService!,
               onClose: _hideTrayMenu,
               onOpenSettings: _openSettingsFromTray,
+              onQuit: _handleQuit,
             )
           : SpotlightScreen(
               authService: widget.authService,

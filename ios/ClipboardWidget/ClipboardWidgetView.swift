@@ -96,7 +96,12 @@ struct ClipboardWidgetView: View {
 
     /// Individual clipboard item row
     private func clipboardItemRow(_ item: ClipboardItemData) -> some View {
-        Button(intent: CopyToClipboardIntent(clipboardId: item.id, content: item.contentPreview)) {
+        Button(intent: CopyToClipboardIntent(
+            clipboardId: item.id,
+            content: item.contentPreview,
+            contentType: item.contentType,
+            thumbnailPath: item.thumbnailPath ?? ""
+        )) {
             HStack(spacing: 10) {
                 // Icon or thumbnail
                 ZStack {
@@ -106,7 +111,22 @@ struct ClipboardWidgetView: View {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(Color(red: 0.35, green: 0.4, blue: 0.95))
+                    } else if let thumbnailPath = item.thumbnailPath, item.contentType.lowercased().contains("image") {
+                        // Display actual image thumbnail for images
+                        if let uiImage = UIImage(contentsOfFile: thumbnailPath) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 40, height: 40)
+                                .clipped()
+                        } else {
+                            // Fallback to icon if image fails to load
+                            Image(systemName: "photo")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.primary)
+                        }
                     } else {
+                        // Show icon for non-image types
                         Image(systemName: iconForContentType(item.contentType))
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(.primary)

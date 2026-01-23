@@ -4,11 +4,14 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private companion object {
@@ -52,29 +55,81 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleShareIntent(intent: Intent) {
-        val sharedText = when {
+        when {
             intent.type?.startsWith("text/") == true -> {
-                intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+                if (sharedText.isNotEmpty()) {
+                    saveSharedContentFast(sharedText)
+                }
             }
-            else -> ""
-        }
-
-        if (sharedText.isNotEmpty()) {
-            // Call Flutter method to save content
-            saveSharedContentFast(sharedText)
+            intent.type?.startsWith("image/") == true -> {
+                val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                if (imageUri != null) {
+                    saveSharedImageFast(imageUri)
+                }
+            }
         }
     }
 
     private fun saveSharedContentFast(content: String) {
         val channel = io.flutter.embedding.engine.systemchannels.MethodChannel(
             flutterEngine!!.dartExecutor.binaryMessenger,
-            CHANNEL
+            SHARE_CHANNEL
         )
 
         // Show device selector dialog and start save in background
         channel.invokeMethod("handleShareIntent", mapOf("content" to content)) { result ->
             // Save started in background, close activity immediately
             // Don't wait for save to complete
+            finish()
+        }
+    }
+
+    private fun saveSharedImageFast(imageUri: Uri) {
+        try {
+            // Read image bytes from URI
+            val inputStream = contentResolver.openInputStream(imageUri)
+            val bytes = inputStream?.readBytes()
+            inputStream?.close()
+
+            if (bytes == null || bytes.isEmpty()) {
+                Log.e(TAG, "❌ Failed to read image from URI: $imageUri")
+                Toast.makeText(this, "Failed to read image", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+
+            // Validate size (10MB limit)
+            val maxSize = 10 * 1024 * 1024 // 10MB
+            if (bytes.size > maxSize) {
+                Log.e(TAG, "❌ Image too large: ${bytes.size} bytes (max: $maxSize)")
+                Toast.makeText(this, "Image too large (max 10MB)", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+
+            // Get MIME type
+            val mimeType = contentResolver.getType(imageUri) ?: "image/*"
+
+            val channel = io.flutter.embedding.engine.systemchannels.MethodChannel(
+                flutterEngine!!.dartExecutor.binaryMessenger,
+                SHARE_CHANNEL
+            )
+
+            // Pass raw bytes directly to Flutter (MethodChannel supports ByteArray → Uint8List)
+            // No base64 encoding needed - saves 33% memory overhead!
+            channel.invokeMethod("handleShareImage", mapOf(
+                "imageBytes" to bytes,
+                "mimeType" to mimeType
+            )) { result ->
+                // Save started in background, close activity
+                finish()
+            }
+
+            Log.d(TAG, "✅ Shared image: $mimeType, ${bytes.size / 1024}KB")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error reading shared image: ${e.message}", e)
+            Toast.makeText(this, "Failed to share image", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
@@ -200,16 +255,46 @@ class MainActivity : FlutterActivity() {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
             when {
-                // Copy image from thumbnail
+                // Copy image from thumbnail (load actual image bytes, not text path)
                 contentType.startsWith("image_") && !thumbnailPath.isNullOrEmpty() -> {
                     try {
-                        // For images, we copy the thumbnail path as a URI
-                        // The actual image is cached on device
-                        val clip = ClipData.newPlainText("Image path", thumbnailPath)
+                        val imageFile = File(thumbnailPath)
+                        if (!imageFile.exists()) {
+                            Log.w(TAG, "⚠️ Thumbnail file not found: $thumbnailPath")
+                            showToast("Image file not found")
+                            return
+                        }
+
+                        // Verify it's a valid image by attempting to decode
+                        val bitmap = BitmapFactory.decodeFile(thumbnailPath)
+                        if (bitmap == null) {
+                            Log.w(TAG, "⚠️ Failed to decode image: $thumbnailPath")
+                            showToast("Invalid image file")
+                            return
+                        }
+
+                        // Recycle bitmap immediately (we only needed it for validation)
+                        bitmap.recycle()
+
+                        // Create content URI for the image file
+                        val imageUri = Uri.fromFile(imageFile)
+
+                        // Determine MIME type from content type
+                        val mimeType = when {
+                            contentType.contains("png") -> "image/png"
+                            contentType.contains("jpeg") -> "image/jpeg"
+                            contentType.contains("gif") -> "image/gif"
+                            else -> "image/*"
+                        }
+
+                        // Copy as image with URI (this allows paste in other apps)
+                        val clip = ClipData.newUri(contentResolver, "Image", imageUri)
                         clipboard.setPrimaryClip(clip)
+
+                        Log.d(TAG, "✅ Copied image from widget: ${imageFile.length() / 1024}KB")
                         showToast("Image copied")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to copy image: ${e.message}")
+                        Log.e(TAG, "❌ Failed to copy image: ${e.message}", e)
                         showToast("Failed to copy image")
                     }
                 }

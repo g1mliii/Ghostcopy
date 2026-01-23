@@ -58,21 +58,21 @@ class ClipboardService implements IClipboardService {
         if (result != null) return result;
       }
 
-      // Try to read HTML
-      if (reader.canProvide(Formats.htmlText)) {
-        debugPrint('[ClipboardService] ↓ Reading HTML');
-        final html = await reader.readValue(Formats.htmlText);
-        if (html != null && html.isNotEmpty) {
-          return ClipboardContent.html(html);
-        }
-      }
-
-      // Fall back to plain text
+      // Try to read plain text first (prioritize clean text over HTML)
       if (reader.canProvide(Formats.plainText)) {
         final text = await reader.readValue(Formats.plainText);
         if (text != null && text.isNotEmpty) {
           debugPrint('[ClipboardService] ↓ Read text: ${text.length} chars');
           return ClipboardContent.text(text);
+        }
+      }
+
+      // Try to read HTML (fallback if no plain text, or if we want to add a setting later)
+      if (reader.canProvide(Formats.htmlText)) {
+        debugPrint('[ClipboardService] ↓ Reading HTML');
+        final html = await reader.readValue(Formats.htmlText);
+        if (html != null && html.isNotEmpty) {
+          return ClipboardContent.html(html);
         }
       }
 

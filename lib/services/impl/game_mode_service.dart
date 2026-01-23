@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../../models/clipboard_item.dart';
 import '../game_mode_service.dart';
+
 
 /// Concrete implementation of IGameModeService
 ///
@@ -49,6 +52,7 @@ class GameModeService implements IGameModeService {
   @override
   void toggle() {
     _isActive = !_isActive;
+    debugPrint('GameModeService: Toggled Game Mode. New state: $_isActive');
 
     // Broadcast state change for reactive UI updates
     _isActiveController.add(_isActive);
@@ -71,6 +75,7 @@ class GameModeService implements IGameModeService {
   @override
   void queueNotification(ClipboardItem item) {
     if (_isActive) {
+      debugPrint('GameModeService: Queuing notification. Queue size: ${_notificationQueue.length + 1}');
       // Prevent memory leaks during long gaming sessions
       if (_notificationQueue.length >= maxQueueSize) {
         // Remove oldest notification (FIFO)
@@ -94,6 +99,7 @@ class GameModeService implements IGameModeService {
   ///
   /// Requirement 6.3: Display queued notifications in sequence
   void _flushQueueWithCallback() {
+    debugPrint('GameModeService: Flushing ${_notificationQueue.length} notifications');
     if (_notificationCallback != null) {
       // Process notifications in order (FIFO)
       for (final item in _notificationQueue) {

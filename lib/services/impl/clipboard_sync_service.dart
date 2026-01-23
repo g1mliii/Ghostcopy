@@ -3,8 +3,8 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:super_clipboard/super_clipboard.dart';
 
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
@@ -62,6 +62,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Clipboard monitoring
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
+  String? _lastClipboardFormat; // Track format to avoid re-reading (e.g., 'image/png', 'text')
   bool _isMonitoring = false;
 
   @override
@@ -198,10 +199,20 @@ class ClipboardSyncService implements IClipboardSyncService {
         AutoReceiveBehavior.never => false,
         AutoReceiveBehavior.smart => () {
             final staleDuration = Duration(minutes: staleDurationMinutes);
-            return _lastClipboardModificationTime == null ||
+            final isStale = _lastClipboardModificationTime == null ||
                 now.difference(_lastClipboardModificationTime!) >= staleDuration;
+            
+            debugPrint('[ClipboardSyncService] Smart Auto-Receive Check:');
+            debugPrint('  - Last Mod: $_lastClipboardModificationTime');
+            debugPrint('  - Stale Threshold: $staleDurationMinutes min');
+            debugPrint('  - Is Stale: $isStale (Diff: ${now.difference(_lastClipboardModificationTime ?? DateTime.fromMillisecondsSinceEpoch(0))})');
+            
+            return isStale;
           }(),
       };
+
+      debugPrint('[ClipboardSyncService] Auto-Receive Behavior: ${autoReceiveBehavior.name}');
+      debugPrint('[ClipboardSyncService] Should Auto-Copy: $shouldAutoCopy');
 
       if (shouldAutoCopy) {
         // Auto-copy to clipboard
@@ -350,16 +361,46 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Check clipboard and auto-send if changed
   Future<void> _checkClipboardForAutoSend() async {
     try {
-      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-      final clipboardContent = clipboardData?.text ?? '';
+      // OPTIMIZATION: Quick format check to avoid expensive full reads
+      final reader = await SystemClipboard.instance?.read();
+      if (reader == null) return;
 
-      // Skip if empty or unchanged
-      if (clipboardContent.isEmpty ||
-          clipboardContent == _lastMonitoredClipboard) {
+      // Determine current clipboard format (cheapest operation)
+      String? currentFormat;
+      if (reader.canProvide(Formats.png)) {
+        currentFormat = 'image/png';
+      } else if (reader.canProvide(Formats.jpeg)) {
+        currentFormat = 'image/jpeg';
+      } else if (reader.canProvide(Formats.plainText)) {
+        currentFormat = 'text';
+      } else if (reader.canProvide(Formats.htmlText)) {
+        currentFormat = 'html';
+      }
+
+      // Skip full read if format hasn't changed (prevents re-reading 10MB images)
+      if (currentFormat != null && currentFormat == _lastClipboardFormat) {
         return;
       }
 
-      _lastMonitoredClipboard = clipboardContent;
+      _lastClipboardFormat = currentFormat;
+
+      // Read clipboard using ClipboardService (supports all formats)
+      final clipboardContent = await _clipboardService.read();
+
+      // Skip if empty
+      if (clipboardContent.isEmpty) {
+        return;
+      }
+
+      // Calculate hash for deduplication (works for text and images)
+      final contentHash = _calculateClipboardContentHash(clipboardContent);
+
+      // Skip if unchanged (compare hashes instead of raw content)
+      if (contentHash == _lastMonitoredClipboard) {
+        return;
+      }
+
+      _lastMonitoredClipboard = contentHash;
 
       // Rate limiting
       if (_lastSendTime != null) {
@@ -370,25 +411,50 @@ class ClipboardSyncService implements IClipboardSyncService {
         }
       }
 
-      // Security check
-      final detection = await _securityService.detectSensitiveDataAsync(
-        clipboardContent,
-      );
-      if (detection.isSensitive) {
-        debugPrint(
-          '[ClipboardSyncService] Auto-send blocked: ${detection.type?.label} detected',
+      // Security check (only for text content)
+      if (clipboardContent.hasText) {
+        final detection = await _securityService.detectSensitiveDataAsync(
+          clipboardContent.text!,
         );
-        return;
+        if (detection.isSensitive) {
+          debugPrint(
+            '[ClipboardSyncService] Auto-send blocked: ${detection.type?.label} detected',
+          );
+          return;
+        }
       }
 
-      // Auto-send
-      debugPrint(
-        '[ClipboardSyncService] Auto-sending: ${clipboardContent.substring(0, clipboardContent.length > 50 ? 50 : clipboardContent.length)}...',
-      );
-      await _autoSendClipboard(clipboardContent);
+      // Auto-send based on content type
+      if (clipboardContent.hasImage) {
+        debugPrint(
+          '[ClipboardSyncService] Auto-sending image: ${clipboardContent.imageBytes!.length} bytes (${clipboardContent.mimeType})',
+        );
+        await _autoSendImage(
+          clipboardContent.imageBytes!,
+          clipboardContent.mimeType!,
+        );
+      } else if (clipboardContent.hasText) {
+        final textContent = clipboardContent.text!;
+        debugPrint(
+          '[ClipboardSyncService] Auto-sending: ${textContent.substring(0, textContent.length > 50 ? 50 : textContent.length)}...',
+        );
+        await _autoSendClipboard(textContent);
+      }
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Clipboard check failed: $e');
     }
+  }
+
+  /// Calculate hash for clipboard content (text or image)
+  String _calculateClipboardContentHash(ClipboardContent content) {
+    if (content.hasImage) {
+      // Hash image bytes
+      return md5.convert(content.imageBytes!).toString();
+    } else if (content.hasText) {
+      // Hash text content
+      return md5.convert(utf8.encode(content.text!)).toString();
+    }
+    return '';
   }
 
   /// Auto-send clipboard content
@@ -470,6 +536,86 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Show error toast
       _notificationService?.showToast(
         message: 'Auto-send failed',
+        type: NotificationType.error,
+      );
+    }
+  }
+
+  /// Auto-send image content
+  Future<void> _autoSendImage(Uint8List imageBytes, String mimeType) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Content deduplication (hash image bytes)
+      final contentHash = md5.convert(imageBytes).toString();
+      if (contentHash == _lastSentContentHash) {
+        debugPrint('[ClipboardSyncService] Skipping duplicate image');
+        return;
+      }
+      _lastSentContentHash = contentHash;
+
+      // Map mimeType to ContentType
+      ContentType contentType;
+      switch (mimeType) {
+        case 'image/png':
+          contentType = ContentType.imagePng;
+        case 'image/jpeg':
+        case 'image/jpg':
+          contentType = ContentType.imageJpeg;
+        case 'image/gif':
+          contentType = ContentType.imageGif;
+        default:
+          debugPrint('[ClipboardSyncService] Unsupported image type: $mimeType');
+          return;
+      }
+
+      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
+      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+
+      // Get target devices
+      final targetDevices = await _settingsService.getAutoSendTargetDevices();
+
+      // Convert Set to List (null if empty = all devices)
+      final targetDevicesList = targetDevices.isEmpty ? null : targetDevices.toList();
+
+      // Insert image using repository
+      final result = await _clipboardRepository.insertImage(
+        userId: userId,
+        deviceType: currentDeviceType,
+        deviceName: currentDeviceName,
+        imageBytes: imageBytes,
+        mimeType: mimeType,
+        contentType: contentType,
+        targetDeviceTypes: targetDevicesList,
+      );
+
+      _lastSendTime = DateTime.now();
+
+      // Notify UI
+      onClipboardSent?.call(result);
+
+      // Show success toast
+      final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
+      final targetText = targetDevices.isEmpty
+          ? 'all devices'
+          : targetDevices.length == 1
+              ? targetDevices.first
+              : '${targetDevices.length} device types';
+      _notificationService?.showToast(
+        message: 'Auto-sent image ($sizeKB KB) to $targetText',
+        type: NotificationType.success,
+      );
+
+      debugPrint(
+        '[ClipboardSyncService] Auto-sent image to ${targetDevices.isEmpty ? "all devices" : targetDevices.join(", ")}',
+      );
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] Auto-send image failed: $e');
+
+      // Show error toast
+      _notificationService?.showToast(
+        message: 'Auto-send image failed',
         type: NotificationType.error,
       );
     }
@@ -595,16 +741,20 @@ class ClipboardSyncService implements IClipboardSyncService {
     }
   }
 
+  bool _isDisposed = false;
+
   /// Fire webhook (non-blocking, fire-and-forget)
   void _fireWebhook(String content, String deviceType) {
+    if (_isDisposed) return;
     final webhook = _webhookService;
     if (webhook == null) return;
 
     // Fire in background (don't await)
     () async {
+      if (_isDisposed) return;
       try {
         final webhookEnabled = await _settingsService.getWebhookEnabled();
-        if (!webhookEnabled) return;
+        if (!webhookEnabled || _isDisposed) return;
 
         final webhookUrl = await _settingsService.getWebhookUrl();
         if (webhookUrl == null || webhookUrl.isEmpty) {
@@ -618,24 +768,27 @@ class ClipboardSyncService implements IClipboardSyncService {
           'timestamp': DateTime.now().toIso8601String(),
         };
 
-        await webhook.sendWebhook(webhookUrl, payload);
+        if (!_isDisposed) {
+          await webhook.sendWebhook(webhookUrl, payload);
+        }
       } on Exception catch (e) {
         debugPrint('[ClipboardSyncService] ❌ Webhook error: $e');
-        // Silent failure - don't block clipboard operations
       }
     }();
   }
 
   /// Append to Obsidian vault (non-blocking, fire-and-forget)
   void _appendToObsidian(String content) {
+    if (_isDisposed) return;
     final obsidian = _obsidianService;
     if (obsidian == null) return;
 
     // Fire in background (don't await)
     () async {
+      if (_isDisposed) return;
       try {
         final obsidianEnabled = await _settingsService.getObsidianEnabled();
-        if (!obsidianEnabled) return;
+        if (!obsidianEnabled || _isDisposed) return;
 
         final vaultPath = await _settingsService.getObsidianVaultPath();
         if (vaultPath == null || vaultPath.isEmpty) {
@@ -645,14 +798,15 @@ class ClipboardSyncService implements IClipboardSyncService {
 
         final fileName = await _settingsService.getObsidianFileName();
 
-        await obsidian.appendToVault(
-          vaultPath: vaultPath,
-          fileName: fileName,
-          content: content,
-        );
+        if (!_isDisposed) {
+          await obsidian.appendToVault(
+            vaultPath: vaultPath,
+            fileName: fileName,
+            content: content,
+          );
+        }
       } on Exception catch (e) {
         debugPrint('[ClipboardSyncService] ❌ Obsidian error: $e');
-        // Silent failure - don't block clipboard operations
       }
     }();
   }
@@ -660,6 +814,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void dispose() {
     debugPrint('[ClipboardSyncService] Disposing...');
+    _isDisposed = true;
 
     // Cancel timers
     _clipboardMonitorTimer?.cancel();

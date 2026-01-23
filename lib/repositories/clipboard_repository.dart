@@ -22,6 +22,7 @@ abstract class IClipboardRepository {
     required ContentType contentType,
     int? width,
     int? height,
+    List<String>? targetDeviceTypes,
   });
 
   /// Insert a rich text clipboard item (HTML or Markdown)

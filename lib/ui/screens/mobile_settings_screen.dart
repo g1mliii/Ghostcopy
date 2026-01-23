@@ -389,9 +389,9 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       ),
       body: ListView(
         children: [
-          // Account section
-          _buildSectionHeader('Account'),
-          _buildAccountSection(),
+          // Features section (moved to top)
+          _buildSectionHeader('Features'),
+          _buildFeaturesSection(),
 
           const SizedBox(height: 24),
 
@@ -401,15 +401,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
           const SizedBox(height: 24),
 
-          // Features section
-          _buildSectionHeader('Features'),
-          _buildFeaturesSection(),
-
-          const SizedBox(height: 24),
-
           // Security section
           _buildSectionHeader('Security'),
           _buildSecuritySection(),
+
+          const SizedBox(height: 24),
+
+          // Account section (moved to bottom)
+          _buildSectionHeader('Account'),
+          _buildAccountSection(),
 
           const SizedBox(height: 24),
 

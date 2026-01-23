@@ -182,6 +182,7 @@ class ClipboardRepository implements IClipboardRepository {
     required ContentType contentType,
     int? width,
     int? height,
+    List<String>? targetDeviceTypes,
   }) async {
     try {
       // Validate user authentication
@@ -221,6 +222,9 @@ class ClipboardRepository implements IClipboardRepository {
         'user_id': userId,
         'device_name': _sanitizeDeviceName(deviceName),
         'device_type': _validateDeviceType(deviceType),
+        'target_device_type': targetDeviceTypes
+            ?.map(_validateDeviceType)
+            .toList(), // null = broadcast to all devices
         'content': '', // Placeholder, will be updated with URL
         'content_type': contentType.value,
         'mime_type': mimeType,
@@ -261,6 +265,7 @@ class ClipboardRepository implements IClipboardRepository {
         content: uploadResult.publicUrl,
         deviceName: deviceName,
         deviceType: deviceType,
+        targetDeviceTypes: targetDeviceTypes,
         contentType: contentType,
         storagePath: uploadResult.storagePath,
         fileSizeBytes: imageBytes.length,

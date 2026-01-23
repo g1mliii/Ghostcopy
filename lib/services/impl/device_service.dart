@@ -102,7 +102,7 @@ class DeviceService implements IDeviceService {
 
     // Check cache first (unless force refresh requested)
     if (!forceRefresh && _isCacheValid()) {
-      debugPrint('[DeviceService] Returning cached devices (${_cachedDevices!.length} device(s))');
+      // debugPrint('[DeviceService] Returning cached devices (${_cachedDevices!.length} device(s))');
       return _cachedDevices!;
     }
 

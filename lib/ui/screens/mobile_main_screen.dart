@@ -72,6 +72,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   final TextEditingController _pasteController = TextEditingController();
   bool _isSending = false;
   String? _sendError;
+  ClipboardContent? _clipboardContent; // Full clipboard content (images, HTML, text)
 
   // Device selection state
   List<Device> _devices = [];
@@ -166,10 +167,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       if (_lastSendWasFromPaste) {
         _clearClipboardNow();
       }
+
+      // Memory: Clear clipboard content to prevent memory leak (especially for large images)
+      if (mounted) {
+        setState(() {
+          _clipboardContent = null;
+        });
+      }
     } else if (state == AppLifecycleState.resumed) {
       // App coming to foreground: resume Realtime
       debugPrint('[MobileMain] App resumed → Resuming Realtime subscription');
       _historySubscription?.resume();
+
+      // Auto-paste from clipboard (user-friendly - populates paste area automatically)
+      _populateFromClipboard();
     }
   }
 
@@ -179,6 +190,64 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // Use shared singleton instance
       _encryptionService = EncryptionService.instance;
       await _encryptionService!.initialize(userId);
+    }
+  }
+
+  /// Auto-paste from system clipboard when app opens/resumes
+  /// Populates paste area with text or shows image preview
+  Future<void> _populateFromClipboard() async {
+    try {
+      final clipboardService = ClipboardService.instance;
+      final clipboardContent = await clipboardService.read();
+
+      if (clipboardContent.isEmpty) {
+        debugPrint('[MobileMain] Clipboard is empty');
+        return;
+      }
+
+      String displayText;
+      if (clipboardContent.hasImage) {
+        // For images, show indicator text in TextField
+        final mimeType = clipboardContent.mimeType ?? 'unknown';
+        final sizeKB = (clipboardContent.imageBytes?.length ?? 0) / 1024;
+        displayText =
+            '[Image: ${mimeType.split('/').last} (${sizeKB.toStringAsFixed(1)}KB)]';
+        debugPrint(
+          '[MobileMain] ↓ Auto-pasted image: $mimeType, ${sizeKB.toStringAsFixed(1)}KB',
+        );
+      } else if (clipboardContent.hasHtml) {
+        // For HTML, show the HTML source
+        displayText = clipboardContent.html ?? '';
+        debugPrint('[MobileMain] ↓ Auto-pasted HTML: ${displayText.length} chars');
+      } else {
+        // For plain text
+        displayText = clipboardContent.text ?? '';
+        debugPrint('[MobileMain] ↓ Auto-pasted text: ${displayText.length} chars');
+      }
+
+      if (displayText.isNotEmpty && mounted) {
+        setState(() {
+          _clipboardContent = clipboardContent; // Store full clipboard content
+          _pasteController.text = displayText;
+          // Position cursor at end
+          _pasteController.selection = TextSelection.fromPosition(
+            TextPosition(offset: displayText.length),
+          );
+        });
+
+        // Precache image to avoid re-decoding on rebuilds
+        if (clipboardContent.hasImage && mounted) {
+          unawaited(
+            precacheImage(
+              MemoryImage(clipboardContent.imageBytes!),
+              context,
+            ),
+          );
+        }
+      }
+    } on Exception catch (e) {
+      // Silently fail if clipboard access denied (user may have sensitive content)
+      debugPrint('[MobileMain] ⚠️ Could not read clipboard: $e');
     }
   }
 
@@ -198,6 +267,40 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             if (selectedDeviceTypes != null) {
               // Save in background (don't await)
               unawaited(_saveSharedContent(content, selectedDeviceTypes));
+            }
+            return true;
+          }
+          return false;
+
+        case 'handleShareImage':
+          // ignore: avoid_dynamic_calls
+          final imageBytes = call.arguments['imageBytes'] as Uint8List?;
+          // ignore: avoid_dynamic_calls
+          final mimeType = call.arguments['mimeType'] as String?;
+
+          if (imageBytes != null && imageBytes.isNotEmpty) {
+            // Validate size (10MB limit - defense in depth)
+            if (imageBytes.length > 10 * 1024 * 1024) {
+              debugPrint('[MobileMain] ❌ Image too large: ${imageBytes.length} bytes');
+              showGhostToast(
+                context,
+                'Image too large (max 10MB)',
+                icon: Icons.error_outline,
+                type: GhostToastType.error,
+              );
+              return false;
+            }
+
+            final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
+
+            // Show device selector
+            final selectedDeviceTypes = await _showDeviceSelectorDialog(
+              'Image ($sizeKB KB)',
+            );
+
+            if (selectedDeviceTypes != null) {
+              // Save in background (don't await)
+              unawaited(_saveSharedImage(imageBytes, mimeType!, selectedDeviceTypes));
             }
             return true;
           }
@@ -549,6 +652,82 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
+  Future<void> _saveSharedImage(
+    Uint8List imageBytes,
+    String mimeType,
+    Set<String> selectedDeviceTypes,
+  ) async {
+    try {
+      // Map mimeType to ContentType
+      ContentType contentType;
+      switch (mimeType) {
+        case 'image/png':
+          contentType = ContentType.imagePng;
+        case 'image/jpeg':
+        case 'image/jpg':
+          contentType = ContentType.imageJpeg;
+        case 'image/gif':
+          contentType = ContentType.imageGif;
+        default:
+          debugPrint('[ShareSheet] ❌ Unsupported image type: $mimeType');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Unsupported image type: $mimeType'),
+                backgroundColor: Colors.red.shade400,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+          return;
+      }
+
+      final deviceType = ClipboardRepository.getCurrentDeviceType();
+
+      // Upload image to Supabase
+      await widget.clipboardRepository.insertImage(
+        userId: widget.authService.currentUserId!,
+        deviceType: deviceType,
+        deviceName: null,
+        imageBytes: imageBytes,
+        mimeType: mimeType,
+        contentType: contentType,
+        targetDeviceTypes: selectedDeviceTypes.isEmpty
+            ? null
+            : selectedDeviceTypes.toList(),
+      );
+
+      if (mounted) {
+        // Show success snackbar
+        final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              selectedDeviceTypes.isEmpty
+                  ? 'Shared image ($sizeKB KB) to all devices'
+                  : 'Shared image ($sizeKB KB) to ${selectedDeviceTypes.join(", ")}',
+            ),
+            backgroundColor: GhostColors.success,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        debugPrint('[ShareSheet] Image saved: $sizeKB KB');
+      }
+    } on Exception catch (e) {
+      debugPrint('[ShareSheet] Error saving shared image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to share image'),
+            backgroundColor: Colors.red.shade400,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _loadDevices({bool forceRefresh = false}) async {
     setState(() => _devicesLoading = true);
 
@@ -775,6 +954,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleSend() async {
+    // Check if sending image or text
+    if (_clipboardContent?.hasImage ?? false) {
+      // Send image
+      await _sendImage();
+      return;
+    }
+
     final content = _pasteController.text.trim();
     if (content.isEmpty) {
       setState(() => _sendError = 'Please paste or type content to send');
@@ -826,6 +1012,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // Clear paste area and show success
       if (mounted) {
         _pasteController.clear();
+        _clipboardContent = null; // Clear image content
         setState(() => _isSending = false);
 
         showGhostToast(
@@ -845,6 +1032,88 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         setState(() {
           _isSending = false;
           _sendError = 'Failed to send: $e';
+        });
+      }
+    }
+  }
+
+  /// Send image from clipboard content
+  Future<void> _sendImage() async {
+    if (_clipboardContent?.hasImage != true) return;
+
+    setState(() {
+      _isSending = true;
+      _sendError = null;
+    });
+
+    try {
+      final imageBytes = _clipboardContent!.imageBytes!;
+      final mimeType = _clipboardContent!.mimeType!;
+
+      // Map mimeType to ContentType
+      ContentType contentType;
+      switch (mimeType) {
+        case 'image/png':
+          contentType = ContentType.imagePng;
+        case 'image/jpeg':
+        case 'image/jpg':
+          contentType = ContentType.imageJpeg;
+        case 'image/gif':
+          contentType = ContentType.imageGif;
+        default:
+          setState(() {
+            _isSending = false;
+            _sendError = 'Unsupported image type: $mimeType';
+          });
+          return;
+      }
+
+      // Determine target devices
+      List<String>? targetTypes;
+      if (_selectedDeviceTypes.isNotEmpty) {
+        targetTypes = _selectedDeviceTypes.toList();
+      }
+
+      final deviceType = ClipboardRepository.getCurrentDeviceType();
+
+      // Send image
+      await widget.clipboardRepository.insertImage(
+        userId: widget.authService.currentUserId!,
+        deviceType: deviceType,
+        deviceName: null,
+        imageBytes: imageBytes,
+        mimeType: mimeType,
+        contentType: contentType,
+        targetDeviceTypes: targetTypes,
+      );
+
+      debugPrint('[MobileMain] ✅ Sent image (${(imageBytes.length / 1024).toStringAsFixed(1)} KB)');
+
+      // Clear paste area and show success
+      if (mounted) {
+        _pasteController.clear();
+        setState(() {
+          _clipboardContent = null;
+          _isSending = false;
+        });
+
+        showGhostToast(
+          context,
+          'Image sent successfully',
+          icon: Icons.image,
+          type: GhostToastType.success,
+        );
+
+        // Security: Schedule clipboard auto-clear
+        _lastSendWasFromPaste = true;
+        await _scheduleClipboardClear();
+      }
+    } on Exception catch (e) {
+      debugPrint('[MobileMain] Failed to send image: $e');
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendError = 'Failed to send image: $e';
         });
       }
     }
@@ -1259,6 +1528,66 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  /// Build image preview for paste area (when clipboard contains image)
+  Widget _buildImagePreview() {
+    if (_clipboardContent?.hasImage != true) {
+      return const SizedBox.shrink();
+    }
+
+    final imageBytes = _clipboardContent!.imageBytes!;
+    final mimeType = _clipboardContent!.mimeType ?? 'unknown';
+    final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: GhostColors.primary.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Image thumbnail
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxHeight: 80,
+              ),
+              child: Image.memory(
+                imageBytes,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    height: 80,
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.broken_image,
+                      size: 40,
+                      color: GhostColors.textMuted,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Image info
+          Text(
+            '${mimeType.split('/').last.toUpperCase()} • $sizeKB KB',
+            style: GhostTypography.caption.copyWith(
+              color: GhostColors.textMuted,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPasteArea() {
     return Container(
       margin: const EdgeInsets.all(20),
@@ -1289,6 +1618,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ],
             ),
           ),
+          // Image preview (if clipboard has image)
+          if (_clipboardContent?.hasImage ?? false) _buildImagePreview(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(

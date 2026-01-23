@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 import '../../services/game_mode_service.dart';
 import '../../services/window_service.dart';
 
@@ -12,6 +11,7 @@ class TrayMenuWindow extends StatelessWidget {
     required this.gameModeService,
     required this.onClose,
     required this.onOpenSettings,
+    required this.onQuit,
     super.key,
   });
 
@@ -19,16 +19,25 @@ class TrayMenuWindow extends StatelessWidget {
   final IGameModeService gameModeService;
   final VoidCallback onClose;
   final VoidCallback onOpenSettings;
+  final VoidCallback onQuit;
 
   @override
   Widget build(BuildContext context) {
     // Platform-specific positioning:
     // - macOS: Menu bar is at top, so menu extends downward from top-right
     // - Windows: Taskbar is at bottom, so menu extends upward from bottom-right
-    final alignment = Platform.isMacOS ? Alignment.topRight : Alignment.bottomRight;
+    final alignment = Platform.isMacOS
+        ? Alignment.topRight
+        : Alignment.bottomRight;
     final padding = Platform.isMacOS
-        ? const EdgeInsets.only(right: 16, top: 8) // Top padding for macOS menu bar
-        : const EdgeInsets.only(right: 16, bottom: 60); // Bottom padding for Windows taskbar
+        ? const EdgeInsets.only(
+            right: 16,
+            top: 8,
+          ) // Top padding for macOS menu bar
+        : const EdgeInsets.only(
+            right: 16,
+            bottom: 60,
+          ); // Bottom padding for Windows taskbar
 
     return Material(
       type: MaterialType.transparency,
@@ -38,10 +47,7 @@ class TrayMenuWindow extends StatelessWidget {
           color: Colors.transparent,
           child: Align(
             alignment: alignment,
-            child: Padding(
-              padding: padding,
-              child: _buildMenu(context),
-            ),
+            child: Padding(padding: padding, child: _buildMenu(context)),
           ),
         ),
       ),
@@ -62,60 +68,63 @@ class TrayMenuWindow extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          RepaintBoundary(
-            child: _buildMenuItem(
-            icon: Icons.visibility,
-            label: 'Show Spotlight',
-            onTap: () async {
-              onClose(); // Close tray first
-              // Wait for tray to close and state to update
-              await Future<void>.delayed(const Duration(milliseconds: 100));
-              await windowService.showSpotlight();
-            },
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RepaintBoundary(
+              child: _buildMenuItem(
+                icon: Icons.visibility,
+                label: 'Show Spotlight',
+                onTap: () async {
+                  onClose(); // Close tray first
+                  // Wait for tray to close and state to update
+                  await Future<void>.delayed(const Duration(milliseconds: 100));
+                  await windowService.showSpotlight();
+                },
+              ),
             ),
-          ),
-          _buildDivider(),
-          // Use StreamBuilder for reactive Game Mode toggle
-          RepaintBoundary(
-            child: StreamBuilder<bool>(
-              stream: gameModeService.isActiveStream,
-              initialData: gameModeService.isActive,
-              builder: (context, snapshot) {
-                final isActive = snapshot.data ?? false;
-                return _buildMenuItem(
-                icon: Icons.videogame_asset,
-                label: 'Game Mode',
-                isChecked: isActive,
-                isToggle: true,
-                color: isActive ? const Color(0xFF5865F2) : null,
-                onTap: gameModeService.toggle, // Tearoff - keeps menu open so user sees toggle
-              );
-              },
+            _buildDivider(),
+            // Use StreamBuilder for reactive Game Mode toggle
+            RepaintBoundary(
+              child: StreamBuilder<bool>(
+                stream: gameModeService.isActiveStream,
+                initialData: gameModeService.isActive,
+                builder: (context, snapshot) {
+                  final isActive = snapshot.data ?? false;
+                  return _buildMenuItem(
+                    icon: Icons.videogame_asset,
+                    label: 'Game Mode',
+                    isChecked: isActive,
+                    isToggle: true,
+                    color: isActive ? const Color(0xFF5865F2) : null,
+                    onTap: gameModeService
+                        .toggle, // Tearoff - keeps menu open so user sees toggle
+                  );
+                },
+              ),
             ),
-          ),
-          _buildDivider(),
-          RepaintBoundary(
-            child: _buildMenuItem(
-              icon: Icons.settings,
-              label: 'Settings',
-              onTap: () {
-                onClose(); // This will trigger opening spotlight with settings
-                onOpenSettings(); // Signal to open settings panel
-              },
+            _buildDivider(),
+            RepaintBoundary(
+              child: _buildMenuItem(
+                icon: Icons.settings,
+                label: 'Settings',
+                onTap: () {
+                  onClose(); // This will trigger opening spotlight with settings
+                  onOpenSettings(); // Signal to open settings panel
+                },
+              ),
             ),
-          ),
-          _buildDivider(),
-          RepaintBoundary(
-            child: _buildMenuItem(
-              icon: Icons.close,
-              label: 'Quit',
-              onTap: windowManager.destroy,
+            _buildDivider(),
+            RepaintBoundary(
+              child: _buildMenuItem(
+                icon: Icons.close,
+                label: 'Quit',
+                onTap: onQuit,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -138,11 +147,7 @@ class TrayMenuWindow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
             children: [
-              Icon(
-                icon,
-                size: 14,
-                color: color ?? Colors.white70,
-              ),
+              Icon(icon, size: 14, color: color ?? Colors.white70),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -166,8 +171,9 @@ class TrayMenuWindow extends StatelessWidget {
                         : Colors.white.withValues(alpha: 0.2),
                   ),
                   child: Align(
-                    alignment:
-                        isChecked ? Alignment.centerRight : Alignment.centerLeft,
+                    alignment: isChecked
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
                     child: Container(
                       width: 12,
                       height: 12,

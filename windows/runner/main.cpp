@@ -2,6 +2,8 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <shobjidl.h>
+
 #include "flutter_window.h"
 #include "utils.h"
 
