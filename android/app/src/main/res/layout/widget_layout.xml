@@ -15,13 +15,13 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:marginBottom="8dp">
+        android:layout_marginBottom="8dp">
 
         <!-- GhostCopy Title -->
         <ImageView
             android:layout_width="20dp"
             android:layout_height="20dp"
-            android:src="@android:drawable/ic_menu_copy"
+            android:src="@android:drawable/ic_menu_share"
             android:tint="#5865F2"
             android:contentDescription="@string/app_name" />
 

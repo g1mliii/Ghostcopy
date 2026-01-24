@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GhostCopy</string>
+    <string name="refresh">Refresh</string>
+    <string name="widget_description">View your 5 most recent clipboard items</string>
+</resources>

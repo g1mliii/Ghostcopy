@@ -60,18 +60,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _autoShortenUrls = false;
   bool _urlShortenerLoading = false;
 
-  // Webhook state
-  bool _webhookEnabled = false;
-  String _webhookUrl = '';
-  final _webhookUrlController = TextEditingController();
-
-  // Obsidian state
-  bool _obsidianEnabled = false;
-  String _obsidianVaultPath = '';
-  String _obsidianFileName = 'clipboard.md';
-  final _obsidianVaultPathController = TextEditingController();
-  final _obsidianFileNameController = TextEditingController();
-
   // App info
   String _appVersion = '';
 
@@ -83,17 +71,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     _loadAppInfo();
     _loadAutoClearSetting();
     _loadUrlShorteningStatus();
-    _loadWebhookStatus();
-    _loadObsidianStatus();
   }
 
   @override
   void dispose() {
-    // Dispose text controllers
-    _webhookUrlController.dispose();
-    _obsidianVaultPathController.dispose();
-    _obsidianFileNameController.dispose();
-
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
     super.dispose();
   }
@@ -666,41 +647,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     }
   }
 
-  Future<void> _loadWebhookStatus() async {
-    try {
-      final enabled = await widget.settingsService.getWebhookEnabled();
-      final url = await widget.settingsService.getWebhookUrl();
-      if (mounted) {
-        setState(() {
-          _webhookEnabled = enabled;
-          _webhookUrl = url ?? '';
-          _webhookUrlController.text = _webhookUrl;
-        });
-      }
-    } on Exception catch (e) {
-      debugPrint('Failed to load webhook setting: $e');
-    }
-  }
-
-  Future<void> _loadObsidianStatus() async {
-    try {
-      final enabled = await widget.settingsService.getObsidianEnabled();
-      final vaultPath = await widget.settingsService.getObsidianVaultPath();
-      final fileName = await widget.settingsService.getObsidianFileName();
-      if (mounted) {
-        setState(() {
-          _obsidianEnabled = enabled;
-          _obsidianVaultPath = vaultPath ?? '';
-          _obsidianFileName = fileName;
-          _obsidianVaultPathController.text = _obsidianVaultPath;
-          _obsidianFileNameController.text = _obsidianFileName;
-        });
-      }
-    } on Exception catch (e) {
-      debugPrint('Failed to load Obsidian setting: $e');
-    }
-  }
-
   Future<void> _handleAutoClearChange(int? newValue) async {
     if (newValue == null) return;
 
@@ -768,121 +714,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
 
-          const Divider(height: 1, color: GhostColors.glassBorder),
-
-          // Webhook toggle
-          SwitchListTile(
-            secondary: const Icon(
-              Icons.webhook,
-              color: GhostColors.primary,
-              size: 20,
-            ),
-            title: const Text(
-              'Webhook Integration',
-              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
-            ),
-            subtitle: const Text(
-              'Send clipboard data to external services',
-              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-            ),
-            value: _webhookEnabled,
-            activeTrackColor: GhostColors.success,
-            onChanged: (value) async {
-              await widget.settingsService.setWebhookEnabled(enabled: value);
-              if (mounted) {
-                setState(() => _webhookEnabled = value);
-              }
-            },
-          ),
-
-          if (_webhookEnabled) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: TextField(
-                controller: _webhookUrlController,
-                style: const TextStyle(fontSize: 13, color: GhostColors.textPrimary),
-                decoration: InputDecoration(
-                  labelText: 'Webhook URL',
-                  labelStyle: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: GhostColors.glassBorder),
-                  ),
-                ),
-                onChanged: (value) async {
-                  await widget.settingsService.setWebhookUrl(value);
-                },
-              ),
-            ),
-          ],
-
-          const Divider(height: 1, color: GhostColors.glassBorder),
-
-          // Obsidian toggle
-          SwitchListTile(
-            secondary: const Icon(
-              Icons.note,
-              color: GhostColors.primary,
-              size: 20,
-            ),
-            title: const Text(
-              'Obsidian Integration',
-              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
-            ),
-            subtitle: const Text(
-              'Auto-append to Obsidian vault',
-              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-            ),
-            value: _obsidianEnabled,
-            activeTrackColor: GhostColors.success,
-            onChanged: (value) async {
-              await widget.settingsService.setObsidianEnabled(enabled: value);
-              if (mounted) {
-                setState(() => _obsidianEnabled = value);
-              }
-            },
-          ),
-
-          if (_obsidianEnabled) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _obsidianVaultPathController,
-                    style: const TextStyle(fontSize: 13, color: GhostColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'Vault Path',
-                      labelStyle: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: GhostColors.glassBorder),
-                      ),
-                    ),
-                    onChanged: (value) async {
-                      await widget.settingsService.setObsidianVaultPath(value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _obsidianFileNameController,
-                    style: const TextStyle(fontSize: 13, color: GhostColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'File Name',
-                      labelStyle: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: GhostColors.glassBorder),
-                      ),
-                    ),
-                    onChanged: (value) async {
-                      await widget.settingsService.setObsidianFileName(value);
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );

@@ -11,6 +11,7 @@ import android.widget.RemoteViews
 import com.ghostcopy.ghostcopy.MainActivity
 import com.ghostcopy.ghostcopy.R
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**

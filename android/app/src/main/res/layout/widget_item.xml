@@ -67,7 +67,7 @@
     <ImageView
         android:layout_width="16dp"
         android:layout_height="16dp"
-        android:src="@android:drawable/ic_menu_copy"
+        android:src="@android:drawable/ic_menu_share"
         android:tint="#5865F2"
         android:alpha="0.6"
         android:contentDescription="@null" />

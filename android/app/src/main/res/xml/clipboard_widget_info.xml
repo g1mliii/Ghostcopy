@@ -9,4 +9,4 @@
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
     android:previewImage="@mipmap/ic_launcher"
-    android:description="View your 5 most recent clipboard items" />
+    android:description="@string/widget_description" />

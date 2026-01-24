@@ -67,7 +67,21 @@
       "mcp__supabase__get_edge_function",
       "Bash(cmd /c \"if not exist test\\\\integration\\\\desktop mkdir test\\\\integration\\\\desktop && if not exist test\\\\integration\\\\mobile mkdir test\\\\integration\\\\mobile\")",
       "mcp__supabase__get_logs",
-      "Skill(react-best-practices)"
+      "Skill(react-best-practices)",
+      "Bash(flutter emulators:*)",
+      "Bash(flutter devices:*)",
+      "Bash(where:*)",
+      "Bash(tasklist:*)",
+      "Bash(ping:*)",
+      "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\emulator\\\\emulator.exe\" -list-avds)",
+      "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\emulator\\\\emulator.exe\" -avd Medium_Phone_API_36.1 -no-snapshot-load -dns-server 8.8.8.8 -no-window)",
+      "Bash(adb kill-server:*)",
+      "Bash(adb start-server:*)",
+      "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\platform-tools\\\\adb.exe\" kill-server)",
+      "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\platform-tools\\\\adb.exe\" start-server)",
+      "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\emulator\\\\emulator.exe\" -avd Medium_Phone_API_36.1 -wipe-data)",
+      "Bash(./gradlew:*)",
+      "Bash(tee:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

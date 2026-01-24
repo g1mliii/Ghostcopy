@@ -101,6 +101,38 @@ class WidgetDataManager(private val context: Context) {
     }
   }
 
+  /**
+   * Update widget data from Flutter method channel.
+   * Converts Map format from Flutter to ClipboardItemData.
+   */
+  fun updateFromFlutter(items: List<Map<String, Any>>, lastUpdated: Long) {
+    try {
+      val clipboardItems = items.mapNotNull { item ->
+        try {
+          ClipboardItemData(
+            id = item["id"] as? String ?: return@mapNotNull null,
+            contentType = item["contentType"] as? String ?: "text",
+            contentPreview = item["contentPreview"] as? String ?: "",
+            thumbnailPath = item["thumbnailPath"] as? String,
+            deviceType = item["deviceType"] as? String ?: "unknown",
+            createdAt = item["createdAt"] as? String ?: "",
+            isEncrypted = item["isEncrypted"] as? Boolean ?: false
+          )
+        } catch (e: Exception) {
+          Log.e(TAG, "❌ Failed to parse item: ${e.message}")
+          null
+        }
+      }
+
+      saveClipboardItems(clipboardItems)
+      prefs.edit().putLong(KEY_LAST_UPDATED, lastUpdated).apply()
+
+      Log.d(TAG, "✅ Updated from Flutter: ${clipboardItems.size} items")
+    } catch (e: Exception) {
+      Log.e(TAG, "❌ Failed to update from Flutter: ${e.message}", e)
+    }
+  }
+
   companion object {
     private const val TAG = "WidgetDataManager"
     private const val PREFS_NAME = "ghostcopy_widget_prefs"

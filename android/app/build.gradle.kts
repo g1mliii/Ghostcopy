@@ -27,7 +27,7 @@ android {
         applicationId = "com.ghostcopy.ghostcopy"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 23  // Required for super_clipboard (image/rich text support)
+        minSdk = flutter.minSdkVersion  // Required for super_clipboard (image/rich text support)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -48,6 +48,14 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // AndroidX Core Libraries
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+
+    // Firebase
+    implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
 
     // WorkManager for background tasks (widget refresh)
     implementation("androidx.work:work-runtime-ktx:2.8.1")

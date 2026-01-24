@@ -2,6 +2,7 @@ package com.ghostcopy.ghostcopy.widget
 
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
+import android.content.Context
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker

@@ -11,13 +11,20 @@ import android.widget.Toast
 import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : FlutterActivity() {
     private companion object {
+        private const val TAG = "MainActivity"
         private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
+        private const val WIDGET_CHANNEL = "com.ghostcopy/widget"
     }
+
+    // Method channels (stored to prevent memory leaks)
+    private var shareChannel: MethodChannel? = null
+    private var widgetChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -29,15 +36,49 @@ class MainActivity : FlutterActivity() {
         )
 
         // Method channel for share sheet operations
-        io.flutter.embedding.engine.systemchannels.MethodChannel(
+        shareChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             SHARE_CHANNEL
-        ).setMethodCallHandler { call, result ->
+        )
+        shareChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "shareComplete" -> {
                     // Share was processed, close the activity
                     finish()
                     result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // Method channel for widget updates
+        widgetChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            WIDGET_CHANNEL
+        )
+        widgetChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "updateWidget" -> {
+                    try {
+                        val items = call.argument<List<Map<String, Any>>>("items")
+                        val lastUpdated = call.argument<Long>("lastUpdated")
+
+                        if (items != null && lastUpdated != null) {
+                            com.ghostcopy.ghostcopy.widget.WidgetDataManager.getInstance(applicationContext)
+                                .updateFromFlutter(items, lastUpdated)
+
+                            // Notify widget to refresh
+                            com.ghostcopy.ghostcopy.widget.ClipboardWidget.notifyWidgetDataChanged(applicationContext)
+
+                            Log.d(TAG, "✅ Widget updated with ${items.size} items")
+                            result.success(true)
+                        } else {
+                            result.error("INVALID_ARGS", "Missing items or lastUpdated", null)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Failed to update widget: ${e.message}", e)
+                        result.error("UPDATE_ERROR", e.message, null)
+                    }
                 }
                 else -> result.notImplemented()
             }
@@ -78,17 +119,16 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun saveSharedContentFast(content: String) {
-        val channel = io.flutter.embedding.engine.systemchannels.MethodChannel(
+        val channel = MethodChannel(
             flutterEngine!!.dartExecutor.binaryMessenger,
             SHARE_CHANNEL
         )
 
         // Show device selector dialog and start save in background
-        channel.invokeMethod("handleShareIntent", mapOf("content" to content)) { result ->
-            // Save started in background, close activity immediately
-            // Don't wait for save to complete
-            finish()
-        }
+        channel.invokeMethod("handleShareIntent", mapOf("content" to content))
+        // Save started in background, close activity immediately
+        // Don't wait for save to complete
+        finish()
     }
 
     private fun saveSharedImageFast(imageUri: Uri) {
@@ -117,7 +157,7 @@ class MainActivity : FlutterActivity() {
             // Get MIME type
             val mimeType = contentResolver.getType(imageUri) ?: "image/*"
 
-            val channel = io.flutter.embedding.engine.systemchannels.MethodChannel(
+            val channel = MethodChannel(
                 flutterEngine!!.dartExecutor.binaryMessenger,
                 SHARE_CHANNEL
             )
@@ -127,10 +167,9 @@ class MainActivity : FlutterActivity() {
             channel.invokeMethod("handleShareImage", mapOf(
                 "imageBytes" to bytes,
                 "mimeType" to mimeType
-            )) { result ->
-                // Save started in background, close activity
-                finish()
-            }
+            ))
+            // Save started in background, close activity
+            finish()
 
             Log.d(TAG, "✅ Shared image: $mimeType, ${bytes.size / 1024}KB")
         } catch (e: Exception) {
@@ -213,7 +252,7 @@ class MainActivity : FlutterActivity() {
     ) {
         try {
             // Get Flutter engine to call Dart code for database fetch
-            val channel = io.flutter.embedding.engine.systemchannels.MethodChannel(
+            val channel = MethodChannel(
                 flutterEngine!!.dartExecutor.binaryMessenger,
                 NOTIFICATION_CHANNEL
             )
@@ -223,14 +262,8 @@ class MainActivity : FlutterActivity() {
             channel.invokeMethod("handleNotificationAction", mapOf(
                 "clipboardId" to clipboardId,
                 "action" to "copy"
-            )) { result ->
-                if (result != null && result is Boolean && result) {
-                    Log.d(TAG, "✅ Fetched and copied clipboard item $clipboardId")
-                } else {
-                    Log.e(TAG, "❌ Failed to fetch and copy clipboard item $clipboardId")
-                    Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
-                }
-            }
+            ))
+            Log.d(TAG, "✅ Triggered copy action for clipboard item $clipboardId")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)
             Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
@@ -338,15 +371,24 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
+     * Clean up method channels to prevent memory leaks.
+     */
+    override fun onDestroy() {
+        // Remove method channel handlers
+        shareChannel?.setMethodCallHandler(null)
+        widgetChannel?.setMethodCallHandler(null)
+        shareChannel = null
+        widgetChannel = null
+
+        super.onDestroy()
+    }
+
+    /**
      * Show a short toast message.
      */
     private fun showToast(message: String) {
         runOnUiThread {
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private companion object {
-        private const val TAG = "MainActivity"
     }
 }

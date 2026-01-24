@@ -14,6 +14,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/security_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
+import '../../services/widget_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../widgets/cached_clipboard_image.dart';
@@ -71,6 +72,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   // Paste area state
   final TextEditingController _pasteController = TextEditingController();
   bool _isSending = false;
+  bool _isUploadingImage = false;
   String? _sendError;
   ClipboardContent? _clipboardContent; // Full clipboard content (images, HTML, text)
 
@@ -764,6 +766,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           // Cleanup cache to prevent unbounded growth
           _cleanupCache();
         });
+
+        // Update widget with latest clipboard data (non-blocking)
+        // Run in background to avoid blocking UI
+        unawaited(
+          WidgetService().updateWidgetData(items).catchError((Object e) {
+            debugPrint('[MobileMain] Failed to update widget: $e');
+          }),
+        );
       }
     } on Exception catch (e) {
       debugPrint('[MobileMain] Failed to load history: $e');
@@ -1022,6 +1032,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           type: GhostToastType.success,
         );
 
+        // Reload history to show new item and update widget (non-blocking)
+        unawaited(_loadHistory());
+
         // Security: Schedule clipboard auto-clear
         _lastSendWasFromPaste = true;
         await _scheduleClipboardClear();
@@ -1104,6 +1117,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           type: GhostToastType.success,
         );
 
+        // Reload history to show new item and update widget (non-blocking)
+        unawaited(_loadHistory());
+
         // Security: Schedule clipboard auto-clear
         _lastSendWasFromPaste = true;
         await _scheduleClipboardClear();
@@ -1151,6 +1167,15 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleImageUpload() async {
+    // Prevent double-tap
+    if (_isUploadingImage) {
+      return;
+    }
+
+    setState(() {
+      _isUploadingImage = true;
+    });
+
     try {
       final picker = ImagePicker();
       final image = await picker.pickImage(
@@ -1161,6 +1186,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
       if (image == null) {
         // User cancelled
+        setState(() {
+          _isUploadingImage = false;
+        });
         return;
       }
 
@@ -1204,6 +1232,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           icon: Icons.check_circle,
           type: GhostToastType.success,
         );
+
+        // Reload history to show new item and update widget (non-blocking)
+        unawaited(_loadHistory());
       }
     } on Exception catch (e) {
       debugPrint('[MobileMain] Failed to upload image: $e');
@@ -1214,6 +1245,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           icon: Icons.error,
           type: GhostToastType.error,
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingImage = false;
+        });
       }
     }
   }
@@ -1296,10 +1333,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           );
         }
       } else if (item.isRichText) {
-        // Rich text - decrypt if needed and copy with format
-        var finalContent = item.content;
-        if (_encryptionService != null) {
-          finalContent = await _encryptionService!.decrypt(item.content);
+        // Rich text - use cached decrypted content if available, or decrypt
+        var finalContent = _decryptedContentCache[item.id] ?? item.content;
+
+        // Only decrypt if not in cache and encryption is enabled
+        if (_decryptedContentCache[item.id] == null &&
+            _encryptionService != null &&
+            item.isEncrypted) {
+          try {
+            finalContent = await _encryptionService!.decrypt(item.content);
+            _decryptedContentCache[item.id] = finalContent;
+          } on Exception catch (e) {
+            debugPrint('[MobileMain] Decryption failed, using raw content: $e');
+            finalContent = item.content;
+          }
         }
 
         if (item.richTextFormat == RichTextFormat.html) {
@@ -1319,10 +1366,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           );
         }
       } else {
-        // Plain text - decrypt if needed and copy
-        var finalContent = item.content;
-        if (_encryptionService != null) {
-          finalContent = await _encryptionService!.decrypt(item.content);
+        // Plain text - use cached decrypted content if available, or decrypt
+        var finalContent = _decryptedContentCache[item.id] ?? item.content;
+
+        // Only decrypt if not in cache and encryption is enabled
+        if (_decryptedContentCache[item.id] == null &&
+            _encryptionService != null &&
+            item.isEncrypted) {
+          try {
+            finalContent = await _encryptionService!.decrypt(item.content);
+            _decryptedContentCache[item.id] = finalContent;
+          } on Exception catch (e) {
+            debugPrint('[MobileMain] Decryption failed, using raw content: $e');
+            finalContent = item.content;
+          }
         }
 
         await clipboardService.writeText(finalContent);
