@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../models/clipboard_item.dart';
@@ -13,6 +18,7 @@ import '../../services/auto_start_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/device_service.dart';
+import '../../services/file_type_service.dart';
 import '../../services/game_mode_service.dart';
 import '../../services/hotkey_service.dart';
 import '../../services/impl/encryption_service.dart';
@@ -22,12 +28,14 @@ import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
 import '../../services/security_service.dart';
 import '../../services/settings_service.dart';
+import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../widgets/auth_panel.dart';
 import '../widgets/cached_clipboard_image.dart';
+import '../widgets/file_preview_widget.dart';
 import '../widgets/settings_panel.dart';
 
 /// Platform types for device selection
@@ -125,6 +133,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   bool _showHistory = false;
   bool _showSettings = false;
   bool _showAuth = false;
+  bool _isDragOver = false;
   List<ClipboardItem> _historyItems = [];
   List<ClipboardItem> _filteredHistoryItems = [];
   bool _isLoadingHistory = false;
@@ -540,7 +549,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       }
 
       String displayText;
-      if (clipboardContent.hasImage) {
+      if (clipboardContent.hasFile) {
+        // For files, show indicator
+        final filename = clipboardContent.filename ?? 'unknown';
+        final sizeKB = (clipboardContent.fileBytes?.length ?? 0) / 1024;
+        displayText =
+            '[File: $filename (${sizeKB.toStringAsFixed(1)}KB)]';
+        debugPrint(
+          '[Spotlight] ↓ Auto-pasted file: $filename, ${sizeKB.toStringAsFixed(1)}KB',
+        );
+      } else if (clipboardContent.hasImage) {
         // For images, show indicator
         final mimeType = clipboardContent.mimeType ?? 'unknown';
         final sizeKB = (clipboardContent.imageBytes?.length ?? 0) / 1024;
@@ -628,7 +646,29 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       // Insert into Supabase based on content type
       // Notification triggered by database webhook, no client-side invocation needed
 
-      if (_clipboardContent?.hasImage ?? false) {
+      if (_clipboardContent?.hasFile ?? false) {
+        // File content - upload to storage
+        final bytes = _clipboardContent!.fileBytes!;
+        final filename = _clipboardContent!.filename;
+
+        // Detect file type
+        final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+          bytes,
+          filename,
+        );
+
+        await widget.clipboardRepository.insertFile(
+          userId: userId,
+          deviceType: currentDeviceType,
+          deviceName: currentDeviceName,
+          fileBytes: bytes,
+          mimeType: fileTypeInfo.mimeType,
+          contentType: fileTypeInfo.contentType,
+          originalFilename: filename,
+          targetDeviceTypes: targetDevicesList,
+        );
+        debugPrint('[Spotlight] ↑ Sent file: $filename (${bytes.length} bytes)');
+      } else if (_clipboardContent?.hasImage ?? false) {
         // Image content - upload to storage
         final bytes = _clipboardContent!.imageBytes!;
         final mimeType = _clipboardContent!.mimeType ?? 'image/png';
@@ -757,42 +797,47 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
   }
 
-  Future<void> _handleImageUpload() async {
+  Future<void> _handleFileUpload() async {
     try {
-      final picker = ImagePicker();
-      final image = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 2048,
-        maxHeight: 2048,
+      final result = await FilePicker.platform.pickFiles(
+
+        onFileLoading: (status) => debugPrint('File loading: $status'),
       );
 
-      if (image == null) {
+      if (result == null || result.files.isEmpty) {
         // User cancelled
         return;
       }
 
-      // Read image bytes
-      final bytes = await image.readAsBytes();
-
-      // Determine mime type and content type
-      String mimeType;
-      ContentType contentType;
-
-      final path = image.path.toLowerCase();
-      if (path.endsWith('.png')) {
-        mimeType = 'image/png';
-        contentType = ContentType.imagePng;
-      } else if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
-        mimeType = 'image/jpeg';
-        contentType = ContentType.imageJpeg;
-      } else if (path.endsWith('.gif')) {
-        mimeType = 'image/gif';
-        contentType = ContentType.imageGif;
-      } else {
-        // Default to JPEG
-        mimeType = 'image/jpeg';
-        contentType = ContentType.imageJpeg;
+      final file = result.files.first;
+      final path = file.path;
+      
+      if (path == null) {
+        throw Exception('File path is null');
       }
+
+      final fileObj = File(path);
+      final filename = file.name;
+      
+      // Validate file size (10MB limit) - Check BEFORE reading bytes to save memory
+      if ((await fileObj.length()) > 10485760) {
+        if (mounted) {
+           widget.notificationService?.showToast(
+            message: 'File too large: $filename (max 10MB)',
+            type: NotificationType.error,
+          );
+        }
+        return;
+      }
+
+      // Read file bytes
+      final bytes = await fileObj.readAsBytes();
+
+      // Detect file type
+      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        filename,
+      );
 
       // Get current user ID
       final userId = Supabase.instance.client.auth.currentUser?.id;
@@ -800,27 +845,28 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         throw Exception('Not authenticated');
       }
 
-      // Upload image
-      await widget.clipboardRepository.insertImage(
+      // Upload file using generic file insert (handles images too)
+      await widget.clipboardRepository.insertFile(
         userId: userId,
         deviceType: ClipboardRepository.getCurrentDeviceType(),
         deviceName: ClipboardRepository.getCurrentDeviceName(),
-        imageBytes: bytes,
-        mimeType: mimeType,
-        contentType: contentType,
+        fileBytes: bytes,
+        mimeType: fileTypeInfo.mimeType,
+        contentType: fileTypeInfo.contentType,
+        originalFilename: filename,
       );
 
       if (mounted) {
         widget.notificationService?.showToast(
-          message: 'Image uploaded successfully',
+          message: 'File uploaded: $filename',
           type: NotificationType.success,
         );
       }
     } on Exception catch (e) {
-      debugPrint('[SpotlightScreen] Failed to upload image: $e');
+      debugPrint('[SpotlightScreen] Failed to upload file: $e');
       if (mounted) {
         widget.notificationService?.showToast(
-          message: 'Failed to upload image: $e',
+          message: 'Failed to upload file: $e',
           type: NotificationType.error,
         );
       }
@@ -857,9 +903,74 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         child: Focus(
           autofocus: true,
           descendantsAreFocusable: true,
-          child: Scaffold(
-            backgroundColor: GhostColors.surface,
-            body: Stack(
+          child: DropTarget(
+            onDragDone: (details) async {
+              // Handle dropped files
+              setState(() => _isDragOver = false);
+
+              for (final file in details.files) {
+                try {
+                  final fileObj = File(file.path);
+                  final filename = path.basename(file.path);
+
+                  // Validate file size (10MB limit) - Check BEFORE reading bytes
+                  if ((await fileObj.length()) > 10485760) {
+                    widget.notificationService?.showToast(
+                      message: 'File too large: $filename (max 10MB)',
+                      type: NotificationType.error,
+                    );
+                    continue;
+                  }
+
+                  final bytes = await fileObj.readAsBytes();
+
+                  // Detect file type
+                  final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+                    bytes,
+                    filename,
+                  );
+
+                  // Get current user ID
+                  final userId = Supabase.instance.client.auth.currentUser?.id;
+                  if (userId == null) {
+                    throw Exception('Not authenticated');
+                  }
+
+                  // Upload file
+                  await widget.clipboardRepository.insertFile(
+                    userId: userId,
+                    deviceType: ClipboardRepository.getCurrentDeviceType(),
+                    deviceName: ClipboardRepository.getCurrentDeviceName(),
+                    fileBytes: bytes,
+                    contentType: fileTypeInfo.contentType,
+                    mimeType: fileTypeInfo.mimeType,
+                    originalFilename: filename,
+                  );
+
+                  if (mounted) {
+                    widget.notificationService?.showToast(
+                      message: 'File uploaded: $filename',
+                      type: NotificationType.success,
+                    );
+                  }
+                  } on Exception catch (e) {
+                    debugPrint('[Spotlight] Drag-drop failed: $e');
+                    widget.notificationService?.showToast(
+                      message: 'Upload failed: ${path.basename(file.path)}',
+                      type: NotificationType.error,
+                    );
+                  }
+              }
+            },
+            onDragEntered: (_) {
+              setState(() => _isDragOver = true);
+            },
+            onDragExited: (_) {
+              setState(() => _isDragOver = false);
+            },
+            child: Scaffold(
+              backgroundColor: GhostColors.surface,
+              body: Stack(
               children: [
                 // Main content
                 FadeTransition(
@@ -935,11 +1046,61 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 if (_showSettings) _buildSettingsPanel(),
                 // History panel overlay (right side)
                 if (_showHistory) _buildHistoryPanel(),
+                // Drag-over visual feedback
+                if (_isDragOver)
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: GhostColors.primary.withValues(alpha: 0.1),
+                        border: Border.all(
+                          color: GhostColors.primary,
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 16,
+                          ),
+                          decoration: BoxDecoration(
+                            color: GhostColors.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: GhostColors.primary,
+                              width: 2,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.upload_file,
+                                color: GhostColors.primary,
+                                size: 32,
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'Drop files to upload',
+                                style: TextStyle(
+                                  color: GhostColors.primary,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ), // Close Stack (body)
           ), // Close Scaffold
-        ), // Close Focus
-      ), // Close Actions
+        ), // Close DropTarget
+      ), // Close Focus
+    ), // Close Actions
     ); // Close Shortcuts
   }
 
@@ -1036,7 +1197,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
-  /// Build text field for clipboard content with upload button
   /// Build image preview (shown when clipboard contains image)
   Widget? _buildImagePreview() {
     if (_clipboardContent?.hasImage != true) return null;
@@ -1095,12 +1255,47 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
+  /// Build file preview (shown when clipboard contains file)
+  Widget? _buildFilePreview() {
+    if (_clipboardContent?.hasFile != true) return null;
+
+    final fileBytes = _clipboardContent!.fileBytes!;
+    final filename = _clipboardContent!.filename ?? 'file';
+
+    // Create a temporary clipboard item for the preview widget
+    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+      fileBytes,
+      filename,
+    );
+
+    final tempItem = ClipboardItem(
+      id: '0',
+      userId: '',
+      content: '',
+      deviceType: '',
+      createdAt: DateTime.now(),
+      contentType: fileTypeInfo.contentType,
+      fileSizeBytes: fileBytes.length,
+      metadata: ClipboardMetadata(originalFilename: filename),
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: FilePreviewWidget(
+        item: tempItem,
+
+      ),
+    );
+  }
+
   Widget _buildTextField() {
     return RepaintBoundary(
       // Isolate text field repaints
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // File preview (if clipboard has file)
+          if (_buildFilePreview() != null) _buildFilePreview()!,
           // Image preview (if clipboard has image)
           if (_buildImagePreview() != null) _buildImagePreview()!,
           TextField(
@@ -1141,11 +1336,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             child: Row(
               children: [
                 IconButton(
-                  onPressed: _handleImageUpload,
-                  icon: const Icon(Icons.add_photo_alternate_outlined),
+                  onPressed: _handleFileUpload,
+                  icon: const Icon(Icons.upload_file),
                   color: GhostColors.primary,
                   iconSize: 20,
-                  tooltip: 'Upload image',
+                  tooltip: 'Upload file',
                   padding: const EdgeInsets.all(8),
                   constraints: const BoxConstraints(),
                   splashRadius: 18,
@@ -1845,8 +2040,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                   item: item,
                                   clipboardRepository:
                                       widget.clipboardRepository,
+                                  notificationService: widget.notificationService,
                                   timeAgo: _formatTimeAgo(item.createdAt),
                                   device: _capitalizeFirst(item.deviceType),
+                                  onDelete: () {
+                                    // Remove from local list and reload
+                                    setState(() {
+                                      _filteredHistoryItems.removeAt(index);
+                                      _historyItems.remove(item);
+                                    });
+                                  },
                                   onTap: () async {
                                     // Copy directly to system clipboard (handles all content types)
                                     try {
@@ -1862,7 +2065,47 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                       );
 
                                       // Handle different content types
-                                      if (item.isImage) {
+                                      if (item.isFile) {
+                                        // File - download to temp and write to clipboard
+                                        if (item.storagePath == null) {
+                                          throw Exception('File missing storage path');
+                                        }
+
+                                        final bytes = await widget
+                                            .clipboardRepository
+                                            .downloadFile(item);
+                                        
+                                        if (bytes == null) {
+                                          throw Exception('Failed to download file');
+                                        }
+
+                                        // Save to temp using shared TempFileService (accessed via singleton for now or pass it down)
+                                        // Note: Ideally we should use the injected service, but for UI simplicity we'll use the singleton instance
+                                        // which lines up with how other services are accessed in this widget if needed.
+                                        // However, TempFileService is not injected into _StaggeredHistoryItem.
+                                        // We will use the implementation directly or we need to pass it.
+                                        // Looking at imports, we have `../../services/temp_file_service.dart`.
+                                        
+                                        final filename = item.metadata?.originalFilename ?? 'file.bin';
+                                        final tempFile = await TempFileService.instance.saveTempFile(bytes, filename);
+                                        
+                                        await ClipboardService.instance.writeFilePath(tempFile.path);
+                                        
+                                        debugPrint(
+                                          '[Spotlight] File copied to clipboard: $filename',
+                                        );
+
+                                        // Notify sync service
+                                        widget.clipboardSyncService
+                                            .updateClipboardModificationTime();
+
+                                        if (mounted) {
+                                          widget.notificationService?.showToast(
+                                            message: 'File copied to clipboard',
+                                            type: NotificationType.success,
+                                          );
+                                        }
+                                      } else if (item.isImage) {
                                         // For images, download from storage and copy to clipboard
                                         final bytes = await widget
                                             .clipboardRepository
@@ -2096,14 +2339,18 @@ class _StaggeredHistoryItem extends StatefulWidget {
     required this.timeAgo,
     required this.device,
     required this.onTap,
+    required this.onDelete,
+    this.notificationService,
   });
 
   final int index;
   final ClipboardItem item;
   final IClipboardRepository clipboardRepository;
+  final INotificationService? notificationService;
   final String timeAgo;
   final String device;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   @override
   State<_StaggeredHistoryItem> createState() => _StaggeredHistoryItemState();
@@ -2151,8 +2398,16 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     super.dispose();
   }
 
-  /// Build content preview based on content type (text, image, or rich text)
+  /// Build content preview based on content type (text, image, file, or rich text)
   Widget _buildContentPreview() {
+    // File preview
+    if (widget.item.isFile) {
+      return FilePreviewWidget(
+        item: widget.item,
+        compact: true,
+      );
+    }
+
     // Image preview
     if (widget.item.isImage) {
       return _buildImagePreview();
@@ -2228,6 +2483,129 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     );
   }
 
+  /// Handle save to computer action
+  Future<void> _handleSaveToComputer() async {
+    try {
+      // Only works for files and images
+      if (!widget.item.requiresDownload) return;
+
+      final filename = widget.item.metadata?.originalFilename ??
+                      'file.${widget.item.contentType.value}';
+
+      // Show save dialog
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save File',
+        fileName: filename,
+      );
+
+      if (savePath != null) {
+        // Download file from storage
+        final bytes = await widget.clipboardRepository.downloadFile(
+          widget.item,
+        );
+
+        // Validate bytes
+        if (bytes == null || bytes.isEmpty) {
+          throw Exception('Failed to download file');
+        }
+
+        // Write to disk
+        final file = File(savePath);
+        await file.writeAsBytes(bytes);
+
+        widget.notificationService?.showToast(
+          message: 'File saved successfully',
+          type: NotificationType.success,
+        );
+      }
+    } on Exception catch (e) {
+      debugPrint('[History] Save failed: $e');
+      widget.notificationService?.showToast(
+        message: 'Failed to save file',
+        type: NotificationType.error,
+      );
+    }
+  }
+
+  /// Handle delete action
+  Future<void> _handleDelete() async {
+    try {
+      // Delete from database
+      await widget.clipboardRepository.delete(widget.item.id);
+
+      // Call the onDelete callback to update UI
+      widget.onDelete();
+
+      widget.notificationService?.showToast(
+        message: 'Item deleted',
+        type: NotificationType.success,
+      );
+    } on Exception catch (e) {
+      debugPrint('[History] Delete failed: $e');
+      widget.notificationService?.showToast(
+        message: 'Failed to delete item',
+        type: NotificationType.error,
+      );
+    }
+  }
+
+  /// Show context menu at position
+  void _showContextMenu(BuildContext context, Offset position) {
+    if (!mounted) return;
+    final overlayState = Overlay.of(context);
+    
+    final overlay = overlayState.context.findRenderObject()! as RenderBox;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(40, 40),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.content_copy, size: 16),
+              SizedBox(width: 12),
+              Text('Copy to Clipboard'),
+            ],
+          ),
+        ),
+        if (widget.item.requiresDownload)
+          const PopupMenuItem<String>(
+            value: 'save',
+            child: Row(
+              children: [
+                Icon(Icons.save_alt, size: 16),
+                SizedBox(width: 12),
+                Text('Save to Computer...'),
+              ],
+            ),
+          ),
+        const PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 16, color: Colors.red),
+              SizedBox(width: 12),
+              Text('Delete', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'copy') {
+        widget.onTap();
+      } else if (value == 'save') {
+        _handleSaveToComputer();
+      } else if (value == 'delete') {
+        _handleDelete();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return FadeTransition(
@@ -2237,11 +2615,52 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
         child: MouseRegion(
           onEnter: (_) => setState(() => _isHovered = true),
           onExit: (_) => setState(() => _isHovered = false),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: widget.onTap,
-              child: AnimatedContainer(
+          child: DragItemWidget(
+            dragItemProvider: (request) async {
+              final item = DragItem(
+                suggestedName: widget.item.metadata?.originalFilename ?? 
+                    (widget.item.isImage ? 'image.png' : 'snippet.txt'),
+              );
+
+              if (widget.item.isFile || widget.item.isImage) {
+                try {
+                  // Download file to temp directory for dragging
+                  final bytes = await widget.clipboardRepository.downloadFile(widget.item);
+                  
+                  if (bytes != null) {
+                    final tempDir = await getTemporaryDirectory();
+                    final filename = widget.item.metadata?.originalFilename ?? 
+                        (widget.item.isImage ? 'image.png' : 'file.bin');
+                    
+                    final tempFile = File(path.join(tempDir.path, filename));
+                    await tempFile.writeAsBytes(bytes);
+                    
+                    item.add(Formats.fileUri(tempFile.uri));
+                  }
+                } on Exception catch (e) {
+                  debugPrint('Failed to prepare file for drag: $e');
+                }
+              } else {
+                // Plain text
+                item.add(Formats.plainText(widget.item.content));
+                if (widget.item.isRichText && widget.item.richTextFormat == RichTextFormat.html) {
+                  item.add(Formats.htmlText(widget.item.content));
+                }
+              }
+
+              return item;
+            },
+            allowedOperations: () => [DropOperation.copy],
+            child: GestureDetector(
+              onSecondaryTapDown: (details) {
+                // Show context menu on right-click
+                _showContextMenu(context, details.globalPosition);
+              },
+              child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: widget.onTap,
+                child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -2350,8 +2769,10 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
               ), // Close AnimatedContainer
             ), // Close InkWell
           ), // Close Material
-        ), // Close MouseRegion
-      ), // Close SlideTransition
+        ), // Close GestureDetector
+      ), // Close DragItemWidget
+      ), // Close MouseRegion
+    ), // Close SlideTransition
     ); // Close FadeTransition
   }
 

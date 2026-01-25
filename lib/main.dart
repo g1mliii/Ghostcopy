@@ -36,6 +36,7 @@ import 'services/push_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
 import 'services/system_power_service.dart';
+import 'services/temp_file_service.dart';
 
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
@@ -68,6 +69,9 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Cleanup old temp files from previous sessions
+  await TempFileService.instance.cleanupTempFiles();
 
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');

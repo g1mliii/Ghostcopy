@@ -124,25 +124,7 @@ class ClipboardWidget : AppWidgetProvider() {
     }
   }
 
-  /**
-   * Notify widget that data has changed (e.g., from FCM notification).
-   *
-   * Triggers ListView to reload data from RemoteViewsFactory.
-   */
-  private fun notifyWidgetDataChanged(context: Context) {
-    try {
-      val appWidgetManager = AppWidgetManager.getInstance(context)
-      val componentName = ComponentName(context, ClipboardWidget::class.java)
-      val widgetIds = appWidgetManager.getAppWidgetIds(componentName)
 
-      if (widgetIds.isNotEmpty()) {
-        appWidgetManager.notifyAppWidgetViewDataChanged(widgetIds, R.id.widget_list)
-        Log.d(TAG, "✅ Notified widget ListView to refresh (${widgetIds.size} widgets)")
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "❌ Failed to notify widget data change: ${e.message}", e)
-    }
-  }
 
   /**
    * Format timestamp as relative time (e.g., "2m ago", "Just now").
@@ -170,5 +152,25 @@ class ClipboardWidget : AppWidgetProvider() {
     private const val TAG = "ClipboardWidget"
     private const val ACTION_REFRESH = "com.ghostcopy.ghostcopy.WIDGET_REFRESH"
     private const val ACTION_WIDGET_ITEM_CLICK = "com.ghostcopy.ghostcopy.WIDGET_ITEM_CLICK"
+
+    /**
+     * Notify widget that data has changed (e.g., from FCM notification).
+     *
+     * Triggers ListView to reload data from RemoteViewsFactory.
+     */
+    fun notifyWidgetDataChanged(context: Context) {
+      try {
+        val appWidgetManager = AppWidgetManager.getInstance(context)
+        val componentName = ComponentName(context, ClipboardWidget::class.java)
+        val widgetIds = appWidgetManager.getAppWidgetIds(componentName)
+
+        if (widgetIds.isNotEmpty()) {
+          appWidgetManager.notifyAppWidgetViewDataChanged(widgetIds, R.id.widget_list)
+          Log.d(TAG, "✅ Notified widget ListView to refresh (${widgetIds.size} widgets)")
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "❌ Failed to notify widget data change: ${e.message}", e)
+      }
+    }
   }
 }

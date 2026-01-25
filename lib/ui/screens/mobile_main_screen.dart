@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:app_links/app_links.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/clipboard_item.dart';
@@ -10,6 +15,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
+import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/security_service.dart';
 import '../../services/settings_service.dart';
@@ -74,7 +80,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   bool _isSending = false;
   bool _isUploadingImage = false;
   String? _sendError;
-  ClipboardContent? _clipboardContent; // Full clipboard content (images, HTML, text)
+  ClipboardContent?
+  _clipboardContent; // Full clipboard content (images, HTML, text)
 
   // Device selection state
   List<Device> _devices = [];
@@ -128,31 +135,66 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
     _initializeShareIntentListeners();
     _setupMethodChannels();
+    _initDeepLinks();
   }
+
+  StreamSubscription<Uri>? _linkSubscription;
 
   @override
   void dispose() {
-    // Unregister lifecycle observer
     WidgetsBinding.instance.removeObserver(this);
-
-    // Dispose all resources to prevent memory leaks
     _pasteController.dispose();
     _historySearchController.dispose();
     _historySubscription?.cancel();
     _clipboardClearTimer?.cancel();
     _searchDebounceTimer?.cancel();
+    _intentDataStreamSubscription?.cancel();
+    _linkSubscription?.cancel();
 
     // Remove method channel handlers to prevent memory leaks
     _shareChannel.setMethodCallHandler(null);
     _notificationChannel.setMethodCallHandler(null);
-
-    // NOTE: EncryptionService is a singleton - do NOT dispose it here
 
     // Clear caches
     _decryptedContentCache.clear();
     _detectionCache.clear();
 
     super.dispose();
+  }
+
+  Future<void> _initDeepLinks() async {
+    final appLinks = AppLinks();
+
+    // Handle initial link
+    try {
+      final initialUri = await appLinks.getInitialLink();
+      if (initialUri != null) {
+        unawaited(_handleDeepLink(initialUri));
+      }
+    } on Exception catch (e) {
+      debugPrint('[MobileMain] ❌ Error getting initial link: $e');
+    }
+
+    // Handle coming links
+    _linkSubscription = appLinks.uriLinkStream.listen(
+      _handleDeepLink,
+      onError: (Object err) {
+        debugPrint('[MobileMain] ❌ Link stream error: $err');
+      },
+    );
+  }
+
+  Future<void> _handleDeepLink(Uri uri) async {
+    debugPrint('[MobileMain] 🔗 Deep link received: $uri');
+    // Format: ghostcopy://share/{clipboardId}
+    if (uri.scheme == 'ghostcopy' && uri.host == 'share') {
+      final clipboardId = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.first
+          : null;
+      if (clipboardId != null) {
+        await _processShareAction(clipboardId, action: 'share');
+      }
+    }
   }
 
   /// Handle app lifecycle changes: pause Realtime when backgrounding, resume when returning
@@ -220,11 +262,22 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       } else if (clipboardContent.hasHtml) {
         // For HTML, show the HTML source
         displayText = clipboardContent.html ?? '';
-        debugPrint('[MobileMain] ↓ Auto-pasted HTML: ${displayText.length} chars');
+        debugPrint(
+          '[MobileMain] ↓ Auto-pasted HTML: ${displayText.length} chars',
+        );
+      } else if (clipboardContent.hasFile) {
+        // For Files
+        displayText =
+            '[File: ${clipboardContent.filename} (${clipboardContent.fileBytes?.length} bytes)]';
+        debugPrint(
+          '[MobileMain] ↓ Auto-pasted file: ${clipboardContent.filename}',
+        );
       } else {
         // For plain text
         displayText = clipboardContent.text ?? '';
-        debugPrint('[MobileMain] ↓ Auto-pasted text: ${displayText.length} chars');
+        debugPrint(
+          '[MobileMain] ↓ Auto-pasted text: ${displayText.length} chars',
+        );
       }
 
       if (displayText.isNotEmpty && mounted) {
@@ -240,10 +293,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         // Precache image to avoid re-decoding on rebuilds
         if (clipboardContent.hasImage && mounted) {
           unawaited(
-            precacheImage(
-              MemoryImage(clipboardContent.imageBytes!),
-              context,
-            ),
+            precacheImage(MemoryImage(clipboardContent.imageBytes!), context),
           );
         }
       }
@@ -283,7 +333,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           if (imageBytes != null && imageBytes.isNotEmpty) {
             // Validate size (10MB limit - defense in depth)
             if (imageBytes.length > 10 * 1024 * 1024) {
-              debugPrint('[MobileMain] ❌ Image too large: ${imageBytes.length} bytes');
+              debugPrint(
+                '[MobileMain] ❌ Image too large: ${imageBytes.length} bytes',
+              );
               showGhostToast(
                 context,
                 'Image too large (max 10MB)',
@@ -302,7 +354,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
             if (selectedDeviceTypes != null) {
               // Save in background (don't await)
-              unawaited(_saveSharedImage(imageBytes, mimeType!, selectedDeviceTypes));
+              unawaited(
+                _saveSharedImage(imageBytes, mimeType!, selectedDeviceTypes),
+              );
             }
             return true;
           }
@@ -350,8 +404,21 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         '[MobileMain] 📬 Notification action: $action for clipboard $clipboardId',
       );
 
+      return await _processShareAction(clipboardId, action: action);
+    } on Exception catch (e) {
+      debugPrint('[MobileMain] ❌ Error handling notification action: $e');
+      return false;
+    }
+  }
+
+  /// Process share action (from notification or deep link)
+  ///
+  /// Fetches the item by ID and either:
+  /// - Downloads and opens Share Sheet (for files/images or explicit share action)
+  /// - Copies content to clipboard (for text)
+  Future<bool> _processShareAction(String clipboardId, {String? action}) async {
+    try {
       // Fetch full clipboard item from database
-      // Limit to 100 items to ensure we find it in reasonable time
       final items = await widget.clipboardRepository.getHistory(limit: 100);
 
       // Find the item with matching ID
@@ -368,55 +435,127 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         return false;
       }
 
-      // Copy to clipboard based on content type
-      final clipboardService = ClipboardService.instance;
+      // Unified handling for Files and Images (Download & Share)
+      // OR if action is explicitly 'share'
+      if (item.isImage || item.isFile || action == 'share') {
+        final fileBytes = await widget.clipboardRepository.downloadFile(item);
+        if (fileBytes != null) {
+          final filename =
+              item.metadata?.originalFilename ??
+              (item.isImage
+                  ? 'image.${item.mimeType?.split("/").last ?? "png"}'
+                  : 'file');
 
-      switch (item.contentType) {
-        case ContentType.html:
-          await clipboardService.writeHtml(item.content);
-          debugPrint('[MobileMain] ✅ Copied HTML to clipboard');
+          final tempFile = await ClipboardService.instance.writeTempFile(
+            fileBytes,
+            filename,
+          );
 
-        case ContentType.markdown:
-          await clipboardService.writeText(item.content);
-          debugPrint('[MobileMain] ✅ Copied Markdown to clipboard');
+          // ignore: deprecated_member_use
+          await Share.shareXFiles([
+            XFile(tempFile.path),
+          ], text: 'Shared via GhostCopy');
+          debugPrint(
+            '[MobileMain] ✅ Opened Share Sheet for ${item.contentType.value}',
+          );
+        } else {
+          debugPrint('[MobileMain] ❌ Failed to download file for sharing');
+          return false;
+        }
+      } else {
+        // Text types (Plain, HTML, Markdown) - Copy to clipboard
+        final clipboardService = ClipboardService.instance;
 
-        case ContentType.imagePng:
-        case ContentType.imageJpeg:
-        case ContentType.imageGif:
-          if (item.storagePath != null) {
-            final imageBytes = await widget.clipboardRepository.downloadFile(
-              item,
-            );
-            if (imageBytes != null) {
-              await clipboardService.writeImage(imageBytes);
-              debugPrint('[MobileMain] ✅ Copied image to clipboard');
-            } else {
-              debugPrint('[MobileMain] ❌ Failed to download image');
-              return false;
-            }
-          } else {
-            debugPrint('[MobileMain] ❌ Image has no storage path');
-            return false;
-          }
-
-        default:
-          // Plain text (text, or any other type)
-          await clipboardService.writeText(item.content);
-          debugPrint('[MobileMain] ✅ Copied text to clipboard');
+        switch (item.contentType) {
+          case ContentType.html:
+            await clipboardService.writeHtml(item.content);
+            debugPrint('[MobileMain] ✅ Copied HTML to clipboard');
+          case ContentType.markdown:
+            await clipboardService.writeText(item.content);
+            debugPrint('[MobileMain] ✅ Copied Markdown to clipboard');
+          default: // Plain text
+            await clipboardService.writeText(item.content);
+            debugPrint('[MobileMain] ✅ Copied text to clipboard');
+        }
       }
 
       return true;
     } on Exception catch (e) {
-      debugPrint('[MobileMain] ❌ Error handling notification action: $e');
+      debugPrint('[MobileMain] ❌ Error processing share action: $e');
       return false;
     }
   }
 
+  StreamSubscription<List<SharedMediaFile>>? _intentDataStreamSubscription;
+
   void _initializeShareIntentListeners() {
-    // Share intent listeners are set up via receive_sharing_intent package
-    // The package handles intercepting share intents from Android/iOS
-    // and routing them to the app. This is called in initState().
+    // 1. Listen for cached intents (app opened via share)
+    ReceiveSharingIntent.instance.getInitialMedia().then((value) {
+      if (value.isNotEmpty) {
+        _handleSharedFiles(value);
+      }
+    });
+
+    // 2. Listen for stream intents (app already running)
+    _intentDataStreamSubscription = ReceiveSharingIntent.instance
+        .getMediaStream()
+        .listen(
+          (value) {
+            if (value.isNotEmpty) {
+              _handleSharedFiles(value);
+            }
+          },
+          onError: (Object err) {
+            debugPrint('getMediaStream error: $err');
+          },
+        );
+
     debugPrint('[ShareSheet] Share intent listeners initialized');
+  }
+
+  Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
+    for (final file in files) {
+      try {
+        final path = file.path;
+        if (path.isEmpty) continue;
+
+        final bytes = await File(path).readAsBytes();
+        final filename = path.split(Platform.pathSeparator).last;
+
+        // Detect file type
+        final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+          bytes,
+          filename,
+        );
+
+        // Determine device type
+        final deviceType = ClipboardRepository.getCurrentDeviceType();
+
+        // Upload
+        await widget.clipboardRepository.insertFile(
+          userId: widget.authService.currentUserId!,
+          deviceType: deviceType,
+          deviceName: null,
+          fileBytes: bytes,
+          originalFilename: filename,
+          contentType: fileTypeInfo.contentType,
+          mimeType: fileTypeInfo.mimeType,
+        );
+
+        if (mounted) {
+          showGhostToast(
+            context,
+            'Shared file uploaded: $filename',
+            icon: Icons.upload_file,
+            type: GhostToastType.success,
+          );
+        }
+      } on Exception catch (e) {
+        debugPrint('Error handling shared file: $e');
+      }
+    }
+    // Refresh history
+    unawaited(_loadHistory());
   }
 
   // Called by native share intent handlers (through method channels or plugins)
@@ -1100,7 +1239,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         targetDeviceTypes: targetTypes,
       );
 
-      debugPrint('[MobileMain] ✅ Sent image (${(imageBytes.length / 1024).toStringAsFixed(1)} KB)');
+      debugPrint(
+        '[MobileMain] ✅ Sent image (${(imageBytes.length / 1024).toStringAsFixed(1)} KB)',
+      );
 
       // Clear paste area and show success
       if (mounted) {
@@ -1310,28 +1451,31 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       final clipboardService = ClipboardService.instance;
 
       // Handle different content types
-      if (item.isImage) {
-        // For images, download from storage and copy to clipboard
-        // Note: Images are NOT encrypted (too large for encryption)
-        final bytes = await widget.clipboardRepository.downloadFile(item);
-        if (bytes == null) {
-          throw Exception('Failed to download image');
+      // Handle different content types
+      if (item.isImage || item.isFile) {
+        // Image OR File - Download to temp and share via system sheet
+        // Requirement: "history view needs to have the ability to display similar to dekstop all file types and now we handle tap to copy in the hisotry view with share sheet to export out right instead of tap to copy to clipboard for images and files"
+        final fileBytes = await widget.clipboardRepository.downloadFile(item);
+        if (fileBytes == null) {
+          throw Exception('Failed to download file');
         }
 
-        await clipboardService.writeImage(bytes);
-        debugPrint(
-          '[MobileMain] Image copied to clipboard (${bytes.length} bytes)',
+        final filename =
+            item.metadata?.originalFilename ??
+            (item.isImage
+                ? 'image.${item.mimeType?.split("/").last ?? "png"}'
+                : 'file');
+
+        final tempFile = await ClipboardService.instance.writeTempFile(
+          fileBytes,
+          filename,
         );
 
-        if (mounted) {
-          showGhostToast(
-            context,
-            'Image copied to clipboard',
-            icon: Icons.image,
-            type: GhostToastType.success,
-            duration: const Duration(seconds: 1),
-          );
-        }
+        // Share using share_plus
+        // ignore: deprecated_member_use
+        await Share.shareXFiles([
+          XFile(tempFile.path),
+        ], text: 'Shared via GhostCopy');
       } else if (item.isRichText) {
         // Rich text - use cached decrypted content if available, or decrypt
         var finalContent = _decryptedContentCache[item.id] ?? item.content;
@@ -1407,6 +1551,56 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
+  Future<void> _handleFilePick() async {
+    try {
+      final result = await FilePicker.platform.pickFiles();
+      if (result == null) return;
+
+      final file = result.files.single;
+      final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+
+      // Determine device type
+      final deviceType = ClipboardRepository.getCurrentDeviceType();
+
+      // Detect file type
+      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        file.name,
+      );
+
+      // Upload file
+      await widget.clipboardRepository.insertFile(
+        userId: widget.authService.currentUserId!,
+        deviceType: deviceType,
+        deviceName: null,
+        fileBytes: bytes,
+        originalFilename: file.name,
+        contentType: fileTypeInfo.contentType,
+        mimeType: fileTypeInfo.mimeType,
+      );
+
+      if (mounted) {
+        showGhostToast(
+          context,
+          'File uploaded: ${file.name}',
+          icon: Icons.upload_file,
+          type: GhostToastType.success,
+        );
+        unawaited(_loadHistory());
+      }
+    } on Exception catch (e) {
+      debugPrint('[MobileMain] File pick failed: $e');
+      if (mounted) {
+        showGhostToast(
+          context,
+          'Failed to upload file',
+          icon: Icons.error,
+          type: GhostToastType.error,
+        );
+      }
+    }
+  }
+
   Future<void> _navigateToSettings() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -1463,6 +1657,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             color: GhostColors.textSecondary,
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _handleFilePick,
+        backgroundColor: GhostColors.primary,
+        child: const Icon(Icons.attach_file, color: Colors.white),
       ),
       body: RefreshIndicator(
         onRefresh: _handleRefresh,
@@ -1587,7 +1786,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// Build image preview for paste area (when clipboard contains image)
   Widget _buildImagePreview() {
-    if (_clipboardContent?.hasImage != true) {
+    if (_clipboardContent?.hasImage != true ||
+        _clipboardContent?.imageBytes == null) {
       return const SizedBox.shrink();
     }
 
@@ -1601,9 +1801,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       decoration: BoxDecoration(
         color: GhostColors.surfaceLight,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: GhostColors.primary.withValues(alpha: 0.3),
-        ),
+        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -1611,9 +1809,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxHeight: 80,
-              ),
+              constraints: const BoxConstraints(maxHeight: 80),
               child: Image.memory(
                 imageBytes,
                 fit: BoxFit.contain,
@@ -2192,6 +2388,11 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       return _buildImagePreview();
     }
 
+    // File preview
+    if (widget.item.isFile) {
+      return _buildFilePreview();
+    }
+
     // Rich text preview
     if (widget.item.isRichText) {
       return _buildRichTextPreview(displayContent);
@@ -2223,6 +2424,178 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       height: 120,
       width: double.infinity,
     );
+  }
+
+  /// Build file preview widget
+  Widget _buildFilePreview() {
+    final filename = widget.item.metadata?.originalFilename ?? 'Unknown File';
+    final size = widget.item.displaySize;
+    final ext = filename.split('.').last.toUpperCase();
+    final fileColor = _getFileColor(ext);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: fileColor.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: fileColor.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(_getFileIcon(ext), color: fileColor, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  filename,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: GhostColors.textPrimary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$ext • $size',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: GhostColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.share_outlined,
+            color: GhostColors.textMuted,
+            size: 20,
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getFileIcon(String ext) {
+    switch (ext) {
+      case 'PDF':
+        return Icons.picture_as_pdf_rounded;
+      case 'ZIP':
+      case 'RAR':
+      case '7Z':
+      case 'TAR':
+      case 'GZ':
+        return Icons.folder_zip_rounded;
+      case 'DOC':
+      case 'DOCX':
+        return Icons.description_rounded;
+      case 'XLS':
+      case 'XLSX':
+      case 'CSV':
+        return Icons.table_chart_rounded;
+      case 'PPT':
+      case 'PPTX':
+        return Icons.slideshow_rounded;
+      case 'MP3':
+      case 'WAV':
+      case 'M4A':
+      case 'AAC':
+      case 'OGG':
+        return Icons.audio_file_rounded;
+      case 'MP4':
+      case 'MOV':
+      case 'MKV':
+      case 'AVI':
+      case 'WEBM':
+        return Icons.video_file_rounded;
+      case 'Js':
+      case 'TS':
+      case 'PY':
+      case 'DART':
+      case 'HTML':
+      case 'CSS':
+      case 'JSON':
+      case 'XML':
+      case 'YAML':
+      case 'YML':
+        return Icons.code_rounded;
+      case 'TXT':
+      case 'MD':
+      case 'RTF':
+        return Icons.text_snippet_rounded;
+      case 'EXE':
+      case 'DMG':
+      case 'ISO':
+      case 'MSI':
+      case 'APK':
+        return Icons.install_desktop_rounded;
+      default:
+        return Icons.insert_drive_file_rounded;
+    }
+  }
+
+  Color _getFileColor(String ext) {
+    switch (ext) {
+      case 'PDF':
+        return Colors.red.shade400;
+      case 'ZIP':
+      case 'RAR':
+      case '7Z':
+      case 'TAR':
+      case 'GZ':
+        return Colors.orange.shade400;
+      case 'XLS':
+      case 'XLSX':
+      case 'CSV':
+        return Colors.green.shade400;
+      case 'PPT':
+      case 'PPTX':
+        return Colors.orange.shade700;
+      case 'MP3':
+      case 'WAV':
+      case 'M4A':
+      case 'AAC':
+      case 'OGG':
+        return Colors.purple.shade400;
+      case 'MP4':
+      case 'MOV':
+      case 'MKV':
+      case 'AVI':
+      case 'WEBM':
+        return Colors.red.shade600;
+      case 'JS':
+      case 'TS':
+      case 'PY':
+      case 'DART':
+      case 'HTML':
+      case 'CSS':
+      case 'JSON':
+      case 'XML':
+      case 'YAML':
+      case 'YML':
+        return Colors.blue.shade400;
+      case 'EXE':
+      case 'DMG':
+      case 'ISO':
+      case 'MSI':
+      case 'APK':
+        return Colors.teal.shade400;
+      case 'DOC':
+      case 'DOCX':
+        return Colors.blue.shade600;
+      default:
+        return GhostColors.primary;
+    }
   }
 
   /// Build rich text preview widget

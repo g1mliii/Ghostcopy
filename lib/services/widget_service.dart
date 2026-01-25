@@ -68,7 +68,9 @@ class WidgetService implements IWidgetService {
     try {
       // Skip initialization on unsupported platforms (desktop)
       if (!_isMobileOrWeb()) {
-        debugPrint('[WidgetService] Platform not supported, skipping initialization');
+        debugPrint(
+          '[WidgetService] Platform not supported, skipping initialization',
+        );
         _initialized = true;
         return;
       }
@@ -90,7 +92,9 @@ class WidgetService implements IWidgetService {
   /// Handle method calls from native widget code
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     if (_disposed) {
-      debugPrint('[WidgetService] Ignoring method call after disposal: ${call.method}');
+      debugPrint(
+        '[WidgetService] Ignoring method call after disposal: ${call.method}',
+      );
       throw PlatformException(
         code: 'DISPOSED',
         message: 'WidgetService has been disposed',
@@ -123,7 +127,9 @@ class WidgetService implements IWidgetService {
   @override
   Future<void> updateWidgetData(List<ClipboardItem> items) async {
     if (!_initialized || _disposed) {
-      debugPrint('[WidgetService] Not initialized or disposed, skipping update');
+      debugPrint(
+        '[WidgetService] Not initialized or disposed, skipping update',
+      );
       return;
     }
 
@@ -153,7 +159,9 @@ class WidgetService implements IWidgetService {
   @override
   Future<void> refreshWidget() async {
     if (!_initialized || _disposed) {
-      debugPrint('[WidgetService] Not initialized or disposed, skipping refresh');
+      debugPrint(
+        '[WidgetService] Not initialized or disposed, skipping refresh',
+      );
       return;
     }
 
@@ -164,7 +172,9 @@ class WidgetService implements IWidgetService {
       // Update widget with new data
       await updateWidgetData(items);
 
-      debugPrint('[WidgetService] ✅ Widget refreshed with ${items.length} items');
+      debugPrint(
+        '[WidgetService] ✅ Widget refreshed with ${items.length} items',
+      );
     } on Exception catch (e) {
       debugPrint('[WidgetService] ❌ Failed to refresh widget: $e');
     }
@@ -186,7 +196,9 @@ class WidgetService implements IWidgetService {
         try {
           thumbnailPath = await _cacheThumbnailForWidget(item);
         } on Exception catch (e) {
-          debugPrint('[WidgetService] Failed to cache thumbnail for ${item.id}: $e');
+          debugPrint(
+            '[WidgetService] Failed to cache thumbnail for ${item.id}: $e',
+          );
           // Continue without thumbnail - widget will show placeholder
         }
       }
@@ -199,6 +211,10 @@ class WidgetService implements IWidgetService {
         'deviceType': item.deviceType,
         'createdAt': item.createdAt.toIso8601String(),
         'isEncrypted': item.isEncrypted,
+        'isFile': item.isFile,
+        'isImage': item.isImage,
+        'displaySize': item.displaySize,
+        'filename': item.metadata?.originalFilename,
       });
     }
 
@@ -219,6 +235,9 @@ class WidgetService implements IWidgetService {
     if (item.isImage) {
       // Image preview shows file size
       return 'Image (${item.displaySize})';
+    } else if (item.isFile) {
+      // File preview shows filename
+      return item.metadata?.originalFilename ?? 'File (${item.displaySize})';
     } else if (item.isEncrypted) {
       // Encrypted content shows lock icon
       return '🔒 Encrypted content (tap to view)';
@@ -311,7 +330,9 @@ class WidgetService implements IWidgetService {
 
       return thumbnailFile.path;
     } on Exception catch (e) {
-      debugPrint('[WidgetService] ❌ Failed to cache thumbnail for ${item.id}: $e');
+      debugPrint(
+        '[WidgetService] ❌ Failed to cache thumbnail for ${item.id}: $e',
+      );
       return null;
     }
   }

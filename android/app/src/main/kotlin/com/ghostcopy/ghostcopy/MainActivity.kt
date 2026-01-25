@@ -285,8 +285,16 @@ class MainActivity : FlutterActivity() {
             val contentPreview = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_PREVIEW) ?: ""
             val thumbnailPath = intent.getStringExtra(ClipboardWidgetFactory.KEY_THUMBNAIL_PATH)
             val isEncrypted = intent.getBooleanExtra(ClipboardWidgetFactory.KEY_IS_ENCRYPTED, false)
+            val action = intent.getStringExtra("action") ?: "copy"
 
-            if (contentPreview.isEmpty()) {
+            // If action is share, delegate to Flutter to download and share
+            if (action == "share" && clipboardId.isNotEmpty()) {
+                Log.d(TAG, "📤 Widget share action for $clipboardId")
+                fetchAndCopyClipboardItem(clipboardId, contentType, "Widget")
+                return
+            }
+
+            if (contentPreview.isEmpty() && !action.equals("share")) {
                 Log.w(TAG, "Empty content for clipboard item $clipboardId")
                 return
             }
@@ -317,14 +325,6 @@ class MainActivity : FlutterActivity() {
 
                         // Create content URI for the image file
                         val imageUri = Uri.fromFile(imageFile)
-
-                        // Determine MIME type from content type
-                        val mimeType = when {
-                            contentType.contains("png") -> "image/png"
-                            contentType.contains("jpeg") -> "image/jpeg"
-                            contentType.contains("gif") -> "image/gif"
-                            else -> "image/*"
-                        }
 
                         // Copy as image with URI (this allows paste in other apps)
                         val clip = ClipData.newUri(contentResolver, "Image", imageUri)
@@ -366,7 +366,7 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "✅ Widget item copied: $contentType")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to handle widget item click: ${e.message}", e)
-            showToast("Failed to copy")
+            showToast("Failed to process")
         }
     }
 

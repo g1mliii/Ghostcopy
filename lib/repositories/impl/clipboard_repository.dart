@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
+import '../../models/exceptions.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/storage_service.dart';
@@ -173,6 +174,255 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
+  Future<ClipboardItem> insertFile({
+    required String userId,
+    required String deviceType,
+    required String? deviceName,
+    required Uint8List fileBytes,
+    required String mimeType,
+    required ContentType contentType,
+    String? originalFilename,
+    int? width,
+    int? height,
+    List<String>? targetDeviceTypes,
+  }) async {
+    try {
+      // Validate user authentication
+      final currentUserId = _client.auth.currentUser?.id;
+      if (currentUserId == null) {
+        throw SecurityException(
+          'User must be authenticated to insert file items',
+        );
+      }
+
+      // Defense in depth: ensure userId matches authenticated user
+      if (userId != currentUserId) {
+        throw SecurityException('Cannot insert file for another user');
+      }
+
+      // Validate file size (10MB limit)
+      const maxFileSize = 10485760; // 10MB
+      if (fileBytes.length > maxFileSize) {
+        throw ValidationException(
+          'File exceeds 10MB limit: ${fileBytes.length} bytes',
+        );
+      }
+
+      // Validate content type requires storage
+      if (!contentType.requiresStorage) {
+        throw ValidationException(
+          'Content type must require storage, got: ${contentType.value}',
+        );
+      }
+
+      // 1. Insert placeholder to get clip ID
+      debugPrint(
+        '[Repository] ↑ Inserting file placeholder (${fileBytes.length} bytes)',
+      );
+
+      // Build metadata with original filename
+      final metadata = <String, dynamic>{
+        if (width != null) 'width': width,
+        if (height != null) 'height': height,
+        if (originalFilename != null) 'original_filename': originalFilename,
+      };
+
+      final response = await _client
+          .from('clipboard')
+          .insert({
+            'user_id': userId,
+            'device_name': _sanitizeDeviceName(deviceName),
+            'device_type': _validateDeviceType(deviceType),
+            'target_device_type': targetDeviceTypes
+                ?.map(_validateDeviceType)
+                .toList(), // null = broadcast to all devices
+            'content': '', // Placeholder, will be updated with URL
+            'content_type': contentType.value,
+            'mime_type': mimeType,
+            'file_size_bytes': fileBytes.length,
+            if (metadata.isNotEmpty) 'metadata': metadata,
+            'is_encrypted': false, // Files NOT encrypted
+          })
+          .select()
+          .single();
+
+      final clipId = response['id'].toString();
+
+      // 2. Upload to Storage
+      // Use original filename if provided, otherwise generate from extension
+      final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
+      debugPrint(
+        '[Repository] ↑ Uploading to storage: $userId/$clipId/$filename',
+      );
+
+      final uploadResult = await _storageService.uploadFile(
+        userId: userId,
+        clipboardId: clipId,
+        bytes: fileBytes,
+        filename: filename,
+        mimeType: mimeType,
+      );
+
+      // 3. Update with storage path and URL
+      await _client
+          .from('clipboard')
+          .update({
+            'storage_path': uploadResult.storagePath,
+            'content': uploadResult.publicUrl, // URL in content field
+          })
+          .eq('id', clipId);
+
+      debugPrint('[Repository] ✓ File uploaded successfully: $filename');
+
+      return ClipboardItem(
+        id: clipId,
+        userId: userId,
+        content: uploadResult.publicUrl,
+        deviceName: deviceName,
+        deviceType: deviceType,
+        targetDeviceTypes: targetDeviceTypes,
+        contentType: contentType,
+        storagePath: uploadResult.storagePath,
+        fileSizeBytes: fileBytes.length,
+        mimeType: mimeType,
+        metadata: metadata.isNotEmpty
+            ? ClipboardMetadata(
+                width: width,
+                height: height,
+                originalFilename: originalFilename,
+              )
+            : null,
+        createdAt: DateTime.parse(response['created_at'] as String),
+      );
+    } on SecurityException {
+      rethrow;
+    } on ValidationException {
+      rethrow;
+    } on PostgrestException catch (e) {
+      debugPrint('[Repository] ✗ Database error: ${e.message}');
+      throw RepositoryException('Database error: ${e.message}');
+    } catch (e) {
+      debugPrint('[Repository] ✗ Failed to insert file: $e');
+      throw RepositoryException('Failed to insert file: $e');
+    }
+  }
+
+  @override
+  Stream<double> uploadFileWithProgress({
+    required String userId,
+    required String deviceType,
+    required String? deviceName,
+    required Uint8List fileBytes,
+    required String mimeType,
+    required ContentType contentType,
+    String? originalFilename,
+    int? width,
+    int? height,
+    List<String>? targetDeviceTypes,
+  }) async* {
+    try {
+      // Validate user authentication
+      final currentUserId = _client.auth.currentUser?.id;
+      if (currentUserId == null) {
+        throw SecurityException(
+          'User must be authenticated to insert file items',
+        );
+      }
+
+      if (userId != currentUserId) {
+        throw SecurityException('Cannot insert file for another user');
+      }
+
+      // Validate file size (10MB limit)
+      const maxFileSize = 10485760; // 10MB
+      if (fileBytes.length > maxFileSize) {
+        throw ValidationException(
+          'File exceeds 10MB limit: ${fileBytes.length} bytes',
+        );
+      }
+
+      if (!contentType.requiresStorage) {
+        throw ValidationException(
+          'Content type must require storage, got: ${contentType.value}',
+        );
+      }
+
+      // Progress: 0.1 - Starting
+      yield 0.1;
+
+      debugPrint(
+        '[Repository] ↑ Inserting file with progress (${fileBytes.length} bytes)',
+      );
+
+      final metadata = <String, dynamic>{
+        if (width != null) 'width': width,
+        if (height != null) 'height': height,
+        if (originalFilename != null) 'original_filename': originalFilename,
+      };
+
+      final response = await _client
+          .from('clipboard')
+          .insert({
+            'user_id': userId,
+            'device_name': _sanitizeDeviceName(deviceName),
+            'device_type': _validateDeviceType(deviceType),
+            'target_device_type': targetDeviceTypes
+                ?.map(_validateDeviceType)
+                .toList(),
+            'content': '',
+            'content_type': contentType.value,
+            'mime_type': mimeType,
+            'file_size_bytes': fileBytes.length,
+            if (metadata.isNotEmpty) 'metadata': metadata,
+            'is_encrypted': false,
+          })
+          .select()
+          .single();
+
+      final clipId = response['id'].toString();
+      yield 0.3; // Database record created
+
+      final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
+      debugPrint(
+        '[Repository] ↑ Uploading to storage: $userId/$clipId/$filename',
+      );
+
+      final uploadResult = await _storageService.uploadFile(
+        userId: userId,
+        clipboardId: clipId,
+        bytes: fileBytes,
+        filename: filename,
+        mimeType: mimeType,
+      );
+
+      yield 0.8; // Upload complete
+
+      await _client
+          .from('clipboard')
+          .update({
+            'storage_path': uploadResult.storagePath,
+            'content': uploadResult.publicUrl,
+          })
+          .eq('id', clipId);
+
+      debugPrint('[Repository] ✓ File uploaded successfully');
+      yield 1.0; // Done
+    } on SecurityException {
+      rethrow;
+    } on ValidationException {
+      rethrow;
+    } on SocketException {
+      throw NetworkException('Network error: Check your connection');
+    } on PostgrestException catch (e) {
+      debugPrint('[Repository] ✗ Database error: ${e.message}');
+      throw RepositoryException('Database error: ${e.message}');
+    } catch (e) {
+      debugPrint('[Repository] ✗ Failed to upload file: $e');
+      throw RepositoryException('Failed to upload file: $e');
+    }
+  }
+
+  @override
   Future<ClipboardItem> insertImage({
     required String userId,
     required String deviceType,
@@ -184,106 +434,25 @@ class ClipboardRepository implements IClipboardRepository {
     int? height,
     List<String>? targetDeviceTypes,
   }) async {
-    try {
-      // Validate user authentication
-      final currentUserId = _client.auth.currentUser?.id;
-      if (currentUserId == null) {
-        throw SecurityException(
-          'User must be authenticated to insert image items',
-        );
-      }
-
-      // Defense in depth: ensure userId matches authenticated user
-      if (userId != currentUserId) {
-        throw SecurityException('Cannot insert image for another user');
-      }
-
-      // Validate file size (10MB limit)
-      const maxImageSize = 10485760; // 10MB
-      if (imageBytes.length > maxImageSize) {
-        throw ValidationException(
-          'Image exceeds 10MB limit: ${imageBytes.length} bytes',
-        );
-      }
-
-      // Validate content type is an image
-      if (!contentType.isImage) {
-        throw ValidationException(
-          'Content type must be an image type, got: ${contentType.value}',
-        );
-      }
-
-      // 1. Insert placeholder to get clip ID
-      debugPrint(
-        '[Repository] ↑ Inserting image placeholder (${imageBytes.length} bytes)',
+    // Validate content type is an image
+    if (!contentType.isImage) {
+      throw ValidationException(
+        'Content type must be an image type, got: ${contentType.value}',
       );
-
-      final response = await _client.from('clipboard').insert({
-        'user_id': userId,
-        'device_name': _sanitizeDeviceName(deviceName),
-        'device_type': _validateDeviceType(deviceType),
-        'target_device_type': targetDeviceTypes
-            ?.map(_validateDeviceType)
-            .toList(), // null = broadcast to all devices
-        'content': '', // Placeholder, will be updated with URL
-        'content_type': contentType.value,
-        'mime_type': mimeType,
-        'file_size_bytes': imageBytes.length,
-        if (width != null || height != null)
-          'metadata': {
-            if (width != null) 'width': width,
-            if (height != null) 'height': height,
-          },
-        'is_encrypted': false, // Images NOT encrypted
-      }).select().single();
-
-      final clipId = response['id'].toString();
-
-      // 2. Upload to Storage
-      final filename = 'image.${_getExtension(mimeType)}';
-      debugPrint('[Repository] ↑ Uploading to storage: $userId/$clipId/$filename');
-
-      final uploadResult = await _storageService.uploadFile(
-        userId: userId,
-        clipboardId: clipId,
-        bytes: imageBytes,
-        filename: filename,
-        mimeType: mimeType,
-      );
-
-      // 3. Update with storage path and URL
-      await _client.from('clipboard').update({
-        'storage_path': uploadResult.storagePath,
-        'content': uploadResult.publicUrl, // URL in content field
-      }).eq('id', clipId);
-
-      debugPrint('[Repository] ✓ Image uploaded successfully');
-
-      return ClipboardItem(
-        id: clipId,
-        userId: userId,
-        content: uploadResult.publicUrl,
-        deviceName: deviceName,
-        deviceType: deviceType,
-        targetDeviceTypes: targetDeviceTypes,
-        contentType: contentType,
-        storagePath: uploadResult.storagePath,
-        fileSizeBytes: imageBytes.length,
-        mimeType: mimeType,
-        metadata: ClipboardMetadata(width: width, height: height),
-        createdAt: DateTime.parse(response['created_at'] as String),
-      );
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
-    } on PostgrestException catch (e) {
-      debugPrint('[Repository] ✗ Database error: ${e.message}');
-      throw RepositoryException('Database error: ${e.message}');
-    } catch (e) {
-      debugPrint('[Repository] ✗ Failed to insert image: $e');
-      throw RepositoryException('Failed to insert image: $e');
     }
+
+    // Delegate to insertFile (convenience wrapper for backward compatibility)
+    return insertFile(
+      userId: userId,
+      deviceType: deviceType,
+      deviceName: deviceName,
+      fileBytes: imageBytes,
+      mimeType: mimeType,
+      contentType: contentType,
+      width: width,
+      height: height,
+      targetDeviceTypes: targetDeviceTypes,
+    );
   }
 
   @override
@@ -321,25 +490,31 @@ class ClipboardRepository implements IClipboardRepository {
           : sanitizedContent;
 
       // Determine content type and mime type
-      final contentType =
-          format == RichTextFormat.html ? ContentType.html : ContentType.markdown;
-      final mimeType =
-          format == RichTextFormat.html ? 'text/html' : 'text/markdown';
+      final contentType = format == RichTextFormat.html
+          ? ContentType.html
+          : ContentType.markdown;
+      final mimeType = format == RichTextFormat.html
+          ? 'text/html'
+          : 'text/markdown';
 
       debugPrint(
         '[Repository] ↑ Inserting rich text (${format.value}, ${sanitizedContent.length} chars)',
       );
 
-      final response = await _client.from('clipboard').insert({
-        'user_id': userId,
-        'device_name': _sanitizeDeviceName(deviceName),
-        'device_type': _validateDeviceType(deviceType),
-        'content': contentToStore,
-        'content_type': contentType.value,
-        'mime_type': mimeType,
-        'rich_text_format': format.value,
-        'is_encrypted': isEncryptionEnabled,
-      }).select().single();
+      final response = await _client
+          .from('clipboard')
+          .insert({
+            'user_id': userId,
+            'device_name': _sanitizeDeviceName(deviceName),
+            'device_type': _validateDeviceType(deviceType),
+            'content': contentToStore,
+            'content_type': contentType.value,
+            'mime_type': mimeType,
+            'rich_text_format': format.value,
+            'is_encrypted': isEncryptionEnabled,
+          })
+          .select()
+          .single();
 
       debugPrint('[Repository] ✓ Rich text inserted successfully');
 
@@ -408,30 +583,35 @@ class ClipboardRepository implements IClipboardRepository {
       debugPrint('[Repository] 🔍 Local search: "$query" (limit: $safeLimit)');
 
       // Get all history items (they're cached locally via watchHistory stream)
-      final allItems = await getHistory(limit: 100); // Search more items locally
+      final allItems = await getHistory(
+        limit: 100,
+      ); // Search more items locally
 
       // Lightweight local search - case-insensitive substring match
       final lowerQuery = query.toLowerCase();
-      final results = allItems.where((item) {
-        // Search in content
-        if (item.content.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
+      final results = allItems
+          .where((item) {
+            // Search in content
+            if (item.content.toLowerCase().contains(lowerQuery)) {
+              return true;
+            }
 
-        // Search in device name if present
-        if (item.deviceName != null &&
-            item.deviceName!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
+            // Search in device name if present
+            if (item.deviceName != null &&
+                item.deviceName!.toLowerCase().contains(lowerQuery)) {
+              return true;
+            }
 
-        // Search in mime type if present (e.g., "image/png")
-        if (item.mimeType != null &&
-            item.mimeType!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
+            // Search in mime type if present (e.g., "image/png")
+            if (item.mimeType != null &&
+                item.mimeType!.toLowerCase().contains(lowerQuery)) {
+              return true;
+            }
 
-        return false;
-      }).take(safeLimit).toList();
+            return false;
+          })
+          .take(safeLimit)
+          .toList();
 
       debugPrint('[Repository] ✓ Found ${results.length} results locally');
 
@@ -872,16 +1052,27 @@ class ClipboardRepository implements IClipboardRepository {
 
   /// Get file extension from MIME type
   String _getExtension(String mimeType) {
-    switch (mimeType) {
-      case 'image/png':
-        return 'png';
-      case 'image/jpeg':
-        return 'jpg';
-      case 'image/gif':
-        return 'gif';
-      default:
-        return 'bin';
-    }
+    const mimeToExt = {
+      // Images
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/gif': 'gif',
+      // Documents
+      'application/pdf': 'pdf',
+      'application/msword': 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+          'docx',
+      'text/plain': 'txt',
+      // Archives
+      'application/zip': 'zip',
+      'application/x-tar': 'tar',
+      'application/gzip': 'gz',
+      // Media
+      'video/mp4': 'mp4',
+      'audio/mpeg': 'mp3',
+      'audio/wav': 'wav',
+    };
+    return mimeToExt[mimeType] ?? 'bin';
   }
 }
 

@@ -1,5 +1,3 @@
-import Foundation
-
 /// Manages clipboard data shared between main app and widget extension via App Groups
 /// Uses UserDefaults with App Group suite for inter-process communication
 ///
@@ -7,6 +5,18 @@ import Foundation
 /// - Weak references for delegates (prevents retain cycles)
 /// - Single shared instance (singleton)
 /// - Properly cleans up UserDefaults observers on deinit
+
+import Foundation
+
+// MARK: - Data Models
+
+/// Clipboard item data structure for widget display
+
+// MARK: - Delegate Protocol
+
+/// Delegate for widget update notifications
+import WidgetKit
+
 class WidgetDataManager {
     static let shared = WidgetDataManager()
 
@@ -19,7 +29,8 @@ class WidgetDataManager {
     private static let maxItems = 5
 
     // Lazy-loaded shared UserDefaults
-    private lazy var userDefaults = UserDefaults(suiteName: Self.appGroupIdentifier) ?? UserDefaults.standard
+    private lazy var userDefaults =
+        UserDefaults(suiteName: Self.appGroupIdentifier) ?? UserDefaults.standard
 
     // Keep track of changes for widget reload
     private weak var widgetUpdateDelegate: WidgetUpdateDelegate?
@@ -109,17 +120,13 @@ class WidgetDataManager {
         widgetUpdateDelegate?.onWidgetDataUpdated()
 
         #if !targetEnvironment(simulator)
-        // On physical device, request widget refresh from system
-        if #available(iOS 14.0, *) {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
+            // On physical device, request widget refresh from system
+            if #available(iOS 14.0, *) {
+                WidgetCenter.shared.reloadAllTimelines()
+            }
         #endif
     }
 }
-
-// MARK: - Data Models
-
-/// Clipboard item data structure for widget display
 struct ClipboardItemData: Codable {
     let id: String
     let contentType: String
@@ -128,6 +135,10 @@ struct ClipboardItemData: Codable {
     let deviceType: String
     let createdAt: String
     let isEncrypted: Bool
+    let isFile: Bool
+    let isImage: Bool
+    let displaySize: String?
+    let filename: String?
 
     /// Convert to dictionary for UserDefaults storage
     func toDictionary() -> [String: Any] {
@@ -139,21 +150,30 @@ struct ClipboardItemData: Codable {
             "deviceType": deviceType,
             "createdAt": createdAt,
             "isEncrypted": isEncrypted,
+            "isFile": isFile,
+            "isImage": isImage,
+            "displaySize": displaySize ?? "",
+            "filename": filename ?? "",
         ]
     }
 
     /// Create from dictionary
     static func fromDictionary(_ dict: [String: Any]) -> ClipboardItemData? {
         guard let id = dict["id"] as? String,
-              let contentType = dict["contentType"] as? String,
-              let contentPreview = dict["contentPreview"] as? String,
-              let deviceType = dict["deviceType"] as? String,
-              let createdAt = dict["createdAt"] as? String else {
+            let contentType = dict["contentType"] as? String,
+            let contentPreview = dict["contentPreview"] as? String,
+            let deviceType = dict["deviceType"] as? String,
+            let createdAt = dict["createdAt"] as? String
+        else {
             return nil
         }
 
         let thumbnailPath = dict["thumbnailPath"] as? String
         let isEncrypted = dict["isEncrypted"] as? Bool ?? false
+        let isFile = dict["isFile"] as? Bool ?? false
+        let isImage = dict["isImage"] as? Bool ?? false
+        let displaySize = dict["displaySize"] as? String
+        let filename = dict["filename"] as? String
 
         return ClipboardItemData(
             id: id,
@@ -162,14 +182,14 @@ struct ClipboardItemData: Codable {
             thumbnailPath: thumbnailPath?.isEmpty == false ? thumbnailPath : nil,
             deviceType: deviceType,
             createdAt: createdAt,
-            isEncrypted: isEncrypted
+            isEncrypted: isEncrypted,
+            isFile: isFile,
+            isImage: isImage,
+            displaySize: displaySize,
+            filename: filename
         )
     }
 }
-
-// MARK: - Delegate Protocol
-
-/// Delegate for widget update notifications
 protocol WidgetUpdateDelegate: AnyObject {
     func onWidgetDataUpdated()
 }

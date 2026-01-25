@@ -5,14 +5,64 @@ enum ContentType {
   markdown('markdown'),
   imagePng('image_png'),
   imageJpeg('image_jpeg'),
-  imageGif('image_gif');
+  imageGif('image_gif'),
+  filePdf('file_pdf'),
+  fileDoc('file_doc'),
+  fileDocx('file_docx'),
+  fileTxt('file_txt'),
+  fileZip('file_zip'),
+  fileTar('file_tar'),
+  fileGz('file_gz'),
+  fileMp4('file_mp4'),
+  fileMp3('file_mp3'),
+  fileWav('file_wav'),
+  fileOther('file_other');
 
   const ContentType(this.value);
   final String value;
 
   bool get isImage => this == imagePng || this == imageJpeg || this == imageGif;
   bool get isRichText => this == html || this == markdown;
-  bool get requiresStorage => isImage;
+  bool get isFile => !isImage && !isRichText && this != text;
+  bool get requiresStorage => isImage || isFile;
+
+  /// Get MIME type for this content type
+  String? get mimeType {
+    switch (this) {
+      case imagePng:
+        return 'image/png';
+      case imageJpeg:
+        return 'image/jpeg';
+      case imageGif:
+        return 'image/gif';
+      case filePdf:
+        return 'application/pdf';
+      case fileDoc:
+        return 'application/msword';
+      case fileDocx:
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case fileTxt:
+        return 'text/plain';
+      case fileZip:
+        return 'application/zip';
+      case fileTar:
+        return 'application/x-tar';
+      case fileGz:
+        return 'application/gzip';
+      case fileMp4:
+        return 'video/mp4';
+      case fileMp3:
+        return 'audio/mpeg';
+      case fileWav:
+        return 'audio/wav';
+      case html:
+        return 'text/html';
+      case markdown:
+        return 'text/markdown';
+      default:
+        return null;
+    }
+  }
 
   static ContentType fromString(String value) {
     return ContentType.values.firstWhere(
@@ -161,6 +211,7 @@ class ClipboardItem {
   // Helper methods
   bool get isImage => contentType.isImage;
   bool get isRichText => contentType.isRichText;
+  bool get isFile => contentType.isFile;
   bool get requiresDownload => contentType.requiresStorage;
 
   String get displaySize {

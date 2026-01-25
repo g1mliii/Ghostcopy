@@ -1,7 +1,3 @@
-import AppIntents
-import WidgetKit
-import UIKit
-
 /// App Intent for manual widget refresh
 /// Triggered when user taps the refresh button on the widget
 ///
@@ -9,6 +5,17 @@ import UIKit
 /// - Lightweight async operation
 /// - Properly cancels URLSession tasks
 /// - No retain cycles (escaping closures handled with weak self pattern)
+import AppIntents
+
+import UIKit
+
+/// Copy to clipboard intent for widget tap
+/// Triggered when user taps a clipboard item in the widget
+
+// MARK: - Error Types
+
+import WidgetKit
+
 @available(iOS 17.0, *)
 struct RefreshWidgetIntent: AppIntent {
     static var title: LocalizedStringResource = "Refresh Clipboard Widget"
@@ -23,7 +30,8 @@ struct RefreshWidgetIntent: AppIntent {
         do {
             // Get stored Supabase credentials from UserDefaults
             guard let supabaseUrl = UserDefaults.standard.string(forKey: "supabase_url"),
-                  let anonKey = UserDefaults.standard.string(forKey: "supabase_anon_key") else {
+                let anonKey = UserDefaults.standard.string(forKey: "supabase_anon_key")
+            else {
                 print("[RefreshWidgetIntent] ❌ Missing Supabase credentials")
                 return .result()
             }
@@ -69,7 +77,8 @@ struct RefreshWidgetIntent: AppIntent {
             return []
         }
 
-        let apiUrl = URL(string: "\(url)/rest/v1/clipboard?user_id=eq.\(userId)&order=created_at.desc&limit=5")!
+        let apiUrl = URL(
+            string: "\(url)/rest/v1/clipboard?user_id=eq.\(userId)&order=created_at.desc&limit=5")!
 
         var request = URLRequest(url: apiUrl)
         request.httpMethod = "GET"
@@ -87,32 +96,59 @@ struct RefreshWidgetIntent: AppIntent {
 
         // Verify response
         guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+            httpResponse.statusCode == 200
+        else {
             throw RefreshError.invalidResponse
         }
 
         // Parse JSON
-        guard let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        guard let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else {
             throw RefreshError.invalidJSON
         }
 
         // Format items for widget
         return jsonArray.map { item in
-            [
+            let contentType = item["content_type"] as? String ?? "text"
+            let isFile = contentType.hasPrefix("file_")
+            let isImage = contentType.hasPrefix("image_")
+            let sizeBytes = item["file_size_bytes"] as? Int64 ?? 0
+
+            // Format size
+            let displaySize: String
+            if sizeBytes > 0 {
+                if sizeBytes < 1024 {
+                    displaySize = "\(sizeBytes)B"
+                } else if sizeBytes < 1_048_576 {
+                    displaySize = String(format: "%.1fKB", Double(sizeBytes) / 1024.0)
+                } else {
+                    displaySize = String(format: "%.1fMB", Double(sizeBytes) / 1048576.0)
+                }
+            } else {
+                displaySize = ""
+            }
+
+            // Extract filename
+            let metadata = item["metadata"] as? [String: Any]
+            let filename = metadata?["original_filename"] as? String
+
+            return [
                 "id": (item["id"] as? NSNumber)?.stringValue ?? "",
-                "contentType": item["content_type"] as? String ?? "text",
-                "contentPreview": item["content_preview"] as? String ?? item["content"] as? String ?? "",
+                "contentType": contentType,
+                "contentPreview": item["content_preview"] as? String ?? item["content"] as? String
+                    ?? "",
                 "thumbnailPath": item["thumbnail_path"] as? String,
                 "deviceType": item["device_type"] as? String ?? "Unknown",
                 "createdAt": item["created_at"] as? String ?? Date().toISO8601String(),
                 "isEncrypted": item["is_encrypted"] as? Bool ?? false,
+                "isFile": isFile,
+                "isImage": isImage,
+                "displaySize": displaySize,
+                "filename": filename ?? "",
             ]
         }
     }
 }
-
-/// Copy to clipboard intent for widget tap
-/// Triggered when user taps a clipboard item in the widget
 @available(iOS 17.0, *)
 struct CopyToClipboardIntent: AppIntent {
     static var title: LocalizedStringResource = "Copy to Clipboard"
@@ -122,10 +158,37 @@ struct CopyToClipboardIntent: AppIntent {
     @Parameter(title: "Content") var content: String
     @Parameter(title: "Content Type") var contentType: String
     @Parameter(title: "Thumbnail Path") var thumbnailPath: String
+    @Parameter(title: "Action") var action: String?
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        print("[CopyToClipboardIntent] 📋 Copying: type=\(contentType), content=\(content.prefix(50))...")
+        let actualAction = action ?? "copy"
+        print(
+            "[CopyToClipboardIntent] 🚀 Performing action: \(actualAction) for type: \(contentType)")
+
+        if actualAction == "share" {
+            // Open main app with share action
+            // The URL scheme opening happens automatically if we used Link, but for AppIntent,
+            // we rely on openAppWhenRun = true and the system launching the app.
+            // Typically we pass data via NSUserActivity or URL, but Widget intents are limited.
+            // HOWEVER, since openAppWhenRun is true, the app WILL launch.
+            // We need to pass the intent details to the app delegate.
+            // Swift AppIntents don't automatically populate launch options with custom keys easily without specific handling.
+            // A better approach for "Share": Use a Link() in SwiftUI instead of a Button(intent:).
+            // But sticking to Intent:
+            // We can use `OpenURLIntent` or similiar, but we need custom logic.
+            // Actually, `openAppWhenRun = true` continues execution in the app?
+            // No, it just brings app to foreground.
+            // Best practice for Widget -> App deep link is using Link(destination: URL(...))
+            // I will update ClipboardWidgetView to use Link for "share" action instead of this Intent!
+            // BUT, I will leave this Intent support here just in case.
+            return .result(
+                opensIntent: OpenURLIntent(URL(string: "ghostcopy://share/\(clipboardId)")!))
+        }
+
+        print(
+            "[CopyToClipboardIntent] 📋 Copying: type=\(contentType), content=\(content.prefix(50))..."
+        )
 
         // Check if it's an image type
         if contentType.lowercased().contains("image") && !thumbnailPath.isEmpty {
@@ -150,9 +213,6 @@ struct CopyToClipboardIntent: AppIntent {
         return .result()
     }
 }
-
-// MARK: - Error Types
-
 enum RefreshError: Error, LocalizedError {
     case invalidResponse
     case invalidJSON

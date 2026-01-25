@@ -1,6 +1,3 @@
-import SwiftUI
-import WidgetKit
-
 /// SwiftUI view for ClipboardWidget
 /// Displays last 5 clipboard items with manual refresh capability
 ///
@@ -8,14 +5,28 @@ import WidgetKit
 /// - No expensive layout operations
 /// - Images loaded from local cache only
 /// - Lightweight preview text generation
+import SwiftUI
+
+// MARK: - Widget Extensions
+
+// MARK: - Preview
+
+import WidgetKit
+
 struct ClipboardWidgetView: View {
     var entry: ClipboardWidgetProvider.Entry
 
     var body: some View {
         ZStack {
             // Background
-            Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.05, green: 0.05, blue: 0.07, alpha: 1) : UIColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1) })
-                .ignoresSafeArea()
+            Color(
+                UIColor {
+                    $0.userInterfaceStyle == .dark
+                        ? UIColor(red: 0.05, green: 0.05, blue: 0.07, alpha: 1)
+                        : UIColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1)
+                }
+            )
+            .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 // Header with refresh button
@@ -39,7 +50,12 @@ struct ClipboardWidgetView: View {
                             .foregroundColor(Color(red: 0.35, green: 0.4, blue: 0.95))
                             .frame(width: 28, height: 28)
                             .background(
-                                Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.12, green: 0.12, blue: 0.16, alpha: 1) : UIColor(red: 0.93, green: 0.93, blue: 0.96, alpha: 1) })
+                                Color(
+                                    UIColor {
+                                        $0.userInterfaceStyle == .dark
+                                            ? UIColor(red: 0.12, green: 0.12, blue: 0.16, alpha: 1)
+                                            : UIColor(red: 0.93, green: 0.93, blue: 0.96, alpha: 1)
+                                    })
                             )
                             .cornerRadius(6)
                     }
@@ -96,22 +112,30 @@ struct ClipboardWidgetView: View {
 
     /// Individual clipboard item row
     private func clipboardItemRow(_ item: ClipboardItemData) -> some View {
-        Button(intent: CopyToClipboardIntent(
-            clipboardId: item.id,
-            content: item.contentPreview,
-            contentType: item.contentType,
-            thumbnailPath: item.thumbnailPath ?? ""
-        )) {
+        Button(
+            intent: CopyToClipboardIntent(
+                clipboardId: item.id,
+                content: item.contentPreview,
+                contentType: item.contentType,
+                thumbnailPath: item.thumbnailPath ?? "",
+                action: (item.isFile || item.isImage) ? "share" : "copy"
+            )
+        ) {
             HStack(spacing: 10) {
                 // Icon or thumbnail
                 ZStack {
-                    Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.12, green: 0.12, blue: 0.16, alpha: 1) : UIColor(red: 0.93, green: 0.93, blue: 0.96, alpha: 1) })
+                    Color(
+                        UIColor {
+                            $0.userInterfaceStyle == .dark
+                                ? UIColor(red: 0.12, green: 0.12, blue: 0.16, alpha: 1)
+                                : UIColor(red: 0.93, green: 0.93, blue: 0.96, alpha: 1)
+                        })
 
                     if item.isEncrypted {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(Color(red: 0.35, green: 0.4, blue: 0.95))
-                    } else if let thumbnailPath = item.thumbnailPath, item.contentType.lowercased().contains("image") {
+                    } else if let thumbnailPath = item.thumbnailPath, item.isImage {
                         // Display actual image thumbnail for images
                         if let uiImage = UIImage(contentsOfFile: thumbnailPath) {
                             Image(uiImage: uiImage)
@@ -137,14 +161,20 @@ struct ClipboardWidgetView: View {
 
                 // Content preview
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.contentPreview)
+                    Text(item.isFile ? (item.filename ?? item.contentPreview) : item.contentPreview)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
-                    Text(item.deviceType)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        Text(item.deviceType)
+
+                        if let size = item.displaySize, !size.isEmpty {
+                            Text("• \(size)")
+                        }
+                    }
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundColor(.secondary)
                 }
 
                 Spacer()
@@ -166,18 +196,17 @@ struct ClipboardWidgetView: View {
     /// Get SF Symbol for content type
     private func iconForContentType(_ type: String) -> String {
         switch type.lowercased() {
-        case "image":
-            return "photo"
-        case "json":
-            return "curlybraces"
-        case "html", "markdown":
-            return "doc.text"
-        case "jwt":
-            return "lock"
-        case "color":
-            return "rectangle.fill"
-        default:
-            return "doc"
+        case "image": return "photo"
+        case "json": return "curlybraces"
+        case "html", "markdown": return "doc.text"
+        case "jwt": return "lock"
+        case "color": return "rectangle.fill"
+        case "file_pdf": return "doc.fill"
+        case "file_zip", "file_tar", "file_gz": return "doc.zipper"
+        case "file_doc", "file_docx", "file_txt": return "doc.text.fill"
+        case "file_mp4": return "film.fill"
+        case "file_mp3", "file_wav": return "waveform"
+        default: return "doc"
         }
     }
 
@@ -204,9 +233,6 @@ struct ClipboardWidgetView: View {
         }
     }
 }
-
-// MARK: - Widget Extensions
-
 extension View {
     func widgetBackground(_ backgroundView: some View) -> some View {
         if #available(iOS 17.0, *) {
@@ -220,9 +246,6 @@ extension View {
         }
     }
 }
-
-// MARK: - Preview
-
 #Preview(as: .systemSmall) {
     ClipboardWidget()
 } timeline: {

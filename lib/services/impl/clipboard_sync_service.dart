@@ -10,11 +10,13 @@ import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../clipboard_service.dart';
 import '../clipboard_sync_service.dart';
+import '../file_type_service.dart';
 import '../game_mode_service.dart';
 import '../notification_service.dart';
 import '../obsidian_service.dart';
 import '../security_service.dart';
 import '../settings_service.dart';
+import '../temp_file_service.dart';
 import '../url_shortener_service.dart';
 import '../webhook_service.dart';
 
@@ -31,6 +33,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     required ISettingsService settingsService,
     required ISecurityService securityService,
     IClipboardService? clipboardService,
+    ITempFileService? tempFileService,
     INotificationService? notificationService,
     IGameModeService? gameModeService,
     IUrlShortenerService? urlShortenerService,
@@ -40,6 +43,7 @@ class ClipboardSyncService implements IClipboardSyncService {
         _settingsService = settingsService,
         _securityService = securityService,
         _clipboardService = clipboardService ?? ClipboardService.instance,
+        _tempFileService = tempFileService ?? TempFileService.instance,
         _notificationService = notificationService,
         _gameModeService = gameModeService,
         _urlShortenerService = urlShortenerService,
@@ -50,6 +54,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   final ISettingsService _settingsService;
   final ISecurityService _securityService;
   final IClipboardService _clipboardService;
+  final ITempFileService _tempFileService;
   final INotificationService? _notificationService;
   final IGameModeService? _gameModeService;
   final IUrlShortenerService? _urlShortenerService;
@@ -232,8 +237,13 @@ class ClipboardSyncService implements IClipboardSyncService {
               _gameModeService?.queueNotification(item);
               debugPrint('[ClipboardSyncService] Notification queued (Game Mode)');
             } else {
+              final contentTypeStr = item.isFile
+                  ? 'file'
+                  : item.isImage
+                      ? 'image'
+                      : 'content';
               _notificationService?.showToast(
-                message: 'Auto-copied ${item.isImage ? 'image' : 'content'} from $deviceType',
+                message: 'Auto-copied $contentTypeStr from $deviceType',
                 type: NotificationType.success,
               );
             }
@@ -253,15 +263,27 @@ class ClipboardSyncService implements IClipboardSyncService {
         if (history.isEmpty) return;
 
         final item = history.first;
-        final truncated = item.content.length > 40
-            ? '${item.content.substring(0, 40)}...'
-            : item.content;
+
+        // Format message based on content type
+        String message;
+        if (item.isFile) {
+          final filename = item.metadata?.originalFilename ?? 'file';
+          message = 'New file from $deviceType: "$filename"';
+        } else if (item.isImage) {
+          final size = item.displaySize;
+          message = 'New image from $deviceType ($size)';
+        } else {
+          final truncated = item.content.length > 40
+              ? '${item.content.substring(0, 40)}...'
+              : item.content;
+          message = 'New clip from $deviceType: "$truncated"';
+        }
 
         if (_gameModeService?.isActive ?? false) {
           _gameModeService?.queueNotification(item);
         } else {
           _notificationService?.showClickableToast(
-            message: 'New clip from $deviceType: "$truncated"',
+            message: message,
             actionLabel: 'Copy',
             duration: const Duration(seconds: 5),
             onAction: () async {
@@ -292,6 +314,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// - Plain text (copied as plain text)
   /// - Rich text (HTML/Markdown - HTML copied with plain text fallback)
   /// - Images (PNG/JPEG/GIF - downloaded from storage and copied as image)
+  /// - Files (PDF, DOC, ZIP, etc. - downloaded to temp, path copied to clipboard)
   /// - Encrypted content (already decrypted by repository)
   Future<void> _copyItemToClipboard(ClipboardItem item) async {
     switch (item.contentType) {
@@ -331,6 +354,35 @@ class ClipboardSyncService implements IClipboardSyncService {
         debugPrint(
           '[ClipboardSyncService] Copied image (${item.displaySize}) to clipboard',
         );
+
+      default:
+        // Files - download from storage, save to temp, copy path to clipboard
+        if (item.isFile) {
+          if (item.storagePath == null) {
+            throw RepositoryException(
+              'File item ${item.id} missing storage_path',
+            );
+          }
+
+          final fileBytes = await _clipboardRepository.downloadFile(item);
+          if (fileBytes == null || fileBytes.isEmpty) {
+            throw RepositoryException(
+              'Failed to download file from storage path: ${item.storagePath}',
+            );
+          }
+
+          // Get original filename from metadata, fallback to generic name
+          final filename = item.metadata?.originalFilename ?? 'file.bin';
+
+          // Save to temp directory
+          final tempFile = await _tempFileService.saveTempFile(fileBytes, filename);
+
+          // Copy file path to clipboard
+          await _clipboardService.writeFilePath(tempFile.path);
+          debugPrint(
+            '[ClipboardSyncService] Copied file ($filename, ${item.displaySize}) to clipboard',
+          );
+        }
     }
   }
 
@@ -367,7 +419,9 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Determine current clipboard format (cheapest operation)
       String? currentFormat;
-      if (reader.canProvide(Formats.png)) {
+      if (reader.canProvide(Formats.fileUri)) {
+        currentFormat = 'file';
+      } else if (reader.canProvide(Formats.png)) {
         currentFormat = 'image/png';
       } else if (reader.canProvide(Formats.jpeg)) {
         currentFormat = 'image/jpeg';
@@ -377,7 +431,7 @@ class ClipboardSyncService implements IClipboardSyncService {
         currentFormat = 'html';
       }
 
-      // Skip full read if format hasn't changed (prevents re-reading 10MB images)
+      // Skip full read if format hasn't changed (prevents re-reading 10MB files)
       if (currentFormat != null && currentFormat == _lastClipboardFormat) {
         return;
       }
@@ -425,7 +479,16 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
 
       // Auto-send based on content type
-      if (clipboardContent.hasImage) {
+      if (clipboardContent.hasFile) {
+        debugPrint(
+          '[ClipboardSyncService] Auto-sending file: ${clipboardContent.filename} (${clipboardContent.fileBytes!.length} bytes)',
+        );
+        await _autoSendFile(
+          clipboardContent.fileBytes!,
+          clipboardContent.filename!,
+          clipboardContent.mimeType,
+        );
+      } else if (clipboardContent.hasImage) {
         debugPrint(
           '[ClipboardSyncService] Auto-sending image: ${clipboardContent.imageBytes!.length} bytes (${clipboardContent.mimeType})',
         );
@@ -616,6 +679,75 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Show error toast
       _notificationService?.showToast(
         message: 'Auto-send image failed',
+        type: NotificationType.error,
+      );
+    }
+  }
+
+  /// Auto-send file content
+  Future<void> _autoSendFile(Uint8List fileBytes, String filename, String? mimeType) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Content deduplication (hash file bytes)
+      final contentHash = md5.convert(fileBytes).toString();
+      if (contentHash == _lastSentContentHash) {
+        debugPrint('[ClipboardSyncService] Skipping duplicate file');
+        return;
+      }
+      _lastSentContentHash = contentHash;
+
+      // Use FileTypeService to detect file type
+      final fileTypeInfo = FileTypeService.instance.detectFromBytes(fileBytes, filename);
+
+      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
+      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+
+      // Get target devices
+      final targetDevices = await _settingsService.getAutoSendTargetDevices();
+
+      // Convert Set to List (null if empty = all devices)
+      final targetDevicesList = targetDevices.isEmpty ? null : targetDevices.toList();
+
+      // Insert file using repository
+      final result = await _clipboardRepository.insertFile(
+        userId: userId,
+        deviceType: currentDeviceType,
+        deviceName: currentDeviceName,
+        fileBytes: fileBytes,
+        mimeType: mimeType ?? fileTypeInfo.mimeType,
+        contentType: fileTypeInfo.contentType,
+        originalFilename: filename,
+        targetDeviceTypes: targetDevicesList,
+      );
+
+      _lastSendTime = DateTime.now();
+
+      // Notify UI
+      onClipboardSent?.call(result);
+
+      // Show success toast
+      final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
+      final targetText = targetDevices.isEmpty
+          ? 'all devices'
+          : targetDevices.length == 1
+              ? targetDevices.first
+              : '${targetDevices.length} device types';
+      _notificationService?.showToast(
+        message: 'Auto-sent file "$filename" ($sizeKB KB) to $targetText',
+        type: NotificationType.success,
+      );
+
+      debugPrint(
+        '[ClipboardSyncService] Auto-sent file to ${targetDevices.isEmpty ? "all devices" : targetDevices.join(", ")}',
+      );
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] Auto-send file failed: $e');
+
+      // Show error toast
+      _notificationService?.showToast(
+        message: 'Auto-send file failed',
         type: NotificationType.error,
       );
     }

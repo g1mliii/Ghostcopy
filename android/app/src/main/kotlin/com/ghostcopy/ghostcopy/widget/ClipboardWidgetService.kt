@@ -70,20 +70,29 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
       // Set content preview text
       views.setTextViewText(R.id.content_preview, item.contentPreview)
 
-      // Set timestamp
-      views.setTextViewText(R.id.timestamp, formatTimeAgo(item.createdAt))
-
       // Determine icon based on content type
       val iconRes = when {
-        item.contentType.startsWith("image_") -> R.drawable.ic_image
+        item.isImage -> R.drawable.ic_image
+        item.isFile -> R.drawable.ic_file
         item.contentType == "html" -> R.drawable.ic_html_code
         item.contentType == "markdown" -> R.drawable.ic_text_snippets
         else -> R.drawable.ic_text_fields
       }
       views.setImageViewResource(R.id.content_icon, iconRes)
 
+      // File/Image override: Show filename and size
+      if (item.isFile || item.isImage) {
+        val size = item.displaySize ?: ""
+        val filename = item.filename ?: (if (item.isImage) "Image" else "File")
+        
+        views.setTextViewText(R.id.content_preview, filename)
+        views.setTextViewText(R.id.timestamp, size.ifEmpty { formatTimeAgo(item.createdAt) })
+      } else {
+        views.setTextViewText(R.id.timestamp, formatTimeAgo(item.createdAt))
+      }
+
       // Load and set thumbnail if available
-      if (!item.thumbnailPath.isNullOrEmpty() && item.contentType.startsWith("image_")) {
+      if (!item.thumbnailPath.isNullOrEmpty() && item.isImage) {
         try {
           val bitmap = BitmapFactory.decodeFile(item.thumbnailPath)
           if (bitmap != null) {
@@ -104,6 +113,14 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
         putExtra(KEY_CONTENT_PREVIEW, item.contentPreview)
         putExtra(KEY_THUMBNAIL_PATH, item.thumbnailPath)
         putExtra(KEY_IS_ENCRYPTED, item.isEncrypted)
+        
+        // Use SHARE action for files/images so they open share sheet/view immediately
+        if (item.isFile || item.isImage) {
+          putExtra("action", "share")
+          putExtra("filename", item.filename)
+        } else {
+          putExtra("action", "copy")
+        }
       }
       views.setOnClickFillInIntent(R.id.item_container, fillInIntent)
 

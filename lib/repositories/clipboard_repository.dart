@@ -9,8 +9,45 @@ abstract class IClipboardRepository {
   /// Insert a new clipboard item and return it with generated ID
   Future<ClipboardItem> insert(ClipboardItem item);
 
+  /// Insert a file clipboard item (supports all file types under 10MB)
+  ///
+  /// Uploads file to Supabase Storage and creates DB record with storage_path
+  /// Files are NOT encrypted (too large, would exceed 10MB limit after base64)
+  /// Preserves original filename in metadata
+  Future<ClipboardItem> insertFile({
+    required String userId,
+    required String deviceType,
+    required String? deviceName,
+    required Uint8List fileBytes,
+    required String mimeType,
+    required ContentType contentType,
+    String? originalFilename,
+    int? width,
+    int? height,
+    List<String>? targetDeviceTypes,
+  });
+
+  /// Insert a file with progress reporting (for UI feedback)
+  ///
+  /// Yields progress values from 0.0 to 1.0 during upload
+  /// Returns the created ClipboardItem when complete
+  /// Throws exceptions for network/storage errors
+  Stream<double> uploadFileWithProgress({
+    required String userId,
+    required String deviceType,
+    required String? deviceName,
+    required Uint8List fileBytes,
+    required String mimeType,
+    required ContentType contentType,
+    String? originalFilename,
+    int? width,
+    int? height,
+    List<String>? targetDeviceTypes,
+  });
+
   /// Insert an image clipboard item
   ///
+  /// Convenience wrapper around insertFile for images
   /// Uploads image to Supabase Storage and creates DB record with storage_path
   /// Images are NOT encrypted (too large, would exceed 10MB limit after base64)
   Future<ClipboardItem> insertImage({

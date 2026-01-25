@@ -116,7 +116,11 @@ class WidgetDataManager(private val context: Context) {
             thumbnailPath = item["thumbnailPath"] as? String,
             deviceType = item["deviceType"] as? String ?: "unknown",
             createdAt = item["createdAt"] as? String ?: "",
-            isEncrypted = item["isEncrypted"] as? Boolean ?: false
+            isEncrypted = item["isEncrypted"] as? Boolean ?: false,
+            isFile = item["isFile"] as? Boolean ?: false,
+            isImage = item["isImage"] as? Boolean ?: false,
+            displaySize = item["displaySize"] as? String,
+            filename = item["filename"] as? String
           )
         } catch (e: Exception) {
           Log.e(TAG, "❌ Failed to parse item: ${e.message}")
@@ -162,4 +166,8 @@ data class ClipboardItemData(
   val deviceType: String,
   val createdAt: String,
   val isEncrypted: Boolean,
+  val isFile: Boolean = false,
+  val isImage: Boolean = false,
+  val displaySize: String? = null,
+  val filename: String? = null,
 )
