@@ -362,6 +362,46 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           }
           return false;
 
+        case 'handleShareFile':
+          // ignore: avoid_dynamic_calls
+          final fileBytes = call.arguments['fileBytes'] as Uint8List?;
+          // ignore: avoid_dynamic_calls
+          final mimeType = call.arguments['mimeType'] as String?;
+          // ignore: avoid_dynamic_calls
+          final filename = call.arguments['filename'] as String?;
+
+          if (fileBytes != null && fileBytes.isNotEmpty && filename != null) {
+            // Validate size (10MB limit - defense in depth)
+            if (fileBytes.length > 10 * 1024 * 1024) {
+              debugPrint(
+                '[MobileMain] ❌ File too large: ${fileBytes.length} bytes',
+              );
+              showGhostToast(
+                context,
+                'File too large (max 10MB)',
+                icon: Icons.error_outline,
+                type: GhostToastType.error,
+              );
+              return false;
+            }
+
+            final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
+
+            // Show device selector
+            final selectedDeviceTypes = await _showDeviceSelectorDialog(
+              '$filename ($sizeKB KB)',
+            );
+
+            if (selectedDeviceTypes != null) {
+              // Save in background (don't await)
+              unawaited(
+                _saveSharedFile(fileBytes, mimeType!, filename, selectedDeviceTypes),
+              );
+            }
+            return true;
+          }
+          return false;
+
         default:
           return false;
       }
@@ -861,6 +901,64 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Failed to share image'),
+            backgroundColor: Colors.red.shade400,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveSharedFile(
+    Uint8List fileBytes,
+    String mimeType,
+    String filename,
+    Set<String> selectedDeviceTypes,
+  ) async {
+    try {
+      // Detect file type from bytes and filename
+      final fileTypeInfo =
+          FileTypeService.instance.detectFromBytes(fileBytes, filename);
+
+      final deviceType = ClipboardRepository.getCurrentDeviceType();
+
+      // Upload file to Supabase
+      await widget.clipboardRepository.insertFile(
+        userId: widget.authService.currentUserId!,
+        deviceType: deviceType,
+        deviceName: null,
+        fileBytes: fileBytes,
+        mimeType: mimeType,
+        contentType: fileTypeInfo.contentType,
+        originalFilename: filename,
+        targetDeviceTypes: selectedDeviceTypes.isEmpty
+            ? null
+            : selectedDeviceTypes.toList(),
+      );
+
+      if (mounted) {
+        // Show success snackbar
+        final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              selectedDeviceTypes.isEmpty
+                  ? 'Shared $filename ($sizeKB KB) to all devices'
+                  : 'Shared $filename ($sizeKB KB) to ${selectedDeviceTypes.join(", ")}',
+            ),
+            backgroundColor: GhostColors.success,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        debugPrint('[ShareSheet] File saved: $filename ($sizeKB KB)');
+      }
+    } on Exception catch (e) {
+      debugPrint('[ShareSheet] Error saving shared file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to share file'),
             backgroundColor: Colors.red.shade400,
             duration: const Duration(seconds: 2),
           ),
@@ -1558,6 +1656,61 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
       final file = result.files.single;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+
+      // Validate file size (10MB limit)
+      if (bytes.length > 10485760) {
+        if (mounted) {
+          showGhostToast(
+            context,
+            'File too large: ${file.name} (max 10MB)',
+            icon: Icons.error_outline,
+            type: GhostToastType.error,
+          );
+        }
+        return;
+      }
+
+      // Warn for large files (>5MB)
+      if (bytes.length > 5242880) {
+        if (mounted) {
+          final sizeMB = (bytes.length / 1048576).toStringAsFixed(1);
+          final shouldContinue = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: GhostColors.surface,
+              title: const Text(
+                'Large File Warning',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: GhostColors.textPrimary,
+                ),
+              ),
+              content: Text(
+                'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: GhostColors.textMuted,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Upload'),
+                ),
+              ],
+            ),
+          ) ?? false;
+
+          if (!shouldContinue) {
+            return;
+          }
+        }
+      }
 
       // Determine device type
       final deviceType = ClipboardRepository.getCurrentDeviceType();

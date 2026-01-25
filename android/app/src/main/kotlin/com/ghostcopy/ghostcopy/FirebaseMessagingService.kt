@@ -31,22 +31,43 @@ class FirebaseMessagingService : FirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     try {
       // Extract FCM data
-      val clipboardId = remoteMessage.data["clipboard_id"] ?: ""
-      val clipboardContent = remoteMessage.data["clipboard_content"] ?: ""
-      val deviceType = remoteMessage.data["device_type"] ?: "Another device"
-      val contentType = remoteMessage.data["content_type"] ?: "text"
+      val data = remoteMessage.data
+      val clipboardId = data["clipboard_id"] ?: ""
+      val clipboardContent = data["clipboard_content"] ?: ""
+      val deviceType = data["device_type"] ?: "Another device"
+      val contentType = data["content_type"] ?: "text"
+      val fileSize = data["file_size"]
+      val filename = data["filename"]
+      val mimeType = data["mime_type"]
 
       Log.d(TAG, "📬 FCM received: id=$clipboardId, type=$contentType, size=${clipboardContent.length}")
 
-      // 1. Auto-copy to clipboard if content available
-      if (clipboardContent.isNotEmpty()) {
+      // Determine if this is a file/image
+      val isFile = contentType.startsWith("file_")
+      val isImage = contentType.startsWith("image_")
+
+      // 1. Auto-copy to clipboard OR notify for files
+      if (isFile || isImage) {
+        // Files/images cannot be auto-copied to clipboard on Android
+        // User must tap notification to download and share
+        Log.d(TAG, "📎 File/image notification - user must tap to download")
+      } else if (clipboardContent.isNotEmpty()) {
+        // Text content - auto-copy to clipboard
         autoCopyToClipboard(clipboardContent)
         Log.d(TAG, "✅ Auto-copied content from $deviceType")
       }
 
-      // 2. Update widget with new item (if within size limit or for metadata)
+      // 2. Update widget with new item (including file metadata)
       if (clipboardId.isNotEmpty()) {
-        updateWidgetWithNewClip(clipboardId, contentType, clipboardContent)
+        updateWidgetWithNewClip(
+          clipboardId = clipboardId,
+          contentType = contentType,
+          contentPreview = clipboardContent,
+          isFile = isFile,
+          isImage = isImage,
+          displaySize = fileSize,
+          filename = filename
+        )
       }
     } catch (e: Exception) {
       Log.e(TAG, "❌ Error processing FCM message: ${e.message}", e)
@@ -77,19 +98,34 @@ class FirebaseMessagingService : FirebaseMessagingService() {
     clipboardId: String,
     contentType: String,
     contentPreview: String,
+    isFile: Boolean = false,
+    isImage: Boolean = false,
+    displaySize: String? = null,
+    filename: String? = null,
   ) {
     try {
       val dataManager = WidgetDataManager.getInstance(this)
+
+      // Generate appropriate preview text
+      val preview = when {
+        isFile && filename != null -> filename
+        isImage && displaySize != null -> "Image ($displaySize)"
+        else -> contentPreview.take(100)
+      }
 
       // Create widget item data from FCM payload
       val newItem = ClipboardItemData(
         id = clipboardId,
         contentType = contentType,
-        contentPreview = contentPreview.take(100), // Limit preview to 100 chars
+        contentPreview = preview,
         thumbnailPath = null, // Images downloaded separately
         deviceType = "mobile",
         createdAt = Instant.now().toString(),
         isEncrypted = false, // FCM data is unencrypted
+        isFile = isFile,
+        isImage = isImage,
+        displaySize = displaySize,
+        filename = filename
       )
 
       // Add to widget data (will be inserted at position 0, max 5 items)
@@ -98,7 +134,7 @@ class FirebaseMessagingService : FirebaseMessagingService() {
       // Notify widget to update
       notifyWidgetUpdate()
 
-      Log.d(TAG, "✅ Updated widget with new clip: $clipboardId")
+      Log.d(TAG, "✅ Updated widget with new clip: $clipboardId (isFile=$isFile, isImage=$isImage)")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to update widget: ${e.message}", e)
     }

@@ -115,6 +115,13 @@ class MainActivity : FlutterActivity() {
                     saveSharedImageFast(imageUri)
                 }
             }
+            // Handle all other file types (PDFs, DOCs, ZIPs, etc.)
+            else -> {
+                val fileUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                if (fileUri != null) {
+                    saveSharedFileFast(fileUri)
+                }
+            }
         }
     }
 
@@ -175,6 +182,61 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error reading shared image: ${e.message}", e)
             Toast.makeText(this, "Failed to share image", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun saveSharedFileFast(fileUri: Uri) {
+        try {
+            // Read file bytes from URI
+            val inputStream = contentResolver.openInputStream(fileUri)
+            val bytes = inputStream?.readBytes()
+            inputStream?.close()
+
+            if (bytes == null || bytes.isEmpty()) {
+                Log.e(TAG, "❌ Failed to read file from URI: $fileUri")
+                Toast.makeText(this, "Failed to read file", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+
+            // Validate size (10MB limit)
+            val maxSize = 10 * 1024 * 1024 // 10MB
+            if (bytes.size > maxSize) {
+                Log.e(TAG, "❌ File too large: ${bytes.size} bytes (max: $maxSize)")
+                Toast.makeText(this, "File too large (max 10MB)", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+
+            // Get MIME type
+            val mimeType = contentResolver.getType(fileUri) ?: "application/octet-stream"
+
+            // Get original filename from URI
+            val filename = contentResolver.query(fileUri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                cursor.moveToFirst()
+                cursor.getString(nameIndex)
+            } ?: "file"
+
+            val channel = MethodChannel(
+                flutterEngine!!.dartExecutor.binaryMessenger,
+                SHARE_CHANNEL
+            )
+
+            // Pass raw bytes directly to Flutter
+            channel.invokeMethod("handleShareFile", mapOf(
+                "fileBytes" to bytes,
+                "mimeType" to mimeType,
+                "filename" to filename
+            ))
+            // Save started in background, close activity
+            finish()
+
+            Log.d(TAG, "✅ Shared file: $filename ($mimeType), ${bytes.size / 1024}KB")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error reading shared file: ${e.message}", e)
+            Toast.makeText(this, "Failed to share file", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
@@ -240,7 +302,7 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Fetch clipboard item from Supabase database and copy to clipboard.
+     * Fetch clipboard item from Supabase database and copy to clipboard or share.
      * Called when content is too large to fit in FCM payload.
      *
      * Uses the notifications method channel for consistency with iOS.
@@ -257,16 +319,24 @@ class MainActivity : FlutterActivity() {
                 NOTIFICATION_CHANNEL
             )
 
-            // Invoke Flutter method to fetch clipboard item and copy to clipboard
+            // Determine action based on content type
+            // Files and images should open share sheet, text gets copied to clipboard
+            val action = if (expectedContentType.startsWith("image_") || expectedContentType.startsWith("file_")) {
+                "share"
+            } else {
+                "copy"
+            }
+
+            // Invoke Flutter method to fetch clipboard item and perform action
             // Same method call that iOS uses via AppDelegate
             channel.invokeMethod("handleNotificationAction", mapOf(
                 "clipboardId" to clipboardId,
-                "action" to "copy"
+                "action" to action
             ))
-            Log.d(TAG, "✅ Triggered copy action for clipboard item $clipboardId")
+            Log.d(TAG, "✅ Triggered $action action for clipboard item $clipboardId ($expectedContentType)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)
-            Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Failed to process item", Toast.LENGTH_SHORT).show()
         }
     }
 

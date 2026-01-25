@@ -382,6 +382,12 @@ class ClipboardSyncService implements IClipboardSyncService {
           debugPrint(
             '[ClipboardSyncService] Copied file ($filename, ${item.displaySize}) to clipboard',
           );
+
+          // Schedule temp file cleanup after clipboard operation completes
+          // Wait 5 seconds to ensure clipboard has finished reading the file
+          Future.delayed(const Duration(seconds: 5), () {
+            _tempFileService.deleteTempFile(tempFile.path);
+          });
         }
     }
   }

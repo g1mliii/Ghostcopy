@@ -73,6 +73,9 @@ Future<void> main(List<String> args) async {
   // Cleanup old temp files from previous sessions
   await TempFileService.instance.cleanupTempFiles();
 
+  // Start periodic cleanup timer (every 15 minutes)
+  TempFileService.instance.startPeriodicCleanup();
+
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');
 
@@ -551,6 +554,9 @@ class _MyAppState extends State<MyApp> {
       // Dispose widget service (singleton) to clean up method channel
       WidgetService().dispose();
     }
+
+    // Stop temp file cleanup timer (cross-platform)
+    TempFileService.instance.stopPeriodicCleanup();
   }
 
   Future<void> _handleQuit() async {

@@ -133,6 +133,14 @@ import WidgetKit
       notifyFlutterOfWidgetAction(clipboardId)
     }
 
+    // Check if opened via widget share action (ghostcopy://share/{clipboard_id})
+    if url.scheme == "ghostcopy" && url.host == "share" {
+      // Extract clipboard ID from path
+      let clipboardId = url.lastPathComponent
+      print("[AppDelegate] 📤 Widget deep link: share clipboard \(clipboardId)")
+      notifyFlutterOfNotificationAction(clipboardId, action: "share")
+    }
+
     return super.application(application, open: url, options: options)
   }
 
@@ -252,14 +260,22 @@ import WidgetKit
 
     // Extract clipboard content from FCM data payload
     let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
+    let contentType = userInfo["content_type"] as? String ?? "text"
     let deviceType = userInfo["device_type"] as? String ?? "Another device"
 
     print("📱 FCM notification received in foreground from \(deviceType)")
 
-    if !clipboardContent.isEmpty {
-      // Auto-copy when app is in foreground
+    // Check if this is a file/image
+    let isFile = contentType.hasPrefix("file_")
+    let isImage = contentType.hasPrefix("image_")
+
+    if !clipboardContent.isEmpty && !isFile && !isImage {
+      // Auto-copy text content when app is in foreground
+      // Files/images cannot be auto-copied - user must tap notification
       UIPasteboard.general.string = clipboardContent
       print("✅ Auto-copied to clipboard: \(clipboardContent.prefix(50))...")
+    } else if isFile || isImage {
+      print("📎 File/image notification - user must tap to download and share")
     }
 
     // Update widget with new clipboard item
@@ -275,32 +291,48 @@ import WidgetKit
   /// Adds new item to widget storage and reloads widget timeline
   private func updateWidgetForFCMNotification(_ userInfo: [AnyHashable: Any]) {
     // Extract item data from FCM payload
-    guard let clipboardContent = userInfo["clipboard_content"] as? String,
-          !clipboardContent.isEmpty else {
-      return
-    }
-
+    let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
     let contentType = (userInfo["content_type"] as? String) ?? "text"
-    let contentPreview = (userInfo["content_preview"] as? String) ?? clipboardContent
     let deviceType = (userInfo["device_type"] as? String) ?? "Another device"
     let clipboardId = (userInfo["clipboard_id"] as? String) ?? UUID().uuidString
+    let fileSize = userInfo["file_size"] as? String
+    let filename = userInfo["filename"] as? String
+    let mimeType = userInfo["mime_type"] as? String
+
+    // Determine if this is a file/image
+    let isFile = contentType.hasPrefix("file_")
+    let isImage = contentType.hasPrefix("image_")
+
+    // Generate appropriate preview
+    var contentPreview: String
+    if isFile, let fname = filename {
+      contentPreview = fname
+    } else if isImage, let size = fileSize {
+      contentPreview = "Image (\(size))"
+    } else {
+      contentPreview = clipboardContent.isEmpty ? "Content" : String(clipboardContent.prefix(100))
+    }
 
     // Create item dictionary for widget
     let item: [String: Any] = [
       "id": clipboardId,
       "contentType": contentType,
       "contentPreview": contentPreview,
-      "thumbnailPath": userInfo["thumbnail_path"],
+      "thumbnailPath": userInfo["thumbnail_path"] ?? "",
       "deviceType": deviceType,
       "createdAt": Date().toISO8601String(),
       "isEncrypted": (userInfo["is_encrypted"] as? Bool) ?? false,
+      "isFile": isFile,
+      "isImage": isImage,
+      "displaySize": fileSize ?? "",
+      "filename": filename ?? "",
     ]
 
     // Add to widget storage
     let dataManager = WidgetDataManager.shared
     dataManager.addNewClip(item)
 
-    print("[AppDelegate] ✅ Widget updated with FCM notification")
+    print("[AppDelegate] ✅ Widget updated with FCM notification (isFile=\(isFile), isImage=\(isImage))")
   }
 }
 

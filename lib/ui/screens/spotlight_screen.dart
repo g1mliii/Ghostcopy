@@ -820,7 +820,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       final filename = file.name;
       
       // Validate file size (10MB limit) - Check BEFORE reading bytes to save memory
-      if ((await fileObj.length()) > 10485760) {
+      final fileSizeBytes = await fileObj.length();
+      if (fileSizeBytes > 10485760) {
         if (mounted) {
            widget.notificationService?.showToast(
             message: 'File too large: $filename (max 10MB)',
@@ -828,6 +829,48 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           );
         }
         return;
+      }
+
+      // Warn for large files (>5MB)
+      if (fileSizeBytes > 5242880) {
+        if (mounted) {
+          final sizeMB = (fileSizeBytes / 1048576).toStringAsFixed(1);
+          final shouldContinue = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: GhostColors.surface,
+              title: const Text(
+                'Large File Warning',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: GhostColors.textPrimary,
+                ),
+              ),
+              content: Text(
+                'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: GhostColors.textMuted,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Upload'),
+                ),
+              ],
+            ),
+          ) ?? false;
+
+          if (!shouldContinue) {
+            return;
+          }
+        }
       }
 
       // Read file bytes
@@ -2088,12 +2131,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                         
                                         final filename = item.metadata?.originalFilename ?? 'file.bin';
                                         final tempFile = await TempFileService.instance.saveTempFile(bytes, filename);
-                                        
+
                                         await ClipboardService.instance.writeFilePath(tempFile.path);
-                                        
+
                                         debugPrint(
                                           '[Spotlight] File copied to clipboard: $filename',
                                         );
+
+                                        // Schedule temp file cleanup after clipboard operation
+                                        Future.delayed(const Duration(seconds: 5), () {
+                                          TempFileService.instance.deleteTempFile(tempFile.path);
+                                        });
 
                                         // Notify sync service
                                         widget.clipboardSyncService

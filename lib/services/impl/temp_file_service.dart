@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -14,6 +15,7 @@ class TempFileService implements ITempFileService {
   static final TempFileService instance = TempFileService._();
 
   static const String _filePrefix = 'ghostcopy_';
+  Timer? _periodicCleanupTimer;
 
   @override
   Future<File> saveTempFile(Uint8List bytes, String filename) async {
@@ -95,5 +97,32 @@ class TempFileService implements ITempFileService {
       debugPrint('[TempFileService] ✗ Failed to delete temp file: $e');
       // Don't throw - deletion is best effort
     }
+  }
+
+  /// Start periodic cleanup timer (runs every 15 minutes)
+  ///
+  /// Should be called once on app startup after initial cleanup
+  void startPeriodicCleanup() {
+    // Cancel existing timer if any
+    _periodicCleanupTimer?.cancel();
+
+    // Run cleanup every 15 minutes
+    _periodicCleanupTimer = Timer.periodic(
+      const Duration(minutes: 15),
+      (_) {
+        cleanupTempFiles();
+      },
+    );
+
+    debugPrint('[TempFileService] 🔄 Periodic cleanup started (every 15 min)');
+  }
+
+  /// Stop periodic cleanup timer
+  ///
+  /// Should be called on app shutdown for cleanup
+  void stopPeriodicCleanup() {
+    _periodicCleanupTimer?.cancel();
+    _periodicCleanupTimer = null;
+    debugPrint('[TempFileService] ⏹ Periodic cleanup stopped');
   }
 }
