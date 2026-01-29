@@ -4,8 +4,10 @@
 <head>
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:;">
     <title>GhostCopy - Privacy Protocol</title>
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <!-- Preconnect to external domains for faster resource loading -->
     <link href="https://fonts.googleapis.com" rel="preconnect" />
     <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
     <link
@@ -14,33 +16,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
         rel="stylesheet" />
-    <script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "primary": "#e77255", // Burnt Sienna
-                        "slate-deep": "#1a1a1d",
-                        "stone-dark": "#211f1e",
-                        "stone-heavy": "#151413",
-                        "stone-light": "#2d2a28",
-                        "gold-light": "#C5A059",
-                        "gold-dark": "#9A7B4F",
-                    },
-                    fontFamily: {
-                        "display": ["Noto Serif", "serif"],
-                        "sans": ["Noto Sans", "sans-serif"],
-                    },
-                    backgroundImage: {
-                        'weathered-gold': 'linear-gradient(180deg, #b08d55 0%, #8a6d45 100%)',
-                        'weathered-gold-hover': 'linear-gradient(180deg, #c5a059 0%, #9a7b4f 100%)',
-                        'heat-haze': 'linear-gradient(to top, rgba(231, 114, 85, 0.05), transparent 40%)',
-                    },
-                },
-            },
-        }
-    </script>
+    <link rel="stylesheet" href="./output.css" />
     <style>
         ::-webkit-scrollbar {
             width: 8px
@@ -138,6 +114,16 @@
             </div>
         </footer>
     </div>
+    <script>
+        // Register Service Worker for offline caching
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch((err) => {
+                    console.log('Service Worker registration failed:', err);
+                });
+            });
+        }
+    </script>
 </body>
 
 </html>

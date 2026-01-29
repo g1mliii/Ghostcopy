@@ -18,8 +18,14 @@ class WebhookService implements IWebhookService {
   WebhookService._internal();
   static final WebhookService _instance = WebhookService._internal();
 
-  // Shared HTTP client for all requests (connection pooling)
-  static final http.Client _httpClient = http.Client();
+  // HTTP client for connection pooling (lazy initialized to support dispose/reinit)
+  http.Client? _httpClient;
+  
+  // Lazy getter for HTTP client - creates new instance if disposed
+  http.Client get _client {
+    _httpClient ??= http.Client();
+    return _httpClient!;
+  }
 
   @override
   Future<void> sendWebhook(String url, Map<String, dynamic> payload) async {
@@ -30,7 +36,7 @@ class WebhookService implements IWebhookService {
       try {
         debugPrint('[WebhookService] Sending webhook (attempt ${retries + 1}/$maxRetries)');
 
-        final response = await _httpClient
+        final response = await _client
             .post(
               Uri.parse(url),
               headers: {'Content-Type': 'application/json'},
@@ -67,7 +73,8 @@ class WebhookService implements IWebhookService {
 
   @override
   void dispose() {
-    _httpClient.close();
+    _httpClient?.close();
+    _httpClient = null;
     debugPrint('[WebhookService] ✅ Disposed');
   }
 }

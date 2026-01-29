@@ -198,12 +198,14 @@ class _DevicePanelState extends State<DevicePanel> {
                 final currentDeviceId = widget.deviceService.getCurrentDeviceId();
                 final isCurrentDevice = device.id == currentDeviceId;
 
-                return DeviceListItem(
+                return RepaintBoundary(
                   key: ValueKey(device.id),
-                  device: device,
-                  isCurrentDevice: isCurrentDevice,
-                  onRename: _handleRename,
-                  onRemove: _handleRemove,
+                  child: DeviceListItem(
+                    device: device,
+                    isCurrentDevice: isCurrentDevice,
+                    onRename: _handleRename,
+                    onRemove: _handleRemove,
+                  ),
                 );
               },
             ),

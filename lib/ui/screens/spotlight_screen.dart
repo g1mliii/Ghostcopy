@@ -155,6 +155,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
 
+  // File picker state - prevent window blur from closing window during file selection
+  bool _isFilePickerOpen = false;
+
   // String caching for expensive computations (Performance optimization)
   String? _cachedSendButtonTargetText;
 
@@ -259,21 +262,21 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Debounced to prevent expensive regex/JSON operations on every keystroke
     _textControllerListener = () {
       final text = _textController.text;
-      
-      // Update basic state immediately
-      setState(() => _content = text);
-
-      // Cancel previous debounce detection
+      // Debounce content detection
       _searchDebounceTimer?.cancel();
-      
-      // Debounce heavy transformer detection
-      _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+      _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
         if (!mounted) return;
-        
+
+        // Detect content type (JSON, JWT, hex color, etc.)
+        final detectedType = await widget.transformerService.detectContentType(
+          text,
+        );
+
+        if (!mounted) return;
+
         setState(() {
-          // Detect content type (JSON, JWT, hex color, etc.)
-          _detectedContentType = widget.transformerService.detectContentType(text);
-          
+          _detectedContentType = detectedType;
+
           // Clear previous transformation result when content changes
           _transformationResult = null;
         });
@@ -526,6 +529,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   @override
   void onWindowBlur() {
+    // Don't hide window if file picker is open (file picker takes focus)
+    if (_isFilePickerOpen) {
+      debugPrint('[Spotlight] Window blur ignored - file picker is open');
+      return;
+    }
+
     // Hide window when it loses focus (user clicks outside)
     widget.windowService.hideSpotlight();
 
@@ -553,8 +562,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         // For files, show indicator
         final filename = clipboardContent.filename ?? 'unknown';
         final sizeKB = (clipboardContent.fileBytes?.length ?? 0) / 1024;
-        displayText =
-            '[File: $filename (${sizeKB.toStringAsFixed(1)}KB)]';
+        displayText = '[File: $filename (${sizeKB.toStringAsFixed(1)}KB)]';
         debugPrint(
           '[Spotlight] ↓ Auto-pasted file: $filename, ${sizeKB.toStringAsFixed(1)}KB',
         );
@@ -595,10 +603,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         // Precache image to avoid re-decoding on rebuilds
         if (clipboardContent.hasImage && mounted) {
           unawaited(
-            precacheImage(
-              MemoryImage(clipboardContent.imageBytes!),
-              context,
-            ),
+            precacheImage(MemoryImage(clipboardContent.imageBytes!), context),
           );
         }
 
@@ -667,7 +672,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           originalFilename: filename,
           targetDeviceTypes: targetDevicesList,
         );
-        debugPrint('[Spotlight] ↑ Sent file: $filename (${bytes.length} bytes)');
+        debugPrint(
+          '[Spotlight] ↑ Sent file: $filename (${bytes.length} bytes)',
+        );
       } else if (_clipboardContent?.hasImage ?? false) {
         // Image content - upload to storage
         final bytes = _clipboardContent!.imageBytes!;
@@ -799,10 +806,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   Future<void> _handleFileUpload() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      // Set flag to prevent window blur from closing window
+      setState(() => _isFilePickerOpen = true);
 
+      final result = await FilePicker.platform.pickFiles(
         onFileLoading: (status) => debugPrint('File loading: $status'),
       );
+
+      // Clear flag after file picker closes
+      if (mounted) {
+        setState(() => _isFilePickerOpen = false);
+      }
 
       if (result == null || result.files.isEmpty) {
         // User cancelled
@@ -811,19 +825,19 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
       final file = result.files.first;
       final path = file.path;
-      
+
       if (path == null) {
         throw Exception('File path is null');
       }
 
       final fileObj = File(path);
       final filename = file.name;
-      
+
       // Validate file size (10MB limit) - Check BEFORE reading bytes to save memory
       final fileSizeBytes = await fileObj.length();
       if (fileSizeBytes > 10485760) {
         if (mounted) {
-           widget.notificationService?.showToast(
+          widget.notificationService?.showToast(
             message: 'File too large: $filename (max 10MB)',
             type: NotificationType.error,
           );
@@ -835,37 +849,39 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       if (fileSizeBytes > 5242880) {
         if (mounted) {
           final sizeMB = (fileSizeBytes / 1048576).toStringAsFixed(1);
-          final shouldContinue = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: GhostColors.surface,
-              title: const Text(
-                'Large File Warning',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: GhostColors.textPrimary,
+          final shouldContinue =
+              await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  backgroundColor: GhostColors.surface,
+                  title: const Text(
+                    'Large File Warning',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: GhostColors.textPrimary,
+                    ),
+                  ),
+                  content: Text(
+                    'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Upload'),
+                    ),
+                  ],
                 ),
-              ),
-              content: Text(
-                'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: GhostColors.textMuted,
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Upload'),
-                ),
-              ],
-            ),
-          ) ?? false;
+              ) ??
+              false;
 
           if (!shouldContinue) {
             return;
@@ -908,10 +924,18 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     } on Exception catch (e) {
       debugPrint('[SpotlightScreen] Failed to upload file: $e');
       if (mounted) {
+        // Clear file picker flag on error
+        setState(() => _isFilePickerOpen = false);
+
         widget.notificationService?.showToast(
           message: 'Failed to upload file: $e',
           type: NotificationType.error,
         );
+      }
+    } finally {
+      // Ensure flag is always cleared
+      if (mounted && _isFilePickerOpen) {
+        setState(() => _isFilePickerOpen = false);
       }
     }
   }
@@ -996,13 +1020,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                       type: NotificationType.success,
                     );
                   }
-                  } on Exception catch (e) {
-                    debugPrint('[Spotlight] Drag-drop failed: $e');
-                    widget.notificationService?.showToast(
-                      message: 'Upload failed: ${path.basename(file.path)}',
-                      type: NotificationType.error,
-                    );
-                  }
+                } on Exception catch (e) {
+                  debugPrint('[Spotlight] Drag-drop failed: $e');
+                  widget.notificationService?.showToast(
+                    message: 'Upload failed: ${path.basename(file.path)}',
+                    type: NotificationType.error,
+                  );
+                }
               }
             },
             onDragEntered: (_) {
@@ -1014,136 +1038,136 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             child: Scaffold(
               backgroundColor: GhostColors.surface,
               body: Stack(
-              children: [
-                // Main content
-                FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: ScaleTransition(
-                    scale: _scaleAnimation,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          20,
-                          50,
-                          20,
-                          20,
-                        ), // Extra top padding for buttons
-                        child: SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _buildHeader(),
-                              const SizedBox(height: 12),
-                              _buildTextField(),
-                              const SizedBox(height: 10),
-                              // Show transformer previews if content is transformable
-                              if (_detectedContentType?.isTransformable ??
-                                  false)
-                                ..._buildTransformerUI(),
-                              _buildPlatformSelector(),
-                              const SizedBox(height: 12),
-                              _buildSendButton(),
-                              if (_errorMessage != null) ...[
-                                const SizedBox(height: 10),
-                                _buildErrorMessage(),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                // Settings button - Top Left
-                Positioned(top: 12, left: 12, child: _buildSettingsButton()),
-                // History button - Top Right
-                Positioned(top: 12, right: 12, child: _buildHistoryButton()),
-                // Click-outside overlay to close auth
-                if (_showAuth)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _handleAuthOverlayTap,
-                      child: Container(color: Colors.transparent),
-                    ),
-                  ),
-                // Click-outside overlay to close settings
-                if (_showSettings)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _handleSettingsOverlayTap,
-                      child: Container(color: Colors.transparent),
-                    ),
-                  ),
-                // Click-outside overlay to close history
-                if (_showHistory)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _handleHistoryOverlayTap,
-                      child: Container(color: Colors.transparent),
-                    ),
-                  ),
-                // Auth panel overlay (left side, wider than settings)
-                if (_showAuth) _buildAuthPanel(),
-                // Settings panel overlay (left side)
-                if (_showSettings) _buildSettingsPanel(),
-                // History panel overlay (right side)
-                if (_showHistory) _buildHistoryPanel(),
-                // Drag-over visual feedback
-                if (_isDragOver)
-                  Positioned.fill(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: GhostColors.primary.withValues(alpha: 0.1),
-                        border: Border.all(
-                          color: GhostColors.primary,
-                          width: 2,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                children: [
+                  // Main content
+                  FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: ScaleTransition(
+                      scale: _scaleAnimation,
                       child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 16,
-                          ),
-                          decoration: BoxDecoration(
-                            color: GhostColors.surface,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: GhostColors.primary,
-                              width: 2,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            20,
+                            50,
+                            20,
+                            20,
+                          ), // Extra top padding for buttons
+                          child: SingleChildScrollView(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _buildHeader(),
+                                const SizedBox(height: 12),
+                                _buildTextField(),
+                                const SizedBox(height: 10),
+                                // Show transformer previews if content is transformable
+                                if (_detectedContentType?.isTransformable ??
+                                    false)
+                                  ..._buildTransformerUI(),
+                                _buildPlatformSelector(),
+                                const SizedBox(height: 12),
+                                _buildSendButton(),
+                                if (_errorMessage != null) ...[
+                                  const SizedBox(height: 10),
+                                  _buildErrorMessage(),
+                                ],
+                              ],
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.upload_file,
-                                color: GhostColors.primary,
-                                size: 32,
-                              ),
-                              const SizedBox(width: 12),
-                              Text(
-                                'Drop files to upload',
-                                style: TextStyle(
-                                  color: GhostColors.primary,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
                         ),
                       ),
                     ),
                   ),
-              ],
-            ), // Close Stack (body)
-          ), // Close Scaffold
-        ), // Close DropTarget
-      ), // Close Focus
-    ), // Close Actions
+                  // Settings button - Top Left
+                  Positioned(top: 12, left: 12, child: _buildSettingsButton()),
+                  // History button - Top Right
+                  Positioned(top: 12, right: 12, child: _buildHistoryButton()),
+                  // Click-outside overlay to close auth
+                  if (_showAuth)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: _handleAuthOverlayTap,
+                        child: Container(color: Colors.transparent),
+                      ),
+                    ),
+                  // Click-outside overlay to close settings
+                  if (_showSettings)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: _handleSettingsOverlayTap,
+                        child: Container(color: Colors.transparent),
+                      ),
+                    ),
+                  // Click-outside overlay to close history
+                  if (_showHistory)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: _handleHistoryOverlayTap,
+                        child: Container(color: Colors.transparent),
+                      ),
+                    ),
+                  // Auth panel overlay (left side, wider than settings)
+                  if (_showAuth) _buildAuthPanel(),
+                  // Settings panel overlay (left side)
+                  if (_showSettings) _buildSettingsPanel(),
+                  // History panel overlay (right side)
+                  if (_showHistory) _buildHistoryPanel(),
+                  // Drag-over visual feedback
+                  if (_isDragOver)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: GhostColors.primary.withValues(alpha: 0.1),
+                          border: Border.all(
+                            color: GhostColors.primary,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 16,
+                            ),
+                            decoration: BoxDecoration(
+                              color: GhostColors.surface,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: GhostColors.primary,
+                                width: 2,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.upload_file,
+                                  color: GhostColors.primary,
+                                  size: 32,
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  'Drop files to upload',
+                                  style: TextStyle(
+                                    color: GhostColors.primary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ), // Close Stack (body)
+            ), // Close Scaffold
+          ), // Close DropTarget
+        ), // Close Focus
+      ), // Close Actions
     ); // Close Shortcuts
   }
 
@@ -1254,9 +1278,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       decoration: BoxDecoration(
         color: GhostColors.surfaceLight,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: GhostColors.primary.withValues(alpha: 0.3),
-        ),
+        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -1264,9 +1286,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxHeight: 80,
-              ),
+              constraints: const BoxConstraints(maxHeight: 80),
               child: Image.memory(
                 imageBytes,
                 fit: BoxFit.contain,
@@ -1324,10 +1344,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: FilePreviewWidget(
-        item: tempItem,
-
-      ),
+      child: FilePreviewWidget(item: tempItem),
     );
   }
 
@@ -1469,110 +1486,132 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build JSON prettifier button and preview
   Widget _buildJsonTransformer() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ElevatedButton.icon(
-          icon: const Icon(Icons.format_align_left, size: 16),
-          label: const Text('Prettify JSON'),
-          onPressed: () {
-            final result = widget.transformerService.transform(
-              _content,
-              TransformerContentType.json,
-            );
-            if (result.isSuccess && result.transformedContent != null) {
-              setState(() {
-                _textController.text = result.transformedContent!;
-                _transformationResult = result;
-              });
-            } else {
-              setState(() {
-                _errorMessage = result.error ?? 'Failed to prettify JSON';
-              });
-            }
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: GhostColors.primary.withValues(alpha: 0.8),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
+    return RepaintBoundary(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ElevatedButton.icon(
+            icon: const Icon(Icons.format_align_left, size: 16),
+            label: const Text('Prettify JSON'),
+            onPressed: () async {
+              final result = await widget.transformerService.transform(
+                _content,
+                TransformerContentType.json,
+              );
+              if (!mounted) return;
+              if (result.isSuccess && result.transformedContent != null) {
+                setState(() {
+                  _textController.text = result.transformedContent!;
+                  _transformationResult = result;
+                });
+              } else {
+                setState(() {
+                  _errorMessage = result.error ?? 'Failed to prettify JSON';
+                });
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: GhostColors.primary.withValues(alpha: 0.8),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   /// Build JWT decoder preview
   Widget _buildJwtTransformer() {
-    final result =
-        _transformationResult ??
-        widget.transformerService.transform(
-          _content,
-          TransformerContentType.jwt,
-        );
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: GhostColors.surfaceLight,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.vpn_key, size: 16, color: Colors.amber),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'JWT Token',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.amber,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _transformationResult = widget.transformerService.transform(
-                      _content,
-                      TransformerContentType.jwt,
-                    );
-                  });
-                },
-                child: const Icon(
-                  Icons.refresh,
-                  size: 14,
-                  color: Colors.white60,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (result.error != null)
-            Text(
-              result.error!,
-              style: const TextStyle(fontSize: 11, color: Colors.redAccent),
-            )
-          else if (result.preview != null)
-            Text(
-              result.preview!,
-              style: const TextStyle(
-                fontSize: 10,
-                fontFamily: 'monospace',
-                color: Colors.white70,
-              ),
-              maxLines: 6,
-              overflow: TextOverflow.ellipsis,
+    return FutureBuilder<TransformationResult>(
+      future: _transformationResult != null
+          ? Future.value(_transformationResult!)
+          : widget.transformerService.transform(
+              _content,
+              TransformerContentType.jwt,
             ),
-        ],
-      ),
+      builder: (context, snapshot) {
+        final result = snapshot.data;
+
+        return RepaintBoundary(
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: GhostColors.surfaceLight,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: GhostColors.primary.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.vpn_key, size: 16, color: Colors.amber),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'JWT Token',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.amber,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () async {
+                        final newResult = await widget.transformerService
+                            .transform(_content, TransformerContentType.jwt);
+                        if (mounted) {
+                          setState(() {
+                            _transformationResult = newResult;
+                          });
+                        }
+                      },
+                      child: const Icon(
+                        Icons.refresh,
+                        size: 14,
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (result?.error != null)
+                  Text(
+                    result!.error!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.redAccent,
+                    ),
+                  )
+                else if (result?.preview != null)
+                  Text(
+                    result!.preview!,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontFamily: 'monospace',
+                      color: Colors.white70,
+                    ),
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1591,38 +1630,40 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           : colorStr.padRight(8, 'F');
       final rgbValue = int.parse(hexPrefix, radix: 16);
 
-      return Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Color(rgbValue),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: GhostColors.surfaceLight, width: 2),
+      return RepaintBoundary(
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Color(rgbValue),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: GhostColors.surfaceLight, width: 2),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Color',
-                  style: TextStyle(fontSize: 10, color: Colors.white60),
-                ),
-                Text(
-                  colorValue.toUpperCase(),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'monospace',
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Color',
+                    style: TextStyle(fontSize: 10, color: Colors.white60),
                   ),
-                ),
-              ],
+                  Text(
+                    colorValue.toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       );
     } on Exception {
       return const SizedBox.shrink();
@@ -2083,7 +2124,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                   item: item,
                                   clipboardRepository:
                                       widget.clipboardRepository,
-                                  notificationService: widget.notificationService,
+                                  notificationService:
+                                      widget.notificationService,
                                   timeAgo: _formatTimeAgo(item.createdAt),
                                   device: _capitalizeFirst(item.deviceType),
                                   onDelete: () {
@@ -2111,15 +2153,19 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                       if (item.isFile) {
                                         // File - download to temp and write to clipboard
                                         if (item.storagePath == null) {
-                                          throw Exception('File missing storage path');
+                                          throw Exception(
+                                            'File missing storage path',
+                                          );
                                         }
 
                                         final bytes = await widget
                                             .clipboardRepository
                                             .downloadFile(item);
-                                        
+
                                         if (bytes == null) {
-                                          throw Exception('Failed to download file');
+                                          throw Exception(
+                                            'Failed to download file',
+                                          );
                                         }
 
                                         // Save to temp using shared TempFileService (accessed via singleton for now or pass it down)
@@ -2128,20 +2174,29 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                         // However, TempFileService is not injected into _StaggeredHistoryItem.
                                         // We will use the implementation directly or we need to pass it.
                                         // Looking at imports, we have `../../services/temp_file_service.dart`.
-                                        
-                                        final filename = item.metadata?.originalFilename ?? 'file.bin';
-                                        final tempFile = await TempFileService.instance.saveTempFile(bytes, filename);
 
-                                        await ClipboardService.instance.writeFilePath(tempFile.path);
+                                        final filename =
+                                            item.metadata?.originalFilename ??
+                                            'file.bin';
+                                        final tempFile = await TempFileService
+                                            .instance
+                                            .saveTempFile(bytes, filename);
+
+                                        await ClipboardService.instance
+                                            .writeFilePath(tempFile.path);
 
                                         debugPrint(
                                           '[Spotlight] File copied to clipboard: $filename',
                                         );
 
                                         // Schedule temp file cleanup after clipboard operation
-                                        Future.delayed(const Duration(seconds: 5), () {
-                                          TempFileService.instance.deleteTempFile(tempFile.path);
-                                        });
+                                        Future.delayed(
+                                          const Duration(seconds: 5),
+                                          () {
+                                            TempFileService.instance
+                                                .deleteTempFile(tempFile.path);
+                                          },
+                                        );
 
                                         // Notify sync service
                                         widget.clipboardSyncService
@@ -2450,10 +2505,7 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
   Widget _buildContentPreview() {
     // File preview
     if (widget.item.isFile) {
-      return FilePreviewWidget(
-        item: widget.item,
-        compact: true,
-      );
+      return FilePreviewWidget(item: widget.item, compact: true);
     }
 
     // Image preview
@@ -2537,8 +2589,9 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       // Only works for files and images
       if (!widget.item.requiresDownload) return;
 
-      final filename = widget.item.metadata?.originalFilename ??
-                      'file.${widget.item.contentType.value}';
+      final filename =
+          widget.item.metadata?.originalFilename ??
+          'file.${widget.item.contentType.value}';
 
       // Show save dialog
       final savePath = await FilePicker.platform.saveFile(
@@ -2601,7 +2654,7 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
   void _showContextMenu(BuildContext context, Offset position) {
     if (!mounted) return;
     final overlayState = Overlay.of(context);
-    
+
     final overlay = overlayState.context.findRenderObject()! as RenderBox;
 
     showMenu<String>(
@@ -2666,23 +2719,27 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
           child: DragItemWidget(
             dragItemProvider: (request) async {
               final item = DragItem(
-                suggestedName: widget.item.metadata?.originalFilename ?? 
+                suggestedName:
+                    widget.item.metadata?.originalFilename ??
                     (widget.item.isImage ? 'image.png' : 'snippet.txt'),
               );
 
               if (widget.item.isFile || widget.item.isImage) {
                 try {
                   // Download file to temp directory for dragging
-                  final bytes = await widget.clipboardRepository.downloadFile(widget.item);
-                  
+                  final bytes = await widget.clipboardRepository.downloadFile(
+                    widget.item,
+                  );
+
                   if (bytes != null) {
                     final tempDir = await getTemporaryDirectory();
-                    final filename = widget.item.metadata?.originalFilename ?? 
+                    final filename =
+                        widget.item.metadata?.originalFilename ??
                         (widget.item.isImage ? 'image.png' : 'file.bin');
-                    
+
                     final tempFile = File(path.join(tempDir.path, filename));
                     await tempFile.writeAsBytes(bytes);
-                    
+
                     item.add(Formats.fileUri(tempFile.uri));
                   }
                 } on Exception catch (e) {
@@ -2691,7 +2748,8 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
               } else {
                 // Plain text
                 item.add(Formats.plainText(widget.item.content));
-                if (widget.item.isRichText && widget.item.richTextFormat == RichTextFormat.html) {
+                if (widget.item.isRichText &&
+                    widget.item.richTextFormat == RichTextFormat.html) {
                   item.add(Formats.htmlText(widget.item.content));
                 }
               }
@@ -2705,122 +2763,124 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
                 _showContextMenu(context, details.globalPosition);
               },
               child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: widget.onTap,
-                child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                color: _isHovered
-                    ? GhostColors.surface.withValues(alpha: 0.7)
-                    : Colors.transparent,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Content preview with expand button
-                    Row(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: widget.onTap,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    color: _isHovered
+                        ? GhostColors.surface.withValues(alpha: 0.7)
+                        : Colors.transparent,
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(child: _buildContentPreview()),
-                        // Expand button (show if content is long and not an image)
-                        if (!widget.item.isImage &&
-                            widget.item.content.length > 100) ...[
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () =>
-                                setState(() => _isExpanded = !_isExpanded),
-                            child: AnimatedRotation(
-                              turns: _isExpanded ? 0.5 : 0,
-                              duration: const Duration(milliseconds: 200),
-                              child: Icon(
-                                Icons.expand_more,
-                                size: 16,
-                                color: GhostColors.primary.withValues(
-                                  alpha: _isHovered ? 1 : 0.6,
+                        // Content preview with expand button
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: _buildContentPreview()),
+                            // Expand button (show if content is long and not an image)
+                            if (!widget.item.isImage &&
+                                widget.item.content.length > 100) ...[
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: () =>
+                                    setState(() => _isExpanded = !_isExpanded),
+                                child: AnimatedRotation(
+                                  turns: _isExpanded ? 0.5 : 0,
+                                  duration: const Duration(milliseconds: 200),
+                                  child: Icon(
+                                    Icons.expand_more,
+                                    size: 16,
+                                    color: GhostColors.primary.withValues(
+                                      alpha: _isHovered ? 1 : 0.6,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    // Metadata row
-                    Row(
-                      children: [
-                        // Source device icon and name
-                        Icon(
-                          _getDeviceIconByType(widget.device.toLowerCase()),
-                          size: 12,
-                          color: GhostColors.textMuted,
+                            ],
+                          ],
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          widget.device,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: GhostColors.textMuted,
-                          ),
-                        ),
-                        // Show target if specified
-                        if (widget.item.targetDeviceTypes != null &&
-                            widget.item.targetDeviceTypes!.isNotEmpty) ...[
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.arrow_forward,
-                            size: 10,
-                            color: GhostColors.primary.withValues(alpha: 0.7),
-                          ),
-                          const SizedBox(width: 6),
-                          // Show first target device icon (or count if multiple)
-                          if (widget.item.targetDeviceTypes!.length == 1)
+                        const SizedBox(height: 6),
+                        // Metadata row
+                        Row(
+                          children: [
+                            // Source device icon and name
                             Icon(
-                              _getDeviceIconByType(
-                                widget.item.targetDeviceTypes!.first,
-                              ),
+                              _getDeviceIconByType(widget.device.toLowerCase()),
                               size: 12,
-                              color: GhostColors.primary,
-                            )
-                          else
+                              color: GhostColors.textMuted,
+                            ),
+                            const SizedBox(width: 4),
                             Text(
-                              '${widget.item.targetDeviceTypes!.length}',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: GhostColors.primary,
-                                fontWeight: FontWeight.bold,
+                              widget.device,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: GhostColors.textMuted,
                               ),
                             ),
-                        ],
-                        const SizedBox(width: 8),
-                        Text(
-                          '•',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: GhostColors.textMuted,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          widget.timeAgo,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: GhostColors.textMuted,
-                          ),
+                            // Show target if specified
+                            if (widget.item.targetDeviceTypes != null &&
+                                widget.item.targetDeviceTypes!.isNotEmpty) ...[
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.arrow_forward,
+                                size: 10,
+                                color: GhostColors.primary.withValues(
+                                  alpha: 0.7,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              // Show first target device icon (or count if multiple)
+                              if (widget.item.targetDeviceTypes!.length == 1)
+                                Icon(
+                                  _getDeviceIconByType(
+                                    widget.item.targetDeviceTypes!.first,
+                                  ),
+                                  size: 12,
+                                  color: GhostColors.primary,
+                                )
+                              else
+                                Text(
+                                  '${widget.item.targetDeviceTypes!.length}',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: GhostColors.primary,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                            ],
+                            const SizedBox(width: 8),
+                            Text(
+                              '•',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: GhostColors.textMuted,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              widget.timeAgo,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: GhostColors.textMuted,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
-                    ),
-                  ],
-                ), // Close Column
-              ), // Close AnimatedContainer
-            ), // Close InkWell
-          ), // Close Material
-        ), // Close GestureDetector
-      ), // Close DragItemWidget
-      ), // Close MouseRegion
-    ), // Close SlideTransition
+                    ), // Close Column
+                  ), // Close AnimatedContainer
+                ), // Close InkWell
+              ), // Close Material
+            ), // Close GestureDetector
+          ), // Close DragItemWidget
+        ), // Close MouseRegion
+      ), // Close SlideTransition
     ); // Close FadeTransition
   }
 

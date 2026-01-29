@@ -228,6 +228,39 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
+  /// Handle system memory pressure warnings (iOS/Android low-memory events)
+  /// Aggressively clear caches to prevent app termination by OS
+  @override
+  void didHaveMemoryPressure() {
+    super.didHaveMemoryPressure();
+    debugPrint('[MobileMain] ⚠️  System memory pressure detected - clearing caches');
+    
+    // Clear content caches
+    _decryptedContentCache.clear();
+    _detectionCache.clear();
+    
+    // Clear Flutter image caches
+    imageCache
+      ..clear()
+      ..clearLiveImages();
+    
+    // Clear clipboard content from memory (especially large images)
+    if (mounted) {
+      setState(() {
+        _clipboardContent = null;
+      });
+    }
+    
+    // Trim history to most recent 10 items to reduce memory footprint
+    if (mounted && _historyItems.length > 10) {
+      setState(() {
+        _historyItems = _historyItems.take(10).toList();
+        _filteredHistoryItems = _filteredHistoryItems.take(10).toList();
+      });
+      debugPrint('[MobileMain] Trimmed history to 10 items due to memory pressure');
+    }
+  }
+
   Future<void> _initializeEncryption() async {
     final userId = widget.authService.currentUserId;
     if (userId != null) {
@@ -2499,9 +2532,11 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     // Detect content type (Requirements 7.1, 7.2, 7.3)
     // Only if not cached
     if (_detectionResult == null) {
-      final detectionResult = widget.transformerService.detectContentType(
+      final detectionResult = await widget.transformerService.detectContentType(
         _decryptedContent ?? content,
       );
+
+      if (!mounted) return;
 
       _detectionResult = detectionResult;
 

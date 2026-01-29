@@ -1,61 +1,26 @@
 <!DOCTYPE html>
-<html class="dark" lang="en">
+<html class="dark" lang="en" style="color-scheme: dark;">
 
 <head>
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <meta name="description"
         content="GhostCopy - The ultimate cross-device clipboard tool. Copy on desktop, paste on mobile instantly with zero latency." />
+    <meta name="theme-color" content="#1a120f" />
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' https://cdn.tailwindcss.com https://fonts.googleapis.com https://fonts.gstatic.com https://lh3.googleusercontent.com https://www.transparenttextures.com data:; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https://lh3.googleusercontent.com https://www.transparenttextures.com data:;">
+        content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://www.transparenttextures.com data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https://www.transparenttextures.com data:;">
     <title>GhostCopy - Cinematic Masterpiece</title>
+    <!-- Preconnect to external domains for faster resource loading -->
     <link href="https://fonts.googleapis.com" rel="preconnect" />
     <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link href="https://www.transparenttextures.com" rel="preconnect" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,100..900;1,100..900&amp;family=Noto+Sans:ital,wght@0,100..900;1,100..900&amp;family=Cinzel:wght@400..900&amp;display=swap"
         rel="stylesheet" />
     <link
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
         rel="stylesheet" />
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-    <script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "primary": "#ff8c00",
-                        "primary-dark": "#b54e35",
-                        "gold-weathered": "#e6c288",
-                        "sand-dark": "#1a120f",
-                        "sand-medium": "#462c25",
-                        "bronze": "#8c6b5d",
-                        "slate-deep": "#0c0c0e",
-                    },
-                    fontFamily: {
-                        "display": ["Cinzel", "serif"],
-                        "serif": ["Noto Serif", "serif"],
-                        "sans": ["Noto Sans", "sans-serif"],
-                    },
-                    backgroundImage: {
-                        'film-grain': "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noise%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noise)%22 opacity=%220.08%22/%3E%3C/svg%3E')",
-                    },
-                    animation: {
-                        'heat-haze': 'heatHaze 8s infinite linear',
-                    },
-                    keyframes: {
-                        heatHaze: {
-                            '0%': { transform: 'translateY(0) skewX(0)' },
-                            '25%': { transform: 'translateY(-2px) skewX(1deg)' },
-                            '50%': { transform: 'translateY(-4px) skewX(-1deg)' },
-                            '75%': { transform: 'translateY(-2px) skewX(0.5deg)' },
-                            '100%': { transform: 'translateY(0) skewX(0)' },
-                        }
-                    }
-                },
-            },
-        }
-    </script>
+    <link rel="stylesheet" href="./output.css" />
     <style>
         .text-shadow-cinematic {
             text-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 80px rgba(230, 194, 136, 0.2);
@@ -124,16 +89,16 @@
                         href="docs.html">Codex</a>
                     <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
                         href="support.html">Access</a>
-                    <button onclick="window.location.href='download.html'"
-                        class="relative group bg-[#2a1d1a] border border-gold-weathered/30 hover:border-gold-weathered text-gold-weathered text-xs font-display font-bold uppercase tracking-[0.15em] px-8 py-3 transition-all duration-500 rounded-sm overflow-hidden">
+                    <a href="download.html"
+                        class="relative group inline-block bg-[#2a1d1a] border border-gold-weathered/30 hover:border-gold-weathered text-gold-weathered text-xs font-display font-bold uppercase tracking-[0.15em] px-8 py-3 transition-all duration-500 rounded-sm overflow-hidden">
                         <div
                             class="absolute inset-0 bg-gold-weathered/10 translate-y-full group-hover:translate-y-0 transition-transform duration-500">
                         </div>
                         <span class="relative z-10">Beta Access</span>
-                    </button>
+                    </a>
                 </div>
-                <button class="md:hidden text-gold-weathered">
-                    <span class="material-symbols-outlined">menu</span>
+                <button class="md:hidden text-gold-weathered" aria-label="Open navigation menu">
+                    <span class="material-symbols-outlined" aria-hidden="true">menu</span>
                 </button>
             </div>
         </div>
@@ -148,7 +113,7 @@
                 class="absolute bottom-0 left-0 w-full h-full bg-gradient-to-tr from-black via-slate-deep/90 to-transparent z-10">
             </div>
             <div class="absolute inset-0 opacity-[0.2] mix-blend-overlay bg-cover bg-center"
-                style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCsCF3XKnDdktkj05K5OxRXYevTg3aav-fQ5BWPOTNS4WN160PpKvhTIU5ySkmSNXdIhiDAMSmseJil3fs9MOZkRIg_9m14wZuzG4YHXB7si71TFzz6gFQ6DMUZIQrg762g4Af7-0LRL1qNAJOfITEoERLMEOGG0tG5sywsydeU5-T2-SWR_1sE5RTQUiy0cSMO6TW7uK-4ZyXd0Rg7mzIp85NCnedOnPfCqXcSMf8OfkknCyrS6fmB_CIngYDU14lcl_qj-yS_y9z3");'>
+                style='background-image: url("./images/cinematic hero background.webp");'>
             </div>
             <div class="absolute inset-0 backdrop-blur-[1px] opacity-30 pointer-events-none"
                 style="filter: url(#heatWave)"></div>
@@ -194,7 +159,7 @@
                         your devices with cinematic speed.
                     </p>
                     <div class="opacity-0 animate-[fadeIn_1s_ease-out_forwards_1.5s] ml-2 md:ml-16">
-                        <button onclick="window.location.href='download.html'"
+                        <a href="download.html"
                             class="group relative inline-flex items-center justify-center px-10 py-6 bg-[#4a3b32] overflow-hidden rounded-sm shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] border border-[#6d5446]">
                             <span
                                 class="absolute w-0 h-0 transition-all duration-500 ease-out bg-[#8c6b5d] rounded-full group-hover:w-96 group-hover:h-96 opacity-30"></span>
@@ -203,12 +168,12 @@
                                     class="font-display font-bold text-base uppercase tracking-[0.25em] text-[#d4c5a3] group-hover:text-white transition-colors">Start
                                     the Journey</span>
                                 <span
-                                    class="material-symbols-outlined text-[#d4c5a3] group-hover:translate-x-1 transition-transform duration-300">arrow_forward</span>
+                                    class="material-symbols-outlined text-[#d4c5a3] group-hover:translate-x-1 transition-transform duration-300" aria-hidden="true">arrow_forward</span>
                             </span>
                             <div
                                 class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent skew-x-12 opacity-0 group-hover:opacity-100 group-hover:animate-[shimmer_1s_infinite] transition-opacity">
                             </div>
-                        </button>
+                        </a>
                     </div>
                 </div>
                 <div
@@ -216,7 +181,8 @@
                     <div
                         class="w-full h-[120%] bg-gradient-to-br from-[#1c1c1e] to-black transform rotate-y-12 rotate-z-3 translate-y-20 border-l border-white/5 shadow-2xl relative overflow-hidden">
                         <div
-                            class="absolute top-0 left-0 w-full h-full bg-[url('https://lh3.googleusercontent.com/aida-public/AB6AXuCsCF3XKnDdktkj05K5OxRXYevTg3aav-fQ5BWPOTNS4WN160PpKvhTIU5ySkmSNXdIhiDAMSmseJil3fs9MOZkRIg_9m14wZuzG4YHXB7si71TFzz6gFQ6DMUZIQrg762g4Af7-0LRL1qNAJOfITEoERLMEOGG0tG5sywsydeU5-T2-SWR_1sE5RTQUiy0cSMO6TW7uK-4ZyXd0Rg7mzIp85NCnedOnPfCqXcSMf8OfkknCyrS6fmB_CIngYDU14lcl_qj-yS_y9z3')] opacity-10 bg-cover mix-blend-overlay">
+                            class="absolute top-0 left-0 w-full h-full opacity-10 bg-cover mix-blend-overlay"
+                            style='background-image: url("./images/cinematic hero background.webp");'>
                         </div>
                         <div
                             class="absolute top-0 left-0 w-[1px] h-full bg-gradient-to-b from-gold-weathered/60 via-transparent to-transparent shadow-[0_0_15px_rgba(230,194,136,0.3)]">
@@ -237,9 +203,9 @@
     <section class="relative py-20 md:py-32 overflow-hidden bg-sand-dark">
         <div
             class="absolute right-0 top-1/2 -translate-y-1/2 w-1/2 h-[120%] bg-stone-900 skew-x-[-12deg] opacity-90 z-0 origin-bottom shadow-2xl border-l border-stone-800 hidden lg:block">
-            <img loading="lazy" alt="Texture"
+            <img loading="lazy" decoding="async" alt="Weathered stone texture" width="1200" height="1600"
                 class="absolute inset-0 w-full h-full object-cover opacity-20 mix-blend-overlay"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuBvKtyjd42tbPxnRdddjmg4sOmztV3_ucRUO_Z_HE4LWNJcvDl8PVrIpj2di5PSMgq1yyZ74CNbd4l-E6r39V7IK0W_VSsQE9XDkQnSZqrnaX8DNgbQpZZdVfvT2eN7lTZ1jSUsfDmtZVrHYkB4E0Mofnw32HvtgavyGfbtf1U1rRac7PNoU_n14DEs8L9Y5Y_nCc6yR7lRqPt8Q9pMX-0RLx4omj52-2FBcvbOxlcP_jMVJh2DjIryxRjgMFOAdrCP5fR5uOxT0-s4" />
+                src="./images/weather stone detailed.webp" />
         </div>
         <div class="container mx-auto px-6 relative z-10">
             <div class="flex flex-col lg:flex-row items-center gap-16 lg:gap-24">
@@ -303,9 +269,9 @@
 
     <section class="relative min-h-screen flex items-center bg-sand-dark py-16 overflow-hidden">
         <div class="absolute inset-0 z-0">
-            <img loading="lazy" alt="Weathered stone texture"
+            <img loading="lazy" decoding="async" alt="Weathered stone texture" width="1600" height="1200"
                 class="w-full h-full object-cover opacity-30 grayscale contrast-125"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuA1quSsiBGuPgQKrT_dKF-16yab2q1YVL5zmEVs5aMNmlBXfNf-UsBldGrRNPhu8v0CD5k6WbuYRdSPpeVIA0Zk1hI6mr9J53Bq31uu7Q4Dr8Paz2JkMhrI-EpTD-Als5iyJRhckTt536YOultpJ0JUcGMfSdxduFTkNSM50zajNVxHifhqFQZy-z8tUDq9xL-55htjhDwStNzhcmlIAM0Nmi679jW1wmbFgLYvvikflmzreGJKJDg53K5_8SfOsnjSvW9ziRiJ17iK" />
+                src="./images/weatherd stone.webp" />
             <div class="absolute inset-0 bg-gradient-to-r from-sand-dark via-sand-dark/90 to-transparent"></div>
         </div>
         <div class="container mx-auto px-6 relative z-10 w-full">
@@ -442,7 +408,7 @@
                     class="md:col-span-2 relative group overflow-hidden bg-[#151110] border border-white/5 shadow-2xl transition-all duration-700 hover:border-gold-weathered/30">
                     <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-60 grayscale group-hover:grayscale-0"
                         data-alt="Laptop sitting on sand dune displaying code editor"
-                        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCpd0THzJUHqRMOSkKVhM_W1Gcw2lIH4mwvLHWffJ4-LZkFySPHR53RQuIafXC1aoOJQj-XT8mFJpvi5h9528ZfvXgEdnpSmUn6m3a7DwLMpPSvLVyui_SgQ_oDQctMejDrzc7CXGoqgC66zQJvzz0g0wPy9lU3ING2bXW0J5iuLiKmiUDEOcW7xHMWLUL2y787o2S3KtPWY1XX6LjPKGaApFLRv8n8UVNYC7pZQwgq3mORVjQ1BI0llCwWmUzvo5CaaubbY2HxS4sc");'>
+                        style='background-image: url("./images/laptop code editor.webp");'>
                     </div>
                     <div class="absolute inset-0 bg-gradient-to-r from-black via-black/40 to-transparent"></div>
                     <div class="absolute bottom-0 left-0 p-10 z-10 max-w-md">
@@ -459,7 +425,7 @@
                     class="md:row-span-2 relative group overflow-hidden bg-[#151110] border border-white/5 shadow-2xl transition-all duration-700 hover:border-gold-weathered/30">
                     <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-60 grayscale group-hover:grayscale-0"
                         data-alt="Smartphone half buried in golden sand displaying notification"
-                        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDw460snA-IHP6rfHLY-hF_NRznsNCQPFbO7zZDkjr_3mQ7DI4lLpZ-B0k_8SvbbHOUiTBJhRX2F3AgujPF2wKDAqe4jmnbW7VqZT9etd3DbFoxFgt5WK4EWndBWHbv0GfuJwRUq93UXdt_s0DYKL6yMCHaKW6zx0r44IeDdRrqd0GCMG7TD7-83MKSsHCF164_By8GV9PRfmSEp9XlVoKH7ZW_6B5p-LaL0qyp47xvQ2Q0nT0Bz88K4oBESEBEksWrZJ_KgV_-bAR0");'>
+                        style='background-image: url("./images/smartphone notification send.webp");'>
                     </div>
                     <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
                     <div class="absolute bottom-0 left-0 p-10 z-10">
@@ -486,7 +452,7 @@
                 <div class="relative group overflow-hidden bg-black border border-white/5">
                     <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-40 mix-blend-overlay"
                         data-alt="Abstract macro shot of sand grains resembling data particles"
-                        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAhCuoS82GSl-Gd26kItO8I9kDHipz5P-ySKwUYoYak4yOp9i_SwX19vt9sX7gbR2EdDgCGWYzAt-XV0GE1BVLtSR4_UluLcGQ0nw-xMYKgoRP2998DbEJffJ0gJS-CXPvWD_vlB_ryvocvUXaBu3CWWng4D16QW746LaEvVpJKuVpgZasdCX0Gr2He0sozysJIwp-rWXE8a_6evihqVa0URHaz987V_5KiwQa_GbewR0jFlBd_BVq56FFNuD6AeP-cJoeUtZuzEUyp");'>
+                        style='background-image: url("./images/sand grains.webp");'>
                     </div>
                     <div class="absolute inset-0 bg-gradient-to-tr from-black to-slate-deep/50"></div>
                     <div class="absolute inset-0 flex flex-col justify-center items-center p-6 text-center z-10">
@@ -570,8 +536,8 @@
     <!-- Mobile Menu Overlay -->
     <div id="mobile-menu"
         class="fixed inset-0 z-[60] bg-black/95 backdrop-blur-xl transform translate-x-full transition-transform duration-300 md:hidden flex flex-col justify-center items-center gap-8">
-        <button id="close-menu" class="absolute top-6 right-6 text-gold-weathered">
-            <span class="material-symbols-outlined text-4xl">close</span>
+        <button id="close-menu" class="absolute top-6 right-6 text-gold-weathered" aria-label="Close navigation menu">
+            <span class="material-symbols-outlined text-4xl" aria-hidden="true">close</span>
         </button>
         <a href="index.html"
             class="font-display text-2xl font-bold text-white uppercase tracking-[0.2em] mb-4">GhostCopy</a>
@@ -586,17 +552,44 @@
     </div>
 
     <script>
-        const menuBtn = document.querySelector('button .material-symbols-outlined[class*="menu"]').parentElement; // Targeting the menu button
-        const closeBtn = document.getElementById('close-menu');
-        const mobileMenu = document.getElementById('mobile-menu');
+        // Secure mobile menu with proper null checks and cleanup
+        (function() {
+            const menuIcon = document.querySelector('button[aria-label="Open navigation menu"] .material-symbols-outlined');
+            const menuBtn = menuIcon?.parentElement;
+            const closeBtn = document.getElementById('close-menu');
+            const mobileMenu = document.getElementById('mobile-menu');
 
-        menuBtn.addEventListener('click', () => {
-            mobileMenu.classList.remove('translate-x-full');
-        });
+            if (!menuBtn || !closeBtn || !mobileMenu) {
+                console.error('Menu elements not found');
+                return;
+            }
 
-        closeBtn.addEventListener('click', () => {
-            mobileMenu.classList.add('translate-x-full');
-        });
+            const handleMenuOpen = () => {
+                mobileMenu.classList.remove('translate-x-full');
+            };
+
+            const handleMenuClose = () => {
+                mobileMenu.classList.add('translate-x-full');
+            };
+
+            menuBtn.addEventListener('click', handleMenuOpen);
+            closeBtn.addEventListener('click', handleMenuClose);
+
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', () => {
+                menuBtn.removeEventListener('click', handleMenuOpen);
+                closeBtn.removeEventListener('click', handleMenuClose);
+            });
+        })();
+
+        // Register Service Worker for offline caching
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch((err) => {
+                    console.log('Service Worker registration failed:', err);
+                });
+            });
+        }
     </script>
     <style>
         @keyframes fadeIn {

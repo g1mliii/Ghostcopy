@@ -1,0 +1,12 @@
+{
+  "name": "ghostcopy-website",
+  "version": "1.0.0",
+  "description": "GhostCopy website",
+  "scripts": {
+    "build:css": "tailwindcss -i ./input.css -o ./output.css --minify",
+    "watch:css": "tailwindcss -i ./input.css -o ./output.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a120f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #462c25;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #e6c288;
+}
+
+/* Text shadow utilities */
+@layer components {
+  .text-shadow-cinematic {
+    text-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 80px rgba(230, 194, 136, 0.2);
+  }
+
+  .text-split-lighting {
+    background: linear-gradient(115deg, #ffdfba 30%, #5e4b35 70%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+  }
+
+  .chiseled-code {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(230, 194, 136, 0.2);
+    border-radius: 0.25rem;
+    padding: 1rem;
+  }
+}
+
+/* Animation keyframes */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%) skewX(12deg);
+  }
+  100% {
+    transform: translateX(200%) skewX(12deg);
+  }
+}
+
+@layer utilities {
+  .animate-fadeIn {
+    animation: fadeIn 1s ease-out forwards;
+  }
+
+  .animate-shimmer {
+    animation: shimmer 1s infinite;
+  }
+}

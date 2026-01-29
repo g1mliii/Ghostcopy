@@ -30,6 +30,7 @@ Desktop.ini
 *.js.map
 .flutter-plugins
 .flutter-plugins-dependencies
+.pipeflutter_*
 
 # Android
 **/android/**/gradle-wrapper.jar
@@ -80,6 +81,11 @@ test/.test_coverage.dart
 # Logs
 *.log
 logs/
+
+# Website build artifacts
+website/node_modules/
+website/output.css
+website/package-lock.json
 
 # (keep locally, don't commit)
 CONTRIBUTING.md

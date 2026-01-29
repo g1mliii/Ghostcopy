@@ -70,35 +70,56 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Cleanup old temp files from previous sessions
-  await TempFileService.instance.cleanupTempFiles();
-
-  // Start periodic cleanup timer (every 15 minutes)
-  TempFileService.instance.startPeriodicCleanup();
+  // Suppress RawKeyboard assertion errors on Windows (known Flutter issue)
+  // This occurs when Windows sends key events with invalid modifier flags
+  // The assertion doesn't affect functionality - it's just noisy debug output
+  // See: https://github.com/flutter/flutter/issues/93594
+  if (Platform.isWindows) {
+    FlutterError.onError = (details) {
+      // Suppress known RawKeyboard assertion on Windows
+      if (details.exception is AssertionError &&
+          details.exception.toString().contains('RawKeyDownEvent') &&
+          details.exception.toString().contains('_keysPressed.isNotEmpty')) {
+        debugPrint('[Main] ⚠️ Suppressed RawKeyboard assertion (known Windows issue)');
+        return;
+      }
+      // Log other errors normally
+      FlutterError.presentError(details);
+    };
+  }
 
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');
 
-  // Register custom URL scheme for OAuth callbacks (Windows only)
-  if (Platform.isWindows) {
-    await _registerWindowsUrlScheme();
-  }
+  // Start periodic cleanup timer (every 15 minutes)
+  TempFileService.instance.startPeriodicCleanup();
 
-  // Initialize Supabase with session persistence
-  await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
+  // PARALLEL GROUP 1: Independent startup operations
+  await Future.wait([
+    // Cleanup old temp files from previous sessions
+    TempFileService.instance.cleanupTempFiles(),
+    
+    // Initialize Supabase with session persistence
+    Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
+    
+    // Register custom URL scheme for OAuth callbacks (Windows only)
+    if (Platform.isWindows) _registerWindowsUrlScheme() else Future<void>.value(),
+  ]);
 
-  // Initialize AuthService
+  // Initialize services that depend on Supabase
   final authService = AuthService();
-
-  // For desktop: Auto sign-in anonymously
-  // For mobile: Skip auth - let welcome screen handle it
-  if (_isDesktop()) {
-    await authService.initialize();
-  }
-
-  // Initialize DeviceService
   final deviceService = DeviceService();
-  await deviceService.initialize();
+
+  // PARALLEL GROUP 2: Auth and Device initialization (both depend on Supabase)
+  if (_isDesktop()) {
+    await Future.wait([
+      authService.initialize(),
+      deviceService.initialize(),
+    ]);
+  } else {
+    // Mobile: Only initialize device service
+    await deviceService.initialize();
+  }
 
   // For desktop: Register device immediately
   // For mobile: Skip registration - welcome screen will handle it after auth
@@ -124,7 +145,7 @@ Future<void> main(List<String> args) async {
     final webhookService = WebhookService();
     final obsidianService = ObsidianService();
 
-    // Initialize settings service first
+    // Initialize settings service first (required by other services)
     await settingsService.initialize();
 
     // Initialize background clipboard sync service
@@ -138,8 +159,12 @@ Future<void> main(List<String> args) async {
       obsidianService: obsidianService,
     );
 
-    // Initialize clipboard sync service (starts realtime subscription and monitoring)
-    await clipboardSyncService.initialize();
+    // PARALLEL GROUP 3: ClipboardSync and SystemPower (independent)
+    final systemPowerService = SystemPowerService();
+    await Future.wait([
+      clipboardSyncService.initialize(),
+      systemPowerService.initialize(),
+    ]);
 
     // Create LifecycleController for Tray Mode and connection management
     // Must be created AFTER clipboardSyncService and settingsService
@@ -150,10 +175,6 @@ Future<void> main(List<String> args) async {
 
     // Initialize lifecycle controller (loads feature flags, starts monitoring)
     await lifecycleController.initialize();
-
-    // Initialize system power monitoring (desktop only)
-    final systemPowerService = SystemPowerService();
-    await systemPowerService.initialize();
 
     // Note: Power event stream subscription is set up in MyApp.initState()
     // to ensure it can be properly cancelled in dispose()
@@ -170,8 +191,12 @@ Future<void> main(List<String> args) async {
     // Note: ClipboardSyncService was initialized with notificationService: null
     // This is okay - the service will just skip notifications if null
 
-    // Initialize auto-start service
-    await autoStartService.initialize();
+    // PARALLEL GROUP 4: Independent UI services
+    await Future.wait([
+      autoStartService.initialize(),
+      windowService.initialize(),
+      trayService.initialize(),
+    ]);
 
     // Sync auto-start setting with system if needed
     final autoStartEnabled = await settingsService.getAutoStartEnabled();
@@ -184,13 +209,6 @@ Future<void> main(List<String> args) async {
         await autoStartService.disable();
       }
     }
-
-    // Initialize window manager with hidden state (Acceptance Criteria #1)
-    // Note: App always starts hidden, regardless of launch method
-    await windowService.initialize();
-
-    // Initialize system tray (Acceptance Criteria #2)
-    await trayService.initialize();
 
     // Register global hotkey (Requirement 1.1, 3.4)
     // Default: Ctrl+Shift+S to show Spotlight window
@@ -425,7 +443,9 @@ class _MyAppState extends State<MyApp> {
       // Warm up shaders to reduce UI jank on first animations
       // This precompiles common shaders used in the app
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        debugPrint('[Main] Warming up shaders...');
+        debugPrint('[Main] Warming up shaders and precaching icons...');
+        
+        // Shader warmup
         final canvas = Canvas(PictureRecorder());
         final paint = Paint()..color = Colors.white;
         
@@ -439,7 +459,10 @@ class _MyAppState extends State<MyApp> {
         paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 10); // Blur effects
         canvas.drawRect(const Rect.fromLTWH(0, 0, 100, 100), paint);
         
-        debugPrint('[Main] Shader warmup complete');
+        debugPrint('[Main] ✅ Shader warmup complete');
+        
+        // Precache common icons
+        _precacheCommonIcons();
       });
 
       // Wire up Game Mode notification callback (Requirement 6.3)
@@ -502,6 +525,58 @@ class _MyAppState extends State<MyApp> {
 
     // Now show spotlight
     await widget.windowService?.showSpotlight();
+  }
+
+  /// Precache frequently used Material Icons to prevent first-frame jank
+  /// This renders common icons to warm up the icon font cache
+  void _precacheCommonIcons() {
+    // List of commonly used icons in the app
+    final commonIcons = [
+      Icons.content_copy, // Copy icon (used throughout)
+      Icons.send_rounded, // Send button
+      Icons.settings_outlined, // Settings panel
+      Icons.devices, // Device management
+      Icons.check_circle, // Success states
+      Icons.error_outline, // Error states
+      Icons.close, // Close buttons
+      Icons.search, // Search functionality
+      Icons.delete_outline, // Delete actions
+      Icons.visibility, // Show/hide toggles
+      Icons.visibility_off, // Show/hide toggles
+      Icons.lock, // Encryption
+      Icons.lock_open, // Encryption
+      Icons.history, // History
+      Icons.refresh, // Refresh actions
+      Icons.more_vert, // More options
+    ];
+
+    // Create a temporary canvas and paint to render icons
+    // This forces Flutter to load and cache the icon glyphs
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    
+    for (final icon in commonIcons) {
+      // Create, use, and dispose TextPainter to prevent memory leak
+      TextPainter(
+        text: TextSpan(
+          text: String.fromCharCode(icon.codePoint),
+          style: TextStyle(
+            fontFamily: icon.fontFamily,
+            fontSize: 24,
+            color: Colors.white,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )
+        ..layout()
+        ..paint(canvas, Offset.zero)
+        ..dispose();
+    }
+    
+    // End recording and dispose picture to prevent memory leak
+    recorder.endRecording().dispose();
+    
+    debugPrint('[Main] ✅ Precached ${commonIcons.length} common icons');
   }
 
   @override

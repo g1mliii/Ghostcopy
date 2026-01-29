@@ -16,8 +16,14 @@ class UrlShortenerService implements IUrlShortenerService {
   UrlShortenerService._internal();
   static final UrlShortenerService _instance = UrlShortenerService._internal();
 
-  // Shared HTTP client for all requests (connection pooling)
-  static final http.Client _httpClient = http.Client();
+  // HTTP client for connection pooling (lazy initialized to support dispose/reinit)
+  http.Client? _httpClient;
+  
+  // Lazy getter for HTTP client - creates new instance if disposed
+  http.Client get _client {
+    _httpClient ??= http.Client();
+    return _httpClient!;
+  }
 
   // TinyURL API endpoint
   static const String _apiEndpoint = 'https://tinyurl.com/api-create.php';
@@ -31,7 +37,7 @@ class UrlShortenerService implements IUrlShortenerService {
 
       debugPrint('[UrlShortenerService] Shortening URL: ${url.length > 50 ? '${url.substring(0, 50)}...' : url}');
 
-      final response = await _httpClient
+      final response = await _client
           .get(Uri.parse(apiUrl))
           .timeout(const Duration(seconds: 5));
 
@@ -61,7 +67,8 @@ class UrlShortenerService implements IUrlShortenerService {
 
   @override
   void dispose() {
-    _httpClient.close();
+    _httpClient?.close();
+    _httpClient = null;
     debugPrint('[UrlShortenerService] ✅ Disposed');
   }
 }

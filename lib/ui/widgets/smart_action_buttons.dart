@@ -100,7 +100,7 @@ class SmartActionButtons extends StatelessWidget {
   }
 
   Future<void> _handlePrettifyJson(BuildContext context) async {
-    final result = transformerService.transform(content, TransformerContentType.json);
+    final result = await transformerService.transform(content, TransformerContentType.json);
 
     if (result.error != null) {
       if (context.mounted) {
@@ -133,7 +133,7 @@ class SmartActionButtons extends StatelessWidget {
   }
 
   Future<void> _handleDecodeJwt(BuildContext context) async {
-    final result = transformerService.transform(content, TransformerContentType.jwt);
+    final result = await transformerService.transform(content, TransformerContentType.jwt);
 
     if (result.error != null) {
       if (context.mounted) {

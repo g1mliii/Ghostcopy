@@ -681,7 +681,12 @@ class ClipboardRepository implements IClipboardRepository {
           .order('created_at', ascending: false) // Newest first
           .limit(safeLimit);
 
-      final items = _parseClipboardItems(response);
+      // Parse items (use isolate for large responses)
+      final responseList = response as List<dynamic>;
+      final items = await _parseClipboardItemsAsync(
+        responseList.cast<Map<String, dynamic>>(),
+      );
+
       return await _decryptItems(items);
     } on SecurityException {
       rethrow;
@@ -692,6 +697,19 @@ class ClipboardRepository implements IClipboardRepository {
     } catch (e) {
       throw RepositoryException('Failed to get clipboard history: $e');
     }
+  }
+
+  /// Parse clipboard items with optional isolate for large responses
+  Future<List<ClipboardItem>> _parseClipboardItemsAsync(
+    List<Map<String, dynamic>> data,
+  ) async {
+    // For small responses (<20 items), parse synchronously
+    if (data.length < 20) {
+      return _parseClipboardItems(data);
+    }
+
+    // For large responses (>=20 items), parse in background isolate
+    return compute(_parseClipboardItemsInIsolate, data);
   }
 
   @override
@@ -879,7 +897,7 @@ class ClipboardRepository implements IClipboardRepository {
 
   /// Parses raw JSON data into ClipboardItem list
   /// Content is now in the same table (no more join needed)
-  List<ClipboardItem> _parseClipboardItems(List<Map<String, dynamic>> data) {
+  static List<ClipboardItem> _parseClipboardItems(List<Map<String, dynamic>> data) {
     return data.map((json) {
       try {
         // Extract encrypted content directly from clipboard table
@@ -1074,6 +1092,14 @@ class ClipboardRepository implements IClipboardRepository {
     };
     return mimeToExt[mimeType] ?? 'bin';
   }
+}
+
+/// Top-level function for clipboard items parsing in isolate
+/// Must be top-level to work with compute()
+List<ClipboardItem> _parseClipboardItemsInIsolate(
+  List<Map<String, dynamic>> data,
+) {
+  return ClipboardRepository._parseClipboardItems(data);
 }
 
 // ========== Custom Exceptions ==========

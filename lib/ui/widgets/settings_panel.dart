@@ -360,87 +360,103 @@ class _SettingsPanelState extends State<SettingsPanel> {
         children: [
           // 1. Most Important: Feature Toggles
           // Auto-send toggle
-          _buildSettingToggle(
-            title: 'Auto-send clipboard',
-            subtitle: 'Automatically sync when you copy',
-            value: widget.autoSendEnabled,
-            onChanged: (value) async {
-              await widget.settingsService.setAutoSendEnabled(enabled: value);
-              widget.onAutoSendChanged(value);
-            },
+          RepaintBoundary(
+            child: _buildSettingToggle(
+              title: 'Auto-send clipboard',
+              subtitle: 'Automatically sync when you copy',
+              value: widget.autoSendEnabled,
+              onChanged: (value) async {
+                await widget.settingsService.setAutoSendEnabled(enabled: value);
+                widget.onAutoSendChanged(value);
+              },
+            ),
           ),
           const SizedBox(height: 10),
           // Auto-send target devices (only show if auto-send is enabled)
           if (widget.autoSendEnabled) ...[
-            _buildDeviceSelector(),
+            RepaintBoundary(child: _buildDeviceSelector()),
             const SizedBox(height: 10),
           ],
           // URL shortening toggle
-          _buildSettingToggle(
-            title: 'Auto-shorten URLs',
-            subtitle: 'Automatically shorten long URLs before sending',
-            value: _autoShortenUrls,
-            onChanged: (value) async {
-              await widget.settingsService.setAutoShortenUrls(enabled: value);
-              if (mounted) {
-                setState(() => _autoShortenUrls = value);
-              }
-            },
+          RepaintBoundary(
+            child: _buildSettingToggle(
+              title: 'Auto-shorten URLs',
+              subtitle: 'Automatically shorten long URLs before sending',
+              value: _autoShortenUrls,
+              onChanged: (value) async {
+                await widget.settingsService.setAutoShortenUrls(enabled: value);
+                if (mounted) {
+                  setState(() => _autoShortenUrls = value);
+                }
+              },
+            ),
           ),
           const SizedBox(height: 10),
-          // Webhook toggle
-          _buildSettingToggle(
-            title: 'Webhook Integration',
-            subtitle: 'Send clipboard data to external services',
-            value: _webhookEnabled,
-            onChanged: (value) async {
-              await widget.settingsService.setWebhookEnabled(enabled: value);
-              if (mounted) {
-                setState(() => _webhookEnabled = value);
-              }
-            },
-          ),
-          if (_webhookEnabled) ...[
-            const SizedBox(height: 10),
-            _buildTextField(
-              label: 'Webhook URL',
-              controller: _webhookUrlController,
-              onChanged: (value) async {
-                await widget.settingsService.setWebhookUrl(value);
-              },
+          // Webhook toggle & settings
+          RepaintBoundary(
+            child: Column(
+              children: [
+                _buildSettingToggle(
+                  title: 'Webhook Integration',
+                  subtitle: 'Send clipboard data to external services',
+                  value: _webhookEnabled,
+                  onChanged: (value) async {
+                    await widget.settingsService.setWebhookEnabled(enabled: value);
+                    if (mounted) {
+                      setState(() => _webhookEnabled = value);
+                    }
+                  },
+                ),
+                if (_webhookEnabled) ...[
+                  const SizedBox(height: 10),
+                  _buildTextField(
+                    label: 'Webhook URL',
+                    controller: _webhookUrlController,
+                    onChanged: (value) async {
+                      await widget.settingsService.setWebhookUrl(value);
+                    },
+                  ),
+                ],
+              ],
             ),
-          ],
+          ),
           const SizedBox(height: 10),
-          // Obsidian toggle
-          _buildSettingToggle(
-            title: 'Obsidian Integration',
-            subtitle: 'Auto-append to Obsidian vault',
-            value: _obsidianEnabled,
-            onChanged: (value) async {
-              await widget.settingsService.setObsidianEnabled(enabled: value);
-              if (mounted) {
-                setState(() => _obsidianEnabled = value);
-              }
-            },
+          // Obsidian toggle & settings
+          RepaintBoundary(
+            child: Column(
+              children: [
+                _buildSettingToggle(
+                  title: 'Obsidian Integration',
+                  subtitle: 'Auto-append to Obsidian vault',
+                  value: _obsidianEnabled,
+                  onChanged: (value) async {
+                    await widget.settingsService.setObsidianEnabled(enabled: value);
+                    if (mounted) {
+                      setState(() => _obsidianEnabled = value);
+                    }
+                  },
+                ),
+                if (_obsidianEnabled) ...[
+                  const SizedBox(height: 10),
+                  _buildTextField(
+                    label: 'Vault Path',
+                    controller: _obsidianVaultPathController,
+                    onChanged: (value) async {
+                      await widget.settingsService.setObsidianVaultPath(value);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _buildTextField(
+                    label: 'File Name',
+                    controller: _obsidianFileNameController,
+                    onChanged: (value) async {
+                      await widget.settingsService.setObsidianFileName(value);
+                    },
+                  ),
+                ],
+              ],
+            ),
           ),
-          if (_obsidianEnabled) ...[
-            const SizedBox(height: 10),
-            _buildTextField(
-              label: 'Vault Path',
-              controller: _obsidianVaultPathController,
-              onChanged: (value) async {
-                await widget.settingsService.setObsidianVaultPath(value);
-              },
-            ),
-            const SizedBox(height: 10),
-            _buildTextField(
-              label: 'File Name',
-              controller: _obsidianFileNameController,
-              onChanged: (value) async {
-                await widget.settingsService.setObsidianFileName(value);
-              },
-            ),
-          ],
           
           const SizedBox(height: 20),
           const Divider(height: 1, color: GhostColors.glassBorder),
@@ -449,44 +465,48 @@ class _SettingsPanelState extends State<SettingsPanel> {
           // 2. Configuration & Behavior
           // Stale duration slider (only show if in smart mode)
           if (widget.autoReceiveBehavior == AutoReceiveBehavior.smart) ...[
-            _buildSettingSlider(
-              title: 'Clipboard staleness',
-              subtitle: 'Auto-paste after ${widget.staleDurationMinutes} min',
-              value: widget.staleDurationMinutes.toDouble(),
-              min: 1,
-              max: 60,
-              divisions: 59,
-              onChanged: widget.onStaleDurationChanged,
-              onChangeEnd: (value) async {
-                await widget.settingsService.setClipboardStaleDurationMinutes(value);
-              },
+            RepaintBoundary(
+              child: _buildSettingSlider(
+                title: 'Clipboard staleness',
+                subtitle: 'Auto-paste after ${widget.staleDurationMinutes} min',
+                value: widget.staleDurationMinutes.toDouble(),
+                min: 1,
+                max: 60,
+                divisions: 59,
+                onChanged: widget.onStaleDurationChanged,
+                onChangeEnd: (value) async {
+                  await widget.settingsService.setClipboardStaleDurationMinutes(value);
+                },
+              ),
             ),
             const SizedBox(height: 10),
           ],
           // Auto-receive behavior selector
-          _buildAutoReceiveBehaviorSelector(),
+          RepaintBoundary(child: _buildAutoReceiveBehaviorSelector()),
           const SizedBox(height: 12),
           // Info text
-          _buildInfoCard(),
+          RepaintBoundary(child: _buildInfoCard()),
           const SizedBox(height: 20),
           
           // 3. Device Management
           if (widget.deviceService != null) ...[
-            DevicePanel(deviceService: widget.deviceService!),
+            RepaintBoundary(child: DevicePanel(deviceService: widget.deviceService!)),
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.qr_code_2, size: 18),
-                label: const Text('Link New Device'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: GhostColors.primary,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: () => showLinkDeviceDialog(
-                  context,
-                  widget.authService,
-                  widget.encryptionService!,
+            RepaintBoundary(
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.qr_code_2, size: 18),
+                  label: const Text('Link New Device'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: GhostColors.primary,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  onPressed: () => showLinkDeviceDialog(
+                    context,
+                    widget.authService,
+                    widget.encryptionService!,
+                  ),
                 ),
               ),
             ),
@@ -506,34 +526,38 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
             const SizedBox(height: 12),
              if (widget.autoStartService != null) ...[
-              _buildSettingToggle(
-                title: 'Launch at startup',
-                subtitle: 'Start GhostCopy when you log in',
-                value: _autoStartEnabled,
-                onChanged: (value) async {
-                  if (value) {
-                    await widget.autoStartService!.enable();
-                  } else {
-                    await widget.autoStartService!.disable();
-                  }
-                  await widget.settingsService.setAutoStartEnabled(enabled: value);
-                  if (mounted) {
-                    setState(() => _autoStartEnabled = value);
-                  }
-                },
+              RepaintBoundary(
+                child: _buildSettingToggle(
+                  title: 'Launch at startup',
+                  subtitle: 'Start GhostCopy when you log in',
+                  value: _autoStartEnabled,
+                  onChanged: (value) async {
+                    if (value) {
+                      await widget.autoStartService!.enable();
+                    } else {
+                      await widget.autoStartService!.disable();
+                    }
+                    await widget.settingsService.setAutoStartEnabled(enabled: value);
+                    if (mounted) {
+                      setState(() => _autoStartEnabled = value);
+                    }
+                  },
+                ),
               ),
               const SizedBox(height: 10),
             ],
             if (widget.hotkeyService != null) ...[
-              HotkeyCapture(
-                currentHotkey: _currentHotkey,
-                onHotkeyChanged: (newHotkey) async {
-                  await widget.hotkeyService!.unregisterHotkey(_currentHotkey);
-                  if (mounted) {
-                    setState(() => _currentHotkey = newHotkey);
-                  }
-                  debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
-                },
+              RepaintBoundary(
+                child: HotkeyCapture(
+                  currentHotkey: _currentHotkey,
+                  onHotkeyChanged: (newHotkey) async {
+                    await widget.hotkeyService!.unregisterHotkey(_currentHotkey);
+                    if (mounted) {
+                      setState(() => _currentHotkey = newHotkey);
+                    }
+                    debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
+                  },
+                ),
               ),
               const SizedBox(height: 20),
             ],
@@ -548,7 +572,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
               ),
             ),
             const SizedBox(height: 12),
-            _buildEncryptionSection(),
+            RepaintBoundary(child: _buildEncryptionSection()),
             const SizedBox(height: 20),
           ],
           
@@ -560,7 +584,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
           ),
           const SizedBox(height: 12),
-          _buildAccountButton(),
+          RepaintBoundary(child: _buildAccountButton()),
         ],
       ),
     );

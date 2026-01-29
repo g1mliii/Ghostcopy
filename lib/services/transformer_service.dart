@@ -64,8 +64,9 @@ abstract class ITransformerService {
   /// Detect the type of content in the clipboard
   ///
   /// Returns ContentDetectionResult with type and optional metadata
-  /// Will be implemented in tasks 14.1-14.4
-  ContentDetectionResult detectContentType(String content);
+  /// For small content (<10KB), runs synchronously
+  /// For large content (>=10KB), runs in background isolate to prevent UI blocking
+  Future<ContentDetectionResult> detectContentType(String content);
 
   /// Transform content based on its detected type
   ///
@@ -73,6 +74,6 @@ abstract class ITransformerService {
   /// For JWT: Returns decoded payload as formatted JSON
   /// For Hex Color: Returns color value and RGB breakdown
   ///
-  /// Will be implemented in tasks 15-16
-  TransformationResult transform(String content, TransformerContentType type);
+  /// Runs in background isolate to prevent UI blocking during heavy transformations
+  Future<TransformationResult> transform(String content, TransformerContentType type);
 }

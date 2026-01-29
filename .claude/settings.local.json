@@ -81,7 +81,11 @@
       "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\platform-tools\\\\adb.exe\" start-server)",
       "Bash(\"C:\\\\Users\\\\subai\\\\AppData\\\\Local\\\\Android\\\\sdk\\\\emulator\\\\emulator.exe\" -avd Medium_Phone_API_36.1 -wipe-data)",
       "Bash(./gradlew:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(du:*)",
+      "Bash(ls:*)",
+      "Bash(npm install)",
+      "Bash(npm run build:css:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -49,10 +51,15 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   bool _useFallback = false;
   Uint8List? _fallbackImageBytes;
   bool _isLoadingFallback = false;
+  ui.Image? _decodedImage; // Track decoded image for disposal
 
   @override
   void dispose() {
-    // Clear fallback image bytes to prevent memory leak
+    // CRITICAL: Dispose ui.Image to prevent native memory leak
+    _decodedImage?.dispose();
+    _decodedImage = null;
+    
+    // Clear fallback image bytes
     _fallbackImageBytes = null;
     super.dispose();
   }
@@ -135,40 +142,52 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   /// Build fallback image using direct storage download
   Widget _buildFallbackImage() {
-    // If already loaded, display from memory
+    // If already loaded, decode in isolate and display
     if (_fallbackImageBytes != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(widget.borderRadius),
-        child: Image.memory(
-          _fallbackImageBytes!,
-          width: widget.width,
-          height: widget.height,
-          fit: widget.fit,
-        ),
+      return FutureBuilder<ui.Image>(
+        future: _decodeImageInIsolate(_fallbackImageBytes!),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.done) {
+            if (snapshot.hasData && snapshot.data != null) {
+              // Dispose previous image before storing new one
+              if (_decodedImage != snapshot.data) {
+                _decodedImage?.dispose();
+                _decodedImage = snapshot.data;
+              }
+              
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(widget.borderRadius),
+                child: RawImage(
+                  image: snapshot.data,
+                  width: widget.width,
+                  height: widget.height,
+                  fit: widget.fit,
+                ),
+              );
+            } else if (snapshot.hasError) {
+              debugPrint('[CachedClipboardImage] Image decode failed: ${snapshot.error}');
+              return _buildErrorWidget('Failed to decode image');
+            }
+          }
+          // Loading
+          return _buildLoadingIndicator();
+        },
       );
     }
 
     // If loading, show progress
     if (_isLoadingFallback) {
-      return Container(
-        width: widget.width,
-        height: widget.height,
-        decoration: BoxDecoration(
-          color: GhostColors.surface,
-          borderRadius: BorderRadius.circular(widget.borderRadius),
-        ),
-        child: const Center(
-          child: CircularProgressIndicator(
-            color: GhostColors.primary,
-            strokeWidth: 2,
-          ),
-        ),
-      );
+      return _buildLoadingIndicator();
     }
 
     // Start loading
     _loadFallbackImage();
 
+    return _buildLoadingIndicator();
+  }
+
+  /// Build loading indicator widget
+  Widget _buildLoadingIndicator() {
     return Container(
       width: widget.width,
       height: widget.height,
@@ -183,6 +202,28 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         ),
       ),
     );
+  }
+
+  /// Decode image in background isolate to prevent UI blocking
+  Future<ui.Image> _decodeImageInIsolate(Uint8List bytes) async {
+    // For small images (<100KB), decode on main thread to avoid isolate overhead
+    if (bytes.length < 102400) {
+      return _decodeImageSync(bytes);
+    }
+
+    // For large images, decode in background isolate
+    return compute(_decodeImageIsolate, bytes);
+  }
+
+  /// Synchronous image decoding (for small images or in isolate)
+  static Future<ui.Image> _decodeImageSync(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(
+      bytes,
+      targetWidth: 1000, // Resize large images for performance
+      targetHeight: 1000,
+    );
+    final frame = await codec.getNextFrame();
+    return frame.image;
   }
 
   /// Load image from storage (fallback method)
@@ -251,4 +292,10 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       ),
     );
   }
+}
+
+/// Top-level function for image decoding in isolate
+/// Must be top-level to work with compute()
+Future<ui.Image> _decodeImageIsolate(Uint8List bytes) async {
+  return _CachedClipboardImageState._decodeImageSync(bytes);
 }
