@@ -420,25 +420,26 @@ class _AuthPanelState extends State<AuthPanel> {
           }
         }
 
+        // Clean up anonymous account data BEFORE switching accounts
+        // This way user is still authenticated as the old account
+        if (wasAnonymous && currentUserId != null) {
+          debugPrint('[AuthPanel] Cleaning up anonymous account before switching');
+          await widget.authService.cleanupOldAccountData(currentUserId);
+        }
+
         // Sign in with new account
         await widget.authService.signInWithEmail(
           _emailController.text,
           _passwordController.text,
         );
 
-        // Clean up old account data and reset state if switching accounts
+        // Reset local state if switching accounts
         if (currentUserId != null &&
             currentUserId != widget.authService.currentUserId) {
           debugPrint('[AuthPanel] User ID changed, resetting state');
           EncryptionService.instance.reset();
           _clipboardRepository.reset();
           widget.clipboardSyncService.reinitializeForUser();
-
-          // Clean up old account data ONLY if it was anonymous
-          // Permanent accounts should keep their data in Supabase
-          if (wasAnonymous) {
-            await widget.authService.cleanupOldAccountData(currentUserId);
-          }
         }
       } else {
         // Upgrade anonymous to permanent account
@@ -554,10 +555,16 @@ class _AuthPanelState extends State<AuthPanel> {
           }
         }
 
+        // Clean up anonymous account data BEFORE switching accounts
+        if (wasAnonymous && currentUserId != null) {
+          debugPrint('[AuthPanel] Cleaning up anonymous account before switching');
+          await widget.authService.cleanupOldAccountData(currentUserId);
+        }
+
         // Sign in with Google (app_links handles the callback)
         success = await widget.authService.signInWithGoogle();
 
-        // Clean up old account data and reset state if switching accounts
+        // Reset local state if switching accounts
         if (success &&
             currentUserId != null &&
             currentUserId != widget.authService.currentUserId) {
@@ -565,12 +572,6 @@ class _AuthPanelState extends State<AuthPanel> {
           EncryptionService.instance.reset();
           _clipboardRepository.reset();
           widget.clipboardSyncService.reinitializeForUser();
-
-          // Clean up old account data ONLY if it was anonymous
-          // Permanent accounts should keep their data in Supabase
-          if (wasAnonymous) {
-            await widget.authService.cleanupOldAccountData(currentUserId);
-          }
         }
       } else {
         // Sign Up mode: Upgrade anonymous user to Google account

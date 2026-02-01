@@ -687,18 +687,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         final currentUserId = widget.authService.currentUserId;
         final wasAnonymous = widget.authService.isAnonymous;
 
+        // Clean up anonymous account BEFORE switching
+        if (wasAnonymous && currentUserId != null) {
+          await widget.authService.cleanupOldAccountData(currentUserId);
+        }
+
         // Sign in with new account (no captcha on mobile)
         await widget.authService.signInWithEmail(
           _emailController.text,
           _passwordController.text,
         );
-
-        // Clean up old account data ONLY if it was anonymous
-        if (wasAnonymous &&
-            currentUserId != null &&
-            currentUserId != widget.authService.currentUserId) {
-          await widget.authService.cleanupOldAccountData(currentUserId);
-        }
       } else {
         // Upgrade anonymous to permanent account
         await widget.authService.upgradeWithEmail(
@@ -764,16 +762,13 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         final currentUserId = widget.authService.currentUserId;
         final wasAnonymous = widget.authService.isAnonymous;
 
-        // Sign in with Google
-        success = await widget.authService.signInWithGoogle();
-
-        // Clean up old account data ONLY if it was anonymous
-        if (success &&
-            wasAnonymous &&
-            currentUserId != null &&
-            currentUserId != widget.authService.currentUserId) {
+        // Clean up anonymous account BEFORE switching
+        if (wasAnonymous && currentUserId != null) {
           await widget.authService.cleanupOldAccountData(currentUserId);
         }
+
+        // Sign in with Google
+        success = await widget.authService.signInWithGoogle();
       } else {
         // Sign Up mode: Upgrade anonymous user to Google account
         success = await widget.authService.linkGoogleIdentity();
