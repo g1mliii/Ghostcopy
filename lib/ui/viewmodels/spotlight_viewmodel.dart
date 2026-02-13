@@ -234,7 +234,13 @@ class SpotlightViewModel extends ChangeNotifier {
   /// - onSendSuccess: Called after successful send (for clearing text controller and hiding window)
   /// - onSendError: Called on error (optional, error state is already set in ViewModel)
   Future<void> handleSend({VoidCallback? onSendSuccess}) async {
-    if (_content.trim().isEmpty || _isSending) return;
+    final hasTextPayload = _content.trim().isNotEmpty;
+    final hasClipboardPayload =
+        (_clipboardContent?.hasFile ?? false) ||
+        (_clipboardContent?.hasImage ?? false) ||
+        (_clipboardContent?.hasHtml ?? false);
+
+    if ((!hasTextPayload && !hasClipboardPayload) || _isSending) return;
 
     // Rate limit: prevent rapid repeated sends
     final now = DateTime.now();
@@ -345,7 +351,10 @@ class SpotlightViewModel extends ChangeNotifier {
       debugPrint('Sent clipboard to $targetText');
 
       // Notify ClipboardSyncService to prevent duplicate auto-send
-      _syncService.notifyManualSend(_content);
+      _syncService.notifyManualSend(
+        _content,
+        clipboardContent: _clipboardContent,
+      );
 
       // Show success toast
       _notificationService.showToast(

@@ -573,6 +573,13 @@ class ClipboardSyncService implements IClipboardSyncService {
         return _partialHash(bytes);
       }
       return md5.convert(bytes).toString();
+    } else if (content.hasFile) {
+      final bytes = content.fileBytes!;
+      // Use partial hash for large files (>1MB)
+      if (bytes.length > 1024 * 1024) {
+        return _partialHash(bytes);
+      }
+      return md5.convert(bytes).toString();
     } else if (content.hasText) {
       final text = content.text!;
       // Use partial hash for large text (>1MB)
@@ -693,8 +700,10 @@ class ClipboardSyncService implements IClipboardSyncService {
       final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null) return;
 
-      // Content deduplication (hash image bytes)
-      final contentHash = md5.convert(imageBytes).toString();
+      // Content deduplication (partial hash for large payloads)
+      final contentHash = _calculateClipboardContentHash(
+        ClipboardContent.image(imageBytes, mimeType),
+      );
       if (contentHash == _lastSentContentHash) {
         debugPrint('[ClipboardSyncService] Skipping duplicate image');
         return;
@@ -781,8 +790,10 @@ class ClipboardSyncService implements IClipboardSyncService {
       final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null) return;
 
-      // Content deduplication (hash file bytes)
-      final contentHash = md5.convert(fileBytes).toString();
+      // Content deduplication (partial hash for large payloads)
+      final contentHash = _calculateClipboardContentHash(
+        ClipboardContent.file(fileBytes, filename, mimeType),
+      );
       if (contentHash == _lastSentContentHash) {
         debugPrint('[ClipboardSyncService] Skipping duplicate file');
         return;
@@ -864,12 +875,32 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   /// Notify service that content was manually sent via UI
   @override
-  void notifyManualSend(String content) {
-    // Update last monitored clipboard to prevent duplicate auto-send
-    _lastMonitoredClipboard = _calculateContentHash(content);
+  void notifyManualSend(String content, {ClipboardContent? clipboardContent}) {
+    final effectiveClipboardContent =
+        clipboardContent ??
+        (content.isNotEmpty
+            ? ClipboardContent.text(content)
+            : const ClipboardContent.empty());
 
-    // Update content hash to prevent duplicate sends
-    _lastSentContentHash = _calculateContentHash(content);
+    // Align monitor dedupe with the same hashing strategy used in
+    // _checkClipboardForAutoSend (md5 / partial hash by payload type and size).
+    final monitorHash = _calculateClipboardContentHash(
+      effectiveClipboardContent,
+    );
+    if (monitorHash.isNotEmpty) {
+      _lastMonitoredClipboard = monitorHash;
+    }
+
+    // Keep auto-send dedupe aligned with the dedicated send-path hashes.
+    if (effectiveClipboardContent.hasImage ||
+        effectiveClipboardContent.hasFile) {
+      if (monitorHash.isNotEmpty) {
+        _lastSentContentHash = monitorHash;
+      }
+    } else {
+      final textToHash = effectiveClipboardContent.text ?? content;
+      _lastSentContentHash = _calculateContentHash(textToHash);
+    }
 
     debugPrint(
       '[ClipboardSyncService] Manual send notified, preventing duplicate auto-send',

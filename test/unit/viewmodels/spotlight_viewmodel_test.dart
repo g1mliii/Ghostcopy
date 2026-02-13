@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
+import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
@@ -32,7 +35,7 @@ class _TestClipboardSyncService implements IClipboardSyncService {
   Future<void> initialize() async {}
 
   @override
-  void notifyManualSend(String content) {
+  void notifyManualSend(String content, {ClipboardContent? clipboardContent}) {
     lastManualSendContent = content;
   }
 
@@ -100,6 +103,8 @@ class _TestNotificationService implements INotificationService {
 
 void main() {
   setUpAll(() {
+    registerFallbackValue(Uint8List(0));
+    registerFallbackValue(ContentType.text);
     registerFallbackValue(
       ClipboardItem(
         id: 'fallback',
@@ -189,6 +194,54 @@ void main() {
     expect(viewModel.errorMessage, contains('Failed to send'));
     expect(viewModel.isSending, isFalse);
   });
+
+  test(
+    'handleSend sends image payload when text is empty and clears state on success',
+    () async {
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insertImage(
+          userId: any(named: 'userId'),
+          deviceType: any(named: 'deviceType'),
+          deviceName: any(named: 'deviceName'),
+          imageBytes: any(named: 'imageBytes'),
+          mimeType: any(named: 'mimeType'),
+          contentType: any(named: 'contentType'),
+          targetDeviceTypes: any(named: 'targetDeviceTypes'),
+        ),
+      ).thenAnswer((_) async => _clipboardItem(id: 'img-1', content: ''));
+
+      final imageBytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5]);
+      viewModel
+        ..updateContent('')
+        ..updateClipboardContent(
+          ClipboardContent.image(imageBytes, 'image/png'),
+        );
+
+      await viewModel.handleSend();
+
+      verify(
+        () => clipboardRepository.insertImage(
+          userId: 'user-123',
+          deviceType: any(named: 'deviceType'),
+          deviceName: any(named: 'deviceName'),
+          imageBytes: imageBytes,
+          mimeType: 'image/png',
+          contentType: ContentType.imagePng,
+        ),
+      ).called(1);
+
+      expect(clipboardSyncService.lastManualSendContent, isEmpty);
+      expect(viewModel.content, isEmpty);
+      expect(viewModel.clipboardContent, isNull);
+      expect(viewModel.isSending, isFalse);
+      expect(
+        notificationService.toasts.last.$1,
+        contains('Sent to all devices'),
+      );
+      expect(notificationService.toasts.last.$2, NotificationType.success);
+    },
+  );
 }
 
 ClipboardItem _clipboardItem({required String id, required String content}) {

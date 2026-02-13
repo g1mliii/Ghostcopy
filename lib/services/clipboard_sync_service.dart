@@ -1,4 +1,5 @@
 import '../models/clipboard_item.dart';
+import 'clipboard_service.dart';
 
 /// Service that manages clipboard synchronization in the background
 ///
@@ -42,7 +43,7 @@ abstract class IClipboardSyncService {
 
   /// Notify service that content was manually sent via UI
   /// This prevents the monitor from auto-sending the same content
-  void notifyManualSend(String content);
+  void notifyManualSend(String content, {ClipboardContent? clipboardContent});
 
   // ========== CONNECTION MODE MANAGEMENT ==========
 
