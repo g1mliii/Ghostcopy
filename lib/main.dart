@@ -9,6 +9,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'locator.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
@@ -25,7 +26,6 @@ import 'services/impl/lifecycle_controller.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/security_service.dart';
 import 'services/impl/system_power_service.dart';
-
 import 'services/impl/transformer_service.dart';
 import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
@@ -37,7 +37,6 @@ import 'services/security_service.dart';
 import 'services/settings_service.dart';
 import 'services/system_power_service.dart';
 import 'services/temp_file_service.dart';
-
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
 import 'services/url_shortener_service.dart';
@@ -48,6 +47,7 @@ import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
 
 // Configuration - These values are safe to be public
@@ -61,7 +61,6 @@ const _supabaseAnonKey =
 @pragma('vm:entry-point')
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   debugPrint('[FCM Background] Received message: ${message.messageId}');
-  debugPrint('[FCM Background] Data: ${message.data}');
 
   // For background, we don't do anything - Firebase plugin handles notification display
   // The notification tap will be handled when app comes to foreground
@@ -80,7 +79,9 @@ Future<void> main(List<String> args) async {
       if (details.exception is AssertionError &&
           details.exception.toString().contains('RawKeyDownEvent') &&
           details.exception.toString().contains('_keysPressed.isNotEmpty')) {
-        debugPrint('[Main] ⚠️ Suppressed RawKeyboard assertion (known Windows issue)');
+        debugPrint(
+          '[Main] ⚠️ Suppressed RawKeyboard assertion (known Windows issue)',
+        );
         return;
       }
       // Log other errors normally
@@ -98,24 +99,28 @@ Future<void> main(List<String> args) async {
   await Future.wait([
     // Cleanup old temp files from previous sessions
     TempFileService.instance.cleanupTempFiles(),
-    
+
     // Initialize Supabase with session persistence
     Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
-    
+
     // Register custom URL scheme for OAuth callbacks (Windows only)
-    if (Platform.isWindows) _registerWindowsUrlScheme() else Future<void>.value(),
+    if (Platform.isWindows)
+      _registerWindowsUrlScheme()
+    else
+      Future<void>.value(),
   ]);
 
   // Initialize services that depend on Supabase
   final authService = AuthService();
   final deviceService = DeviceService();
 
+  locator
+    ..registerSingleton<IAuthService>(authService)
+    ..registerSingleton<IDeviceService>(deviceService);
+
   // PARALLEL GROUP 2: Auth and Device initialization (both depend on Supabase)
   if (_isDesktop()) {
-    await Future.wait([
-      authService.initialize(),
-      deviceService.initialize(),
-    ]);
+    await Future.wait([authService.initialize(), deviceService.initialize()]);
   } else {
     // Mobile: Only initialize device service
     await deviceService.initialize();
@@ -137,6 +142,15 @@ Future<void> main(List<String> args) async {
     final autoStartService = AutoStartService();
     final clipboardRepository = ClipboardRepository.instance;
 
+    // Register generic services
+    locator
+      ..registerSingleton<ITrayService>(trayService)
+      ..registerSingleton<IHotkeyService>(hotkeyService)
+      ..registerSingleton<IGameModeService>(gameModeService)
+      ..registerSingleton<ISettingsService>(settingsService)
+      ..registerSingleton<IAutoStartService>(autoStartService)
+      ..registerSingleton<IClipboardRepository>(clipboardRepository);
+
     // Initialize stateless utility services (singletons for consistency)
     final securityService = SecurityService();
     final transformerService = TransformerService();
@@ -144,6 +158,15 @@ Future<void> main(List<String> args) async {
     final urlShortenerService = UrlShortenerService();
     final webhookService = WebhookService();
     final obsidianService = ObsidianService();
+
+    // Register stateless utility services
+    locator
+      ..registerSingleton<ISecurityService>(securityService)
+      ..registerSingleton<ITransformerService>(transformerService)
+      ..registerSingleton<IPushNotificationService>(pushNotificationService)
+      ..registerSingleton<IUrlShortenerService>(urlShortenerService)
+      ..registerSingleton<IWebhookService>(webhookService)
+      ..registerSingleton<IObsidianService>(obsidianService);
 
     // Initialize settings service first (required by other services)
     await settingsService.initialize();
@@ -166,12 +189,17 @@ Future<void> main(List<String> args) async {
       systemPowerService.initialize(),
     ]);
 
+    locator
+      ..registerSingleton<IClipboardSyncService>(clipboardSyncService)
+      ..registerSingleton<ISystemPowerService>(systemPowerService);
+
     // Create LifecycleController for Tray Mode and connection management
     // Must be created AFTER clipboardSyncService and settingsService
     final lifecycleController = LifecycleController(
       clipboardSyncService: clipboardSyncService,
       settingsService: settingsService,
     );
+    locator.registerSingleton<ILifecycleController>(lifecycleController);
 
     // Initialize lifecycle controller (loads feature flags, starts monitoring)
     await lifecycleController.initialize();
@@ -183,13 +211,18 @@ Future<void> main(List<String> args) async {
     final windowService = WindowService(
       lifecycleController: lifecycleController,
     );
+    locator.registerSingleton<IWindowService>(windowService);
     final notificationService = NotificationService(
       windowService: windowService,
       gameModeService: gameModeService,
     );
+    locator.registerSingleton<INotificationService>(notificationService);
 
     // Note: ClipboardSyncService was initialized with notificationService: null
     // This is okay - the service will just skip notifications if null
+
+    // Register ViewModels and other factories
+    setupLocator();
 
     // PARALLEL GROUP 4: Independent UI services
     await Future.wait([
@@ -214,30 +247,7 @@ Future<void> main(List<String> args) async {
     // Default: Ctrl+Shift+S to show Spotlight window
     // Note: We'll set the callback in MyApp since it needs state access
 
-    runApp(
-      MyApp(
-        authService: authService,
-        deviceService: deviceService,
-        windowService: windowService,
-        trayService: trayService,
-        hotkeyService: hotkeyService,
-        gameModeService: gameModeService,
-        lifecycleController: lifecycleController,
-        notificationService: notificationService,
-        settingsService: settingsService,
-        autoStartService: autoStartService,
-        clipboardRepository: clipboardRepository,
-        clipboardSyncService: clipboardSyncService,
-        securityService: securityService,
-        transformerService: transformerService,
-        pushNotificationService: pushNotificationService,
-        urlShortenerService: urlShortenerService,
-        webhookService: webhookService,
-        obsidianService: obsidianService,
-        systemPowerService: systemPowerService,
-        launchedAtStartup: launchedAtStartup,
-      ),
-    );
+    runApp(MyApp(launchedAtStartup: launchedAtStartup));
   } else {
     // Mobile app - initialize Firebase and FCM (optional)
     FcmService? fcmService;
@@ -253,6 +263,7 @@ Future<void> main(List<String> args) async {
     final settingsService = SettingsService();
     await settingsService.initialize();
     debugPrint('[App] ✅ Settings service initialized for mobile');
+    locator.registerSingleton<ISettingsService>(settingsService);
 
     try {
       await Firebase.initializeApp();
@@ -270,6 +281,13 @@ Future<void> main(List<String> args) async {
       final widgetService = WidgetService();
       await widgetService.initialize();
       debugPrint('[App] ✅ Widget service initialized');
+      locator
+        ..registerSingleton<IFcmService>(fcmService)
+        ..registerSingleton<IWidgetService>(widgetService)
+        // Register other mobile services
+        ..registerSingleton<IClipboardRepository>(ClipboardRepository.instance)
+        ..registerSingleton<ISecurityService>(SecurityService())
+        ..registerSingleton<ITransformerService>(TransformerService());
 
       // Configure Android notification channel for clipboard sync
       if (Platform.isAndroid) {
@@ -277,9 +295,11 @@ Future<void> main(List<String> args) async {
           'clipboard_sync', // Channel ID
           'Clipboard Sync', // Channel name
           description: 'Notifications for clipboard synchronization',
-          importance: Importance.high, // High importance for heads-up notifications
+          importance:
+              Importance.high, // High importance for heads-up notifications
           playSound: false, // Silent for invisible sync (adjust if needed)
-          enableVibration: false, // No vibration for invisible sync (adjust if needed)
+          enableVibration:
+              false, // No vibration for invisible sync (adjust if needed)
         );
 
         final flutterLocalNotificationsPlugin =
@@ -287,10 +307,13 @@ Future<void> main(List<String> args) async {
 
         await flutterLocalNotificationsPlugin
             .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>()
+              AndroidFlutterLocalNotificationsPlugin
+            >()
             ?.createNotificationChannel(channel);
 
-        debugPrint('[App] ✅ Android notification channel created: clipboard_sync');
+        debugPrint(
+          '[App] ✅ Android notification channel created: clipboard_sync',
+        );
       }
 
       // Get FCM token and update device
@@ -302,37 +325,47 @@ Future<void> main(List<String> args) async {
       }
 
       // Listen for token refresh and update device (store subscription for cleanup)
-      tokenRefreshSubscription = fcmService.tokenRefreshStream.listen((newToken) async {
+      tokenRefreshSubscription = fcmService.tokenRefreshStream.listen((
+        newToken,
+      ) async {
         debugPrint('[App] 🔄 FCM token refreshed, updating device...');
         await deviceService.updateFcmToken(newToken);
       });
 
       // Handle foreground messages (when app is running) - store subscription
-      foregroundMessageSubscription = FirebaseMessaging.onMessage.listen((message) {
+      foregroundMessageSubscription = FirebaseMessaging.onMessage.listen((
+        message,
+      ) {
         debugPrint('[FCM Foreground] Received message: ${message.messageId}');
-        debugPrint('[FCM Foreground] Data: ${message.data}');
 
-        final clipboardContent = (message.data['clipboard_content'] as String?) ?? '';
-        final deviceType = (message.data['device_type'] as String?) ?? 'Another device';
+        final clipboardContent =
+            (message.data['clipboard_content'] as String?) ?? '';
+        final deviceType =
+            (message.data['device_type'] as String?) ?? 'Another device';
 
         if (clipboardContent.isNotEmpty) {
-          debugPrint('[FCM Foreground] Auto-copying content from $deviceType to clipboard');
+          debugPrint(
+            '[FCM Foreground] Auto-copying content from $deviceType to clipboard',
+          );
           // In foreground, we can copy directly to clipboard
           // (Note: In background, Android native service handles it)
         }
       });
 
       // Handle notification tap (when app is in background or terminated) - store subscription
-      messageOpenedAppSubscription = FirebaseMessaging.onMessageOpenedApp.listen((message) {
-        debugPrint('[FCM Tap] Notification tapped: ${message.messageId}');
-        debugPrint('[FCM Tap] Data: ${message.data}');
+      messageOpenedAppSubscription = FirebaseMessaging.onMessageOpenedApp
+          .listen((message) {
+            debugPrint('[FCM Tap] Notification tapped: ${message.messageId}');
 
-        final clipboardContent = (message.data['clipboard_content'] as String?) ?? '';
-        if (clipboardContent.isNotEmpty) {
-          debugPrint('[FCM Tap] Handling notification tap with clipboard content');
-          // Content already copied by CopyActivity or native handler
-        }
-      });
+            final clipboardContent =
+                (message.data['clipboard_content'] as String?) ?? '';
+            if (clipboardContent.isNotEmpty) {
+              debugPrint(
+                '[FCM Tap] Handling notification tap with clipboard content',
+              );
+              // Content already copied by CopyActivity or native handler
+            }
+          });
     } on Exception catch (e) {
       debugPrint(
         '[App] ⚠️  Firebase initialization skipped (not configured): $e',
@@ -344,10 +377,6 @@ Future<void> main(List<String> args) async {
 
     runApp(
       MyApp(
-        authService: authService,
-        deviceService: deviceService,
-        settingsService: settingsService,
-        fcmService: fcmService,
         fcmToken: fcmToken,
         tokenRefreshSubscription: tokenRefreshSubscription,
         foregroundMessageSubscription: foregroundMessageSubscription,
@@ -367,26 +396,6 @@ final supabase = Supabase.instance.client;
 
 class MyApp extends StatefulWidget {
   const MyApp({
-    required this.authService,
-    required this.deviceService,
-    this.windowService,
-    this.trayService,
-    this.hotkeyService,
-    this.gameModeService,
-    this.lifecycleController,
-    this.notificationService,
-    this.settingsService,
-    this.autoStartService,
-    this.clipboardRepository,
-    this.clipboardSyncService,
-    this.securityService,
-    this.transformerService,
-    this.pushNotificationService,
-    this.urlShortenerService,
-    this.webhookService,
-    this.obsidianService,
-    this.systemPowerService,
-    this.fcmService,
     this.fcmToken,
     this.tokenRefreshSubscription,
     this.foregroundMessageSubscription,
@@ -395,26 +404,6 @@ class MyApp extends StatefulWidget {
     super.key,
   });
 
-  final IAuthService authService;
-  final IDeviceService deviceService;
-  final IWindowService? windowService;
-  final ITrayService? trayService;
-  final IHotkeyService? hotkeyService;
-  final IGameModeService? gameModeService;
-  final ILifecycleController? lifecycleController;
-  final INotificationService? notificationService;
-  final ISettingsService? settingsService;
-  final IAutoStartService? autoStartService;
-  final IClipboardRepository? clipboardRepository;
-  final IClipboardSyncService? clipboardSyncService;
-  final ISecurityService? securityService;
-  final ITransformerService? transformerService;
-  final IPushNotificationService? pushNotificationService;
-  final IUrlShortenerService? urlShortenerService;
-  final IWebhookService? webhookService;
-  final IObsidianService? obsidianService;
-  final ISystemPowerService? systemPowerService;
-  final IFcmService? fcmService;
   final String? fcmToken;
   final StreamSubscription<String>? tokenRefreshSubscription;
   final StreamSubscription<RemoteMessage>? foregroundMessageSubscription;
@@ -433,79 +422,90 @@ class _MyAppState extends State<MyApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<PowerEvent>? _powerEventSubscription;
 
+  // Lazy-initialized mobile services (created once, not on every build)
+  // Removed: now registered in main()
+
   @override
   void initState() {
     super.initState();
     if (_isDesktop()) {
       // Initialize notification service with navigator key
-      widget.notificationService?.initialize(_navigatorKey);
-      
+      locator<INotificationService>().initialize(_navigatorKey);
+
       // Warm up shaders to reduce UI jank on first animations
       // This precompiles common shaders used in the app
       WidgetsBinding.instance.addPostFrameCallback((_) {
         debugPrint('[Main] Warming up shaders and precaching icons...');
-        
+
         // Shader warmup
-        final canvas = Canvas(PictureRecorder());
+        final recorder = PictureRecorder();
+        final canvas = Canvas(recorder);
         final paint = Paint()..color = Colors.white;
-        
+
         // Warm up common shader operations used in app
         canvas
           ..drawRect(const Rect.fromLTWH(0, 0, 100, 100), paint) // Rectangles
-          ..drawRRect(RRect.fromRectAndRadius(
-            const Rect.fromLTWH(0, 0, 100, 100),
-            const Radius.circular(12),
-          ), paint); // Rounded corners
-        paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 10); // Blur effects
+          ..drawRRect(
+            RRect.fromRectAndRadius(
+              const Rect.fromLTWH(0, 0, 100, 100),
+              const Radius.circular(12),
+            ),
+            paint,
+          ); // Rounded corners
+        paint.maskFilter = const MaskFilter.blur(
+          BlurStyle.normal,
+          10,
+        ); // Blur effects
         canvas.drawRect(const Rect.fromLTWH(0, 0, 100, 100), paint);
-        
+        recorder.endRecording().dispose();
+
         debugPrint('[Main] ✅ Shader warmup complete');
-        
+
         // Precache common icons
         _precacheCommonIcons();
       });
 
       // Wire up Game Mode notification callback (Requirement 6.3)
-      widget.gameModeService?.setNotificationCallback((item) {
-        widget.notificationService?.showClipboardNotification(
+      locator<IGameModeService>().setNotificationCallback((item) {
+        locator<INotificationService>().showClipboardNotification(
           content: item.content,
           deviceType: item.deviceType,
         );
       });
 
       // Wire up power events to lifecycle controller
-      _powerEventSubscription = widget.systemPowerService?.powerEventStream
+      _powerEventSubscription = locator<ISystemPowerService>().powerEventStream
           .listen((event) {
             debugPrint('[Main] 🔌 Power event: ${event.type.name}');
 
             switch (event.type) {
               case PowerEventType.systemSleep:
-                widget.lifecycleController?.onSystemSleep();
+                locator<ILifecycleController>().onSystemSleep();
                 break;
               case PowerEventType.systemWake:
-                widget.lifecycleController?.onSystemWake();
+                locator<ILifecycleController>().onSystemWake();
                 break;
               case PowerEventType.screenLock:
-                widget.lifecycleController?.onScreenLock();
+                locator<ILifecycleController>().onScreenLock();
                 break;
               case PowerEventType.screenUnlock:
-                widget.lifecycleController?.onScreenUnlock();
+                locator<ILifecycleController>().onScreenUnlock();
                 break;
             }
           });
 
       // Set up tray right-click to show custom menu
-      (widget.trayService as TrayService?)?.onRightClick = _showTrayMenu;
+      (locator<ITrayService>() as TrayService).onRightClick = _showTrayMenu;
 
       // Register global hotkey with state-aware callback
       const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
-      widget.hotkeyService?.registerHotkey(
+      locator<IHotkeyService>().registerHotkey(
         defaultHotkey,
         _handleHotkeySpotlight,
       );
     } else {
       // Mobile: Check if user is already signed in
-      final currentUser = widget.authService.currentUser;
+      final currentUser = locator<IAuthService>().currentUser;
       if (currentUser != null && !currentUser.isAnonymous) {
         // User is already authenticated, skip welcome screen
         _mobileAuthComplete = true;
@@ -524,7 +524,7 @@ class _MyAppState extends State<MyApp> {
     }
 
     // Now show spotlight
-    await widget.windowService?.showSpotlight();
+    await locator<IWindowService>().showSpotlight();
   }
 
   /// Precache frequently used Material Icons to prevent first-frame jank
@@ -554,28 +554,28 @@ class _MyAppState extends State<MyApp> {
     // This forces Flutter to load and cache the icon glyphs
     final recorder = PictureRecorder();
     final canvas = Canvas(recorder);
-    
+
     for (final icon in commonIcons) {
       // Create, use, and dispose TextPainter to prevent memory leak
       TextPainter(
-        text: TextSpan(
-          text: String.fromCharCode(icon.codePoint),
-          style: TextStyle(
-            fontFamily: icon.fontFamily,
-            fontSize: 24,
-            color: Colors.white,
+          text: TextSpan(
+            text: String.fromCharCode(icon.codePoint),
+            style: TextStyle(
+              fontFamily: icon.fontFamily,
+              fontSize: 24,
+              color: Colors.white,
+            ),
           ),
-        ),
-        textDirection: TextDirection.ltr,
-      )
+          textDirection: TextDirection.ltr,
+        )
         ..layout()
         ..paint(canvas, Offset.zero)
         ..dispose();
     }
-    
+
     // End recording and dispose picture to prevent memory leak
     recorder.endRecording().dispose();
-    
+
     debugPrint('[Main] ✅ Precached ${commonIcons.length} common icons');
   }
 
@@ -595,23 +595,31 @@ class _MyAppState extends State<MyApp> {
       _powerEventSubscription = null;
 
       // Dispose all services to prevent memory leaks
-      widget.authService.dispose();
-      widget.deviceService.dispose();
-      widget.notificationService?.dispose();
-      widget.trayService?.dispose();
-      widget.hotkeyService?.dispose();
-      widget.gameModeService?.dispose();
-      widget.windowService?.dispose();
-      widget.lifecycleController?.dispose();
-      widget.settingsService?.dispose();
-      widget.autoStartService?.dispose();
+      locator<IAuthService>().dispose();
+      locator<IDeviceService>().dispose();
+      locator<INotificationService>().dispose();
+      locator<ITrayService>().dispose();
+      locator<IHotkeyService>().dispose();
+      locator<IGameModeService>().dispose();
+      locator<IWindowService>().dispose();
+      locator<ILifecycleController>().dispose();
+      locator<ISettingsService>().dispose();
+      locator<IAutoStartService>().dispose();
       // NOTE: ClipboardRepository is a singleton - dispose is a no-op now
-      widget.clipboardRepository?.dispose();
-      widget.clipboardSyncService?.dispose();
-      widget.urlShortenerService?.dispose();
-      widget.webhookService?.dispose();
-      widget.obsidianService?.dispose();
-      widget.systemPowerService?.dispose();
+      locator<IClipboardRepository>().dispose();
+      locator<IClipboardSyncService>().dispose();
+      locator<IUrlShortenerService>().dispose();
+      locator<IWebhookService>().dispose();
+      locator<IObsidianService>().dispose();
+      locator<ISystemPowerService>().dispose();
+
+      // Dispose singleton ViewModel
+      // Note: We don't register it by interface so we access concrete class
+      try {
+        locator<SpotlightViewModel>().dispose();
+      } on Object catch (_) {
+        // Ignore if not initialized
+      }
       // Note: securityService, transformerService, pushNotificationService
       // are stateless and don't need disposal
     } else {
@@ -622,12 +630,12 @@ class _MyAppState extends State<MyApp> {
       widget.foregroundMessageSubscription?.cancel();
       widget.messageOpenedAppSubscription?.cancel();
 
-      widget.authService.dispose();
-      widget.deviceService.dispose();
-      widget.fcmService?.dispose();
+      locator<IAuthService>().dispose();
+      locator<IDeviceService>().dispose();
+      locator<IFcmService>().dispose();
 
       // Dispose widget service (singleton) to clean up method channel
-      WidgetService().dispose();
+      locator<IWidgetService>().dispose();
     }
 
     // Stop temp file cleanup timer (cross-platform)
@@ -683,11 +691,11 @@ class _MyAppState extends State<MyApp> {
 
   void _hideTrayMenu() {
     setState(() => _showingTrayMenu = false);
-    widget.windowService?.hideSpotlight();
+    locator<IWindowService>().hideSpotlight();
 
     // Test toast notification when minimizing to tray (with delay to ensure window is hidden)
     Future.delayed(const Duration(milliseconds: 500), () {
-      widget.notificationService?.showToast(
+      locator<INotificationService>().showToast(
         message: 'App closed to tray',
         duration: const Duration(seconds: 3),
       );
@@ -705,7 +713,7 @@ class _MyAppState extends State<MyApp> {
     await Future<void>.delayed(const Duration(milliseconds: 100));
 
     // Show spotlight
-    await widget.windowService?.showSpotlight();
+    await locator<IWindowService>().showSpotlight();
   }
 
   @override
@@ -724,27 +732,13 @@ class _MyAppState extends State<MyApp> {
     if (_isDesktop()) {
       return _showingTrayMenu
           ? TrayMenuWindow(
-              windowService: widget.windowService!,
-              gameModeService: widget.gameModeService!,
+              windowService: locator<IWindowService>(),
+              gameModeService: locator<IGameModeService>(),
               onClose: _hideTrayMenu,
               onOpenSettings: _openSettingsFromTray,
               onQuit: _handleQuit,
             )
           : SpotlightScreen(
-              authService: widget.authService,
-              windowService: widget.windowService!,
-              settingsService: widget.settingsService!,
-              clipboardRepository: widget.clipboardRepository!,
-              clipboardSyncService: widget.clipboardSyncService!,
-              securityService: widget.securityService!,
-              transformerService: widget.transformerService!,
-              pushNotificationService: widget.pushNotificationService!,
-              lifecycleController: widget.lifecycleController,
-              notificationService: widget.notificationService,
-              gameModeService: widget.gameModeService,
-              autoStartService: widget.autoStartService,
-              hotkeyService: widget.hotkeyService,
-              deviceService: widget.deviceService,
               openSettingsOnShow: _openSettingsOnShow,
               onSettingsOpened: () {
                 // Reset flag after settings opened
@@ -756,16 +750,14 @@ class _MyAppState extends State<MyApp> {
     // Mobile app - show welcome screen or main screen based on auth state
     if (!_mobileAuthComplete) {
       return MobileWelcomeScreen(
-        authService: widget.authService,
-        deviceService: widget.deviceService,
         fcmToken: widget.fcmToken,
         onAuthComplete: () async {
           // Register device with FCM token after auth
-          await widget.deviceService.registerCurrentDevice();
+          await locator<IDeviceService>().registerCurrentDevice();
 
           // Update FCM token if available
           if (widget.fcmToken != null) {
-            await widget.deviceService.updateFcmToken(widget.fcmToken!);
+            await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
             debugPrint('[Mobile] ✅ Device registered with FCM token');
           }
 
@@ -779,14 +771,7 @@ class _MyAppState extends State<MyApp> {
     }
 
     // Mobile main screen - show after auth complete
-    return MobileMainScreen(
-      authService: widget.authService,
-      deviceService: widget.deviceService,
-      clipboardRepository: ClipboardRepository.instance,
-      securityService: SecurityService(),
-      transformerService: TransformerService(),
-      settingsService: widget.settingsService!,
-    );
+    return const MobileMainScreen();
   }
 }
 

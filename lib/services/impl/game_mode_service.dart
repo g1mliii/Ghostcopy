@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import '../../models/clipboard_item.dart';
 import '../game_mode_service.dart';
 
-
 /// Concrete implementation of IGameModeService
 ///
 /// Game Mode suppresses notifications during fullscreen apps/games.
@@ -75,7 +74,9 @@ class GameModeService implements IGameModeService {
   @override
   void queueNotification(ClipboardItem item) {
     if (_isActive) {
-      debugPrint('GameModeService: Queuing notification. Queue size: ${_notificationQueue.length + 1}');
+      debugPrint(
+        'GameModeService: Queuing notification. Queue size: ${_notificationQueue.length + 1}',
+      );
       // Prevent memory leaks during long gaming sessions
       if (_notificationQueue.length >= maxQueueSize) {
         // Remove oldest notification (FIFO)
@@ -98,20 +99,29 @@ class GameModeService implements IGameModeService {
   /// Internal method to flush queue and trigger callbacks
   ///
   /// Requirement 6.3: Display queued notifications in sequence
+  /// Fix #22: Check disposed flag to prevent race condition
   void _flushQueueWithCallback() {
-    debugPrint('GameModeService: Flushing ${_notificationQueue.length} notifications');
+    if (_isDisposed) return; // Prevent race condition during dispose
+
+    debugPrint(
+      'GameModeService: Flushing ${_notificationQueue.length} notifications',
+    );
     if (_notificationCallback != null) {
       // Process notifications in order (FIFO)
       for (final item in _notificationQueue) {
+        if (_isDisposed) break; // Stop if disposed mid-flush
         _notificationCallback!(item);
       }
     }
     _notificationQueue.clear();
   }
 
+  bool _isDisposed = false; // Fix #22: Track disposal state
+
   /// Dispose and clean up resources to prevent memory leaks
   @override
   void dispose() {
+    _isDisposed = true; // Set flag before cleanup
     _isActiveController.close();
     _notificationQueue.clear();
     _notificationCallback = null;

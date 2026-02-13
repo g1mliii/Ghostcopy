@@ -14,7 +14,7 @@ import 'encryption_service.dart';
 /// Concrete implementation of IAuthService using Supabase Auth
 class AuthService implements IAuthService {
   AuthService({SupabaseClient? client})
-      : _client = client ?? Supabase.instance.client;
+    : _client = client ?? Supabase.instance.client;
 
   final SupabaseClient _client;
   StreamSubscription<AuthState>? _authStateSubscription;
@@ -44,22 +44,19 @@ class AuthService implements IAuthService {
         await _client.auth.signInAnonymously();
         debugPrint('[AuthService] ✅ Signed in anonymously');
       } on AuthException catch (e) {
-        debugPrint('[AuthService] ❌ Failed to sign in anonymously: ${e.message}');
+        debugPrint(
+          '[AuthService] ❌ Failed to sign in anonymously: ${e.message}',
+        );
         rethrow;
       }
     } else {
-      debugPrint('[AuthService] Already signed in as: ${currentUser.id}');
-      if (currentUser.isAnonymous) {
-        debugPrint('[AuthService] User is anonymous');
-      } else {
-        debugPrint('[AuthService] User email: ${currentUser.email}');
-      }
+      debugPrint('[AuthService] Already signed in');
     }
 
     // Initialize EncryptionService with current user
     if (currentUser != null) {
       await EncryptionService.instance.initialize(currentUser.id);
-      
+
       // Auto-restore passphrase from cloud if authenticated and no local passphrase
       if (!currentUser.isAnonymous) {
         await EncryptionService.instance.autoRestoreFromCloud();
@@ -90,7 +87,7 @@ class AuthService implements IAuthService {
         password: password,
         captchaToken: captchaToken,
       );
-      debugPrint('[AuthService] Sign up successful for: $email');
+      debugPrint('[AuthService] Sign up successful');
       return response;
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign up failed: ${e.message}');
@@ -110,7 +107,7 @@ class AuthService implements IAuthService {
         password: password,
         captchaToken: captchaToken,
       );
-      debugPrint('[AuthService] Sign in successful for: $email');
+      debugPrint('[AuthService] Sign in successful');
       return response;
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign in failed: ${e.message}');
@@ -151,9 +148,11 @@ class AuthService implements IAuthService {
   /// Native Google Sign-In for iOS and Android
   Future<bool> _nativeGoogleSignIn() async {
     // Web Client ID (registered in Supabase Dashboard)
-    const webClientId = '415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com';
+    const webClientId =
+        '415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com';
     // iOS Client ID (for iOS only)
-    const iosClientId = '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
+    const iosClientId =
+        '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
 
     final scopes = ['email', 'profile'];
 
@@ -217,10 +216,7 @@ class AuthService implements IAuthService {
       // This will fail if the email is already in use
       // Note: captchaToken not needed for updateUser - user is already authenticated
       final userResponse = await _client.auth.updateUser(
-        UserAttributes(
-          email: email,
-          password: password,
-        ),
+        UserAttributes(email: email, password: password),
       );
 
       debugPrint(
@@ -275,9 +271,11 @@ class AuthService implements IAuthService {
   /// Native Google Identity Linking for iOS and Android
   Future<bool> _nativeLinkGoogleIdentity() async {
     // Web Client ID (registered in Supabase Dashboard)
-    const webClientId = '415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com';
+    const webClientId =
+        '415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com';
     // iOS Client ID (for iOS only)
-    const iosClientId = '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
+    const iosClientId =
+        '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
 
     final scopes = ['email', 'profile'];
 
@@ -317,7 +315,9 @@ class AuthService implements IAuthService {
         accessToken: accessToken,
       );
 
-      debugPrint('[AuthService] ✅ Native Google identity linked (user_id preserved)');
+      debugPrint(
+        '[AuthService] ✅ Native Google identity linked (user_id preserved)',
+      );
       return true;
     } on Exception catch (e) {
       debugPrint('[AuthService] ❌ Native Google identity linking failed: $e');
@@ -334,14 +334,18 @@ class AuthService implements IAuthService {
 
     // Generate a cryptographically secure random token
     // OPTIMIZED: Use shared static secure random instance
-    final randomBytes = List<int>.generate(32, (_) => _secureRandom.nextInt(256));
+    final randomBytes = List<int>.generate(
+      32,
+      (_) => _secureRandom.nextInt(256),
+    );
     final tokenData = '$userId:${base64.encode(randomBytes)}';
     final bytes = utf8.encode(tokenData);
     final hash = sha256.convert(bytes).toString();
 
     // Token expires in 5 minutes
-    final expiresAt =
-        DateTime.now().add(const Duration(minutes: 5)).toIso8601String();
+    final expiresAt = DateTime.now()
+        .add(const Duration(minutes: 5))
+        .toIso8601String();
 
     // Store token in database
     try {
@@ -351,7 +355,9 @@ class AuthService implements IAuthService {
         'expires_at': expiresAt,
       });
 
-      debugPrint('[AuthService] Generated mobile link token (expires in 5 min)');
+      debugPrint(
+        '[AuthService] Generated mobile link token (expires in 5 min)',
+      );
 
       // Return token in deep link format
       return 'ghostcopy://link?token=$hash';
@@ -411,9 +417,7 @@ class AuthService implements IAuthService {
     try {
       // Update the user's password after they've clicked the reset link
       // Supabase automatically validates the reset token from the deep link
-      await _client.auth.updateUser(
-        UserAttributes(password: newPassword),
-      );
+      await _client.auth.updateUser(UserAttributes(password: newPassword));
       debugPrint('[AuthService] Password reset successfully');
       return true;
     } on AuthException catch (e) {
@@ -448,7 +452,10 @@ class AuthService implements IAuthService {
   @override
   Future<void> cleanupOldAccountData(String oldUserId) async {
     try {
-      await _client.rpc<void>('cleanup_user_data', params: {'p_user_id': oldUserId});
+      await _client.rpc<void>(
+        'cleanup_user_data',
+        params: {'p_user_id': oldUserId},
+      );
       debugPrint('[AuthService] ✅ Cleaned up old account data for: $oldUserId');
     } on Object catch (e) {
       debugPrint('[AuthService] ❌ Failed to cleanup old account: $e');

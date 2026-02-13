@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -20,6 +21,9 @@ class WebhookService implements IWebhookService {
 
   // HTTP client for connection pooling (lazy initialized to support dispose/reinit)
   http.Client? _httpClient;
+
+  // Active retry timer (cancellable to prevent leaks)
+  Timer? _retryTimer;
 
   // Lazy getter for HTTP client - creates new instance if disposed
   http.Client get _client {
@@ -50,21 +54,14 @@ class WebhookService implements IWebhookService {
       throw Exception('Invalid webhook URL format');
     }
 
-    // Only allow HTTP and HTTPS protocols
-    if (uri.scheme != 'http' && uri.scheme != 'https') {
-      debugPrint('[WebhookService] ❌ Invalid URL scheme: ${uri.scheme}');
-      throw Exception('Webhook URL must use http or https protocol');
+    // Only allow HTTPS protocol (HTTP is insecure for webhook payloads)
+    if (uri.scheme != 'https') {
+      debugPrint('[WebhookService] ❌ Invalid URL scheme: ${uri.scheme} (HTTPS required)');
+      throw Exception('Webhook URL must use https protocol');
     }
 
-    // Block private IP ranges to prevent SSRF attacks on internal networks
-    // OPTIMIZED: Use pre-compiled static regex patterns
-    final host = uri.host.toLowerCase();
-    for (final range in _privateIpRanges) {
-      if (range.hasMatch(host)) {
-        debugPrint('[WebhookService] ❌ Blocked private IP/localhost: $host');
-        throw Exception('Webhook URL cannot target private networks or localhost');
-      }
-    }
+    // Validate host against SSRF protection
+    _validateHost(uri.host);
 
     var retries = 0;
     const maxRetries = 3;
@@ -73,17 +70,31 @@ class WebhookService implements IWebhookService {
       try {
         debugPrint('[WebhookService] Sending webhook (attempt ${retries + 1}/$maxRetries)');
 
-        final response = await _client
-            .post(
-              uri,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 10));
+        // SECURITY: Disable automatic redirect following to prevent SSRF bypass
+        // Redirects could bypass our private IP validation
+        final request = http.Request('POST', uri)
+          ..followRedirects = false
+          ..headers['Content-Type'] = 'application/json'
+          ..body = jsonEncode(payload);
 
+        final streamedResponse = await _client
+            .send(request)
+            .timeout(const Duration(seconds: 10));
+        final response = await http.Response.fromStream(streamedResponse);
+
+        // Success: 2xx status codes
         if (response.statusCode >= 200 && response.statusCode < 300) {
           debugPrint('[WebhookService] ✅ Webhook sent successfully (${response.statusCode})');
-          return; // Success
+          return;
+        }
+
+        // Reject redirects: 3xx status codes
+        // We don't follow redirects to prevent SSRF attacks via redirect chains
+        if (response.statusCode >= 300 && response.statusCode < 400) {
+          debugPrint(
+            '[WebhookService] ❌ Webhook returned redirect (${response.statusCode}) - redirects not allowed for security',
+          );
+          throw Exception('Webhook redirects are not allowed for security reasons');
         }
 
         debugPrint(
@@ -99,19 +110,44 @@ class WebhookService implements IWebhookService {
         return;
       }
 
-      // Exponential backoff: 2s, 4s, 8s
+      // Exponential backoff: 2s, 4s, 8s (using Timer for cancellability)
       final backoffDuration = Duration(seconds: retries * 2);
       debugPrint(
         '[WebhookService] ⏳ Retrying in ${backoffDuration.inSeconds}s...',
       );
-      await Future<void>.delayed(backoffDuration);
+
+      // Use cancellable timer instead of Future.delayed to prevent leaks
+      final completer = Completer<void>();
+      _retryTimer = Timer(backoffDuration, completer.complete);
+      await completer.future;
+    }
+  }
+
+  /// Validate host against SSRF protection rules
+  ///
+  /// Throws Exception if host targets private networks or localhost
+  void _validateHost(String host) {
+    // Block private IP ranges to prevent SSRF attacks on internal networks
+    // OPTIMIZED: Use pre-compiled static regex patterns
+    final normalizedHost = host.toLowerCase();
+    for (final range in _privateIpRanges) {
+      if (range.hasMatch(normalizedHost)) {
+        debugPrint('[WebhookService] ❌ Blocked private IP/localhost: $host');
+        throw Exception('Webhook URL cannot target private networks or localhost');
+      }
     }
   }
 
   @override
   void dispose() {
+    // Cancel any active retry timer to prevent leaks
+    _retryTimer?.cancel();
+    _retryTimer = null;
+
+    // Close HTTP client to release connections
     _httpClient?.close();
     _httpClient = null;
+
     debugPrint('[WebhookService] ✅ Disposed');
   }
 }

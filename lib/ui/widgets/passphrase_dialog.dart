@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/encryption_service.dart';
+import '../theme/colors.dart';
 
 /// Dialog for setting up encryption passphrase
 ///
@@ -38,7 +39,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
   String? _errorMessage;
 
   static const int _minLength = 8;
-  
+
   @override
   void initState() {
     super.initState();
@@ -115,7 +116,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
         Navigator.of(context).pop(true);
       } else {
         setState(() {
-          _errorMessage = widget.isRestoreMode 
+          _errorMessage = widget.isRestoreMode
               ? 'Failed to restore passphrase. Please try again.'
               : 'Failed to set passphrase. Please try again.';
           _isLoading = false;
@@ -134,7 +135,11 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.isRestoreMode ? 'Enter Encryption Passphrase' : 'Set Encryption Passphrase'),
+      title: Text(
+        widget.isRestoreMode
+            ? 'Enter Encryption Passphrase'
+            : 'Set Encryption Passphrase',
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -152,7 +157,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                 '⚠️ If you lose your passphrase, encrypted data cannot be recovered.',
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.orange,
+                  color: GhostColors.warning,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -193,7 +198,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                 }
               },
             ),
-            
+
             // Confirm passphrase field (only in Set mode)
             if (!widget.isRestoreMode) ...[
               const SizedBox(height: 16),
@@ -208,9 +213,7 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     icon: Icon(
-                      _obscureConfirm
-                          ? Icons.visibility
-                          : Icons.visibility_off,
+                      _obscureConfirm ? Icons.visibility : Icons.visibility_off,
                     ),
                     onPressed: () {
                       setState(() {
@@ -233,18 +236,24 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
+                  color: GhostColors.error.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: GhostColors.error.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                    const Icon(
+                      Icons.error_outline,
+                      color: GhostColors.error,
+                      size: 20,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         _errorMessage!,
-                        style: const TextStyle(color: Colors.red),
+                        style: const TextStyle(color: GhostColors.error),
                       ),
                     ),
                   ],
@@ -274,7 +283,9 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Text(widget.isRestoreMode ? 'Restore Access' : 'Enable Encryption'),
+              : Text(
+                  widget.isRestoreMode ? 'Restore Access' : 'Enable Encryption',
+                ),
         ),
       ],
     );

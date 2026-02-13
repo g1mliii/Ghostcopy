@@ -1,38 +1,35 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:super_drag_and_drop/super_drag_and_drop.dart';
+
 import 'package:window_manager/window_manager.dart';
 
+import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
+
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
-import '../../services/game_mode_service.dart';
+
 import '../../services/hotkey_service.dart';
 import '../../services/impl/encryption_service.dart';
-import '../../services/impl/notification_service.dart';
+
 import '../../services/lifecycle_controller.dart';
 import '../../services/notification_service.dart';
-import '../../services/push_notification_service.dart';
-import '../../services/security_service.dart';
+
 import '../../services/settings_service.dart';
-import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../viewmodels/spotlight_viewmodel.dart';
 import '../widgets/auth_panel.dart';
 import '../widgets/cached_clipboard_image.dart';
 import '../widgets/file_preview_widget.dart';
@@ -52,43 +49,19 @@ enum PlatformType {
   final IconData icon;
 }
 
+/// Navigation panel state for Spotlight window
+/// Enforces mutual exclusivity - only one panel can be open at a time
+enum SpotlightPanel { none, settings, history, auth }
+
 /// Spotlight window for sending clipboard content
 /// Discord/Blip-inspired design with glassmorphism
 class SpotlightScreen extends StatefulWidget {
   const SpotlightScreen({
-    required this.authService,
-    required this.windowService,
-    required this.settingsService,
-    required this.clipboardRepository,
-    required this.clipboardSyncService,
-    required this.securityService,
-    required this.transformerService,
-    required this.pushNotificationService,
-    this.lifecycleController,
-    this.notificationService,
-    this.gameModeService,
-    this.autoStartService,
-    this.hotkeyService,
-    this.deviceService,
     this.openSettingsOnShow = false,
     this.onSettingsOpened,
     super.key,
   });
 
-  final IAuthService authService;
-  final IWindowService windowService;
-  final ISettingsService settingsService;
-  final IClipboardRepository clipboardRepository;
-  final IClipboardSyncService clipboardSyncService;
-  final ISecurityService securityService;
-  final ITransformerService transformerService;
-  final IPushNotificationService pushNotificationService;
-  final ILifecycleController? lifecycleController;
-  final INotificationService? notificationService;
-  final IGameModeService? gameModeService;
-  final IAutoStartService? autoStartService;
-  final IHotkeyService? hotkeyService;
-  final IDeviceService? deviceService;
   final bool openSettingsOnShow;
   final VoidCallback? onSettingsOpened;
 
@@ -118,60 +91,79 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   // Text controllers
   final TextEditingController _textController = TextEditingController();
   final FocusNode _textFieldFocusNode = FocusNode();
-  final TextEditingController _historySearchController =
-      TextEditingController();
 
-  // No local services needed - all are passed as singletons
+  // ViewModel - handles business logic and state
+  late final SpotlightViewModel _viewModel;
 
-  // State
-  String _content = '';
-  ClipboardContent?
-  _clipboardContent; // Full clipboard content (images, HTML, text)
-  final Set<String> _selectedPlatforms = {}; // empty = "All devices"
-  bool _isSending = false;
-  String? _errorMessage;
-  bool _showHistory = false;
-  bool _showSettings = false;
-  bool _showAuth = false;
-  bool _isDragOver = false;
-  List<ClipboardItem> _historyItems = [];
-  List<ClipboardItem> _filteredHistoryItems = [];
-  bool _isLoadingHistory = false;
-  String _historySearchQuery = '';
+  // Cached locator lookups for UI services
+  late final IAuthService _authService = locator<IAuthService>();
+  late final IWindowService _windowService = locator<IWindowService>();
+  late final ISettingsService _settingsService = locator<ISettingsService>();
+  late final INotificationService _notificationService =
+      locator<INotificationService>();
+  late final IClipboardSyncService _syncService =
+      locator<IClipboardSyncService>();
+  late final IClipboardRepository _clipboardRepo =
+      locator<IClipboardRepository>();
+  late final ITransformerService _transformerService =
+      locator<ITransformerService>();
+  late final ILifecycleController _lifecycleController =
+      locator<ILifecycleController>();
+  late final IAutoStartService? _autoStartService =
+      locator.isRegistered<IAutoStartService>()
+      ? locator<IAutoStartService>()
+      : null;
+  late final IHotkeyService? _hotkeyService =
+      locator.isRegistered<IHotkeyService>() ? locator<IHotkeyService>() : null;
+  late final IDeviceService? _deviceService =
+      locator.isRegistered<IDeviceService>() ? locator<IDeviceService>() : null;
+
+  // UI-only state (not in ViewModel)
+  SpotlightPanel _activePanel = SpotlightPanel.none;
+  bool get _showHistory => _activePanel == SpotlightPanel.history;
+  bool get _showSettings => _activePanel == SpotlightPanel.settings;
+  bool get _showAuth => _activePanel == SpotlightPanel.auth;
 
   // Text controller listener for cleanup (Task: Memory leak fix)
-  late VoidCallback _textControllerListener;
+  VoidCallback? _textControllerListener;
 
-  // Transformer state (for JSON prettify, JWT decoding, color preview)
-  ContentDetectionResult? _detectedContentType;
-  TransformationResult? _transformationResult;
+  // ViewModel listener for cleanup (CRITICAL: prevents memory leak)
+  late VoidCallback _viewModelListener;
+
+  // Track focus time to prevent immediate blur (debounce)
+  DateTime? _lastFocusTime;
+  bool _isRebuildScheduled = false;
 
   // Settings state (for UI display only - actual values in SettingsService)
   bool _autoSendEnabled = false;
   int _staleDurationMinutes = 5;
   AutoReceiveBehavior _autoReceiveBehavior = AutoReceiveBehavior.smart;
 
-  // Rate limiting for manual sends only (auto-send handled by ClipboardSyncService)
-  DateTime? _lastSendTime;
-  static const Duration _minSendInterval = Duration(milliseconds: 500);
-
-  // File picker state - prevent window blur from closing window during file selection
-  bool _isFilePickerOpen = false;
-
-  // String caching for expensive computations (Performance optimization)
-  String? _cachedSendButtonTargetText;
-
-  // Timers for debouncing and delayed actions (prevent memory leaks)
-  Timer? _searchDebounceTimer;
-  Timer? _errorClearTimer;
-  static const Duration _searchDebounceDelay = Duration(milliseconds: 200);
-
   @override
   void initState() {
     super.initState();
 
-    // Wire up clipboard sync service callback for history refresh
-    widget.clipboardSyncService.onClipboardReceived = _loadHistory;
+    // Get singleton ViewModel from locator
+    _viewModel = locator<SpotlightViewModel>();
+
+    // Listen to ViewModel changes and trigger UI rebuild
+    // Store listener for removal in dispose (CRITICAL: prevents memory leak)
+    _viewModelListener = () {
+      if (mounted) {
+        // Sync text controller with ViewModel content (fixes clipboard populate issue)
+        if (_textController.text != _viewModel.content) {
+          _textController.text = _viewModel.content;
+          // Move cursor to end
+          _textController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _textController.text.length),
+          );
+        }
+        _scheduleRebuild();
+      }
+    };
+    _viewModel
+      ..addListener(_viewModelListener)
+      ..initialize(); // Initialize ViewModel (loads history, sets up Realtime callback)
 
     // Load settings for UI state
     _initializeSettings();
@@ -253,42 +245,42 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       _authSlideController,
     );
 
-    widget.lifecycleController?.addPausable(_pausableAnimationController);
-    widget.lifecycleController?.addPausable(_pausableHistorySlideController);
-    widget.lifecycleController?.addPausable(_pausableSettingsSlideController);
-    widget.lifecycleController?.addPausable(_pausableAuthSlideController);
+    final lifecycle = _lifecycleController;
+    final pausables = [
+      (_pausableAnimationController, _animationController),
+      (_pausableHistorySlideController, _historySlideController),
+      (_pausableSettingsSlideController, _settingsSlideController),
+      (_pausableAuthSlideController, _authSlideController),
+    ];
 
-    // Listen to text changes and detect content type
-    // Debounced to prevent expensive regex/JSON operations on every keystroke
+    for (final (pausable, controller) in pausables) {
+      if (!lifecycle.addPausable(pausable)) {
+        debugPrint(
+          '[Spotlight] ⚠️ Failed to register pausable - lifecycle limit reached. '
+          'Disposing controller to prevent unmanaged animations.',
+        );
+        // Dispose controller immediately if lifecycle can't manage it
+        // This prevents unmanaged animations from running and wasting CPU
+        try {
+          controller.dispose();
+        } on Exception catch (e) {
+          debugPrint(
+            '[Spotlight] Failed to dispose unregistered controller: $e',
+          );
+        }
+      }
+    }
+
+    // Listen to text changes and update ViewModel
     _textControllerListener = () {
       final text = _textController.text;
-      // Debounce content detection
-      _searchDebounceTimer?.cancel();
-      _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
-        if (!mounted) return;
-
-        // Detect content type (JSON, JWT, hex color, etc.)
-        final detectedType = await widget.transformerService.detectContentType(
-          text,
-        );
-
-        if (!mounted) return;
-
-        setState(() {
-          _detectedContentType = detectedType;
-
-          // Clear previous transformation result when content changes
-          _transformationResult = null;
-        });
-      });
+      // Update ViewModel content (triggers debounced content detection)
+      _viewModel.updateContent(text);
     };
-    _textController.addListener(_textControllerListener);
+    _textController.addListener(_textControllerListener!);
 
     // Add window listener
     windowManager.addListener(this);
-
-    // Load initial history
-    _loadHistory();
 
     // Note: hCaptcha is initialized once in main.dart, not here
     // Note: Realtime subscription and clipboard monitoring are handled
@@ -310,7 +302,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             _animationController.forward(from: 0);
-            _populateFromClipboard();
+            _viewModel.populateFromClipboard();
             _textFieldFocusNode.requestFocus();
           }
         });
@@ -332,99 +324,42 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   Future<void> _openSettings() async {
     if (!_showSettings) {
-      setState(() => _showSettings = true);
+      setState(() => _activePanel = SpotlightPanel.settings);
       await _settingsSlideController.forward();
       widget.onSettingsOpened?.call();
     }
   }
 
-  /// Load clipboard history from Supabase
-  Future<void> _loadHistory() async {
-    setState(() => _isLoadingHistory = true);
-
-    try {
-      final history = await widget.clipboardRepository.getHistory();
-      if (mounted) {
-        setState(() {
-          _historyItems = history;
-          _filteredHistoryItems = history;
-          _isLoadingHistory = false;
-        });
-      }
-    } on Exception catch (e) {
-      debugPrint('Failed to load history: $e');
-      if (mounted) {
-        setState(() => _isLoadingHistory = false);
-      }
-    }
-  }
-
-  /// Filter history based on search query with debouncing (performance optimization)
-  /// Debounces search input to reduce setState calls during rapid typing
-  void _filterHistory(String query) {
-    // Cancel any pending debounce timer
-    _searchDebounceTimer?.cancel();
-
-    // Debounce the filter operation
-    _searchDebounceTimer = Timer(_searchDebounceDelay, () {
-      if (!mounted) return;
-
-      setState(() {
-        _historySearchQuery = query;
-        if (query.trim().isEmpty) {
-          _filteredHistoryItems = _historyItems;
-        } else {
-          final lowerQuery = query.toLowerCase();
-          _filteredHistoryItems = _historyItems.where((item) {
-            // Search in content
-            if (item.content.toLowerCase().contains(lowerQuery)) {
-              return true;
-            }
-            // Search in device name
-            if (item.deviceName != null &&
-                item.deviceName!.toLowerCase().contains(lowerQuery)) {
-              return true;
-            }
-            // Search in mime type
-            if (item.mimeType != null &&
-                item.mimeType!.toLowerCase().contains(lowerQuery)) {
-              return true;
-            }
-            return false;
-          }).toList();
-        }
-      });
-    });
-  }
+  // _viewModel.refreshHistory and _debouncedLoadHistory removed - now in ViewModel
 
   /// Handle tap on auth overlay to close auth panel
   void _handleAuthOverlayTap() {
     _authSlideController.reverse();
-    setState(() => _showAuth = false);
+    setState(() => _activePanel = SpotlightPanel.none);
   }
 
   /// Handle tap on settings overlay to close settings panel
   void _handleSettingsOverlayTap() {
     _settingsSlideController.reverse();
-    setState(() => _showSettings = false);
+    setState(() => _activePanel = SpotlightPanel.none);
   }
 
   /// Handle tap on history overlay to close history panel
   void _handleHistoryOverlayTap() {
     _historySlideController.reverse();
-    setState(() => _showHistory = false);
+    setState(() => _activePanel = SpotlightPanel.none);
   }
 
   /// Initialize settings service and load saved settings
   Future<void> _initializeSettings() async {
     try {
-      await widget.settingsService.initialize();
+      await _settingsService.initialize();
 
       // Load saved settings
-      final autoSend = await widget.settingsService.getAutoSendEnabled();
-      final staleDuration = await widget.settingsService
+      final autoSend = await _settingsService.getAutoSendEnabled();
+      final staleDuration = await _settingsService
           .getClipboardStaleDurationMinutes();
-      final autoReceive = await widget.settingsService.getAutoReceiveBehavior();
+      final autoReceive = await _settingsService.getAutoReceiveBehavior();
 
       if (mounted) {
         setState(() {
@@ -438,6 +373,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
   }
 
+  void _scheduleRebuild() {
+    if (!mounted || _isRebuildScheduled) return;
+
+    _isRebuildScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isRebuildScheduled = false;
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
+
   @override
   void dispose() {
     // Wrap in try-catch to ensure all resources are disposed even if one fails
@@ -446,25 +392,22 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Note: ClipboardSyncService handles realtime subscription and clipboard monitoring
     // We don't need to clean those up here - they persist in the background
 
+    // CRITICAL: Remove ViewModel listener before disposing screen resources.
+    // The ViewModel itself is a singleton and is not disposed here.
     try {
-      // Clear callback from ClipboardSyncService to prevent memory leak
-      // (Service holds reference to _loadHistory method which references this widget)
-      widget.clipboardSyncService.onClipboardReceived = null;
+      _viewModel.removeListener(_viewModelListener);
     } on Exception catch (e) {
-      debugPrint('Error clearing clipboard sync callback: $e');
+      debugPrint('Error removing ViewModel listener: $e');
     }
 
     try {
       // Remove Pausable wrappers from LifecycleController before disposing (Task 12.1)
       // This prevents memory leaks from unbounded Set growth
-      widget.lifecycleController?.removePausable(_pausableAuthSlideController);
-      widget.lifecycleController?.removePausable(
-        _pausableSettingsSlideController,
-      );
-      widget.lifecycleController?.removePausable(
-        _pausableHistorySlideController,
-      );
-      widget.lifecycleController?.removePausable(_pausableAnimationController);
+      _lifecycleController
+        ..removePausable(_pausableAuthSlideController)
+        ..removePausable(_pausableSettingsSlideController)
+        ..removePausable(_pausableHistorySlideController)
+        ..removePausable(_pausableAnimationController);
     } on Exception catch (e) {
       debugPrint('Error removing pausable controllers: $e');
     }
@@ -476,34 +419,39 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       debugPrint('Error removing window manager listener: $e');
     }
 
-    // Dispose animation controllers (unlikely to throw, but wrapped for safety)
+    // Clear file picker flag if still set
     try {
-      _authSlideController.dispose();
-      _settingsSlideController.dispose();
-      _historySlideController.dispose();
-      _animationController.dispose();
+      if (_viewModel.isFilePickerOpen) {
+        _viewModel.setFilePickerOpen(isOpen: false);
+      }
     } on Exception catch (e) {
-      debugPrint('Error disposing animation controllers: $e');
+      debugPrint('Error clearing file picker flag: $e');
     }
 
-    // Cancel timers to prevent memory leaks and setState-after-dispose
-    try {
-      _searchDebounceTimer?.cancel();
-      _searchDebounceTimer = null;
-      _errorClearTimer?.cancel();
-      _errorClearTimer = null;
-    } on Exception catch (e) {
-      debugPrint('Error cancelling timers: $e');
+    // Dispose animation controllers individually to prevent cascading failures
+    final controllers = [
+      ('authSlide', _authSlideController),
+      ('settingsSlide', _settingsSlideController),
+      ('historySlide', _historySlideController),
+      ('animation', _animationController),
+    ];
+
+    for (final (name, controller) in controllers) {
+      try {
+        controller.dispose();
+      } on Exception catch (e) {
+        debugPrint('Error disposing $name controller: $e');
+      }
     }
 
     // Dispose text controllers and focus nodes (unlikely to throw, but wrapped for safety)
     try {
       // Remove text controller listener before disposal (Memory leak fix)
-      _textController
-        ..removeListener(_textControllerListener)
-        ..dispose();
+      if (_textControllerListener != null) {
+        _textController.removeListener(_textControllerListener!);
+      }
+      _textController.dispose();
       _textFieldFocusNode.dispose();
-      _historySearchController.dispose();
     } on Exception catch (e) {
       debugPrint('Error disposing controllers and focus nodes: $e');
     }
@@ -513,6 +461,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   @override
   void onWindowFocus() {
+    _lastFocusTime = DateTime.now();
     // Wait for window to be fully sized/positioned before animating
     // This prevents warped appearance on first few launches
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -521,7 +470,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         _animationController.forward(from: 0);
 
         // Populate from clipboard and focus
-        _populateFromClipboard();
+        _viewModel.populateFromClipboard();
         _textFieldFocusNode.requestFocus();
       }
     });
@@ -529,285 +478,58 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   @override
   void onWindowBlur() {
+    // Debounce: Ignore blur events immediately after focus (prevents flicker/auto-close)
+    if (_lastFocusTime != null &&
+        DateTime.now().difference(_lastFocusTime!) <
+            const Duration(milliseconds: 500)) {
+      return;
+    }
+
     // Don't hide window if file picker is open (file picker takes focus)
-    if (_isFilePickerOpen) {
-      debugPrint('[Spotlight] Window blur ignored - file picker is open');
+    if (_viewModel.isFilePickerOpen) {
       return;
     }
 
     // Hide window when it loses focus (user clicks outside)
-    widget.windowService.hideSpotlight();
+    _windowService.hideSpotlight();
 
-    // Clear clipboard content to prevent memory leak (especially for large images)
-    if (mounted) {
-      setState(() {
-        _clipboardContent = null;
-      });
-    }
+    // Aggressive Tray Optimization:
+    // 1. Clear clipboard content to release large strings/buffers
+    _viewModel.updateClipboardContent(null);
+
+    // 2. Clear Image Cache to release texture memory immediately
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+
+    // 3. Unfocus text fields to release IME resources
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
   }
 
-  /// Populate text field from system clipboard
-  Future<void> _populateFromClipboard() async {
-    try {
-      final clipboardService = ClipboardService.instance;
-      final clipboardContent = await clipboardService.read();
+  // _populateFromClipboard and _handleSend removed - now in ViewModel
 
-      if (clipboardContent.isEmpty) {
-        debugPrint('[Spotlight] Clipboard is empty');
-        return;
-      }
-
-      String displayText;
-      if (clipboardContent.hasFile) {
-        // For files, show indicator
-        final filename = clipboardContent.filename ?? 'unknown';
-        final sizeKB = (clipboardContent.fileBytes?.length ?? 0) / 1024;
-        displayText = '[File: $filename (${sizeKB.toStringAsFixed(1)}KB)]';
-        debugPrint(
-          '[Spotlight] ↓ Auto-pasted file: $filename, ${sizeKB.toStringAsFixed(1)}KB',
-        );
-      } else if (clipboardContent.hasImage) {
-        // For images, show indicator
-        final mimeType = clipboardContent.mimeType ?? 'unknown';
-        final sizeKB = (clipboardContent.imageBytes?.length ?? 0) / 1024;
-        displayText =
-            '[Image: ${mimeType.split('/').last} (${sizeKB.toStringAsFixed(1)}KB)]';
-        debugPrint(
-          '[Spotlight] ↓ Auto-pasted image: $mimeType, ${sizeKB.toStringAsFixed(1)}KB',
-        );
-      } else if (clipboardContent.hasHtml) {
-        // For HTML, show the HTML source
-        displayText = clipboardContent.html ?? '';
-        debugPrint(
-          '[Spotlight] ↓ Auto-pasted HTML: ${displayText.length} chars',
-        );
-      } else {
-        // For plain text
-        displayText = clipboardContent.text ?? '';
-        debugPrint(
-          '[Spotlight] ↓ Auto-pasted text: ${displayText.length} chars',
-        );
-      }
-
-      if (displayText.isNotEmpty && mounted) {
-        setState(() {
-          _clipboardContent = clipboardContent; // Store full clipboard content
-          _textController.text = displayText;
-          _content = displayText;
-          // Position cursor at end
-          _textController.selection = TextSelection.fromPosition(
-            TextPosition(offset: displayText.length),
-          );
-        });
-
-        // Precache image to avoid re-decoding on rebuilds
-        if (clipboardContent.hasImage && mounted) {
-          unawaited(
-            precacheImage(MemoryImage(clipboardContent.imageBytes!), context),
-          );
-        }
-
-        // Notify sync service that clipboard was modified (for staleness tracking)
-        widget.clipboardSyncService.updateClipboardModificationTime();
-      }
-    } on Exception catch (e) {
-      // Silently fail if clipboard access denied
-      debugPrint('Failed to read clipboard: $e');
-    }
-  }
-
-  /// Handle send action - sends clipboard to Supabase
+  /// Wrapper for ViewModel.handleSend that clears text controller and hides window
   Future<void> _handleSend() async {
-    if (_content.trim().isEmpty || _isSending) return;
-
-    // Rate limit: prevent rapid repeated sends
-    final now = DateTime.now();
-    if (_lastSendTime != null &&
-        now.difference(_lastSendTime!) < _minSendInterval) {
-      debugPrint(
-        'Send suppressed: rate limit (${now.difference(_lastSendTime!)})',
-      );
-      return;
-    }
-
-    setState(() => _isSending = true);
-
-    try {
-      // mark last send time early to avoid races
-      _lastSendTime = now;
-
-      // Get current user ID
-      final userId = Supabase.instance.client.auth.currentUser?.id;
-      if (userId == null) {
-        throw Exception('Not authenticated');
-      }
-
-      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
-      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-      final targetDevicesList = _selectedPlatforms.isEmpty
-          ? null
-          : _selectedPlatforms.toList();
-
-      // Insert into Supabase based on content type
-      // Notification triggered by database webhook, no client-side invocation needed
-
-      if (_clipboardContent?.hasFile ?? false) {
-        // File content - upload to storage
-        final bytes = _clipboardContent!.fileBytes!;
-        final filename = _clipboardContent!.filename;
-
-        // Detect file type
-        final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-          bytes,
-          filename,
-        );
-
-        await widget.clipboardRepository.insertFile(
-          userId: userId,
-          deviceType: currentDeviceType,
-          deviceName: currentDeviceName,
-          fileBytes: bytes,
-          mimeType: fileTypeInfo.mimeType,
-          contentType: fileTypeInfo.contentType,
-          originalFilename: filename,
-          targetDeviceTypes: targetDevicesList,
-        );
-        debugPrint(
-          '[Spotlight] ↑ Sent file: $filename (${bytes.length} bytes)',
-        );
-      } else if (_clipboardContent?.hasImage ?? false) {
-        // Image content - upload to storage
-        final bytes = _clipboardContent!.imageBytes!;
-        final mimeType = _clipboardContent!.mimeType ?? 'image/png';
-        final contentType = mimeType.startsWith('image/png')
-            ? ContentType.imagePng
-            : mimeType.startsWith('image/jpeg')
-            ? ContentType.imageJpeg
-            : ContentType.imageGif;
-
-        await widget.clipboardRepository.insertImage(
-          userId: userId,
-          deviceType: currentDeviceType,
-          deviceName: currentDeviceName,
-          imageBytes: bytes,
-          mimeType: mimeType,
-          contentType: contentType,
-        );
-        debugPrint('[Spotlight] ↑ Sent image: ${bytes.length} bytes');
-      } else if (_clipboardContent?.hasHtml ?? false) {
-        // HTML content
-        await widget.clipboardRepository.insertRichText(
-          userId: userId,
-          deviceType: currentDeviceType,
-          deviceName: currentDeviceName,
-          content: _clipboardContent!.html!,
-          format: RichTextFormat.html,
-        );
-        debugPrint('[Spotlight] ↑ Sent HTML: ${_content.length} chars');
-      } else {
-        // Plain text content
-        final item = ClipboardItem(
-          id: '0', // Will be generated by Supabase
-          userId: userId,
-          content: _content,
-          deviceName: currentDeviceName,
-          deviceType: currentDeviceType,
-          targetDeviceTypes: targetDevicesList,
-          createdAt: DateTime.now(),
-        );
-        await widget.clipboardRepository.insert(item);
-        debugPrint('[Spotlight] ↑ Sent text: ${_content.length} chars');
-      }
-
-      final targetText = _selectedPlatforms.isEmpty
-          ? 'all devices'
-          : _selectedPlatforms.length == 1
-          ? PlatformType.values
-                .firstWhere((p) => p.name == _selectedPlatforms.first)
-                .label
-                .toLowerCase()
-          : '${_selectedPlatforms.length} device types';
-
-      debugPrint('Sent: $_content to $targetText');
-
-      // Notification now triggered by database webhook (send-clipboard-notification)
-      // No client-side invocation needed - server handles FCM delivery
-
-      // Notify ClipboardSyncService to prevent duplicate auto-send
-      widget.clipboardSyncService.notifyManualSend(_content);
-
-      if (mounted) {
-        // Show success toast
-        widget.notificationService?.showToast(
-          message: 'Sent to $targetText',
-          type: NotificationType.success,
-        );
+    await _viewModel.handleSend(
+      onSendSuccess: () async {
+        if (!mounted) return;
 
         _textController.clear();
-        setState(() {
-          _content = '';
-          _clipboardContent = null;
-          _isSending = false;
-        });
 
-        // Close window after a brief delay to show toast
+        // Close window after brief delay
         await Future<void>.delayed(const Duration(milliseconds: 500));
         if (mounted) {
-          await widget.windowService.hideSpotlight();
+          await _windowService.hideSpotlight();
         }
-      }
-    } on ValidationException catch (e) {
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-          _errorMessage = 'Validation error: ${e.message}';
-        });
-
-        // Auto-clear error after 4 seconds (using timer for proper cleanup)
-        _errorClearTimer?.cancel();
-        _errorClearTimer = Timer(const Duration(seconds: 4), () {
-          if (mounted) {
-            setState(() => _errorMessage = null);
-          }
-        });
-      }
-    } on SecurityException catch (e) {
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-          _errorMessage = 'Security error: ${e.message}';
-        });
-
-        // Auto-clear error after 4 seconds (using timer for proper cleanup)
-        _errorClearTimer?.cancel();
-        _errorClearTimer = Timer(const Duration(seconds: 4), () {
-          if (mounted) {
-            setState(() => _errorMessage = null);
-          }
-        });
-      }
-    } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-          _errorMessage = 'Failed to send: $e';
-        });
-
-        // Auto-clear error after 4 seconds (using timer for proper cleanup)
-        _errorClearTimer?.cancel();
-        _errorClearTimer = Timer(const Duration(seconds: 4), () {
-          if (mounted) {
-            setState(() => _errorMessage = null);
-          }
-        });
-      }
-    }
+      },
+    );
   }
 
   Future<void> _handleFileUpload() async {
     try {
       // Set flag to prevent window blur from closing window
-      setState(() => _isFilePickerOpen = true);
+      _viewModel.setFilePickerOpen(isOpen: true);
 
       final result = await FilePicker.platform.pickFiles(
         onFileLoading: (status) => debugPrint('File loading: $status'),
@@ -815,7 +537,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
       // Clear flag after file picker closes
       if (mounted) {
-        setState(() => _isFilePickerOpen = false);
+        _viewModel.setFilePickerOpen(isOpen: false);
       }
 
       if (result == null || result.files.isEmpty) {
@@ -837,7 +559,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       final fileSizeBytes = await fileObj.length();
       if (fileSizeBytes > 10485760) {
         if (mounted) {
-          widget.notificationService?.showToast(
+          _notificationService.showToast(
             message: 'File too large: $filename (max 10MB)',
             type: NotificationType.error,
           );
@@ -898,44 +620,42 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         filename,
       );
 
-      // Get current user ID
-      final userId = Supabase.instance.client.auth.currentUser?.id;
-      if (userId == null) {
-        throw Exception('Not authenticated');
-      }
-
-      // Upload file using generic file insert (handles images too)
-      await widget.clipboardRepository.insertFile(
-        userId: userId,
-        deviceType: ClipboardRepository.getCurrentDeviceType(),
-        deviceName: ClipboardRepository.getCurrentDeviceName(),
-        fileBytes: bytes,
-        mimeType: fileTypeInfo.mimeType,
-        contentType: fileTypeInfo.contentType,
-        originalFilename: filename,
-      );
-
+      // FIXED: Store file in _viewModel.clipboardContent for preview (don't send yet)
+      // User will click Send button to actually share it
       if (mounted) {
-        widget.notificationService?.showToast(
-          message: 'File uploaded: $filename',
+        // Update ViewModel with file content
+        final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
+        final displayText = 'File ready to send: $filename ($sizeKB KB)';
+        _viewModel.setFileContent(
+          ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
+          displayText,
+        );
+        _textController.text = displayText;
+
+        _notificationService.showToast(
+          message: 'File ready: $filename',
           type: NotificationType.success,
+        );
+
+        debugPrint(
+          '[Spotlight] File loaded: $filename (${bytes.length} bytes)',
         );
       }
     } on Exception catch (e) {
-      debugPrint('[SpotlightScreen] Failed to upload file: $e');
+      debugPrint('[SpotlightScreen] Failed to load file: $e');
       if (mounted) {
         // Clear file picker flag on error
-        setState(() => _isFilePickerOpen = false);
+        _viewModel.setFilePickerOpen(isOpen: false);
 
-        widget.notificationService?.showToast(
-          message: 'Failed to upload file: $e',
+        _notificationService.showToast(
+          message: 'Failed to load file: $e',
           type: NotificationType.error,
         );
       }
     } finally {
       // Ensure flag is always cleared
-      if (mounted && _isFilePickerOpen) {
-        setState(() => _isFilePickerOpen = false);
+      if (mounted && _viewModel.isFilePickerOpen) {
+        _viewModel.setFilePickerOpen(isOpen: false);
       }
     }
   }
@@ -953,15 +673,25 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               // Handle Escape key
               if (_showAuth) {
                 _authSlideController.reverse();
-                setState(() => _showAuth = false);
+                setState(() => _activePanel = SpotlightPanel.none);
               } else if (_showSettings) {
                 _settingsSlideController.reverse();
-                setState(() => _showSettings = false);
+                setState(() => _activePanel = SpotlightPanel.none);
               } else if (_showHistory) {
                 _historySlideController.reverse();
-                setState(() => _showHistory = false);
+                setState(() => _activePanel = SpotlightPanel.none);
               } else {
-                widget.windowService.hideSpotlight();
+                // Clear file content to free memory before closing
+                if ((_viewModel.clipboardContent?.hasFile ?? false) ||
+                    (_viewModel.clipboardContent?.hasImage ?? false)) {
+                  setState(() {
+                    _viewModel.updateClipboardContent(null);
+                    debugPrint(
+                      '[Spotlight] Cleared file/image content (freed memory)',
+                    );
+                  });
+                }
+                _windowService.hideSpotlight();
               }
               return null;
             },
@@ -970,202 +700,89 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         child: Focus(
           autofocus: true,
           descendantsAreFocusable: true,
-          child: DropTarget(
-            onDragDone: (details) async {
-              // Handle dropped files
-              setState(() => _isDragOver = false);
-
-              for (final file in details.files) {
-                try {
-                  final fileObj = File(file.path);
-                  final filename = path.basename(file.path);
-
-                  // Validate file size (10MB limit) - Check BEFORE reading bytes
-                  if ((await fileObj.length()) > 10485760) {
-                    widget.notificationService?.showToast(
-                      message: 'File too large: $filename (max 10MB)',
-                      type: NotificationType.error,
-                    );
-                    continue;
-                  }
-
-                  final bytes = await fileObj.readAsBytes();
-
-                  // Detect file type
-                  final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-                    bytes,
-                    filename,
-                  );
-
-                  // Get current user ID
-                  final userId = Supabase.instance.client.auth.currentUser?.id;
-                  if (userId == null) {
-                    throw Exception('Not authenticated');
-                  }
-
-                  // Upload file
-                  await widget.clipboardRepository.insertFile(
-                    userId: userId,
-                    deviceType: ClipboardRepository.getCurrentDeviceType(),
-                    deviceName: ClipboardRepository.getCurrentDeviceName(),
-                    fileBytes: bytes,
-                    contentType: fileTypeInfo.contentType,
-                    mimeType: fileTypeInfo.mimeType,
-                    originalFilename: filename,
-                  );
-
-                  if (mounted) {
-                    widget.notificationService?.showToast(
-                      message: 'File uploaded: $filename',
-                      type: NotificationType.success,
-                    );
-                  }
-                } on Exception catch (e) {
-                  debugPrint('[Spotlight] Drag-drop failed: $e');
-                  widget.notificationService?.showToast(
-                    message: 'Upload failed: ${path.basename(file.path)}',
-                    type: NotificationType.error,
-                  );
-                }
-              }
-            },
-            onDragEntered: (_) {
-              setState(() => _isDragOver = true);
-            },
-            onDragExited: (_) {
-              setState(() => _isDragOver = false);
-            },
-            child: Scaffold(
-              backgroundColor: GhostColors.surface,
-              body: Stack(
-                children: [
-                  // Main content
-                  FadeTransition(
-                    opacity: _fadeAnimation,
-                    child: ScaleTransition(
-                      scale: _scaleAnimation,
-                      child: Center(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                            20,
-                            50,
-                            20,
-                            20,
-                          ), // Extra top padding for buttons
-                          child: SingleChildScrollView(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _buildHeader(),
-                                const SizedBox(height: 12),
-                                _buildTextField(),
+          child: Scaffold(
+            backgroundColor: GhostColors.surface,
+            body: Stack(
+              children: [
+                // Main content
+                FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          20,
+                          50,
+                          20,
+                          20,
+                        ), // Extra top padding for buttons
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildHeader(),
+                              const SizedBox(height: 12),
+                              _buildTextField(),
+                              const SizedBox(height: 10),
+                              // Show transformer previews if content is transformable
+                              if (_viewModel
+                                      .detectedContentType
+                                      ?.isTransformable ??
+                                  false)
+                                ..._buildTransformerUI(),
+                              _buildPlatformSelector(),
+                              const SizedBox(height: 12),
+                              _buildSendButton(),
+                              if (_viewModel.errorMessage != null) ...[
                                 const SizedBox(height: 10),
-                                // Show transformer previews if content is transformable
-                                if (_detectedContentType?.isTransformable ??
-                                    false)
-                                  ..._buildTransformerUI(),
-                                _buildPlatformSelector(),
-                                const SizedBox(height: 12),
-                                _buildSendButton(),
-                                if (_errorMessage != null) ...[
-                                  const SizedBox(height: 10),
-                                  _buildErrorMessage(),
-                                ],
+                                _buildErrorMessage(),
                               ],
-                            ),
+                            ],
                           ),
                         ),
                       ),
                     ),
                   ),
-                  // Settings button - Top Left
-                  Positioned(top: 12, left: 12, child: _buildSettingsButton()),
-                  // History button - Top Right
-                  Positioned(top: 12, right: 12, child: _buildHistoryButton()),
-                  // Click-outside overlay to close auth
-                  if (_showAuth)
-                    Positioned.fill(
-                      child: GestureDetector(
-                        onTap: _handleAuthOverlayTap,
-                        child: Container(color: Colors.transparent),
-                      ),
+                ),
+                // Settings button - Top Left
+                Positioned(top: 12, left: 12, child: _buildSettingsButton()),
+                // History button - Top Right
+                Positioned(top: 12, right: 12, child: _buildHistoryButton()),
+                // Click-outside overlay to close auth
+                if (_showAuth)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: _handleAuthOverlayTap,
+                      child: Container(color: Colors.transparent),
                     ),
-                  // Click-outside overlay to close settings
-                  if (_showSettings)
-                    Positioned.fill(
-                      child: GestureDetector(
-                        onTap: _handleSettingsOverlayTap,
-                        child: Container(color: Colors.transparent),
-                      ),
+                  ),
+                // Click-outside overlay to close settings
+                if (_showSettings)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: _handleSettingsOverlayTap,
+                      child: Container(color: Colors.transparent),
                     ),
-                  // Click-outside overlay to close history
-                  if (_showHistory)
-                    Positioned.fill(
-                      child: GestureDetector(
-                        onTap: _handleHistoryOverlayTap,
-                        child: Container(color: Colors.transparent),
-                      ),
+                  ),
+                // Click-outside overlay to close history
+                if (_showHistory)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: _handleHistoryOverlayTap,
+                      child: Container(color: Colors.transparent),
                     ),
-                  // Auth panel overlay (left side, wider than settings)
-                  if (_showAuth) _buildAuthPanel(),
-                  // Settings panel overlay (left side)
-                  if (_showSettings) _buildSettingsPanel(),
-                  // History panel overlay (right side)
-                  if (_showHistory) _buildHistoryPanel(),
-                  // Drag-over visual feedback
-                  if (_isDragOver)
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: GhostColors.primary.withValues(alpha: 0.1),
-                          border: Border.all(
-                            color: GhostColors.primary,
-                            width: 2,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 24,
-                              vertical: 16,
-                            ),
-                            decoration: BoxDecoration(
-                              color: GhostColors.surface,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: GhostColors.primary,
-                                width: 2,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.upload_file,
-                                  color: GhostColors.primary,
-                                  size: 32,
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Drop files to upload',
-                                  style: TextStyle(
-                                    color: GhostColors.primary,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ), // Close Stack (body)
-            ), // Close Scaffold
-          ), // Close DropTarget
+                  ),
+                // Auth panel overlay (left side, wider than settings)
+                if (_showAuth) _buildAuthPanel(),
+                // Settings panel overlay (left side)
+                if (_showSettings) _buildSettingsPanel(),
+                // History panel overlay (right side)
+                if (_showHistory) _buildHistoryPanel(),
+              ],
+            ), // Close Stack (body)
+          ), // Close Scaffold
         ), // Close Focus
       ), // Close Actions
     ); // Close Shortcuts
@@ -1190,86 +807,49 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build settings button for top-left corner
   Widget _buildSettingsButton() {
-    return MouseRegion(
-      onEnter: (_) {
-        setState(() => _showSettings = true);
-        _settingsSlideController.forward();
+    return _HoverableIconButton(
+      icon: Icons.settings,
+      isActive: _showSettings,
+      onTap: () {
+        if (_showSettings) {
+          _settingsSlideController.reverse();
+          setState(() => _activePanel = SpotlightPanel.none);
+        } else {
+          setState(() => _activePanel = SpotlightPanel.settings);
+          _settingsSlideController.forward();
+        }
       },
-      child: InkWell(
-        onTap: () {
-          if (_showSettings) {
-            _settingsSlideController.reverse();
-            setState(() => _showSettings = false);
-          } else {
-            setState(() => _showSettings = true);
-            _settingsSlideController.forward();
-          }
-        },
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: _showSettings
-                ? GhostColors.primary.withValues(alpha: 0.1)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            Icons.settings,
-            size: 22,
-            color: _showSettings
-                ? GhostColors.primary
-                : GhostColors.textSecondary,
-          ),
-        ),
-      ),
     );
   }
 
   /// Build history button for top-right corner
   Widget _buildHistoryButton() {
-    return MouseRegion(
-      onEnter: (_) {
-        setState(() => _showHistory = true);
-        _historySlideController.forward();
+    return _HoverableIconButton(
+      icon: Icons.history,
+      isActive: _showHistory,
+      onTap: () {
+        if (_showHistory) {
+          _historySlideController.reverse();
+          setState(() => _activePanel = SpotlightPanel.none);
+        } else {
+          setState(() => _activePanel = SpotlightPanel.history);
+          _historySlideController.forward();
+        }
       },
-      child: InkWell(
-        onTap: () {
-          if (_showHistory) {
-            _historySlideController.reverse();
-            setState(() => _showHistory = false);
-          } else {
-            setState(() => _showHistory = true);
-            _historySlideController.forward();
-          }
-        },
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: _showHistory
-                ? GhostColors.primary.withValues(alpha: 0.1)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            Icons.history,
-            size: 22,
-            color: _showHistory
-                ? GhostColors.primary
-                : GhostColors.textSecondary,
-          ),
-        ),
-      ),
     );
   }
 
   /// Build image preview (shown when clipboard contains image)
   Widget? _buildImagePreview() {
-    if (_clipboardContent?.hasImage != true) return null;
+    final content = _viewModel.clipboardContent;
+    // Check for null content, no image flag, or missing bytes
+    if (content == null || !content.hasImage || content.imageBytes == null) {
+      return null;
+    }
 
-    final imageBytes = _clipboardContent!.imageBytes!;
-    final mimeType = _clipboardContent!.mimeType ?? 'unknown';
+    final imageBytes = content.imageBytes!;
+    final mimeType = content.mimeType ?? 'unknown';
+    // Calculate size safely
     final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
 
     return Container(
@@ -1290,6 +870,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               child: Image.memory(
                 imageBytes,
                 fit: BoxFit.contain,
+                // Cap DPI scaling at 2x to prevent excessive memory usage on high-DPI displays
+                cacheHeight:
+                    (80 *
+                            MediaQuery.devicePixelRatioOf(
+                              context,
+                            ).clamp(1.0, 2.0))
+                        .round(),
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
                     height: 80,
@@ -1320,10 +907,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build file preview (shown when clipboard contains file)
   Widget? _buildFilePreview() {
-    if (_clipboardContent?.hasFile != true) return null;
+    final content = _viewModel.clipboardContent;
+    // Check for null content, no file flag, or missing bytes
+    if (content == null || !content.hasFile || content.fileBytes == null) {
+      return null;
+    }
 
-    final fileBytes = _clipboardContent!.fileBytes!;
-    final filename = _clipboardContent!.filename ?? 'file';
+    final fileBytes = content.fileBytes!;
+    final filename = content.filename ?? 'file';
 
     // Create a temporary clipboard item for the preview widget
     final fileTypeInfo = FileTypeService.instance.detectFromBytes(
@@ -1349,65 +940,76 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   Widget _buildTextField() {
+    // Cache preview widgets to avoid double construction (performance: build once, use twice)
+    final cachedFilePreview = _buildFilePreview();
+    final cachedImagePreview = _buildImagePreview();
+
+    final hasFile = _viewModel.clipboardContent?.hasFile ?? false;
+    final hasImage = _viewModel.clipboardContent?.hasImage ?? false;
+
     return RepaintBoundary(
       // Isolate text field repaints
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // File preview (if clipboard has file)
-          if (_buildFilePreview() != null) _buildFilePreview()!,
-          // Image preview (if clipboard has image)
-          if (_buildImagePreview() != null) _buildImagePreview()!,
-          TextField(
-            controller: _textController,
-            focusNode: _textFieldFocusNode,
-            autofocus: true,
-            maxLines: 6,
-            minLines: 3,
-            style: GhostTypography.body.copyWith(
-              color: GhostColors.textPrimary,
-            ),
-            decoration: InputDecoration(
-              hintText: 'Paste or type your content...',
-              hintStyle: TextStyle(color: GhostColors.textMuted),
-              filled: true,
-              fillColor: GhostColors.surfaceLight,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
+          // File preview (if clipboard has file) - cached to avoid double construction
+          if (cachedFilePreview != null) cachedFilePreview,
+          // Image preview (if clipboard has image) - cached to avoid double construction
+          if (cachedImagePreview != null) cachedImagePreview,
+          // FIXED: Hide text field when file/image present (text is ignored anyway)
+          if (!hasFile && !hasImage)
+            TextField(
+              controller: _textController,
+              focusNode: _textFieldFocusNode,
+              autofocus: true,
+              maxLines: 6,
+              minLines: 3,
+              style: GhostTypography.body.copyWith(
+                color: GhostColors.textPrimary,
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(
-                  color: GhostColors.primary,
-                  width: 2,
+              decoration: InputDecoration(
+                hintText: 'Paste or type your content...',
+                hintStyle: const TextStyle(color: GhostColors.textMuted),
+                filled: true,
+                fillColor: GhostColors.surfaceLight,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(
+                    color: GhostColors.primary,
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
                 ),
               ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 12,
+              onSubmitted: (_) => _handleSend(),
+            ),
+          // FIXED: Hide upload button when file/image already loaded
+          if (!(_viewModel.clipboardContent?.hasFile ?? false) &&
+              !(_viewModel.clipboardContent?.hasImage ?? false))
+            Padding(
+              padding: const EdgeInsets.only(left: 4, top: 6),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: _handleFileUpload,
+                    icon: const Icon(Icons.upload_file),
+                    color: GhostColors.primary,
+                    iconSize: 20,
+                    tooltip: 'Upload file',
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(),
+                    splashRadius: 18,
+                  ),
+                ],
               ),
             ),
-            onSubmitted: (_) => _handleSend(),
-          ),
-          // Upload button row
-          Padding(
-            padding: const EdgeInsets.only(left: 4, top: 6),
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: _handleFileUpload,
-                  icon: const Icon(Icons.upload_file),
-                  color: GhostColors.primary,
-                  iconSize: 20,
-                  tooltip: 'Upload file',
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
-                  splashRadius: 18,
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
@@ -1427,8 +1029,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           itemBuilder: (context, index) {
             final platform = PlatformType.values[index];
             final isSelected = platform == PlatformType.all
-                ? _selectedPlatforms.isEmpty
-                : _selectedPlatforms.contains(platform.name);
+                ? _viewModel.selectedPlatforms.isEmpty
+                : _viewModel.selectedPlatforms.contains(platform.name);
 
             return RepaintBoundary(
               // Isolate each chip repaint
@@ -1437,21 +1039,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 icon: platform.icon,
                 isSelected: isSelected,
                 onTap: () {
-                  setState(() {
-                    if (platform == PlatformType.all) {
-                      // Selecting "All" clears all selections
-                      _selectedPlatforms.clear();
-                    } else {
-                      // Toggle individual platform
-                      if (_selectedPlatforms.contains(platform.name)) {
-                        _selectedPlatforms.remove(platform.name);
-                      } else {
-                        _selectedPlatforms.add(platform.name);
-                      }
-                    }
-                    // Invalidate send button string cache
-                    _cachedSendButtonTargetText = null;
-                  });
+                  if (platform == PlatformType.all) {
+                    // Selecting "All" clears all selections
+                    _viewModel.clearPlatformSelection();
+                  } else {
+                    // Toggle individual platform
+                    _viewModel.togglePlatform(platform.name);
+                  }
                 },
               ),
             );
@@ -1463,11 +1057,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build transformer UI (JSON prettify, JWT decode, color preview)
   List<Widget> _buildTransformerUI() {
-    if (_detectedContentType == null) return [];
+    if (_viewModel.detectedContentType == null) return [];
 
     final widgets = <Widget>[const SizedBox(height: 10)];
 
-    switch (_detectedContentType!.type) {
+    switch (_viewModel.detectedContentType!.type) {
       case TransformerContentType.json:
         widgets.add(_buildJsonTransformer());
       case TransformerContentType.jwt:
@@ -1494,20 +1088,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             icon: const Icon(Icons.format_align_left, size: 16),
             label: const Text('Prettify JSON'),
             onPressed: () async {
-              final result = await widget.transformerService.transform(
-                _content,
+              final result = await _transformerService.transform(
+                _viewModel.content,
                 TransformerContentType.json,
               );
               if (!mounted) return;
               if (result.isSuccess && result.transformedContent != null) {
                 setState(() {
                   _textController.text = result.transformedContent!;
-                  _transformationResult = result;
                 });
               } else {
-                setState(() {
-                  _errorMessage = result.error ?? 'Failed to prettify JSON';
-                });
+                // Error handling moved to ViewModel
               }
             },
             style: ElevatedButton.styleFrom(
@@ -1526,13 +1117,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build JWT decoder preview
   Widget _buildJwtTransformer() {
+    // Use ViewModel's JWT future (managed by content detection)
+    // The ViewModel prefetches this when JWT is detected, so trust that.
+    // Don't create inline Futures - they can complete after widget disposal.
+    final jwtFuture = _viewModel.jwtTransformFuture;
     return FutureBuilder<TransformationResult>(
-      future: _transformationResult != null
-          ? Future.value(_transformationResult!)
-          : widget.transformerService.transform(
-              _content,
-              TransformerContentType.jwt,
-            ),
+      future: jwtFuture,
       builder: (context, snapshot) {
         final result = snapshot.data;
 
@@ -1551,7 +1141,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.vpn_key, size: 16, color: Colors.amber),
+                    const Icon(
+                      Icons.vpn_key,
+                      size: 16,
+                      color: GhostColors.warning,
+                    ),
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
@@ -1559,19 +1153,18 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: Colors.amber,
+                          color: GhostColors.warning,
                         ),
                       ),
                     ),
                     GestureDetector(
                       onTap: () async {
-                        final newResult = await widget.transformerService
-                            .transform(_content, TransformerContentType.jwt);
-                        if (mounted) {
-                          setState(() {
-                            _transformationResult = newResult;
-                          });
-                        }
+                        // Refresh JWT transformation
+                        await _transformerService.transform(
+                          _viewModel.content,
+                          TransformerContentType.jwt,
+                        );
+                        // Transformation state managed by ViewModel
                       },
                       child: const Icon(
                         Icons.refresh,
@@ -1593,7 +1186,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                     result!.error!,
                     style: const TextStyle(
                       fontSize: 11,
-                      color: Colors.redAccent,
+                      color: GhostColors.errorLight,
                     ),
                   )
                 else if (result?.preview != null)
@@ -1617,7 +1210,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build hex color preview
   Widget _buildHexColorPreview() {
-    final colorValue = _detectedContentType!.metadata?['color'] as String?;
+    final colorValue =
+        _viewModel.detectedContentType!.metadata?['color'] as String?;
     if (colorValue == null) return const SizedBox.shrink();
 
     try {
@@ -1672,30 +1266,33 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build send button
   Widget _buildSendButton() {
-    // Get the target description (cached to avoid expensive computation on every rebuild)
-    _cachedSendButtonTargetText ??= _selectedPlatforms.isEmpty
-        ? 'all devices'
-        : _selectedPlatforms.length == 1
-        ? PlatformType.values
-              .firstWhere((p) => p.name == _selectedPlatforms.first)
-              .label
-              .toLowerCase()
-        : _selectedPlatforms
-              .map(
-                (name) => PlatformType.values
-                    .firstWhere((p) => p.name == name)
-                    .label
-                    .toLowerCase(),
-              )
-              .join(', ');
-    final targetText = _cachedSendButtonTargetText!;
+    // Get the target description (ViewModel manages cache)
+    final targetText =
+        _viewModel.cachedSendButtonTargetText ??
+        (_viewModel.selectedPlatforms.isEmpty
+            ? 'all devices'
+            : _viewModel.selectedPlatforms.length == 1
+            ? PlatformType.values
+                  .firstWhere(
+                    (p) => p.name == _viewModel.selectedPlatforms.first,
+                  )
+                  .label
+                  .toLowerCase()
+            : _viewModel.selectedPlatforms
+                  .map(
+                    (name) => PlatformType.values
+                        .firstWhere((p) => p.name == name)
+                        .label
+                        .toLowerCase(),
+                  )
+                  .join(', '));
 
     return RepaintBoundary(
       // Isolate send button repaints
       child: Column(
         children: [
           // Target indicator
-          if (_selectedPlatforms.isNotEmpty)
+          if (_viewModel.selectedPlatforms.isNotEmpty)
             Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1717,7 +1314,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   const SizedBox(width: 6),
                   Text(
                     'Sending to $targetText only',
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 11,
                       color: GhostColors.textSecondary,
                     ),
@@ -1727,7 +1324,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             ),
           // Send button
           ElevatedButton(
-            onPressed: _isSending ? null : _handleSend,
+            onPressed: _viewModel.isSending ? null : _handleSend,
             style: ElevatedButton.styleFrom(
               backgroundColor: GhostColors.primary,
               minimumSize: const Size(double.infinity, 48),
@@ -1736,7 +1333,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: _isSending
+            child: _viewModel.isSending
                 ? const SizedBox(
                     height: 20,
                     width: 20,
@@ -1789,7 +1386,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _errorMessage!,
+              _viewModel.errorMessage!,
               style: TextStyle(fontSize: 12, color: Colors.red.shade400),
             ),
           ),
@@ -1800,194 +1397,264 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Build settings panel (slide-in from left)
   Widget _buildSettingsPanel() {
+    // Cache settings panel content to prevent rebuilds during animation
+    final panelContent = GestureDetector(
+      onTap: () {}, // Prevent closing when clicking inside panel
+      child: Container(
+        width: 280,
+        decoration: BoxDecoration(
+          color: GhostColors.surfaceLight,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.5),
+              blurRadius: 20,
+              offset: const Offset(5, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.settings,
+                    size: 18,
+                    color: GhostColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Settings',
+                    style: GhostTypography.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: GhostColors.textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    color: GhostColors.textSecondary,
+                    tooltip: 'Close settings', // FIX #27: Accessibility
+                    onPressed: () async {
+                      await _settingsSlideController.reverse();
+                      setState(() => _activePanel = SpotlightPanel.none);
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: GhostColors.surface),
+            // Settings content - now using SettingsPanel widget
+            Expanded(
+              child: SettingsPanel(
+                authService: _authService,
+                settingsService: _settingsService,
+                autoSendEnabled: _autoSendEnabled,
+                staleDurationMinutes: _staleDurationMinutes,
+                autoReceiveBehavior: _autoReceiveBehavior,
+                autoStartService: _autoStartService,
+                hotkeyService: _hotkeyService,
+                deviceService: _deviceService,
+                encryptionService: EncryptionService.instance,
+                onEncryptionChanged: _viewModel.refreshHistory,
+                onClose: _handleSettingsClose,
+                onOpenAuth: () async {
+                  // Close settings panel first to prevent memory leak
+                  await _settingsSlideController.reverse();
+                  setState(() {
+                    _activePanel = SpotlightPanel.auth;
+                  });
+                  await _authSlideController.forward();
+                },
+                onAutoSendChanged: (value) {
+                  setState(() => _autoSendEnabled = value);
+                  // Start/stop clipboard monitoring in background service
+                  if (value) {
+                    _syncService.startClipboardMonitoring();
+                  } else {
+                    _syncService.stopClipboardMonitoring();
+                  }
+                },
+                onStaleDurationChanged: (value) {
+                  setState(() => _staleDurationMinutes = value);
+                },
+                onAutoReceiveBehaviorChanged: (value) {
+                  setState(() => _autoReceiveBehavior = value);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
     return Positioned(
       left: 0,
       top: 0,
       bottom: 0,
       child: SlideTransition(
         position: _settingsSlideAnimation,
-        child: GestureDetector(
-          onTap: () {}, // Prevent closing when clicking inside panel
-          child: Container(
-            width: 280,
-            decoration: BoxDecoration(
-              color: GhostColors.surfaceLight,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  blurRadius: 20,
-                  offset: const Offset(5, 0),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // Header
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.settings,
-                        size: 18,
-                        color: GhostColors.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Settings',
-                        style: GhostTypography.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: GhostColors.textPrimary,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        color: GhostColors.textSecondary,
-                        onPressed: () async {
-                          await _settingsSlideController.reverse();
-                          setState(() => _showSettings = false);
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: GhostColors.surface),
-                // Settings content - now using SettingsPanel widget
-                Expanded(
-                  child: SettingsPanel(
-                    authService: widget.authService,
-                    settingsService: widget.settingsService,
-                    autoSendEnabled: _autoSendEnabled,
-                    staleDurationMinutes: _staleDurationMinutes,
-                    autoReceiveBehavior: _autoReceiveBehavior,
-                    autoStartService: widget.autoStartService,
-                    hotkeyService: widget.hotkeyService,
-                    deviceService: widget.deviceService,
-                    encryptionService: EncryptionService.instance,
-                    onEncryptionChanged: _loadHistory,
-                    onClose: () async {
-                      await _settingsSlideController.reverse();
-                      setState(() => _showSettings = false);
-                    },
-                    onOpenAuth: () async {
-                      // Close settings panel first to prevent memory leak
-                      await _settingsSlideController.reverse();
-                      setState(() {
-                        _showSettings = false;
-                        _showAuth = true;
-                      });
-                      await _authSlideController.forward();
-                    },
-                    onAutoSendChanged: (value) {
-                      setState(() => _autoSendEnabled = value);
-                      // Start/stop clipboard monitoring in background service
-                      if (value) {
-                        widget.clipboardSyncService.startClipboardMonitoring();
-                      } else {
-                        widget.clipboardSyncService.stopClipboardMonitoring();
-                      }
-                    },
-                    onStaleDurationChanged: (value) {
-                      setState(() => _staleDurationMinutes = value);
-                    },
-                    onAutoReceiveBehaviorChanged: (value) {
-                      setState(() => _autoReceiveBehavior = value);
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: panelContent,
       ),
     );
   }
 
   Widget _buildAuthPanel() {
+    // Cache auth panel content to prevent rebuilds
+    final panelContent = GestureDetector(
+      onTap: () {}, // Prevent closing when clicking inside panel
+      child: Container(
+        width: 400, // Wider than Settings (280px)
+        decoration: BoxDecoration(
+          color: GhostColors.surfaceLight,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.5),
+              blurRadius: 20,
+              offset: const Offset(5, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.lock, size: 18, color: GhostColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    _authService.isAnonymous
+                        ? 'Upgrade Account'
+                        : 'Account Settings',
+                    style: GhostTypography.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: GhostColors.textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    color: GhostColors.textSecondary,
+                    onPressed: () async {
+                      await _authSlideController.reverse();
+                      setState(() => _activePanel = SpotlightPanel.none);
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: GhostColors.surface),
+            // Auth form - now using AuthPanel widget
+            Expanded(
+              child: AuthPanel(
+                authService: _authService,
+                notificationService: _notificationService,
+                clipboardSyncService: _syncService,
+                onClose: _handleAuthClose,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
     return Positioned(
       left: 0,
       top: 0,
       bottom: 0,
       child: SlideTransition(
         position: _authSlideAnimation,
-        child: GestureDetector(
-          onTap: () {}, // Prevent closing when clicking inside panel
-          child: Container(
-            width: 400, // Wider than Settings (280px)
-            decoration: BoxDecoration(
-              color: GhostColors.surfaceLight,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  blurRadius: 20,
-                  offset: const Offset(5, 0),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // Header
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.lock,
-                        size: 18,
-                        color: GhostColors.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.authService.isAnonymous
-                            ? 'Upgrade Account'
-                            : 'Account Settings',
-                        style: GhostTypography.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: GhostColors.textPrimary,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        color: GhostColors.textSecondary,
-                        onPressed: () async {
-                          await _authSlideController.reverse();
-                          setState(() => _showAuth = false);
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: GhostColors.surface),
-                // Auth form - now using AuthPanel widget
-                Expanded(
-                  child: AuthPanel(
-                    authService: widget.authService,
-                    notificationService:
-                        widget.notificationService ?? NotificationService(),
-                    clipboardSyncService: widget.clipboardSyncService,
-                    onClose: () async {
-                      await _authSlideController.reverse();
-                      setState(() => _showAuth = false);
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: panelContent,
       ),
     );
   }
 
+  /// Handle copying a history item to clipboard
+  /// Wrapper for history item copy - closes panel then delegates to ViewModel
+  Future<void> _handleHistoryItemCopy(ClipboardItem item) async {
+    // 1. Instant Feedback: Close panel and hide window immediately
+    // We don't wait for the animation or the copy operation
+    if (mounted) {
+      setState(() => _activePanel = SpotlightPanel.none);
+    }
+
+    // Hide window immediately (Optimistic UI)
+    unawaited(_windowService.hideSpotlight());
+
+    // 2. Perform copy in background
+    // We act as if it succeeded immediately to the user
+    try {
+      await _viewModel.handleHistoryItemCopy(item);
+    } on Exception catch (e) {
+      // If copy fails, we might want to show a system notification since window is hidden
+      debugPrint('[Spotlight] Copy failed after hide: $e');
+    }
+
+    // Reset panel state for next time
+    if (mounted) {
+      unawaited(_historySlideController.reverse());
+    }
+  }
+
+  /// Wrapper for history item delete - delegates to ViewModel
+  void _handleHistoryItemDelete(ClipboardItem item) {
+    _viewModel.handleHistoryItemDelete(item);
+  }
+
+  /// Handle closing the settings panel
+  Future<void> _handleSettingsClose() async {
+    await _settingsSlideController.reverse();
+    setState(() => _activePanel = SpotlightPanel.none);
+  }
+
+  /// Handle closing the auth panel
+  Future<void> _handleAuthClose() async {
+    await _authSlideController.reverse();
+    setState(() => _activePanel = SpotlightPanel.none);
+  }
+
+  /// Handle closing the history panel
+  Future<void> _handleHistoryClose() async {
+    await _historySlideController.reverse();
+    setState(() => _activePanel = SpotlightPanel.none);
+  }
+
   /// Build history panel (slide-in from right)
   Widget _buildHistoryPanel() {
-    // Use real history data from Supabase
+    // Cache the panel content to prevent rebuilds during animation (performance)
+    final panelContent = GestureDetector(
+      onTap: () {}, // Prevent closing when clicking inside panel
+      child: Container(
+        width: 280,
+        decoration: BoxDecoration(
+          color: GhostColors.surfaceLight,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.5),
+              blurRadius: 20,
+              offset: const Offset(-5, 0),
+            ),
+          ],
+        ),
+        child: _HistoryPanelContent(
+          historyItems: _viewModel.historyItems,
+          isLoading: _viewModel.isLoadingHistory,
+          clipboardRepository: _clipboardRepo,
+          notificationService: _notificationService,
+          onClose: _handleHistoryClose,
+          onItemTap: _handleHistoryItemCopy,
+          onItemDelete: _handleHistoryItemDelete,
+        ),
+      ),
+    );
 
     return Positioned(
       right: 0,
@@ -1995,364 +1662,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       bottom: 0,
       child: SlideTransition(
         position: _historySlideAnimation,
-        child: GestureDetector(
-          onTap: () {}, // Prevent closing when clicking inside panel
-          child: Container(
-            width: 280,
-            decoration: BoxDecoration(
-              color: GhostColors.surfaceLight,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  blurRadius: 20,
-                  offset: const Offset(-5, 0),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // Header
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.history,
-                        size: 18,
-                        color: GhostColors.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Recent Clips',
-                        style: GhostTypography.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: GhostColors.textPrimary,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        color: GhostColors.textSecondary,
-                        onPressed: () async {
-                          await _historySlideController.reverse();
-                          setState(() => _showHistory = false);
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: GhostColors.surface),
-                // Search bar
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: TextField(
-                    controller: _historySearchController,
-                    onChanged: _filterHistory,
-                    style: const TextStyle(
-                      color: GhostColors.textPrimary,
-                      fontSize: 13,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: 'Search clips...',
-                      hintStyle: const TextStyle(
-                        color: GhostColors.textMuted,
-                        fontSize: 13,
-                      ),
-                      prefixIcon: const Icon(
-                        Icons.search,
-                        size: 18,
-                        color: GhostColors.textMuted,
-                      ),
-                      suffixIcon: _historySearchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, size: 16),
-                              color: GhostColors.textMuted,
-                              onPressed: () {
-                                _historySearchController.clear();
-                                _filterHistory('');
-                              },
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                            )
-                          : null,
-                      filled: true,
-                      fillColor: GhostColors.surface,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                ),
-                // History list
-                Expanded(
-                  child: _isLoadingHistory
-                      ? const Center(
-                          child: CircularProgressIndicator(
-                            color: GhostColors.primary,
-                          ),
-                        )
-                      : _filteredHistoryItems.isEmpty
-                      ? Center(
-                          child: Text(
-                            _historySearchQuery.isNotEmpty
-                                ? 'No results found'
-                                : 'No clipboard history yet',
-                            style: const TextStyle(
-                              color: GhostColors.textMuted,
-                              fontSize: 13,
-                            ),
-                          ),
-                        )
-                      : RepaintBoundary(
-                          // Isolate history list repaints
-                          child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            itemCount: _filteredHistoryItems.length,
-                            itemBuilder: (context, index) {
-                              final item = _filteredHistoryItems[index];
-                              return RepaintBoundary(
-                                // Isolate each history item repaint
-                                child: _StaggeredHistoryItem(
-                                  index: index,
-                                  item: item,
-                                  clipboardRepository:
-                                      widget.clipboardRepository,
-                                  notificationService:
-                                      widget.notificationService,
-                                  timeAgo: _formatTimeAgo(item.createdAt),
-                                  device: _capitalizeFirst(item.deviceType),
-                                  onDelete: () {
-                                    // Remove from local list and reload
-                                    setState(() {
-                                      _filteredHistoryItems.removeAt(index);
-                                      _historyItems.remove(item);
-                                    });
-                                  },
-                                  onTap: () async {
-                                    // Copy directly to system clipboard (handles all content types)
-                                    try {
-                                      // Close history panel first to avoid window state conflicts
-                                      await _historySlideController.reverse();
-                                      if (mounted) {
-                                        setState(() => _showHistory = false);
-                                      }
-
-                                      // Wait for animation to complete
-                                      await Future<void>.delayed(
-                                        const Duration(milliseconds: 200),
-                                      );
-
-                                      // Handle different content types
-                                      if (item.isFile) {
-                                        // File - download to temp and write to clipboard
-                                        if (item.storagePath == null) {
-                                          throw Exception(
-                                            'File missing storage path',
-                                          );
-                                        }
-
-                                        final bytes = await widget
-                                            .clipboardRepository
-                                            .downloadFile(item);
-
-                                        if (bytes == null) {
-                                          throw Exception(
-                                            'Failed to download file',
-                                          );
-                                        }
-
-                                        // Save to temp using shared TempFileService (accessed via singleton for now or pass it down)
-                                        // Note: Ideally we should use the injected service, but for UI simplicity we'll use the singleton instance
-                                        // which lines up with how other services are accessed in this widget if needed.
-                                        // However, TempFileService is not injected into _StaggeredHistoryItem.
-                                        // We will use the implementation directly or we need to pass it.
-                                        // Looking at imports, we have `../../services/temp_file_service.dart`.
-
-                                        final filename =
-                                            item.metadata?.originalFilename ??
-                                            'file.bin';
-                                        final tempFile = await TempFileService
-                                            .instance
-                                            .saveTempFile(bytes, filename);
-
-                                        await ClipboardService.instance
-                                            .writeFilePath(tempFile.path);
-
-                                        debugPrint(
-                                          '[Spotlight] File copied to clipboard: $filename',
-                                        );
-
-                                        // Schedule temp file cleanup after clipboard operation
-                                        Future.delayed(
-                                          const Duration(seconds: 5),
-                                          () {
-                                            TempFileService.instance
-                                                .deleteTempFile(tempFile.path);
-                                          },
-                                        );
-
-                                        // Notify sync service
-                                        widget.clipboardSyncService
-                                            .updateClipboardModificationTime();
-
-                                        if (mounted) {
-                                          widget.notificationService?.showToast(
-                                            message: 'File copied to clipboard',
-                                            type: NotificationType.success,
-                                          );
-                                        }
-                                      } else if (item.isImage) {
-                                        // For images, download from storage and copy to clipboard
-                                        final bytes = await widget
-                                            .clipboardRepository
-                                            .downloadFile(item);
-                                        if (bytes == null) {
-                                          throw Exception(
-                                            'Failed to download image',
-                                          );
-                                        }
-
-                                        // Use super_clipboard to write image
-                                        final clipboardService =
-                                            ClipboardService.instance;
-                                        await clipboardService.writeImage(
-                                          bytes,
-                                        );
-                                        debugPrint(
-                                          '[Spotlight] Image copied to clipboard (${bytes.length} bytes)',
-                                        );
-
-                                        // Notify sync service that clipboard was modified
-                                        widget.clipboardSyncService
-                                            .updateClipboardModificationTime();
-
-                                        if (mounted) {
-                                          widget.notificationService?.showToast(
-                                            message:
-                                                'Image copied to clipboard',
-                                            type: NotificationType.success,
-                                          );
-                                        }
-                                      } else if (item.isRichText) {
-                                        // Rich text - copy as HTML or Markdown
-                                        final clipboardService =
-                                            ClipboardService.instance;
-                                        if (item.richTextFormat ==
-                                            RichTextFormat.html) {
-                                          await clipboardService.writeHtml(
-                                            item.content,
-                                          );
-                                          debugPrint(
-                                            '[Spotlight] HTML copied to clipboard',
-                                          );
-                                        } else {
-                                          // Markdown - copy as plain text for now
-                                          await clipboardService.writeText(
-                                            item.content,
-                                          );
-                                          debugPrint(
-                                            '[Spotlight] Markdown copied to clipboard',
-                                          );
-                                        }
-
-                                        // Notify sync service that clipboard was modified
-                                        widget.clipboardSyncService
-                                            .updateClipboardModificationTime();
-
-                                        await Future<void>.delayed(
-                                          const Duration(milliseconds: 50),
-                                        );
-                                        if (mounted) {
-                                          widget.notificationService?.showToast(
-                                            message:
-                                                'Copied ${item.richTextFormat?.value ?? "rich text"} to clipboard',
-                                            type: NotificationType.success,
-                                          );
-                                        }
-                                      } else {
-                                        // Plain text
-                                        final clipboardService =
-                                            ClipboardService.instance;
-                                        await clipboardService.writeText(
-                                          item.content,
-                                        );
-                                        debugPrint(
-                                          '[Spotlight] Text copied to clipboard',
-                                        );
-
-                                        // Notify sync service that clipboard was modified
-                                        widget.clipboardSyncService
-                                            .updateClipboardModificationTime();
-
-                                        await Future<void>.delayed(
-                                          const Duration(milliseconds: 50),
-                                        );
-                                        if (mounted) {
-                                          widget.notificationService?.showToast(
-                                            message: 'Copied to clipboard',
-                                            type: NotificationType.success,
-                                          );
-                                        }
-                                      }
-                                    } on Exception catch (e) {
-                                      debugPrint(
-                                        'Failed to copy to clipboard: $e',
-                                      );
-                                      if (mounted) {
-                                        widget.notificationService?.showToast(
-                                          message: 'Failed to copy: $e',
-                                          type: NotificationType.error,
-                                        );
-                                      }
-                                    }
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: panelContent,
       ),
     );
-  }
-
-  /// Format DateTime to "X ago" string
-  String _formatTimeAgo(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inSeconds < 60) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      final minutes = difference.inMinutes;
-      return '$minutes${minutes == 1 ? " min" : " mins"} ago';
-    } else if (difference.inHours < 24) {
-      final hours = difference.inHours;
-      return '$hours${hours == 1 ? " hour" : " hours"} ago';
-    } else if (difference.inDays < 7) {
-      final days = difference.inDays;
-      return '$days${days == 1 ? " day" : " days"} ago';
-    } else {
-      final weeks = (difference.inDays / 7).floor();
-      return '$weeks${weeks == 1 ? " week" : " weeks"} ago';
-    }
-  }
-
-  /// Capitalize first letter of string
-  String _capitalizeFirst(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
   }
 }
 
@@ -2433,20 +1745,287 @@ class _PlatformChipState extends State<_PlatformChip> {
   }
 }
 
-/// Staggered history item widget with animation and expand functionality
-class _StaggeredHistoryItem extends StatefulWidget {
-  const _StaggeredHistoryItem({
-    required this.index,
+/// History panel content - manages its own search/filter state to prevent
+/// parent setState rebuilds from cascading into the history list.
+class _HistoryPanelContent extends StatefulWidget {
+  const _HistoryPanelContent({
+    required this.historyItems,
+    required this.isLoading,
+    required this.clipboardRepository,
+    required this.onClose,
+    required this.onItemTap,
+    required this.onItemDelete,
+    this.notificationService,
+  });
+
+  final List<ClipboardItem> historyItems;
+  final bool isLoading;
+  final IClipboardRepository clipboardRepository;
+  final INotificationService? notificationService;
+  final Future<void> Function() onClose;
+  final void Function(ClipboardItem item) onItemTap;
+  final void Function(ClipboardItem item) onItemDelete;
+
+  @override
+  State<_HistoryPanelContent> createState() => _HistoryPanelContentState();
+}
+
+class _HistoryPanelContentState extends State<_HistoryPanelContent> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  List<ClipboardItem> _filteredItems = [];
+  Timer? _filterTimer;
+  static const _searchDebounceDelay = Duration(milliseconds: 200);
+
+  @override
+  void initState() {
+    super.initState();
+    _filteredItems = widget.historyItems;
+  }
+
+  @override
+  void didUpdateWidget(_HistoryPanelContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-apply filter when source items actually change
+    // Check reference equality (fast path for most updates)
+    if (!identical(widget.historyItems, oldWidget.historyItems)) {
+      _applyFilter();
+    }
+  }
+
+  @override
+  void dispose() {
+    _filterTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterHistory(String query) {
+    _filterTimer?.cancel();
+    _filterTimer = Timer(_searchDebounceDelay, () {
+      if (!mounted) return;
+      setState(() {
+        _searchQuery = query;
+        _applyFilter();
+      });
+    });
+  }
+
+  void _applyFilter() {
+    if (_searchQuery.trim().isEmpty) {
+      _filteredItems = widget.historyItems;
+    } else {
+      final lowerQuery = _searchQuery.toLowerCase();
+      _filteredItems = widget.historyItems.where((item) {
+        if (item.content.toLowerCase().contains(lowerQuery)) return true;
+        if (item.deviceName != null &&
+            item.deviceName!.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+        if (item.mimeType != null &&
+            item.mimeType!.toLowerCase().contains(lowerQuery)) {
+          return true;
+        }
+        return false;
+      }).toList();
+    }
+  }
+
+  String _formatTimeAgo(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+    if (difference.inSeconds < 60) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      final minutes = difference.inMinutes;
+      return '$minutes${minutes == 1 ? " min" : " mins"} ago';
+    } else if (difference.inHours < 24) {
+      final hours = difference.inHours;
+      return '$hours${hours == 1 ? " hour" : " hours"} ago';
+    } else if (difference.inDays < 7) {
+      final days = difference.inDays;
+      return '$days${days == 1 ? " day" : " days"} ago';
+    } else {
+      final weeks = (difference.inDays / 7).floor();
+      return '$weeks${weeks == 1 ? " week" : " weeks"} ago';
+    }
+  }
+
+  String _capitalizeFirst(String text) {
+    if (text.isEmpty) return text;
+    return text[0].toUpperCase() + text.substring(1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              const Icon(Icons.history, size: 18, color: GhostColors.primary),
+              const SizedBox(width: 8),
+              Text(
+                'Recent Clips',
+                style: GhostTypography.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: GhostColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                color: GhostColors.textSecondary,
+                tooltip: 'Close history', // FIX #27: Accessibility
+                onPressed: widget.onClose,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: GhostColors.surface),
+        // Search bar
+        _HistorySearchBar(
+          controller: _searchController,
+          onChanged: _filterHistory,
+        ),
+        // History list
+        Expanded(
+          child: widget.isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: GhostColors.primary),
+                )
+              : _filteredItems.isEmpty
+              ? Center(
+                  child: Text(
+                    _searchQuery.isNotEmpty
+                        ? 'No results found'
+                        : 'No clipboard history yet',
+                    style: const TextStyle(
+                      color: GhostColors.textMuted,
+                      fontSize: 13,
+                    ),
+                  ),
+                )
+              : RepaintBoundary(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: _filteredItems.length,
+                    itemBuilder: (context, index) {
+                      final item = _filteredItems[index];
+                      return RepaintBoundary(
+                        key: ValueKey(item.id),
+                        child: _HistoryItemContent(
+                          item: item,
+                          clipboardRepository: widget.clipboardRepository,
+                          notificationService: widget.notificationService,
+                          timeAgo: _formatTimeAgo(item.createdAt),
+                          device: _capitalizeFirst(item.deviceType),
+                          onDelete: () => widget.onItemDelete(item),
+                          onTap: () => widget.onItemTap(item),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Search bar widget that manages its own state to prevent parent rebuilds
+class _HistorySearchBar extends StatefulWidget {
+  const _HistorySearchBar({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_HistorySearchBar> createState() => _HistorySearchBarState();
+}
+
+class _HistorySearchBarState extends State<_HistorySearchBar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleTextChange);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleTextChange);
+    super.dispose();
+  }
+
+  void _handleTextChange() {
+    // Rebuild local widget when text changes (for clear button)
+    // allowing parent to avoid rebuilding on every keystroke
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: TextField(
+        controller: widget.controller,
+        onChanged: widget.onChanged,
+        style: const TextStyle(color: GhostColors.textPrimary, fontSize: 13),
+        decoration: InputDecoration(
+          hintText: 'Search clips...',
+          hintStyle: const TextStyle(
+            color: GhostColors.textMuted,
+            fontSize: 13,
+          ),
+          prefixIcon: const Icon(
+            Icons.search,
+            size: 18,
+            color: GhostColors.textMuted,
+          ),
+          suffixIcon: widget.controller.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, size: 16),
+                  color: GhostColors.textMuted,
+                  onPressed: () {
+                    widget.controller.clear();
+                    widget.onChanged('');
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                )
+              : null,
+          filled: true,
+          fillColor: GhostColors.surface,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Content widget for history item that isolates hover state
+class _HistoryItemContent extends StatefulWidget {
+  const _HistoryItemContent({
     required this.item,
     required this.clipboardRepository,
+    required this.notificationService,
     required this.timeAgo,
     required this.device,
     required this.onTap,
     required this.onDelete,
-    this.notificationService,
   });
 
-  final int index;
   final ClipboardItem item;
   final IClipboardRepository clipboardRepository;
   final INotificationService? notificationService;
@@ -2456,69 +2035,24 @@ class _StaggeredHistoryItem extends StatefulWidget {
   final VoidCallback onDelete;
 
   @override
-  State<_StaggeredHistoryItem> createState() => _StaggeredHistoryItemState();
+  State<_HistoryItemContent> createState() => _HistoryItemContentState();
 }
 
-class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
+class _HistoryItemContentState extends State<_HistoryItemContent> {
   bool _isHovered = false;
   bool _isExpanded = false;
 
-  @override
-  void initState() {
-    super.initState();
-
-    // Staggered animation: each item starts animating with a delay
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 400),
-      vsync: this,
-    );
-
-    // Stagger delay: 50ms per item (0ms for first, 50ms for second, etc.)
-    Future<void>.delayed(Duration(milliseconds: widget.index * 50), () {
-      if (mounted) {
-        _controller.forward();
-      }
-    });
-
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.2), // Slide up slightly
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  /// Build content preview based on content type (text, image, file, or rich text)
+  /// Build content preview based on content type
   Widget _buildContentPreview() {
-    // File preview
     if (widget.item.isFile) {
       return FilePreviewWidget(item: widget.item, compact: true);
     }
-
-    // Image preview
     if (widget.item.isImage) {
       return _buildImagePreview();
     }
-
-    // Rich text preview
     if (widget.item.isRichText) {
       return _buildRichTextPreview();
     }
-
-    // Normal text
     return Text(
       widget.item.content,
       maxLines: _isExpanded ? null : 2,
@@ -2529,13 +2063,13 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
 
   /// Build image preview widget
   Widget _buildImagePreview() {
-    // Use CDN-backed widget with automatic fallback to storage download
     return CachedClipboardImage(
       item: widget.item,
       clipboardRepository: widget.clipboardRepository,
       height: 80,
       width: double.infinity,
       borderRadius: 6,
+      fit: BoxFit.contain,
     );
   }
 
@@ -2548,7 +2082,6 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Badge showing format type
         Row(
           children: [
             Icon(
@@ -2568,7 +2101,6 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
           ],
         ),
         const SizedBox(height: 4),
-        // Content preview
         Text(
           widget.item.content,
           maxLines: _isExpanded ? null : 2,
@@ -2583,34 +2115,28 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     );
   }
 
-  /// Handle save to computer action
   Future<void> _handleSaveToComputer() async {
     try {
-      // Only works for files and images
       if (!widget.item.requiresDownload) return;
 
       final filename =
           widget.item.metadata?.originalFilename ??
           'file.${widget.item.contentType.value}';
 
-      // Show save dialog
       final savePath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save File',
         fileName: filename,
       );
 
       if (savePath != null) {
-        // Download file from storage
         final bytes = await widget.clipboardRepository.downloadFile(
           widget.item,
         );
 
-        // Validate bytes
         if (bytes == null || bytes.isEmpty) {
           throw Exception('Failed to download file');
         }
 
-        // Write to disk
         final file = File(savePath);
         await file.writeAsBytes(bytes);
 
@@ -2628,15 +2154,10 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     }
   }
 
-  /// Handle delete action
   Future<void> _handleDelete() async {
     try {
-      // Delete from database
       await widget.clipboardRepository.delete(widget.item.id);
-
-      // Call the onDelete callback to update UI
       widget.onDelete();
-
       widget.notificationService?.showToast(
         message: 'Item deleted',
         type: NotificationType.success,
@@ -2650,11 +2171,9 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     }
   }
 
-  /// Show context menu at position
   void _showContextMenu(BuildContext context, Offset position) {
     if (!mounted) return;
     final overlayState = Overlay.of(context);
-
     final overlay = overlayState.context.findRenderObject()! as RenderBox;
 
     showMenu<String>(
@@ -2707,183 +2226,6 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _isHovered = true),
-          onExit: (_) => setState(() => _isHovered = false),
-          child: DragItemWidget(
-            dragItemProvider: (request) async {
-              final item = DragItem(
-                suggestedName:
-                    widget.item.metadata?.originalFilename ??
-                    (widget.item.isImage ? 'image.png' : 'snippet.txt'),
-              );
-
-              if (widget.item.isFile || widget.item.isImage) {
-                try {
-                  // Download file to temp directory for dragging
-                  final bytes = await widget.clipboardRepository.downloadFile(
-                    widget.item,
-                  );
-
-                  if (bytes != null) {
-                    final tempDir = await getTemporaryDirectory();
-                    final filename =
-                        widget.item.metadata?.originalFilename ??
-                        (widget.item.isImage ? 'image.png' : 'file.bin');
-
-                    final tempFile = File(path.join(tempDir.path, filename));
-                    await tempFile.writeAsBytes(bytes);
-
-                    item.add(Formats.fileUri(tempFile.uri));
-                  }
-                } on Exception catch (e) {
-                  debugPrint('Failed to prepare file for drag: $e');
-                }
-              } else {
-                // Plain text
-                item.add(Formats.plainText(widget.item.content));
-                if (widget.item.isRichText &&
-                    widget.item.richTextFormat == RichTextFormat.html) {
-                  item.add(Formats.htmlText(widget.item.content));
-                }
-              }
-
-              return item;
-            },
-            allowedOperations: () => [DropOperation.copy],
-            child: GestureDetector(
-              onSecondaryTapDown: (details) {
-                // Show context menu on right-click
-                _showContextMenu(context, details.globalPosition);
-              },
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: widget.onTap,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    color: _isHovered
-                        ? GhostColors.surface.withValues(alpha: 0.7)
-                        : Colors.transparent,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Content preview with expand button
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: _buildContentPreview()),
-                            // Expand button (show if content is long and not an image)
-                            if (!widget.item.isImage &&
-                                widget.item.content.length > 100) ...[
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () =>
-                                    setState(() => _isExpanded = !_isExpanded),
-                                child: AnimatedRotation(
-                                  turns: _isExpanded ? 0.5 : 0,
-                                  duration: const Duration(milliseconds: 200),
-                                  child: Icon(
-                                    Icons.expand_more,
-                                    size: 16,
-                                    color: GhostColors.primary.withValues(
-                                      alpha: _isHovered ? 1 : 0.6,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        // Metadata row
-                        Row(
-                          children: [
-                            // Source device icon and name
-                            Icon(
-                              _getDeviceIconByType(widget.device.toLowerCase()),
-                              size: 12,
-                              color: GhostColors.textMuted,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              widget.device,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: GhostColors.textMuted,
-                              ),
-                            ),
-                            // Show target if specified
-                            if (widget.item.targetDeviceTypes != null &&
-                                widget.item.targetDeviceTypes!.isNotEmpty) ...[
-                              const SizedBox(width: 6),
-                              Icon(
-                                Icons.arrow_forward,
-                                size: 10,
-                                color: GhostColors.primary.withValues(
-                                  alpha: 0.7,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              // Show first target device icon (or count if multiple)
-                              if (widget.item.targetDeviceTypes!.length == 1)
-                                Icon(
-                                  _getDeviceIconByType(
-                                    widget.item.targetDeviceTypes!.first,
-                                  ),
-                                  size: 12,
-                                  color: GhostColors.primary,
-                                )
-                              else
-                                Text(
-                                  '${widget.item.targetDeviceTypes!.length}',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    color: GhostColors.primary,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                            ],
-                            const SizedBox(width: 8),
-                            Text(
-                              '•',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: GhostColors.textMuted,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              widget.timeAgo,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: GhostColors.textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ), // Close Column
-                  ), // Close AnimatedContainer
-                ), // Close InkWell
-              ), // Close Material
-            ), // Close GestureDetector
-          ), // Close DragItemWidget
-        ), // Close MouseRegion
-      ), // Close SlideTransition
-    ); // Close FadeTransition
-  }
-
   IconData _getDeviceIconByType(String deviceType) {
     switch (deviceType.toLowerCase()) {
       case 'windows':
@@ -2899,5 +2241,185 @@ class _StaggeredHistoryItemState extends State<_StaggeredHistoryItem>
       default:
         return Icons.devices;
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onSecondaryTapDown: (details) {
+        _showContextMenu(context, details.globalPosition);
+      },
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onTap,
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _isHovered = true),
+            onExit: (_) => setState(() => _isHovered = false),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: _isHovered
+                  ? GhostColors.surface.withValues(alpha: 0.7)
+                  : Colors.transparent,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _buildContentPreview()),
+                      if (!widget.item.isImage &&
+                          !widget.item.isFile &&
+                          widget.item.content.length > 100) ...[
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () =>
+                              setState(() => _isExpanded = !_isExpanded),
+                          child: AnimatedRotation(
+                            turns: _isExpanded ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(
+                              Icons.expand_more,
+                              size: 16,
+                              color: GhostColors.primary.withValues(
+                                alpha: _isHovered ? 1 : 0.6,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        _getDeviceIconByType(widget.device.toLowerCase()),
+                        size: 12,
+                        color: GhostColors.textMuted,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.device,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 10,
+                        color: GhostColors.primary.withValues(alpha: 0.7),
+                      ),
+                      const SizedBox(width: 6),
+                      if (widget.item.targetDeviceTypes == null ||
+                          widget.item.targetDeviceTypes!.isEmpty)
+                        Text(
+                          'All',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: GhostColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else if (widget.item.targetDeviceTypes!.length == 1)
+                        Icon(
+                          _getDeviceIconByType(
+                            widget.item.targetDeviceTypes!.first,
+                          ),
+                          size: 12,
+                          color: GhostColors.primary,
+                        )
+                      else
+                        Text(
+                          '${widget.item.targetDeviceTypes!.length}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: GhostColors.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '•',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.timeAgo,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Hoverable icon button with local hover state management
+///
+/// This widget manages its own hover state to prevent parent widget rebuilds
+/// when the user hovers over the button. This is a significant performance
+/// optimization for large parent widgets like SpotlightScreen.
+class _HoverableIconButton extends StatefulWidget {
+  const _HoverableIconButton({
+    required this.icon,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  State<_HoverableIconButton> createState() => _HoverableIconButtonState();
+}
+
+class _HoverableIconButtonState extends State<_HoverableIconButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final isHighlighted = widget.isActive || _isHovered;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: InkWell(
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: isHighlighted
+                ? GhostColors.primary.withValues(alpha: 0.1)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            widget.icon,
+            size: 22,
+            color: isHighlighted
+                ? GhostColors.primary
+                : GhostColors.textSecondary,
+          ),
+        ),
+      ),
+    );
   }
 }

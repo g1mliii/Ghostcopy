@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
 import '../../models/clipboard_item.dart';
+import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../clipboard_service.dart';
 import '../clipboard_sync_service.dart';
@@ -32,6 +34,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     required IClipboardRepository clipboardRepository,
     required ISettingsService settingsService,
     required ISecurityService securityService,
+    SupabaseClient? supabaseClient,
     IClipboardService? clipboardService,
     ITempFileService? tempFileService,
     INotificationService? notificationService,
@@ -39,20 +42,22 @@ class ClipboardSyncService implements IClipboardSyncService {
     IUrlShortenerService? urlShortenerService,
     IWebhookService? webhookService,
     IObsidianService? obsidianService,
-  })  : _clipboardRepository = clipboardRepository,
-        _settingsService = settingsService,
-        _securityService = securityService,
-        _clipboardService = clipboardService ?? ClipboardService.instance,
-        _tempFileService = tempFileService ?? TempFileService.instance,
-        _notificationService = notificationService,
-        _gameModeService = gameModeService,
-        _urlShortenerService = urlShortenerService,
-        _webhookService = webhookService,
-        _obsidianService = obsidianService;
+  }) : _clipboardRepository = clipboardRepository,
+       _settingsService = settingsService,
+       _securityService = securityService,
+       _supabaseClient = supabaseClient ?? Supabase.instance.client,
+       _clipboardService = clipboardService ?? ClipboardService.instance,
+       _tempFileService = tempFileService ?? TempFileService.instance,
+       _notificationService = notificationService,
+       _gameModeService = gameModeService,
+       _urlShortenerService = urlShortenerService,
+       _webhookService = webhookService,
+       _obsidianService = obsidianService;
 
   final IClipboardRepository _clipboardRepository;
   final ISettingsService _settingsService;
   final ISecurityService _securityService;
+  final SupabaseClient _supabaseClient;
   final IClipboardService _clipboardService;
   final ITempFileService _tempFileService;
   final INotificationService? _notificationService;
@@ -67,7 +72,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Clipboard monitoring
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
-  String? _lastClipboardFormat; // Track format to avoid re-reading (e.g., 'image/png', 'text')
+  String?
+  _lastClipboardFormat; // Track format for diagnostics and unsupported-format gating
   bool _isMonitoring = false;
 
   @override
@@ -84,6 +90,12 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Rate limiting for send operations
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
+
+  // Temp file cleanup timer (cancellable - Fix #9)
+  Timer? _tempFileCleanupTimer;
+
+  // Pending background operations for clean shutdown (Fix #10)
+  final Set<Future<void>> _pendingFutures = {};
 
   // Content deduplication
   String _lastSentContentHash = '';
@@ -116,13 +128,15 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   /// Subscribe to real-time clipboard updates from Supabase
   void _subscribeToRealtimeUpdates() {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final userId = _supabaseClient.auth.currentUser?.id;
     if (userId == null) {
-      debugPrint('[ClipboardSyncService] Cannot subscribe: user not authenticated');
+      debugPrint(
+        '[ClipboardSyncService] Cannot subscribe: user not authenticated',
+      );
       return;
     }
 
-    _realtimeChannel = Supabase.instance.client
+    _realtimeChannel = _supabaseClient
         .channel('clipboard_changes')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -134,18 +148,24 @@ class ClipboardSyncService implements IClipboardSyncService {
             value: userId,
           ),
           callback: (payload) {
-            debugPrint('[ClipboardSyncService] Realtime update received: ${payload.eventType}');
+            debugPrint(
+              '[ClipboardSyncService] Realtime update received: ${payload.eventType}',
+            );
 
             // Check if from another device
             final deviceName = payload.newRecord['device_name'] as String?;
-            final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-            final isFromDifferentDevice = deviceName != null &&
+            final currentDeviceName =
+                ClipboardRepository.getCurrentDeviceName();
+            final isFromDifferentDevice =
+                deviceName != null &&
                 currentDeviceName != null &&
                 deviceName != currentDeviceName;
 
             // Check if targeted to this device
-            final targetDeviceTypeJson = payload.newRecord['target_device_type'];
-            final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
+            final targetDeviceTypeJson =
+                payload.newRecord['target_device_type'];
+            final currentDeviceType =
+                ClipboardRepository.getCurrentDeviceType();
 
             // Parse target device types (can be null, a list, or a single string)
             List<String>? targetDeviceTypes;
@@ -157,7 +177,8 @@ class ClipboardSyncService implements IClipboardSyncService {
               }
             }
 
-            final isTargetedToMe = targetDeviceTypes == null ||
+            final isTargetedToMe =
+                targetDeviceTypes == null ||
                 targetDeviceTypes.contains(currentDeviceType);
 
             if (isFromDifferentDevice && isTargetedToMe) {
@@ -178,15 +199,12 @@ class ClipboardSyncService implements IClipboardSyncService {
     _autoReceiveDebounceTimer?.cancel();
     _pendingAutoReceiveRecord = record;
 
-    _autoReceiveDebounceTimer = Timer(
-      const Duration(milliseconds: 500),
-      () {
-        if (_pendingAutoReceiveRecord != null) {
-          _handleSmartAutoReceive(_pendingAutoReceiveRecord!);
-          _pendingAutoReceiveRecord = null;
-        }
-      },
-    );
+    _autoReceiveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      if (_pendingAutoReceiveRecord != null) {
+        _handleSmartAutoReceive(_pendingAutoReceiveRecord!);
+        _pendingAutoReceiveRecord = null;
+      }
+    });
   }
 
   /// Handle smart auto-receive logic with support for multiple content types
@@ -196,27 +214,34 @@ class ClipboardSyncService implements IClipboardSyncService {
       final now = DateTime.now();
 
       // Load auto-receive behavior from settings
-      final autoReceiveBehavior = await _settingsService.getAutoReceiveBehavior();
-      final staleDurationMinutes = await _settingsService.getClipboardStaleDurationMinutes();
+      final autoReceiveBehavior = await _settingsService
+          .getAutoReceiveBehavior();
+      final staleDurationMinutes = await _settingsService
+          .getClipboardStaleDurationMinutes();
 
       final shouldAutoCopy = switch (autoReceiveBehavior) {
         AutoReceiveBehavior.always => true,
         AutoReceiveBehavior.never => false,
         AutoReceiveBehavior.smart => () {
-            final staleDuration = Duration(minutes: staleDurationMinutes);
-            final isStale = _lastClipboardModificationTime == null ||
-                now.difference(_lastClipboardModificationTime!) >= staleDuration;
-            
-            debugPrint('[ClipboardSyncService] Smart Auto-Receive Check:');
-            debugPrint('  - Last Mod: $_lastClipboardModificationTime');
-            debugPrint('  - Stale Threshold: $staleDurationMinutes min');
-            debugPrint('  - Is Stale: $isStale (Diff: ${now.difference(_lastClipboardModificationTime ?? DateTime.fromMillisecondsSinceEpoch(0))})');
-            
-            return isStale;
-          }(),
+          final staleDuration = Duration(minutes: staleDurationMinutes);
+          final isStale =
+              _lastClipboardModificationTime == null ||
+              now.difference(_lastClipboardModificationTime!) >= staleDuration;
+
+          debugPrint('[ClipboardSyncService] Smart Auto-Receive Check:');
+          debugPrint('  - Last Mod: $_lastClipboardModificationTime');
+          debugPrint('  - Stale Threshold: $staleDurationMinutes min');
+          debugPrint(
+            '  - Is Stale: $isStale (Diff: ${now.difference(_lastClipboardModificationTime ?? DateTime.fromMillisecondsSinceEpoch(0))})',
+          );
+
+          return isStale;
+        }(),
       };
 
-      debugPrint('[ClipboardSyncService] Auto-Receive Behavior: ${autoReceiveBehavior.name}');
+      debugPrint(
+        '[ClipboardSyncService] Auto-Receive Behavior: ${autoReceiveBehavior.name}',
+      );
       debugPrint('[ClipboardSyncService] Should Auto-Copy: $shouldAutoCopy');
 
       if (shouldAutoCopy) {
@@ -228,20 +253,33 @@ class ClipboardSyncService implements IClipboardSyncService {
 
           try {
             await _copyItemToClipboard(item);
-            debugPrint('[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType');
+            debugPrint(
+              '[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType',
+            );
+
+            // Prevent re-sending auto-received content (stops ping-pong between devices)
+            // Update both dedup hashes so clipboard monitor won't treat this as new content
+            if (!item.isFile && !item.isImage) {
+              _lastMonitoredClipboard = md5
+                  .convert(utf8.encode(item.content))
+                  .toString();
+              _lastSentContentHash = _calculateContentHash(item.content);
+            }
 
             _lastClipboardModificationTime = now;
 
             // Show notification or queue if Game Mode active
             if (_gameModeService?.isActive ?? false) {
               _gameModeService?.queueNotification(item);
-              debugPrint('[ClipboardSyncService] Notification queued (Game Mode)');
+              debugPrint(
+                '[ClipboardSyncService] Notification queued (Game Mode)',
+              );
             } else {
               final contentTypeStr = item.isFile
                   ? 'file'
                   : item.isImage
-                      ? 'image'
-                      : 'content';
+                  ? 'image'
+                  : 'content';
               _notificationService?.showToast(
                 message: 'Auto-copied $contentTypeStr from $deviceType',
                 type: NotificationType.success,
@@ -257,7 +295,9 @@ class ClipboardSyncService implements IClipboardSyncService {
         }
       } else {
         // Not auto-copying - show notification with action
-        debugPrint('[ClipboardSyncService] Not auto-copying (${autoReceiveBehavior.name})');
+        debugPrint(
+          '[ClipboardSyncService] Not auto-copying (${autoReceiveBehavior.name})',
+        );
 
         final history = await _clipboardRepository.getHistory(limit: 1);
         if (history.isEmpty) return;
@@ -375,7 +415,10 @@ class ClipboardSyncService implements IClipboardSyncService {
           final filename = item.metadata?.originalFilename ?? 'file.bin';
 
           // Save to temp directory
-          final tempFile = await _tempFileService.saveTempFile(fileBytes, filename);
+          final tempFile = await _tempFileService.saveTempFile(
+            fileBytes,
+            filename,
+          );
 
           // Copy file path to clipboard
           await _clipboardService.writeFilePath(tempFile.path);
@@ -384,9 +427,12 @@ class ClipboardSyncService implements IClipboardSyncService {
           );
 
           // Schedule temp file cleanup after clipboard operation completes
-          // Wait 5 seconds to ensure clipboard has finished reading the file
-          Future.delayed(const Duration(seconds: 5), () {
-            _tempFileService.deleteTempFile(tempFile.path);
+          // Use cancellable timer instead of fire-and-forget Future.delayed (Fix #9)
+          _tempFileCleanupTimer?.cancel();
+          _tempFileCleanupTimer = Timer(const Duration(seconds: 5), () {
+            if (!_isDisposed) {
+              _tempFileService.deleteTempFile(tempFile.path);
+            }
           });
         }
     }
@@ -412,6 +458,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _clipboardMonitorTimer?.cancel();
     _clipboardMonitorTimer = null;
     _lastMonitoredClipboard = '';
+    _lastClipboardFormat = null;
     _isMonitoring = false;
     debugPrint('[ClipboardSyncService] Clipboard monitoring stopped');
   }
@@ -437,8 +484,10 @@ class ClipboardSyncService implements IClipboardSyncService {
         currentFormat = 'html';
       }
 
-      // Skip full read if format hasn't changed (prevents re-reading 10MB files)
-      if (currentFormat != null && currentFormat == _lastClipboardFormat) {
+      // Only skip on repeated unsupported/unknown formats.
+      // For known formats (text/image/file/html), we must still read and hash
+      // to detect content changes within the same format category.
+      if (currentFormat == null && _lastClipboardFormat == null) {
         return;
       }
 
@@ -505,7 +554,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       } else if (clipboardContent.hasText) {
         final textContent = clipboardContent.text!;
         debugPrint(
-          '[ClipboardSyncService] Auto-sending: ${textContent.substring(0, textContent.length > 50 ? 50 : textContent.length)}...',
+          '[ClipboardSyncService] Auto-sending text (${textContent.length} chars)',
         );
         await _autoSendClipboard(textContent);
       }
@@ -515,21 +564,47 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Calculate hash for clipboard content (text or image)
+  /// Uses partial hash for large content (>1MB) to reduce CPU usage (Fix #13)
   String _calculateClipboardContentHash(ClipboardContent content) {
     if (content.hasImage) {
-      // Hash image bytes
-      return md5.convert(content.imageBytes!).toString();
+      final bytes = content.imageBytes!;
+      // Use partial hash for large images (>1MB)
+      if (bytes.length > 1024 * 1024) {
+        return _partialHash(bytes);
+      }
+      return md5.convert(bytes).toString();
     } else if (content.hasText) {
-      // Hash text content
-      return md5.convert(utf8.encode(content.text!)).toString();
+      final text = content.text!;
+      // Use partial hash for large text (>1MB)
+      if (text.length > 1024 * 1024) {
+        final bytes = utf8.encode(text);
+        return _partialHash(bytes);
+      }
+      return md5.convert(utf8.encode(text)).toString();
     }
     return '';
+  }
+
+  /// Calculate partial hash for large content (first 4KB + last 4KB + size)
+  /// This is much faster than hashing multi-MB content (Fix #13)
+  String _partialHash(Uint8List bytes) {
+    const chunkSize = 4096;
+    final firstChunk = bytes.sublist(0, chunkSize.clamp(0, bytes.length));
+    final lastChunk = bytes.length > chunkSize
+        ? bytes.sublist(bytes.length - chunkSize)
+        : firstChunk;
+    final sizeBytes = utf8.encode(bytes.length.toString());
+    final builder = BytesBuilder(copy: false)
+      ..add(firstChunk)
+      ..add(lastChunk)
+      ..add(sizeBytes);
+    return md5.convert(builder.takeBytes()).toString();
   }
 
   /// Auto-send clipboard content
   Future<void> _autoSendClipboard(String content) async {
     try {
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null) return;
 
       // URL shortening (if enabled)
@@ -557,7 +632,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
 
       // Convert Set to List (null if empty = all devices)
-      final targetDevicesList = targetDevices.isEmpty ? null : targetDevices.toList();
+      final targetDevicesList = targetDevices.isEmpty
+          ? null
+          : targetDevices.toList();
 
       final item = ClipboardItem(
         id: '0',
@@ -589,8 +666,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       final targetText = targetDevices.isEmpty
           ? 'all devices'
           : targetDevices.length == 1
-              ? targetDevices.first
-              : '${targetDevices.length} device types';
+          ? targetDevices.first
+          : '${targetDevices.length} device types';
       _notificationService?.showToast(
         message: 'Auto-sent to $targetText',
         type: NotificationType.success,
@@ -613,7 +690,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Auto-send image content
   Future<void> _autoSendImage(Uint8List imageBytes, String mimeType) async {
     try {
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null) return;
 
       // Content deduplication (hash image bytes)
@@ -635,7 +712,9 @@ class ClipboardSyncService implements IClipboardSyncService {
         case 'image/gif':
           contentType = ContentType.imageGif;
         default:
-          debugPrint('[ClipboardSyncService] Unsupported image type: $mimeType');
+          debugPrint(
+            '[ClipboardSyncService] Unsupported image type: $mimeType',
+          );
           return;
       }
 
@@ -646,7 +725,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       final targetDevices = await _settingsService.getAutoSendTargetDevices();
 
       // Convert Set to List (null if empty = all devices)
-      final targetDevicesList = targetDevices.isEmpty ? null : targetDevices.toList();
+      final targetDevicesList = targetDevices.isEmpty
+          ? null
+          : targetDevices.toList();
 
       // Insert image using repository
       final result = await _clipboardRepository.insertImage(
@@ -669,8 +750,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       final targetText = targetDevices.isEmpty
           ? 'all devices'
           : targetDevices.length == 1
-              ? targetDevices.first
-              : '${targetDevices.length} device types';
+          ? targetDevices.first
+          : '${targetDevices.length} device types';
       _notificationService?.showToast(
         message: 'Auto-sent image ($sizeKB KB) to $targetText',
         type: NotificationType.success,
@@ -691,9 +772,13 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Auto-send file content
-  Future<void> _autoSendFile(Uint8List fileBytes, String filename, String? mimeType) async {
+  Future<void> _autoSendFile(
+    Uint8List fileBytes,
+    String filename,
+    String? mimeType,
+  ) async {
     try {
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null) return;
 
       // Content deduplication (hash file bytes)
@@ -705,7 +790,10 @@ class ClipboardSyncService implements IClipboardSyncService {
       _lastSentContentHash = contentHash;
 
       // Use FileTypeService to detect file type
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(fileBytes, filename);
+      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+        fileBytes,
+        filename,
+      );
 
       final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
       final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
@@ -714,7 +802,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       final targetDevices = await _settingsService.getAutoSendTargetDevices();
 
       // Convert Set to List (null if empty = all devices)
-      final targetDevicesList = targetDevices.isEmpty ? null : targetDevices.toList();
+      final targetDevicesList = targetDevices.isEmpty
+          ? null
+          : targetDevices.toList();
 
       // Insert file using repository
       final result = await _clipboardRepository.insertFile(
@@ -738,8 +828,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       final targetText = targetDevices.isEmpty
           ? 'all devices'
           : targetDevices.length == 1
-              ? targetDevices.first
-              : '${targetDevices.length} device types';
+          ? targetDevices.first
+          : '${targetDevices.length} device types';
       _notificationService?.showToast(
         message: 'Auto-sent file "$filename" ($sizeKB KB) to $targetText',
         type: NotificationType.success,
@@ -776,12 +866,14 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void notifyManualSend(String content) {
     // Update last monitored clipboard to prevent duplicate auto-send
-    _lastMonitoredClipboard = content;
+    _lastMonitoredClipboard = _calculateContentHash(content);
 
     // Update content hash to prevent duplicate sends
     _lastSentContentHash = _calculateContentHash(content);
 
-    debugPrint('[ClipboardSyncService] Manual send notified, preventing duplicate auto-send');
+    debugPrint(
+      '[ClipboardSyncService] Manual send notified, preventing duplicate auto-send',
+    );
   }
 
   // ========== CONNECTION MODE MANAGEMENT ==========
@@ -810,7 +902,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
     if (_pollingTimer != null) return; // Already polling
 
-    debugPrint('[ClipboardSync] 🔄 Starting polling mode (${interval.inMinutes} min)');
+    debugPrint(
+      '[ClipboardSync] 🔄 Starting polling mode (${interval.inMinutes} min)',
+    );
 
     _pollingTimer = Timer.periodic(interval, (_) async {
       await _pollForNewClipboards();
@@ -881,14 +975,14 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   bool _isDisposed = false;
 
-  /// Fire webhook (non-blocking, fire-and-forget)
+  /// Fire webhook (non-blocking with tracking for clean disposal - Fix #10)
   void _fireWebhook(String content, String deviceType) {
     if (_isDisposed) return;
     final webhook = _webhookService;
     if (webhook == null) return;
 
-    // Fire in background (don't await)
-    () async {
+    // Track the future for clean disposal
+    final future = () async {
       if (_isDisposed) return;
       try {
         final webhookEnabled = await _settingsService.getWebhookEnabled();
@@ -896,7 +990,9 @@ class ClipboardSyncService implements IClipboardSyncService {
 
         final webhookUrl = await _settingsService.getWebhookUrl();
         if (webhookUrl == null || webhookUrl.isEmpty) {
-          debugPrint('[ClipboardSyncService] ⚠️  Webhook enabled but no URL configured');
+          debugPrint(
+            '[ClipboardSyncService] ⚠️  Webhook enabled but no URL configured',
+          );
           return;
         }
 
@@ -913,16 +1009,19 @@ class ClipboardSyncService implements IClipboardSyncService {
         debugPrint('[ClipboardSyncService] ❌ Webhook error: $e');
       }
     }();
+
+    _pendingFutures.add(future);
+    future.whenComplete(() => _pendingFutures.remove(future));
   }
 
-  /// Append to Obsidian vault (non-blocking, fire-and-forget)
+  /// Append to Obsidian vault (non-blocking with tracking - Fix #10)
   void _appendToObsidian(String content) {
     if (_isDisposed) return;
     final obsidian = _obsidianService;
     if (obsidian == null) return;
 
-    // Fire in background (don't await)
-    () async {
+    // Track the future for clean disposal
+    final future = () async {
       if (_isDisposed) return;
       try {
         final obsidianEnabled = await _settingsService.getObsidianEnabled();
@@ -930,7 +1029,9 @@ class ClipboardSyncService implements IClipboardSyncService {
 
         final vaultPath = await _settingsService.getObsidianVaultPath();
         if (vaultPath == null || vaultPath.isEmpty) {
-          debugPrint('[ClipboardSyncService] ⚠️  Obsidian enabled but no vault path configured');
+          debugPrint(
+            '[ClipboardSyncService] ⚠️  Obsidian enabled but no vault path configured',
+          );
           return;
         }
 
@@ -947,6 +1048,9 @@ class ClipboardSyncService implements IClipboardSyncService {
         debugPrint('[ClipboardSyncService] ❌ Obsidian error: $e');
       }
     }();
+
+    _pendingFutures.add(future);
+    future.whenComplete(() => _pendingFutures.remove(future));
   }
 
   @override
@@ -961,8 +1065,16 @@ class ClipboardSyncService implements IClipboardSyncService {
     _autoReceiveDebounceTimer?.cancel();
     _autoReceiveDebounceTimer = null;
 
-    _pollingTimer?.cancel(); // NEW - Cancel polling timer
+    _pollingTimer?.cancel();
     _pollingTimer = null;
+
+    // Cancel temp file cleanup timer (Fix #9)
+    _tempFileCleanupTimer?.cancel();
+    _tempFileCleanupTimer = null;
+
+    // Note: _pendingFutures are tracked but not awaited in dispose()
+    // since dispose() is sync. The _isDisposed flag prevents new work.
+    // In a real async dispose, we would: await Future.wait(_pendingFutures);
 
     // Unsubscribe from realtime
     _realtimeChannel?.unsubscribe();

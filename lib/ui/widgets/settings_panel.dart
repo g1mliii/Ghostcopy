@@ -82,6 +82,11 @@ class _SettingsPanelState extends State<SettingsPanel> {
   // Cache expensive computations
   String? _cachedDeviceText;
 
+  // Separate debounce timers per field to prevent data loss
+  Timer? _webhookDebounceTimer;
+  Timer? _vaultPathDebounceTimer;
+  Timer? _fileNameDebounceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -96,10 +101,48 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   @override
   void dispose() {
+    // Flush any pending writes before disposing (fire-and-forget safe pattern)
+    // Note: We intentionally don't await to prevent blocking dispose
+    // Settings are persisted to SharedPreferences which is synchronous internally
+    _flushPendingWrites();
+
+    // Cancel all timers
+    _webhookDebounceTimer?.cancel();
+    _vaultPathDebounceTimer?.cancel();
+    _fileNameDebounceTimer?.cancel();
+
+    // Dispose controllers
     _webhookUrlController.dispose();
     _obsidianVaultPathController.dispose();
     _obsidianFileNameController.dispose();
     super.dispose();
+  }
+
+  /// Flush all pending debounced writes immediately (fire-and-forget)
+  ///
+  /// Safe to call in dispose() because:
+  /// 1. SharedPreferences writes are synchronous internally (cached in memory)
+  /// 2. These are "best effort" persists - if they fail, user can re-enter
+  /// 3. Blocking dispose() with await would be worse (janky UI, delayed cleanup)
+  void _flushPendingWrites() {
+    // Execute any pending webhook write
+    if (_webhookDebounceTimer?.isActive ?? false) {
+      _webhookDebounceTimer?.cancel();
+      // Fire-and-forget: SharedPreferences caches writes synchronously
+      widget.settingsService.setWebhookUrl(_webhookUrlController.text);
+    }
+
+    // Execute any pending vault path write
+    if (_vaultPathDebounceTimer?.isActive ?? false) {
+      _vaultPathDebounceTimer?.cancel();
+      widget.settingsService.setObsidianVaultPath(_obsidianVaultPathController.text);
+    }
+
+    // Execute any pending file name write
+    if (_fileNameDebounceTimer?.isActive ?? false) {
+      _fileNameDebounceTimer?.cancel();
+      widget.settingsService.setObsidianFileName(_obsidianFileNameController.text);
+    }
   }
 
   Future<void> _loadTargetDevices() async {
@@ -354,239 +397,229 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Widget build(BuildContext context) {
     final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
-    return RepaintBoundary(
-      child: ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          // 1. Most Important: Feature Toggles
-          // Auto-send toggle
-          RepaintBoundary(
-            child: _buildSettingToggle(
-              title: 'Auto-send clipboard',
-              subtitle: 'Automatically sync when you copy',
-              value: widget.autoSendEnabled,
-              onChanged: (value) async {
-                await widget.settingsService.setAutoSendEnabled(enabled: value);
-                widget.onAutoSendChanged(value);
-              },
-            ),
-          ),
+    // NOTE: Individual builder methods (_buildSettingToggle, _buildTextField, etc.)
+    // already wrap their content in RepaintBoundary. No need for additional wrapping here.
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        // 1. Most Important: Feature Toggles
+        // Auto-send toggle
+        _buildSettingToggle(
+          title: 'Auto-send clipboard',
+          subtitle: 'Automatically sync when you copy',
+          value: widget.autoSendEnabled,
+          onChanged: (value) async {
+            await widget.settingsService.setAutoSendEnabled(enabled: value);
+            widget.onAutoSendChanged(value);
+          },
+        ),
+        const SizedBox(height: 10),
+        // Auto-send target devices (only show if auto-send is enabled)
+        if (widget.autoSendEnabled) ...[
+          _buildDeviceSelector(),
           const SizedBox(height: 10),
-          // Auto-send target devices (only show if auto-send is enabled)
-          if (widget.autoSendEnabled) ...[
-            RepaintBoundary(child: _buildDeviceSelector()),
-            const SizedBox(height: 10),
-          ],
-          // URL shortening toggle
-          RepaintBoundary(
-            child: _buildSettingToggle(
-              title: 'Auto-shorten URLs',
-              subtitle: 'Automatically shorten long URLs before sending',
-              value: _autoShortenUrls,
+        ],
+        // URL shortening toggle
+        _buildSettingToggle(
+          title: 'Auto-shorten URLs',
+          subtitle: 'Automatically shorten long URLs before sending',
+          value: _autoShortenUrls,
+          onChanged: (value) async {
+            await widget.settingsService.setAutoShortenUrls(enabled: value);
+            if (mounted) {
+              setState(() => _autoShortenUrls = value);
+            }
+          },
+        ),
+        const SizedBox(height: 10),
+        // Webhook toggle & settings
+        Column(
+          children: [
+            _buildSettingToggle(
+              title: 'Webhook Integration',
+              subtitle: 'Send clipboard data to external services',
+              value: _webhookEnabled,
               onChanged: (value) async {
-                await widget.settingsService.setAutoShortenUrls(enabled: value);
+                await widget.settingsService.setWebhookEnabled(enabled: value);
                 if (mounted) {
-                  setState(() => _autoShortenUrls = value);
+                  setState(() => _webhookEnabled = value);
                 }
               },
             ),
-          ),
-          const SizedBox(height: 10),
-          // Webhook toggle & settings
-          RepaintBoundary(
-            child: Column(
-              children: [
-                _buildSettingToggle(
-                  title: 'Webhook Integration',
-                  subtitle: 'Send clipboard data to external services',
-                  value: _webhookEnabled,
-                  onChanged: (value) async {
-                    await widget.settingsService.setWebhookEnabled(enabled: value);
-                    if (mounted) {
-                      setState(() => _webhookEnabled = value);
-                    }
-                  },
-                ),
-                if (_webhookEnabled) ...[
-                  const SizedBox(height: 10),
-                  _buildTextField(
-                    label: 'Webhook URL',
-                    controller: _webhookUrlController,
-                    onChanged: (value) async {
-                      await widget.settingsService.setWebhookUrl(value);
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Obsidian toggle & settings
-          RepaintBoundary(
-            child: Column(
-              children: [
-                _buildSettingToggle(
-                  title: 'Obsidian Integration',
-                  subtitle: 'Auto-append to Obsidian vault',
-                  value: _obsidianEnabled,
-                  onChanged: (value) async {
-                    await widget.settingsService.setObsidianEnabled(enabled: value);
-                    if (mounted) {
-                      setState(() => _obsidianEnabled = value);
-                    }
-                  },
-                ),
-                if (_obsidianEnabled) ...[
-                  const SizedBox(height: 10),
-                  _buildTextField(
-                    label: 'Vault Path',
-                    controller: _obsidianVaultPathController,
-                    onChanged: (value) async {
-                      await widget.settingsService.setObsidianVaultPath(value);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  _buildTextField(
-                    label: 'File Name',
-                    controller: _obsidianFileNameController,
-                    onChanged: (value) async {
-                      await widget.settingsService.setObsidianFileName(value);
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
-          
-          const SizedBox(height: 20),
-          const Divider(height: 1, color: GhostColors.glassBorder),
-          const SizedBox(height: 20),
-
-          // 2. Configuration & Behavior
-          // Stale duration slider (only show if in smart mode)
-          if (widget.autoReceiveBehavior == AutoReceiveBehavior.smart) ...[
-            RepaintBoundary(
-              child: _buildSettingSlider(
-                title: 'Clipboard staleness',
-                subtitle: 'Auto-paste after ${widget.staleDurationMinutes} min',
-                value: widget.staleDurationMinutes.toDouble(),
-                min: 1,
-                max: 60,
-                divisions: 59,
-                onChanged: widget.onStaleDurationChanged,
-                onChangeEnd: (value) async {
-                  await widget.settingsService.setClipboardStaleDurationMinutes(value);
+            if (_webhookEnabled) ...[
+              const SizedBox(height: 10),
+              _buildTextField(
+                label: 'Webhook URL',
+                controller: _webhookUrlController,
+                onChanged: (value) async {
+                  await widget.settingsService.setWebhookUrl(value);
                 },
+                getTimer: () => _webhookDebounceTimer,
+                setTimer: (timer) => _webhookDebounceTimer = timer,
               ),
-            ),
-            const SizedBox(height: 10),
+            ],
           ],
-          // Auto-receive behavior selector
-          RepaintBoundary(child: _buildAutoReceiveBehaviorSelector()),
-          const SizedBox(height: 12),
-          // Info text
-          RepaintBoundary(child: _buildInfoCard()),
-          const SizedBox(height: 20),
-          
-          // 3. Device Management
-          if (widget.deviceService != null) ...[
-            RepaintBoundary(child: DevicePanel(deviceService: widget.deviceService!)),
-            const SizedBox(height: 12),
-            RepaintBoundary(
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.qr_code_2, size: 18),
-                  label: const Text('Link New Device'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: GhostColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  onPressed: () => showLinkDeviceDialog(
-                    context,
-                    widget.authService,
-                    widget.encryptionService!,
-                  ),
-                ),
-              ),
+        ),
+        const SizedBox(height: 10),
+        // Obsidian toggle & settings
+        Column(
+          children: [
+            _buildSettingToggle(
+              title: 'Obsidian Integration',
+              subtitle: 'Auto-append to Obsidian vault',
+              value: _obsidianEnabled,
+              onChanged: (value) async {
+                await widget.settingsService.setObsidianEnabled(enabled: value);
+                if (mounted) {
+                  setState(() => _obsidianEnabled = value);
+                }
+              },
             ),
-            const SizedBox(height: 20),
-          ],
-          
-          const Divider(height: 1, color: GhostColors.glassBorder),
-          const SizedBox(height: 20),
-          
-          // 4. Set and Forget (System Settings)
-          if (isDesktop) ...[
-             Text(
-              'SYSTEM',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textMuted,
-              ),
-            ),
-            const SizedBox(height: 12),
-             if (widget.autoStartService != null) ...[
-              RepaintBoundary(
-                child: _buildSettingToggle(
-                  title: 'Launch at startup',
-                  subtitle: 'Start GhostCopy when you log in',
-                  value: _autoStartEnabled,
-                  onChanged: (value) async {
-                    if (value) {
-                      await widget.autoStartService!.enable();
-                    } else {
-                      await widget.autoStartService!.disable();
-                    }
-                    await widget.settingsService.setAutoStartEnabled(enabled: value);
-                    if (mounted) {
-                      setState(() => _autoStartEnabled = value);
-                    }
-                  },
-                ),
+            if (_obsidianEnabled) ...[
+              const SizedBox(height: 10),
+              _buildTextField(
+                label: 'Vault Path',
+                controller: _obsidianVaultPathController,
+                onChanged: (value) async {
+                  await widget.settingsService.setObsidianVaultPath(value);
+                },
+                getTimer: () => _vaultPathDebounceTimer,
+                setTimer: (timer) => _vaultPathDebounceTimer = timer,
               ),
               const SizedBox(height: 10),
-            ],
-            if (widget.hotkeyService != null) ...[
-              RepaintBoundary(
-                child: HotkeyCapture(
-                  currentHotkey: _currentHotkey,
-                  onHotkeyChanged: (newHotkey) async {
-                    await widget.hotkeyService!.unregisterHotkey(_currentHotkey);
-                    if (mounted) {
-                      setState(() => _currentHotkey = newHotkey);
-                    }
-                    debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
-                  },
-                ),
+              _buildTextField(
+                label: 'File Name',
+                controller: _obsidianFileNameController,
+                onChanged: (value) async {
+                  await widget.settingsService.setObsidianFileName(value);
+                },
+                getTimer: () => _fileNameDebounceTimer,
+                setTimer: (timer) => _fileNameDebounceTimer = timer,
               ),
-              const SizedBox(height: 20),
             ],
           ],
+        ),
 
-          // 5. Security
-          if (widget.encryptionService != null) ...[
-            Text(
-              'SECURITY',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textMuted,
+        const SizedBox(height: 20),
+        const Divider(height: 1, color: GhostColors.glassBorder),
+        const SizedBox(height: 20),
+
+        // 2. Configuration & Behavior
+        // Stale duration slider (only show if in smart mode)
+        if (widget.autoReceiveBehavior == AutoReceiveBehavior.smart) ...[
+          _buildSettingSlider(
+            title: 'Clipboard staleness',
+            subtitle: 'Auto-paste after ${widget.staleDurationMinutes} min',
+            value: widget.staleDurationMinutes.toDouble(),
+            min: 1,
+            max: 60,
+            divisions: 59,
+            onChanged: widget.onStaleDurationChanged,
+            onChangeEnd: (value) async {
+              await widget.settingsService.setClipboardStaleDurationMinutes(value);
+            },
+          ),
+          const SizedBox(height: 10),
+        ],
+        // Auto-receive behavior selector
+        _buildAutoReceiveBehaviorSelector(),
+        const SizedBox(height: 12),
+        // Info text
+        _buildInfoCard(),
+        const SizedBox(height: 20),
+
+        // 3. Device Management
+        if (widget.deviceService != null) ...[
+          DevicePanel(deviceService: widget.deviceService!),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              icon: const Icon(Icons.qr_code_2, size: 18),
+              label: const Text('Link New Device'),
+              style: FilledButton.styleFrom(
+                backgroundColor: GhostColors.primary,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: () => showLinkDeviceDialog(
+                context,
+                widget.authService,
+                widget.encryptionService!,
               ),
             ),
-            const SizedBox(height: 12),
-            RepaintBoundary(child: _buildEncryptionSection()),
-            const SizedBox(height: 20),
-          ],
-          
-          // 6. Account
-          Text(
-            'ACCOUNT',
+          ),
+          const SizedBox(height: 20),
+        ],
+
+        const Divider(height: 1, color: GhostColors.glassBorder),
+        const SizedBox(height: 20),
+
+        // 4. Set and Forget (System Settings)
+        if (isDesktop) ...[
+           Text(
+            'SYSTEM',
             style: GhostTypography.caption.copyWith(
               color: GhostColors.textMuted,
             ),
           ),
           const SizedBox(height: 12),
-          RepaintBoundary(child: _buildAccountButton()),
+           if (widget.autoStartService != null) ...[
+            _buildSettingToggle(
+              title: 'Launch at startup',
+              subtitle: 'Start GhostCopy when you log in',
+              value: _autoStartEnabled,
+              onChanged: (value) async {
+                if (value) {
+                  await widget.autoStartService!.enable();
+                } else {
+                  await widget.autoStartService!.disable();
+                }
+                await widget.settingsService.setAutoStartEnabled(enabled: value);
+                if (mounted) {
+                  setState(() => _autoStartEnabled = value);
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (widget.hotkeyService != null) ...[
+            HotkeyCapture(
+              currentHotkey: _currentHotkey,
+              onHotkeyChanged: (newHotkey) async {
+                await widget.hotkeyService!.unregisterHotkey(_currentHotkey);
+                if (mounted) {
+                  setState(() => _currentHotkey = newHotkey);
+                }
+                debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
         ],
-      ),
+
+        // 5. Security
+        if (widget.encryptionService != null) ...[
+          Text(
+            'SECURITY',
+            style: GhostTypography.caption.copyWith(
+              color: GhostColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildEncryptionSection(),
+          const SizedBox(height: 20),
+        ],
+
+        // 6. Account
+        Text(
+          'ACCOUNT',
+          style: GhostTypography.caption.copyWith(
+            color: GhostColors.textMuted,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildAccountButton(),
+      ],
     );
   }
 
@@ -630,6 +663,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
     required String label,
     required TextEditingController controller,
     required ValueChanged<String> onChanged,
+    required Timer? Function() getTimer,
+    required void Function(Timer?) setTimer,
   }) {
     return RepaintBoundary(
       child: Container(
@@ -652,7 +687,16 @@ class _SettingsPanelState extends State<SettingsPanel> {
             border: InputBorder.none,
             contentPadding: EdgeInsets.zero,
           ),
-          onChanged: onChanged,
+          onChanged: (value) {
+            // Use field-specific timer to prevent data loss
+            getTimer()?.cancel();
+            setTimer(
+              Timer(
+                const Duration(milliseconds: 500),
+                () => onChanged(value),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -946,7 +990,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           const SizedBox(height: 8),
           Text(
             'Tap to select specific devices or leave all selected',
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 10,
               color: GhostColors.textMuted,
               fontStyle: FontStyle.italic,

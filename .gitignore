@@ -71,6 +71,11 @@ secrets/
 *.p12
 *.key
 
+# Firebase configs (contain API keys)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+
 # Coverage
 coverage/
 *.lcov
@@ -94,3 +99,5 @@ lib/README.md
 .github/pull_request_template.md
 New Text Document.txt
 NUL
+flutterfixes.md
+dart_devtools_2026-02-08_23_43_21.825.json

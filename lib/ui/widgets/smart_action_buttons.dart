@@ -71,28 +71,28 @@ class SmartActionButtons extends StatelessWidget {
     return _SmartActionButton(
       icon: Icons.lock_open,
       label: 'Decode JWT',
-      color: Colors.orange.shade400,
+      color: GhostColors.warning,
       onTap: () => _handleDecodeJwt(context),
     );
   }
 
   Widget _buildCopyColorButton(BuildContext context) {
     final colorValue = detectionResult.metadata?['color'] as String?;
+    // Parse color once and reuse for both button color and preview (performance optimization)
+    final parsedColor = _parseHexColor(colorValue ?? '#000000');
     return _SmartActionButton(
       icon: Icons.palette,
       label: 'Copy Color',
-      color: _parseHexColor(colorValue ?? '#000000'),
+      color: parsedColor,
       onTap: () => _handleCopyColor(context, colorValue ?? ''),
       leading: colorValue != null
           ? Container(
               width: 16,
               height: 16,
               decoration: BoxDecoration(
-                color: _parseHexColor(colorValue),
+                color: parsedColor,
                 borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: GhostColors.glassBorder,
-                ),
+                border: Border.all(color: GhostColors.glassBorder),
               ),
             )
           : null,
@@ -100,7 +100,10 @@ class SmartActionButtons extends StatelessWidget {
   }
 
   Future<void> _handlePrettifyJson(BuildContext context) async {
-    final result = await transformerService.transform(content, TransformerContentType.json);
+    final result = await transformerService.transform(
+      content,
+      TransformerContentType.json,
+    );
 
     if (result.error != null) {
       if (context.mounted) {
@@ -115,9 +118,7 @@ class SmartActionButtons extends StatelessWidget {
 
     if (result.transformedContent != null) {
       // Copy prettified JSON to clipboard
-      await Clipboard.setData(
-        ClipboardData(text: result.transformedContent!),
-      );
+      await Clipboard.setData(ClipboardData(text: result.transformedContent!));
 
       if (context.mounted) {
         showGhostToast(
@@ -133,7 +134,10 @@ class SmartActionButtons extends StatelessWidget {
   }
 
   Future<void> _handleDecodeJwt(BuildContext context) async {
-    final result = await transformerService.transform(content, TransformerContentType.jwt);
+    final result = await transformerService.transform(
+      content,
+      TransformerContentType.jwt,
+    );
 
     if (result.error != null) {
       if (context.mounted) {
@@ -183,11 +187,7 @@ class SmartActionButtons extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.lock_open,
-                    color: Colors.orange.shade400,
-                    size: 20,
-                  ),
+                  Icon(Icons.lock_open, color: GhostColors.warning, size: 20),
                   const SizedBox(width: 8),
                   const Text(
                     'JWT Token Decoded',
@@ -207,10 +207,7 @@ class SmartActionButtons extends StatelessWidget {
                 ],
               ),
             ),
-            const Divider(
-              color: GhostColors.glassBorder,
-              height: 1,
-            ),
+            const Divider(color: GhostColors.glassBorder, height: 1),
             // Content
             Expanded(
               child: ListView(
@@ -318,22 +315,13 @@ class _SmartActionButton extends StatelessWidget {
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: color.withValues(alpha: 0.3),
-            ),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (leading != null) ...[
-                leading!,
-                const SizedBox(width: 6),
-              ],
-              Icon(
-                icon,
-                size: 14,
-                color: color,
-              ),
+              if (leading != null) ...[leading!, const SizedBox(width: 6)],
+              Icon(icon, size: 14, color: color),
               const SizedBox(width: 6),
               Text(
                 label,

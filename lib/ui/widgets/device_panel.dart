@@ -11,10 +11,7 @@ import 'device_list_item.dart';
 /// - RepaintBoundary to isolate repaints
 /// - Minimal rebuilds via stateful management
 class DevicePanel extends StatefulWidget {
-  const DevicePanel({
-    required this.deviceService,
-    super.key,
-  });
+  const DevicePanel({required this.deviceService, super.key});
 
   final IDeviceService deviceService;
 
@@ -62,7 +59,10 @@ class _DevicePanelState extends State<DevicePanel> {
   }
 
   Future<bool> _handleRename(String deviceId, String newName) async {
-    final success = await widget.deviceService.updateDeviceName(deviceId, newName);
+    final success = await widget.deviceService.updateDeviceName(
+      deviceId,
+      newName,
+    );
     if (success) {
       // Update local cache to reflect name change
       setState(() {
@@ -82,7 +82,9 @@ class _DevicePanelState extends State<DevicePanel> {
     if (success) {
       // Remove from local cache
       setState(() {
-        _cachedDevices = _cachedDevices?.where((d) => d.id != deviceId).toList();
+        _cachedDevices = _cachedDevices
+            ?.where((d) => d.id != deviceId)
+            .toList();
       });
     }
     return success;
@@ -98,7 +100,7 @@ class _DevicePanelState extends State<DevicePanel> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
+              const Text(
                 'YOUR DEVICES',
                 style: TextStyle(
                   fontSize: 11,
@@ -124,9 +126,9 @@ class _DevicePanelState extends State<DevicePanel> {
           const SizedBox(height: 8),
           // Device list or loading/error state
           if (_isLoading)
-            Center(
+            const Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.all(24),
                 child: CircularProgressIndicator(
                   color: GhostColors.primary,
                   strokeWidth: 2,
@@ -142,16 +144,12 @@ class _DevicePanelState extends State<DevicePanel> {
               ),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 18,
-                    color: Colors.red[300],
-                  ),
+                  Icon(Icons.error_outline, size: 18, color: Colors.red[300]),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       _error!,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 12,
                         color: GhostColors.textSecondary,
                       ),
@@ -167,14 +165,14 @@ class _DevicePanelState extends State<DevicePanel> {
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
+              child: const Row(
                 children: [
                   Icon(
                     Icons.devices_other,
                     size: 18,
                     color: GhostColors.textMuted,
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'No devices registered yet',
@@ -195,7 +193,8 @@ class _DevicePanelState extends State<DevicePanel> {
               itemCount: _cachedDevices!.length,
               itemBuilder: (context, index) {
                 final device = _cachedDevices![index];
-                final currentDeviceId = widget.deviceService.getCurrentDeviceId();
+                final currentDeviceId = widget.deviceService
+                    .getCurrentDeviceId();
                 final isCurrentDevice = device.id == currentDeviceId;
 
                 return RepaintBoundary(
@@ -218,7 +217,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
+              child: const Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
@@ -226,7 +225,7 @@ class _DevicePanelState extends State<DevicePanel> {
                     size: 14,
                     color: GhostColors.primary,
                   ),
-                  const SizedBox(width: 6),
+                  SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       'Tap device name to rename (current device only). Remove inactive devices to keep your list clean.',

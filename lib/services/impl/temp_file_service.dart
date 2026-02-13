@@ -29,7 +29,9 @@ class TempFileService implements ITempFileService {
 
       await file.writeAsBytes(bytes);
 
-      debugPrint('[TempFileService] ✓ Saved temp file: ${file.path} (${bytes.length} bytes)');
+      debugPrint(
+        '[TempFileService] ✓ Saved temp file: ${file.path} (${bytes.length} bytes)',
+      );
 
       return file;
     } catch (e) {
@@ -42,33 +44,18 @@ class TempFileService implements ITempFileService {
   Future<void> cleanupTempFiles() async {
     try {
       final tempDir = await getTemporaryDirectory();
-
-      final files = tempDir
-          .listSync()
-          .whereType<File>()
-          .where((f) => path.basename(f.path).startsWith(_filePrefix));
-
-      final now = DateTime.now();
-      var deletedCount = 0;
-
-      for (final file in files) {
-        try {
-          final stat = file.statSync();
-          final age = now.difference(stat.modified);
-
-          // Delete files older than 1 hour
-          if (age.inHours >= 1) {
-            await file.delete();
-            deletedCount++;
-          }
-        } on Exception catch (e) {
-          // Skip files that can't be deleted (might be in use)
-          debugPrint('[TempFileService] ⚠ Could not delete ${file.path}: $e');
-        }
-      }
+      final cutoffTimestamp = DateTime.now()
+          .subtract(const Duration(hours: 1))
+          .millisecondsSinceEpoch;
+      final deletedCount = await compute(
+        _cleanupTempFilesInIsolate,
+        _TempCleanupParams(tempDir.path, _filePrefix, cutoffTimestamp),
+      );
 
       if (deletedCount > 0) {
-        debugPrint('[TempFileService] ✓ Cleaned up $deletedCount old temp files');
+        debugPrint(
+          '[TempFileService] ✓ Cleaned up $deletedCount old temp files',
+        );
       } else {
         debugPrint('[TempFileService] ○ No old temp files to clean up');
       }
@@ -85,7 +72,9 @@ class TempFileService implements ITempFileService {
 
       // Only delete if it's one of our temp files (safety check)
       if (!path.basename(filePath).startsWith(_filePrefix)) {
-        debugPrint('[TempFileService] ⚠ Refusing to delete non-temp file: $filePath');
+        debugPrint(
+          '[TempFileService] ⚠ Refusing to delete non-temp file: $filePath',
+        );
         return;
       }
 
@@ -107,12 +96,9 @@ class TempFileService implements ITempFileService {
     _periodicCleanupTimer?.cancel();
 
     // Run cleanup every 15 minutes
-    _periodicCleanupTimer = Timer.periodic(
-      const Duration(minutes: 15),
-      (_) {
-        cleanupTempFiles();
-      },
-    );
+    _periodicCleanupTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      cleanupTempFiles();
+    });
 
     debugPrint('[TempFileService] 🔄 Periodic cleanup started (every 15 min)');
   }
@@ -125,4 +111,41 @@ class TempFileService implements ITempFileService {
     _periodicCleanupTimer = null;
     debugPrint('[TempFileService] ⏹ Periodic cleanup stopped');
   }
+}
+
+class _TempCleanupParams {
+  const _TempCleanupParams(
+    this.tempDirPath,
+    this.filePrefix,
+    this.cutoffEpochMs,
+  );
+
+  final String tempDirPath;
+  final String filePrefix;
+  final int cutoffEpochMs;
+}
+
+int _cleanupTempFilesInIsolate(_TempCleanupParams params) {
+  final tempDir = Directory(params.tempDirPath);
+  if (!tempDir.existsSync()) return 0;
+
+  final cutoff = DateTime.fromMillisecondsSinceEpoch(params.cutoffEpochMs);
+  var deletedCount = 0;
+
+  for (final entity in tempDir.listSync()) {
+    if (entity is! File) continue;
+    if (!path.basename(entity.path).startsWith(params.filePrefix)) continue;
+
+    try {
+      final stat = entity.statSync();
+      if (stat.modified.isBefore(cutoff)) {
+        entity.deleteSync();
+        deletedCount++;
+      }
+    } on Exception {
+      // Best effort cleanup only.
+    }
+  }
+
+  return deletedCount;
 }

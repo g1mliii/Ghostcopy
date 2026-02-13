@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow & Operating Principles
+
+**See [`docs/workflow.md`](docs/workflow.md)** for complete workflow orchestration, operating principles, task management, and engineering best practices.
+
+**Key supporting files:**
+- [`tasks/todo.md`](tasks/todo.md) - Current work and task tracking
+- [`tasks/lessons.md`](tasks/lessons.md) - Lessons learned from mistakes and corrections
+
+---
 ## Project Overview
 
 GhostCopy is a cross-platform clipboard synchronization tool built with Flutter. Desktop (Windows/macOS) runs as an invisible background utility with a "Spotlight-style" popup triggered by global hotkey. Mobile (iOS/Android) serves as a receiver with push notifications and home screen widgets.
@@ -55,6 +64,25 @@ All features are implemented as services with abstract interfaces for testabilit
 - `ITransformerService` - Content type detection (JSON, JWT, hex colors)
 - `IGameModeService` - Notification suppression during fullscreen apps
 - `IAutoReceiveService` - Desktop auto-copy from other devices
+
+### ViewModel Pattern (ChangeNotifier + GetIt)
+- Use `ChangeNotifier` ViewModels for screen-level business logic:
+  - `SpotlightViewModel` (`lib/ui/viewmodels/spotlight_viewmodel.dart`)
+  - `MobileMainViewModel` (`lib/ui/viewmodels/mobile_main_viewmodel.dart`)
+- Keep UI-only concerns inside widgets:
+  - Animation controllers / `TickerProvider`
+  - `TextEditingController` and `FocusNode`
+  - Panel routing and transient presentation state
+- Keep business concerns in ViewModels:
+  - Send/receive orchestration
+  - History loading/filtering
+  - Device targeting and security checks
+  - Timer/cache lifecycle and cleanup
+- Binding pattern:
+  - Resolve ViewModel with GetIt in `initState`
+  - Register one listener and coalesce UI rebuilds when needed
+  - Remove listener and dispose ViewModel in `dispose`
+- Testing rule: new ViewModel logic requires unit tests with mocked services.
 
 ### Key Patterns
 

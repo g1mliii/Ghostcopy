@@ -19,8 +19,8 @@ class LifecycleController implements ILifecycleController {
   LifecycleController({
     required IClipboardSyncService clipboardSyncService,
     required ISettingsService settingsService,
-  })  : _clipboardSyncService = clipboardSyncService,
-        _settingsService = settingsService;
+  }) : _clipboardSyncService = clipboardSyncService,
+       _settingsService = settingsService;
 
   final IClipboardSyncService _clipboardSyncService;
   final ISettingsService _settingsService;
@@ -39,7 +39,8 @@ class LifecycleController implements ILifecycleController {
   // ========== CONNECTION MODE (Network State) ==========
 
   ConnectionMode _connectionMode = ConnectionMode.realtime;
-  final _connectionModeController = StreamController<ConnectionMode>.broadcast();
+  final _connectionModeController =
+      StreamController<ConnectionMode>.broadcast();
 
   @override
   ConnectionMode get connectionMode => _connectionMode;
@@ -150,15 +151,15 @@ class LifecycleController implements ILifecycleController {
   }
 
   @override
-  void addPausable(Pausable pausable) {
-    // Defensive check: warn if pausables set is growing too large
+  bool addPausable(Pausable pausable) {
+    // Defensive check: reject if pausables set is too large (Fix #15)
     if (_pausables.length >= _maxPausables) {
       debugPrint(
-        '[Lifecycle] ⚠️  WARNING: Pausables set has reached ${_pausables.length} items! '
-        'This may indicate widgets are not properly calling removePausable() in dispose(). '
+        '[Lifecycle] ⚠️  REJECTED: Pausables set at limit ${_pausables.length}! '
+        'Widget not properly calling removePausable() in dispose(). '
         'Limit: $_maxPausables',
       );
-      // Continue adding anyway, but log the issue for investigation
+      return false; // Reject addition to prevent unbounded memory growth
     }
 
     _pausables.add(pausable);
@@ -171,6 +172,7 @@ class LifecycleController implements ILifecycleController {
         debugPrint('[Lifecycle] ⚠️  Failed to pause newly added resource: $e');
       }
     }
+    return true;
   }
 
   @override
@@ -186,7 +188,9 @@ class LifecycleController implements ILifecycleController {
       const Duration(minutes: 2),
       (_) => _checkInactivity(),
     );
-    debugPrint('[Lifecycle] ⏰ Inactivity monitoring started (check every 2 min)');
+    debugPrint(
+      '[Lifecycle] ⏰ Inactivity monitoring started (check every 2 min)',
+    );
   }
 
   void _checkInactivity() {
@@ -281,7 +285,7 @@ class LifecycleController implements ILifecycleController {
     _powerState = PowerState.awake;
 
     // Resume to realtime (user just woke system, probably active)
-    _resumeConnections();
+    unawaited(_resumeConnections());
   }
 
   @override
@@ -303,7 +307,7 @@ class LifecycleController implements ILifecycleController {
     _powerState = PowerState.awake;
 
     // Resume connections
-    _resumeConnections();
+    unawaited(_resumeConnections());
   }
 
   void _pauseConnections() {
@@ -320,23 +324,32 @@ class LifecycleController implements ILifecycleController {
       ..stopClipboardMonitoring();
   }
 
-  void _resumeConnections() {
+  Future<void> _resumeConnections() async {
     debugPrint('[Lifecycle] ▶️  Resuming connections');
 
     // Always resume to realtime (user just woke system/unlocked screen)
     switchToRealtime();
 
-    // Resume clipboard monitoring if it was stopped
-    final wasMonitoring = _clipboardSyncService.isMonitoring;
-    if (!wasMonitoring) {
-      _clipboardSyncService.startClipboardMonitoring();
+    // Only resume clipboard monitoring if user has auto-send enabled
+    // Prevents overriding user preference after system wake/screen unlock
+    try {
+      final autoSendEnabled = await _settingsService.getAutoSendEnabled();
+      if (_isDisposed) return; // Check after async gap
+      if (autoSendEnabled && !_clipboardSyncService.isMonitoring) {
+        _clipboardSyncService.startClipboardMonitoring();
+      }
+    } on Exception catch (e) {
+      debugPrint('[Lifecycle] ⚠️ Failed to check auto-send setting: $e');
     }
   }
 
   // ========== CLEANUP & DISPOSAL ==========
 
+  bool _isDisposed = false;
+
   @override
   void dispose() {
+    _isDisposed = true;
     debugPrint('[Lifecycle] 🗑️  Disposing all resources');
 
     // Restore original callbacks to prevent memory leaks

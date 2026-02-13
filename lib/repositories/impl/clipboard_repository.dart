@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
+import '../../services/clipboard_cache_manager.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/storage_service.dart';
@@ -215,11 +216,6 @@ class ClipboardRepository implements IClipboardRepository {
         );
       }
 
-      // 1. Insert placeholder to get clip ID
-      debugPrint(
-        '[Repository] ↑ Inserting file placeholder (${fileBytes.length} bytes)',
-      );
-
       // Build metadata with original filename
       final metadata = <String, dynamic>{
         if (width != null) 'width': width,
@@ -227,73 +223,85 @@ class ClipboardRepository implements IClipboardRepository {
         if (originalFilename != null) 'original_filename': originalFilename,
       };
 
-      final response = await _client
-          .from('clipboard')
-          .insert({
-            'user_id': userId,
-            'device_name': _sanitizeDeviceName(deviceName),
-            'device_type': _validateDeviceType(deviceType),
-            'target_device_type': targetDeviceTypes
-                ?.map(_validateDeviceType)
-                .toList(), // null = broadcast to all devices
-            'content': '', // Placeholder, will be updated with URL
-            'content_type': contentType.value,
-            'mime_type': mimeType,
-            'file_size_bytes': fileBytes.length,
-            if (metadata.isNotEmpty) 'metadata': metadata,
-            'is_encrypted': false, // Files NOT encrypted
-          })
-          .select()
-          .single();
-
-      final clipId = response['id'].toString();
-
-      // 2. Upload to Storage
-      // Use original filename if provided, otherwise generate from extension
+      // FIXED: Upload file FIRST to avoid race condition with realtime INSERT event
+      // Use timestamp for storage path (doesn't need to match database ID)
+      final storageId = DateTime.now().millisecondsSinceEpoch.toString();
       final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
+
       debugPrint(
-        '[Repository] ↑ Uploading to storage: $userId/$clipId/$filename',
+        '[Repository] ↑ Uploading to storage (${fileBytes.length} bytes): $filename',
       );
 
+      // 1. Upload to Storage first
       final uploadResult = await _storageService.uploadFile(
         userId: userId,
-        clipboardId: clipId,
+        clipboardId: storageId,
         bytes: fileBytes,
         filename: filename,
         mimeType: mimeType,
       );
 
-      // 3. Update with storage path and URL
-      await _client
-          .from('clipboard')
-          .update({
-            'storage_path': uploadResult.storagePath,
-            'content': uploadResult.publicUrl, // URL in content field
-          })
-          .eq('id', clipId);
+      // 2. Insert to database with correct storage path (no placeholder, no UPDATE!)
+      debugPrint('[Repository] ↑ Inserting database record');
 
-      debugPrint('[Repository] ✓ File uploaded successfully: $filename');
+      try {
+        final response = await _client
+            .from('clipboard')
+            .insert({
+              'user_id': userId,
+              'device_name': _sanitizeDeviceName(deviceName),
+              'device_type': _validateDeviceType(deviceType),
+              'target_device_type': targetDeviceTypes
+                  ?.map(_validateDeviceType)
+                  .toList(), // null = broadcast to all devices
+              'content': uploadResult.publicUrl,
+              'content_type': contentType.value,
+              'mime_type': mimeType,
+              'file_size_bytes': fileBytes.length,
+              'storage_path': uploadResult.storagePath,
+              if (metadata.isNotEmpty) 'metadata': metadata,
+              'is_encrypted': false, // Files NOT encrypted
+            })
+            .select()
+            .single();
 
-      return ClipboardItem(
-        id: clipId,
-        userId: userId,
-        content: uploadResult.publicUrl,
-        deviceName: deviceName,
-        deviceType: deviceType,
-        targetDeviceTypes: targetDeviceTypes,
-        contentType: contentType,
-        storagePath: uploadResult.storagePath,
-        fileSizeBytes: fileBytes.length,
-        mimeType: mimeType,
-        metadata: metadata.isNotEmpty
-            ? ClipboardMetadata(
-                width: width,
-                height: height,
-                originalFilename: originalFilename,
-              )
-            : null,
-        createdAt: DateTime.parse(response['created_at'] as String),
-      );
+        final clipId = response['id'].toString();
+
+        debugPrint('[Repository] ✓ File uploaded successfully: $filename');
+
+        return ClipboardItem(
+          id: clipId,
+          userId: userId,
+          content: uploadResult.publicUrl,
+          deviceName: deviceName,
+          deviceType: deviceType,
+          targetDeviceTypes: targetDeviceTypes,
+          contentType: contentType,
+          storagePath: uploadResult.storagePath,
+          fileSizeBytes: fileBytes.length,
+          mimeType: mimeType,
+          metadata: metadata.isNotEmpty
+              ? ClipboardMetadata(
+                  width: width,
+                  height: height,
+                  originalFilename: originalFilename,
+                )
+              : null,
+          createdAt: DateTime.parse(response['created_at'] as String),
+        );
+      } on Exception catch (e) {
+        // FIXED: Clean up orphaned storage file if database insert fails
+        debugPrint(
+          '[Repository] ✗ Database insert failed, cleaning up storage: $e',
+        );
+        try {
+          await _storageService.deleteFile(uploadResult.storagePath);
+          debugPrint('[Repository] ✓ Cleaned up orphaned storage file');
+        } on Exception catch (deleteError) {
+          debugPrint('[Repository] ⚠ Failed to clean up storage: $deleteError');
+        }
+        rethrow;
+      }
     } on SecurityException {
       rethrow;
     } on ValidationException {
@@ -360,53 +368,62 @@ class ClipboardRepository implements IClipboardRepository {
         if (originalFilename != null) 'original_filename': originalFilename,
       };
 
-      final response = await _client
-          .from('clipboard')
-          .insert({
-            'user_id': userId,
-            'device_name': _sanitizeDeviceName(deviceName),
-            'device_type': _validateDeviceType(deviceType),
-            'target_device_type': targetDeviceTypes
-                ?.map(_validateDeviceType)
-                .toList(),
-            'content': '',
-            'content_type': contentType.value,
-            'mime_type': mimeType,
-            'file_size_bytes': fileBytes.length,
-            if (metadata.isNotEmpty) 'metadata': metadata,
-            'is_encrypted': false,
-          })
-          .select()
-          .single();
-
-      final clipId = response['id'].toString();
-      yield 0.3; // Database record created
-
+      // FIXED: Upload file FIRST to avoid race condition with realtime INSERT event
+      // Use timestamp for storage path (doesn't need to match database ID)
+      final storageId = DateTime.now().millisecondsSinceEpoch.toString();
       final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
-      debugPrint(
-        '[Repository] ↑ Uploading to storage: $userId/$clipId/$filename',
-      );
+
+      debugPrint('[Repository] ↑ Uploading to storage: $filename');
+
+      yield 0.3; // Starting upload
 
       final uploadResult = await _storageService.uploadFile(
         userId: userId,
-        clipboardId: clipId,
+        clipboardId: storageId,
         bytes: fileBytes,
         filename: filename,
         mimeType: mimeType,
       );
 
-      yield 0.8; // Upload complete
+      yield 0.7; // Upload complete
 
-      await _client
-          .from('clipboard')
-          .update({
-            'storage_path': uploadResult.storagePath,
-            'content': uploadResult.publicUrl,
-          })
-          .eq('id', clipId);
+      // Insert to database with correct storage path (no placeholder, no UPDATE!)
+      debugPrint('[Repository] ↑ Inserting database record');
 
-      debugPrint('[Repository] ✓ File uploaded successfully');
-      yield 1.0; // Done
+      try {
+        await _client.from('clipboard').insert({
+          'user_id': userId,
+          'device_name': _sanitizeDeviceName(deviceName),
+          'device_type': _validateDeviceType(deviceType),
+          'target_device_type': targetDeviceTypes
+              ?.map(_validateDeviceType)
+              .toList(),
+          'content': uploadResult.publicUrl,
+          'content_type': contentType.value,
+          'mime_type': mimeType,
+          'file_size_bytes': fileBytes.length,
+          'storage_path': uploadResult.storagePath,
+          if (metadata.isNotEmpty) 'metadata': metadata,
+          'is_encrypted': false,
+        });
+
+        yield 0.9; // Database record created
+
+        debugPrint('[Repository] ✓ File uploaded successfully');
+        yield 1.0; // Done
+      } on Exception catch (e) {
+        // Clean up orphaned storage file if database insert fails
+        debugPrint(
+          '[Repository] ✗ Database insert failed, cleaning up storage: $e',
+        );
+        try {
+          await _storageService.deleteFile(uploadResult.storagePath);
+          debugPrint('[Repository] ✓ Cleaned up orphaned storage file');
+        } on Exception catch (deleteError) {
+          debugPrint('[Repository] ⚠ Failed to clean up storage: $deleteError');
+        }
+        rethrow;
+      }
     } on SecurityException {
       rethrow;
     } on ValidationException {
@@ -687,7 +704,12 @@ class ClipboardRepository implements IClipboardRepository {
         responseList.cast<Map<String, dynamic>>(),
       );
 
-      return await _decryptItems(items);
+      final decryptedItems = await _decryptItems(items);
+
+      // FIXED: Clean up orphaned cache entries (async, don't await)
+      _cleanupOrphanedCache(decryptedItems);
+
+      return decryptedItems;
     } on SecurityException {
       rethrow;
     } on ValidationException {
@@ -699,16 +721,39 @@ class ClipboardRepository implements IClipboardRepository {
     }
   }
 
+  /// Clean up orphaned cache entries in background
+  ///
+  /// Removes cached images that are no longer in visible history
+  void _cleanupOrphanedCache(List<ClipboardItem> currentHistory) {
+    // Run in background, don't block history fetch
+    Future(() async {
+      try {
+        // Get URLs of all images in current history
+        final validUrls = currentHistory
+            .where((item) => item.isImage && item.content.isNotEmpty)
+            .map((item) => item.content)
+            .toSet();
+
+        // Clean up cache entries not in current history
+        await ClipboardCacheManager.instance.cleanupOrphaned(validUrls);
+      } on Exception catch (e) {
+        debugPrint('[Repository] ⚠ Background cache cleanup failed: $e');
+        // Swallow exception - cache cleanup is best effort
+      }
+    });
+  }
+
   /// Parse clipboard items with optional isolate for large responses
   Future<List<ClipboardItem>> _parseClipboardItemsAsync(
     List<Map<String, dynamic>> data,
   ) async {
-    // For small responses (<20 items), parse synchronously
-    if (data.length < 20) {
+    // For small/medium responses (<100 items), parse synchronously (Fix #23)
+    // Isolate overhead makes parse slower for typical payloads
+    if (data.length < 100) {
       return _parseClipboardItems(data);
     }
 
-    // For large responses (>=20 items), parse in background isolate
+    // For large responses (>=100 items), parse in background isolate
     return compute(_parseClipboardItemsInIsolate, data);
   }
 
@@ -726,6 +771,24 @@ class ClipboardRepository implements IClipboardRepository {
         );
       }
 
+      // FIXED: Fetch item first to get URL for cache cleanup
+      ClipboardItem? item;
+      try {
+        final response = await _client
+            .from('clipboard')
+            .select()
+            .eq('id', id)
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        if (response != null) {
+          item = ClipboardItem.fromJson(response);
+        }
+      } on Exception catch (e) {
+        debugPrint('[Repository] ⚠ Failed to fetch item before delete: $e');
+        // Continue with deletion even if fetch fails
+      }
+
       // Delete with RLS enforcement
       // RLS policy ensures user can only delete their own items
       await _client
@@ -733,6 +796,17 @@ class ClipboardRepository implements IClipboardRepository {
           .delete()
           .eq('id', id)
           .eq('user_id', userId); // Explicit filter for defense in depth
+
+      // FIXED: Remove from image cache if it's an image
+      if (item != null && item.isImage && item.content.isNotEmpty) {
+        try {
+          await ClipboardCacheManager.instance.removeFile(item.content);
+          debugPrint('[Repository] ✓ Removed from cache: ${item.id}');
+        } on Exception catch (e) {
+          debugPrint('[Repository] ⚠ Cache removal failed: $e');
+          // Don't throw - cache cleanup is best effort
+        }
+      }
     } on SecurityException {
       rethrow;
     } on ValidationException {
@@ -897,7 +971,9 @@ class ClipboardRepository implements IClipboardRepository {
 
   /// Parses raw JSON data into ClipboardItem list
   /// Content is now in the same table (no more join needed)
-  static List<ClipboardItem> _parseClipboardItems(List<Map<String, dynamic>> data) {
+  static List<ClipboardItem> _parseClipboardItems(
+    List<Map<String, dynamic>> data,
+  ) {
     return data.map((json) {
       try {
         // Extract encrypted content directly from clipboard table
@@ -1100,33 +1176,4 @@ List<ClipboardItem> _parseClipboardItemsInIsolate(
   List<Map<String, dynamic>> data,
 ) {
   return ClipboardRepository._parseClipboardItems(data);
-}
-
-// ========== Custom Exceptions ==========
-
-/// Exception thrown when validation fails
-class ValidationException implements Exception {
-  ValidationException(this.message);
-  final String message;
-
-  @override
-  String toString() => 'ValidationException: $message';
-}
-
-/// Exception thrown when security checks fail
-class SecurityException implements Exception {
-  SecurityException(this.message);
-  final String message;
-
-  @override
-  String toString() => 'SecurityException: $message';
-}
-
-/// Exception thrown when repository operations fail
-class RepositoryException implements Exception {
-  RepositoryException(this.message);
-  final String message;
-
-  @override
-  String toString() => 'RepositoryException: $message';
 }

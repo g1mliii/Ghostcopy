@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/colors.dart';
@@ -54,11 +56,7 @@ IconData _getDefaultIcon(GhostToastType type) {
   }
 }
 
-enum GhostToastType {
-  success,
-  error,
-  info,
-}
+enum GhostToastType { success, error, info }
 
 class _GhostToastWidget extends StatefulWidget {
   const _GhostToastWidget({
@@ -85,6 +83,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
   bool _isDismissed = false;
+  Timer? _autoDismissTimer; // Cancellable timer (Fix #16)
 
   @override
   void initState() {
@@ -95,24 +94,22 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
       vsync: this,
     );
 
-    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+    _fadeAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, 1), // Slide up from bottom
       end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-    );
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     // Start entrance animation
     _controller.forward();
 
-    // Auto-dismiss after duration
-    // Use WidgetsBinding to avoid timer issues in tests
+    // Auto-dismiss after duration - use Timer for cancellation (Fix #16)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future<void>.delayed(widget.duration, () {
+      _autoDismissTimer = Timer(widget.duration, () {
         if (mounted && !_isDismissed) {
           _dismiss();
         }
@@ -133,6 +130,9 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
 
   @override
   void dispose() {
+    // Cancel auto-dismiss timer to prevent memory leaks (Fix #16)
+    _autoDismissTimer?.cancel();
+    _autoDismissTimer = null;
     // Clean up animation controller
     _controller.dispose();
     super.dispose();
@@ -191,11 +191,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    widget.icon,
-                    size: 20,
-                    color: _getIconColor(),
-                  ),
+                  Icon(widget.icon, size: 20, color: _getIconColor()),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(

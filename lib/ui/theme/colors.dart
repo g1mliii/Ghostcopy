@@ -20,6 +20,12 @@ class GhostColors {
   static const textSecondary = Color(0xFFB9BBBE);
   static const textMuted = Color(0xFF72767D);
 
+  // Semantic colors for status/alerts
+  static const warning = Color(0xFFFFB020); // Amber-like for warnings
+  static const warningLight = Color(0xFFFFD54F); // Lighter warning
+  static const error = Color(0xFFEF5350); // Red for errors
+  static const errorLight = Color(0xFFFF8A80); // Lighter error text
+
   // Glassmorphism
   static const glassBackground = Color(0x1AFFFFFF); // 10% white
   static const glassBorder = Color(0x33FFFFFF); // 20% white

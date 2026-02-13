@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../locator.dart';
 import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
@@ -17,15 +18,11 @@ import '../theme/typography.dart';
 /// Performance: Proper disposal, RepaintBoundary, const where possible
 class MobileWelcomeScreen extends StatefulWidget {
   const MobileWelcomeScreen({
-    required this.authService,
-    required this.deviceService,
     required this.onAuthComplete,
     this.fcmToken,
     super.key,
   });
 
-  final IAuthService authService;
-  final IDeviceService deviceService;
   final VoidCallback onAuthComplete;
   final String? fcmToken;
 
@@ -74,20 +71,23 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   void _onTabChanged() {
     if (_tabController.index == 0) {
-      // QR tab - initialize scanner if not already initialized
+      // QR tab - initialize scanner if not already initialized (Fix #18)
+      // Create controller OUTSIDE setState, then trigger rebuild
       if (_scannerController == null) {
+        final controller = MobileScannerController(
+          detectionSpeed: DetectionSpeed.noDuplicates,
+        );
         setState(() {
-          _scannerController = MobileScannerController(
-            detectionSpeed: DetectionSpeed.noDuplicates,
-          );
+          _scannerController = controller;
         });
       }
     } else {
       // Auth tab - dispose scanner to save resources
-      _scannerController?.dispose();
+      final controllerToDispose = _scannerController;
       setState(() {
         _scannerController = null;
       });
+      controllerToDispose?.dispose();
     }
   }
 
@@ -106,10 +106,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             Expanded(
               child: TabBarView(
                 controller: _tabController,
-                children: [
-                  _buildQRScanTab(),
-                  _buildAuthTab(),
-                ],
+                children: [_buildQRScanTab(), _buildAuthTab()],
               ),
             ),
           ],
@@ -130,9 +127,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             decoration: BoxDecoration(
               color: GhostColors.surface,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: GhostColors.glassBorder,
-              ),
+              border: Border.all(color: GhostColors.glassBorder),
             ),
             child: const Icon(
               Icons.content_copy_rounded,
@@ -179,18 +174,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         dividerColor: Colors.transparent,
         labelColor: Colors.white,
         unselectedLabelColor: GhostColors.textSecondary,
-        labelStyle: GhostTypography.body.copyWith(
-          fontWeight: FontWeight.w600,
-        ),
+        labelStyle: GhostTypography.body.copyWith(fontWeight: FontWeight.w600),
         tabs: const [
-          Tab(
-            icon: Icon(Icons.qr_code_scanner),
-            text: 'Scan QR',
-          ),
-          Tab(
-            icon: Icon(Icons.login),
-            text: 'Sign In',
-          ),
+          Tab(icon: Icon(Icons.qr_code_scanner), text: 'Scan QR'),
+          Tab(icon: Icon(Icons.login), text: 'Sign In'),
         ],
       ),
     );
@@ -208,9 +195,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             decoration: BoxDecoration(
               color: GhostColors.surface,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: GhostColors.glassBorder,
-              ),
+              border: Border.all(color: GhostColors.glassBorder),
             ),
             child: Row(
               children: [
@@ -249,10 +234,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       decoration: BoxDecoration(
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: GhostColors.glassBorder,
-          width: 2,
-        ),
+        border: Border.all(color: GhostColors.glassBorder, width: 2),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
@@ -265,15 +247,15 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                       controller: controller,
                       onDetect: _onQRCodeDetected,
                     ),
-                  if (_qrScanning)
-                    Container(
-                      color: Colors.black54,
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                          color: GhostColors.primary,
+                    if (_qrScanning)
+                      Container(
+                        color: Colors.black54,
+                        child: const Center(
+                          child: CircularProgressIndicator(
+                            color: GhostColors.primary,
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 )
               : Center(
@@ -295,9 +277,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       decoration: BoxDecoration(
         color: Colors.red.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Colors.red.withValues(alpha: 0.3),
-        ),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -306,9 +286,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           Expanded(
             child: Text(
               _qrError!,
-              style: GhostTypography.caption.copyWith(
-                color: Colors.red,
-              ),
+              style: GhostTypography.caption.copyWith(color: Colors.red),
             ),
           ),
         ],
@@ -394,8 +372,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                   'Sign Up',
                   style: GhostTypography.body.copyWith(
                     fontWeight: FontWeight.w600,
-                    color:
-                        !_isLogin ? Colors.white : GhostColors.textSecondary,
+                    color: !_isLogin ? Colors.white : GhostColors.textSecondary,
                   ),
                 ),
               ),
@@ -419,8 +396,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide:
-              const BorderSide(color: GhostColors.primary, width: 2),
+          borderSide: const BorderSide(color: GhostColors.primary, width: 2),
         ),
       ),
       keyboardType: TextInputType.emailAddress,
@@ -442,8 +418,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide:
-              const BorderSide(color: GhostColors.primary, width: 2),
+          borderSide: const BorderSide(color: GhostColors.primary, width: 2),
         ),
       ),
       obscureText: true,
@@ -475,9 +450,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       decoration: BoxDecoration(
         color: Colors.red.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Colors.red.withValues(alpha: 0.3),
-        ),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -486,9 +459,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           Expanded(
             child: Text(
               _authError!,
-              style: GhostTypography.caption.copyWith(
-                color: Colors.red,
-              ),
+              style: GhostTypography.caption.copyWith(color: Colors.red),
             ),
           ),
         ],
@@ -558,9 +529,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         padding: const EdgeInsets.symmetric(vertical: 16),
         side: const BorderSide(color: GhostColors.surface),
         foregroundColor: GhostColors.textPrimary,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -589,7 +558,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       try {
         qrData = jsonDecode(code) as Map<String, dynamic>;
       } on FormatException catch (_) {
-        throw Exception('Invalid QR code format. Please scan a GhostCopy QR code.');
+        throw Exception(
+          'Invalid QR code format. Please scan a GhostCopy QR code.',
+        );
       }
 
       // Validate QR data structure
@@ -614,7 +585,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       if (response.status != 200 || response.data == null) {
         final errorData = response.data as Map<String, dynamic>?;
-        final errorMsg = errorData?['error'] as String? ?? 'Failed to authenticate';
+        final errorMsg =
+            errorData?['error'] as String? ?? 'Failed to authenticate';
         throw Exception(errorMsg);
       }
 
@@ -637,7 +609,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           final userId = supabase.auth.currentUser?.id;
           if (userId != null) {
             await encryptionService.initialize(userId);
-            final imported = await encryptionService.importPassphraseFromQr(encryptedPassphrase);
+            final imported = await encryptionService.importPassphraseFromQr(
+              encryptedPassphrase,
+            );
             if (imported) {
               debugPrint('[QR] ✅ Passphrase imported successfully');
             } else {
@@ -653,10 +627,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       // Register device and update FCM token
       if (mounted) {
-        await widget.deviceService.registerCurrentDevice();
+        await locator<IDeviceService>().registerCurrentDevice();
 
         if (widget.fcmToken != null) {
-          await widget.deviceService.updateFcmToken(widget.fcmToken!);
+          await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
           debugPrint('[QR] ✅ Device registered with FCM token');
         }
 
@@ -684,22 +658,22 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // Mobile doesn't use hCaptcha - simplified auth flow
       if (_isLogin) {
         // Sign in existing user - check if switching accounts
-        final currentUserId = widget.authService.currentUserId;
-        final wasAnonymous = widget.authService.isAnonymous;
+        final currentUserId = locator<IAuthService>().currentUserId;
+        final wasAnonymous = locator<IAuthService>().isAnonymous;
 
         // Clean up anonymous account BEFORE switching
         if (wasAnonymous && currentUserId != null) {
-          await widget.authService.cleanupOldAccountData(currentUserId);
+          await locator<IAuthService>().cleanupOldAccountData(currentUserId);
         }
 
         // Sign in with new account (no captcha on mobile)
-        await widget.authService.signInWithEmail(
+        await locator<IAuthService>().signInWithEmail(
           _emailController.text,
           _passwordController.text,
         );
       } else {
         // Upgrade anonymous to permanent account
-        await widget.authService.upgradeWithEmail(
+        await locator<IAuthService>().upgradeWithEmail(
           _emailController.text,
           _passwordController.text,
         );
@@ -708,13 +682,15 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // Success - register device with FCM token before navigating
       if (mounted) {
         // Auto-restore passphrase from cloud backup if available
-        final userId = widget.authService.currentUserId;
+        final userId = locator<IAuthService>().currentUserId;
         if (userId != null) {
           final encryptionService = EncryptionService.instance;
           await encryptionService.initialize(userId);
           final restored = await encryptionService.autoRestoreFromCloud();
           if (restored) {
-            debugPrint('[Mobile] ✅ Encryption passphrase auto-restored from cloud');
+            debugPrint(
+              '[Mobile] ✅ Encryption passphrase auto-restored from cloud',
+            );
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -728,12 +704,14 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         }
 
         // Register device
-        await widget.deviceService.registerCurrentDevice();
+        await locator<IDeviceService>().registerCurrentDevice();
 
         // Update FCM token if available
         if (widget.fcmToken != null) {
-          await widget.deviceService.updateFcmToken(widget.fcmToken!);
-          debugPrint('[Mobile] ✅ Device registered with FCM token after email auth');
+          await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+          debugPrint(
+            '[Mobile] ✅ Device registered with FCM token after email auth',
+          );
         }
 
         widget.onAuthComplete();
@@ -759,31 +737,33 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       if (_isLogin) {
         // Login mode: Sign in with existing Google account
-        final currentUserId = widget.authService.currentUserId;
-        final wasAnonymous = widget.authService.isAnonymous;
+        final currentUserId = locator<IAuthService>().currentUserId;
+        final wasAnonymous = locator<IAuthService>().isAnonymous;
 
         // Clean up anonymous account BEFORE switching
         if (wasAnonymous && currentUserId != null) {
-          await widget.authService.cleanupOldAccountData(currentUserId);
+          await locator<IAuthService>().cleanupOldAccountData(currentUserId);
         }
 
         // Sign in with Google
-        success = await widget.authService.signInWithGoogle();
+        success = await locator<IAuthService>().signInWithGoogle();
       } else {
         // Sign Up mode: Upgrade anonymous user to Google account
-        success = await widget.authService.linkGoogleIdentity();
+        success = await locator<IAuthService>().linkGoogleIdentity();
       }
 
       if (mounted) {
         if (success) {
           // Auto-restore passphrase from cloud backup if available
-          final userId = widget.authService.currentUserId;
+          final userId = locator<IAuthService>().currentUserId;
           if (userId != null) {
             final encryptionService = EncryptionService.instance;
             await encryptionService.initialize(userId);
             final restored = await encryptionService.autoRestoreFromCloud();
             if (restored) {
-              debugPrint('[Mobile] ✅ Encryption passphrase auto-restored from cloud');
+              debugPrint(
+                '[Mobile] ✅ Encryption passphrase auto-restored from cloud',
+              );
               // Show a toast/snackbar to inform user
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -798,12 +778,14 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           }
 
           // Success - register device with FCM token before navigating
-          await widget.deviceService.registerCurrentDevice();
+          await locator<IDeviceService>().registerCurrentDevice();
 
           // Update FCM token if available
           if (widget.fcmToken != null) {
-            await widget.deviceService.updateFcmToken(widget.fcmToken!);
-            debugPrint('[Mobile] ✅ Device registered with FCM token after Google auth');
+            await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+            debugPrint(
+              '[Mobile] ✅ Device registered with FCM token after Google auth',
+            );
           }
 
           widget.onAuthComplete();
@@ -838,7 +820,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     });
 
     try {
-      final success = await widget.authService.sendPasswordResetEmail(email);
+      final success = await locator<IAuthService>().sendPasswordResetEmail(
+        email,
+      );
 
       if (mounted) {
         setState(() => _authLoading = false);
@@ -846,47 +830,50 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         if (success) {
           // Show success message
           if (mounted) {
-            unawaited(showDialog<void>(
-              context: context,
-              builder: (context) => AlertDialog(
-                backgroundColor: GhostColors.surfaceLight,
-                title: Row(
-                  children: [
-                    const Icon(
-                      Icons.mark_email_read,
-                      color: GhostColors.success,
+            unawaited(
+              showDialog<void>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  backgroundColor: GhostColors.surfaceLight,
+                  title: Row(
+                    children: [
+                      const Icon(
+                        Icons.mark_email_read,
+                        color: GhostColors.success,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Email Sent',
+                        style: GhostTypography.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: GhostColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  content: Text(
+                    'Check your email for a password reset link.',
+                    style: GhostTypography.body.copyWith(
+                      color: GhostColors.textSecondary,
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Email Sent',
-                      style: GhostTypography.body.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: GhostColors.textPrimary,
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text(
+                        'OK',
+                        style: TextStyle(color: GhostColors.primary),
                       ),
                     ),
                   ],
                 ),
-                content: Text(
-                  'Check your email for a password reset link.',
-                  style: GhostTypography.body.copyWith(
-                    color: GhostColors.textSecondary,
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text(
-                      'OK',
-                      style: TextStyle(color: GhostColors.primary),
-                    ),
-                  ),
-                ],
               ),
-            ));
+            );
           }
         } else {
           setState(() {
-            _authError = 'Failed to send reset email. Please check your email address.';
+            _authError =
+                'Failed to send reset email. Please check your email address.';
           });
         }
       }

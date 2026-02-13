@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -163,8 +164,21 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
     if (confirmed) {
       await widget.authService.signOut();
+
+      // Re-register device + FCM token for new anonymous user
+      // signOut() signs in anonymously, so current user has a new user_id
+      try {
+        await widget.deviceService.registerCurrentDevice();
+        final fcmToken = await FirebaseMessaging.instance.getToken();
+        if (fcmToken != null) {
+          await widget.deviceService.updateFcmToken(fcmToken);
+        }
+        debugPrint('[Settings] ✅ Device re-registered after sign out');
+      } on Exception catch (e) {
+        debugPrint('[Settings] ⚠️ Failed to re-register device: $e');
+      }
+
       if (mounted) {
-        // Pop back to welcome screen (handled by main.dart state change)
         Navigator.of(context).pop();
       }
     }

@@ -48,8 +48,8 @@ class WidgetService implements IWidgetService {
   // Cache directory path (lazy loaded)
   String? _widgetCachePath;
 
-  // Reference to clipboard repository
-  late final IClipboardRepository _clipboardRepository;
+  // Reference to clipboard repository (nullable for re-initialization)
+  IClipboardRepository? _clipboardRepository;
 
   /// Initialize the widget service and set up method channel handlers
   @override
@@ -59,10 +59,14 @@ class WidgetService implements IWidgetService {
       return;
     }
 
+    // P7 FIX: Allow re-initialization after dispose by resetting state
     if (_disposed) {
-      throw StateError(
-        'WidgetService has been disposed and cannot be re-initialized',
+      debugPrint(
+        '[WidgetService] Resetting disposed state for re-initialization',
       );
+      _disposed = false;
+      _widgetCachePath = null;
+      _clipboardRepository = null; // Reset so it's re-assigned below
     }
 
     try {
@@ -167,7 +171,12 @@ class WidgetService implements IWidgetService {
 
     try {
       // Fetch latest 5 items from Supabase
-      final items = await _clipboardRepository.getHistory(limit: 5);
+      final repo = _clipboardRepository;
+      if (repo == null) {
+        debugPrint('[WidgetService] Repository not initialized');
+        return;
+      }
+      final items = await repo.getHistory(limit: 5);
 
       // Update widget with new data
       await updateWidgetData(items);
@@ -284,8 +293,27 @@ class WidgetService implements IWidgetService {
     if (!item.isImage) return null;
 
     try {
+      final cacheDir = await _getWidgetCacheDir();
+      final thumbnailFile = File('$cacheDir/${item.id}.jpg');
+
+      // Reuse existing thumbnail for immutable clipboard item IDs.
+      if (thumbnailFile.existsSync()) {
+        final stat = thumbnailFile.statSync();
+        if (stat.size > 0) {
+          debugPrint(
+            '[WidgetService] Reusing cached thumbnail: ${thumbnailFile.path}',
+          );
+          return thumbnailFile.path;
+        }
+      }
+
       // Download image from Supabase Storage
-      final bytes = await _clipboardRepository.downloadFile(item);
+      final repo = _clipboardRepository;
+      if (repo == null) {
+        debugPrint('[WidgetService] Repository not initialized for thumbnail');
+        return null;
+      }
+      final bytes = await repo.downloadFile(item);
       if (bytes == null) {
         debugPrint('[WidgetService] No image data for ${item.id}');
         return null;
@@ -321,9 +349,6 @@ class WidgetService implements IWidgetService {
       );
 
       // Save to cache
-      final cacheDir = await _getWidgetCacheDir();
-      final thumbnailFile = File('$cacheDir/${item.id}.jpg');
-
       await thumbnailFile.writeAsBytes(jpegBytes);
 
       debugPrint('[WidgetService] ✅ Cached thumbnail: ${thumbnailFile.path}');

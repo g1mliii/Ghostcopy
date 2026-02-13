@@ -10,7 +10,11 @@ import '../device_service.dart';
 /// Desktop devices register without FCM tokens.
 /// Mobile devices will add FCM tokens when implemented.
 class DeviceService implements IDeviceService {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  /// Constructor with optional Supabase client for testing
+  DeviceService({SupabaseClient? supabaseClient})
+    : _supabase = supabaseClient ?? Supabase.instance.client;
+
+  final SupabaseClient _supabase;
   bool _initialized = false;
   String? _currentDeviceId;
 
@@ -33,7 +37,9 @@ class DeviceService implements IDeviceService {
     try {
       debugPrint('[DeviceService] Starting initialization...');
       _initialized = true;
-      debugPrint('[DeviceService] ✅ Initialized successfully (caching enabled: 5min TTL)');
+      debugPrint(
+        '[DeviceService] ✅ Initialized successfully (caching enabled: 5min TTL)',
+      );
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to initialize: $e');
       rethrow;
@@ -42,7 +48,9 @@ class DeviceService implements IDeviceService {
 
   void _ensureInitialized() {
     if (!_initialized) {
-      throw StateError('DeviceService not initialized. Call initialize() first.');
+      throw StateError(
+        'DeviceService not initialized. Call initialize() first.',
+      );
     }
   }
 
@@ -60,23 +68,28 @@ class DeviceService implements IDeviceService {
     try {
       final userId = _supabase.auth.currentUser!.id;
       final deviceType = ClipboardRepository.getCurrentDeviceType();
-      final deviceName = ClipboardRepository.getCurrentDeviceName() ??
+      final deviceName =
+          ClipboardRepository.getCurrentDeviceName() ??
           '${_capitalizeFirst(deviceType)} Device';
 
-      debugPrint('[DeviceService] Registering device: $deviceType ($deviceName)');
+      debugPrint(
+        '[DeviceService] Registering device: $deviceType ($deviceName)',
+      );
 
       // Upsert device (insert or update if exists)
       // Unique constraint on (user_id, device_type, device_name) ensures no duplicates
-      final response = await _supabase.from('devices').upsert(
-        {
-          'user_id': userId,
-          'device_type': deviceType,
-          'device_name': deviceName,
-          'fcm_token': null, // Desktop doesn't use FCM, mobile will update later
-          'last_active': DateTime.now().toUtc().toIso8601String(),
-        },
-        onConflict: 'user_id,device_type,device_name',
-      ).select('id').single();
+      final response = await _supabase
+          .from('devices')
+          .upsert({
+            'user_id': userId,
+            'device_type': deviceType,
+            'device_name': deviceName,
+            'fcm_token':
+                null, // Desktop doesn't use FCM, mobile will update later
+            'last_active': DateTime.now().toUtc().toIso8601String(),
+          }, onConflict: 'user_id,device_type,device_name')
+          .select('id')
+          .single();
 
       _currentDeviceId = response['id'] as String;
 
@@ -87,7 +100,9 @@ class DeviceService implements IDeviceService {
       // Invalidate cache since device list changed
       _invalidateCache();
     } on PostgrestException catch (e) {
-      debugPrint('[DeviceService] ❌ Postgres error registering device: ${e.message}');
+      debugPrint(
+        '[DeviceService] ❌ Postgres error registering device: ${e.message}',
+      );
       // Don't rethrow - device registration is non-critical
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to register device: $e');
@@ -123,11 +138,15 @@ class DeviceService implements IDeviceService {
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
 
-      debugPrint('[DeviceService] Fetched and cached ${devices.length} device(s)');
+      debugPrint(
+        '[DeviceService] Fetched and cached ${devices.length} device(s)',
+      );
 
       return devices;
     } on PostgrestException catch (e) {
-      debugPrint('[DeviceService] ❌ Postgres error fetching devices: ${e.message}');
+      debugPrint(
+        '[DeviceService] ❌ Postgres error fetching devices: ${e.message}',
+      );
       return [];
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to fetch devices: $e');
@@ -148,14 +167,19 @@ class DeviceService implements IDeviceService {
     }
 
     try {
-      await _supabase.from('devices').update({
-        'fcm_token': fcmToken,
-        'last_active': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', _currentDeviceId!);
+      await _supabase
+          .from('devices')
+          .update({
+            'fcm_token': fcmToken,
+            'last_active': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', _currentDeviceId!);
 
       debugPrint('[DeviceService] ✅ FCM token updated');
     } on PostgrestException catch (e) {
-      debugPrint('[DeviceService] ❌ Postgres error updating FCM token: ${e.message}');
+      debugPrint(
+        '[DeviceService] ❌ Postgres error updating FCM token: ${e.message}',
+      );
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to update FCM token: $e');
     }
@@ -175,7 +199,8 @@ class DeviceService implements IDeviceService {
 
     // Rate limit: Skip update if called too frequently
     if (_lastActiveUpdateTime != null &&
-        DateTime.now().difference(_lastActiveUpdateTime!) < _minActiveUpdateInterval) {
+        DateTime.now().difference(_lastActiveUpdateTime!) <
+            _minActiveUpdateInterval) {
       debugPrint(
         '[DeviceService] ⏭️ Skipping last active update (rate limited)',
       );
@@ -183,9 +208,10 @@ class DeviceService implements IDeviceService {
     }
 
     try {
-      await _supabase.from('devices').update({
-        'last_active': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', _currentDeviceId!);
+      await _supabase
+          .from('devices')
+          .update({'last_active': DateTime.now().toUtc().toIso8601String()})
+          .eq('id', _currentDeviceId!);
 
       _lastActiveUpdateTime = DateTime.now();
 
@@ -215,7 +241,9 @@ class DeviceService implements IDeviceService {
       debugPrint('[DeviceService] ✅ Device unregistered');
       _currentDeviceId = null;
     } on PostgrestException catch (e) {
-      debugPrint('[DeviceService] ❌ Postgres error unregistering device: ${e.message}');
+      debugPrint(
+        '[DeviceService] ❌ Postgres error unregistering device: ${e.message}',
+      );
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to unregister device: $e');
     }
@@ -234,9 +262,10 @@ class DeviceService implements IDeviceService {
     }
 
     try {
-      await _supabase.from('devices').update({
-        'device_name': trimmedName,
-      }).eq('id', deviceId);
+      await _supabase
+          .from('devices')
+          .update({'device_name': trimmedName})
+          .eq('id', deviceId);
 
       debugPrint('[DeviceService] ✅ Device name updated to: $trimmedName');
 
@@ -245,7 +274,9 @@ class DeviceService implements IDeviceService {
 
       return true;
     } on PostgrestException catch (e) {
-      debugPrint('[DeviceService] ❌ Postgres error updating device name: ${e.message}');
+      debugPrint(
+        '[DeviceService] ❌ Postgres error updating device name: ${e.message}',
+      );
       return false;
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to update device name: $e');
@@ -274,7 +305,9 @@ class DeviceService implements IDeviceService {
 
       return true;
     } on PostgrestException catch (e) {
-      debugPrint('[DeviceService] ❌ Postgres error removing device: ${e.message}');
+      debugPrint(
+        '[DeviceService] ❌ Postgres error removing device: ${e.message}',
+      );
       return false;
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to remove device: $e');

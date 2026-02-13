@@ -86,7 +86,8 @@
       "Bash(ls:*)",
       "Bash(npm install)",
       "Bash(npm run build:css:*)",
-      "Bash(claude mcp:*)"
+      "Bash(claude mcp:*)",
+      "Bash(npx skills:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -85,7 +85,8 @@ abstract class ILifecycleController {
   void exitTrayMode();
 
   /// Add a UI resource to be paused/resumed with Tray Mode
-  void addPausable(Pausable pausable);
+  /// Returns true if added, false if rejected (at capacity limit)
+  bool addPausable(Pausable pausable);
 
   /// Remove a UI resource from Tray Mode management
   void removePausable(Pausable pausable);

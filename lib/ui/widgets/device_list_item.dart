@@ -98,26 +98,23 @@ class _DeviceListItemState extends State<DeviceListItem> {
         backgroundColor: GhostColors.surface,
         title: Text(
           'Remove Device?',
-          style: TextStyle(color: GhostColors.textPrimary),
+          style: const TextStyle(color: GhostColors.textPrimary),
         ),
         content: Text(
           'Remove "${widget.device.displayName}" from your devices?',
-          style: TextStyle(color: GhostColors.textSecondary),
+          style: const TextStyle(color: GhostColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: Text(
               'Cancel',
-              style: TextStyle(color: GhostColors.textMuted),
+              style: const TextStyle(color: GhostColors.textMuted),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(
-              'Remove',
-              style: TextStyle(color: Colors.red),
-            ),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -158,8 +155,8 @@ class _DeviceListItemState extends State<DeviceListItem> {
               color: widget.isCurrentDevice
                   ? GhostColors.primary
                   : _isInactive()
-                      ? GhostColors.textMuted
-                      : GhostColors.textSecondary,
+                  ? GhostColors.textMuted
+                  : GhostColors.textSecondary,
             ),
             const SizedBox(width: 12),
             // Device info
@@ -176,7 +173,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                                 controller: _nameController,
                                 autofocus: true,
                                 maxLength: 255,
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 13,
                                   color: GhostColors.textPrimary,
                                   fontWeight: FontWeight.w600,
@@ -203,12 +200,16 @@ class _DeviceListItemState extends State<DeviceListItem> {
                                     : null,
                                 child: Row(
                                   children: [
-                                    Text(
-                                      widget.device.displayName,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: GhostColors.textPrimary,
-                                        fontWeight: FontWeight.w600,
+                                    Flexible(
+                                      child: Text(
+                                        widget.device.displayName,
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 1,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: GhostColors.textPrimary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ),
                                     if (widget.isCurrentDevice) ...[
@@ -219,13 +220,16 @@ class _DeviceListItemState extends State<DeviceListItem> {
                                           vertical: 2,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: GhostColors.primary
-                                              .withValues(alpha: 0.2),
-                                          borderRadius: BorderRadius.circular(4),
+                                          color: GhostColors.primary.withValues(
+                                            alpha: 0.2,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
                                         ),
                                         child: Text(
                                           'This device',
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                             fontSize: 9,
                                             color: GhostColors.primary,
                                             fontWeight: FontWeight.w600,
@@ -246,21 +250,21 @@ class _DeviceListItemState extends State<DeviceListItem> {
                       Text(
                         widget.device.deviceType[0].toUpperCase() +
                             widget.device.deviceType.substring(1),
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
                       ),
                       Text(
                         ' · ',
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
                       ),
                       Text(
                         _getRelativeTime(),
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
@@ -289,10 +293,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                 color: GhostColors.success,
                 onPressed: _saveName,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
               IconButton(
                 icon: const Icon(Icons.close, size: 18),
@@ -302,10 +303,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                   _nameController.text = widget.device.displayName;
                 }),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
             ] else if (!widget.isCurrentDevice) ...[
               IconButton(
@@ -313,10 +311,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                 color: GhostColors.textMuted,
                 onPressed: _confirmRemove,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
             ],
           ],

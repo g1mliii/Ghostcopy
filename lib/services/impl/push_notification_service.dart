@@ -8,7 +8,11 @@ import '../push_notification_service.dart';
 /// Calls Supabase Edge Function to send push notifications to mobile devices.
 /// Implements client-driven notification pattern for optimal performance.
 class PushNotificationService implements IPushNotificationService {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  /// Constructor with optional Supabase client for testing
+  PushNotificationService({SupabaseClient? supabaseClient})
+    : _supabase = supabaseClient ?? Supabase.instance.client;
+
+  final SupabaseClient _supabase;
 
   @override
   Future<int> sendClipboardNotification({
@@ -21,8 +25,8 @@ class PushNotificationService implements IPushNotificationService {
       final targetText = targetDeviceTypes == null
           ? 'all devices'
           : targetDeviceTypes.length == 1
-              ? targetDeviceTypes.first
-              : targetDeviceTypes.join(', ');
+          ? targetDeviceTypes.first
+          : targetDeviceTypes.join(', ');
 
       debugPrint(
         '[PushNotification] Calling Edge Function for clipboard #$clipboardId '
@@ -37,7 +41,8 @@ class PushNotificationService implements IPushNotificationService {
           'clipboard_id': clipboardId,
           'content_preview': contentPreview,
           'device_type': deviceType,
-          if (targetDeviceTypes != null) 'target_device_types': targetDeviceTypes,
+          if (targetDeviceTypes != null)
+            'target_device_types': targetDeviceTypes,
         },
       );
 
