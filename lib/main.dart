@@ -263,7 +263,13 @@ Future<void> main(List<String> args) async {
     final settingsService = SettingsService();
     await settingsService.initialize();
     debugPrint('[App] ✅ Settings service initialized for mobile');
-    locator.registerSingleton<ISettingsService>(settingsService);
+    locator
+      ..registerSingleton<ISettingsService>(settingsService)
+      // Core mobile services required by screens/viewmodels even when
+      // Firebase/FCM is not configured.
+      ..registerSingleton<IClipboardRepository>(ClipboardRepository.instance)
+      ..registerSingleton<ISecurityService>(SecurityService())
+      ..registerSingleton<ITransformerService>(TransformerService());
 
     try {
       await Firebase.initializeApp();
@@ -283,11 +289,7 @@ Future<void> main(List<String> args) async {
       debugPrint('[App] ✅ Widget service initialized');
       locator
         ..registerSingleton<IFcmService>(fcmService)
-        ..registerSingleton<IWidgetService>(widgetService)
-        // Register other mobile services
-        ..registerSingleton<IClipboardRepository>(ClipboardRepository.instance)
-        ..registerSingleton<ISecurityService>(SecurityService())
-        ..registerSingleton<ITransformerService>(TransformerService());
+        ..registerSingleton<IWidgetService>(widgetService);
 
       // Configure Android notification channel for clipboard sync
       if (Platform.isAndroid) {
@@ -632,10 +634,14 @@ class _MyAppState extends State<MyApp> {
 
       locator<IAuthService>().dispose();
       locator<IDeviceService>().dispose();
-      locator<IFcmService>().dispose();
+      if (locator.isRegistered<IFcmService>()) {
+        locator<IFcmService>().dispose();
+      }
 
       // Dispose widget service (singleton) to clean up method channel
-      locator<IWidgetService>().dispose();
+      if (locator.isRegistered<IWidgetService>()) {
+        locator<IWidgetService>().dispose();
+      }
     }
 
     // Stop temp file cleanup timer (cross-platform)
