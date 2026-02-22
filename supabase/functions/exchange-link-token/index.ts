@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     // Get token from request body
     const { token } = await req.json()
 
-    if (!token) {
+    if (typeof token !== 'string' || token.trim().length === 0) {
       return new Response(
         JSON.stringify({ error: 'Missing token parameter' }),
         {
@@ -30,21 +30,71 @@ Deno.serve(async (req) => {
       )
     }
 
+    const normalizedToken = token.trim()
+
     // Create Supabase admin client
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // 1. Verify token exists in database and is not expired
-    const { data: linkData, error: linkError } = await supabase
+    // 1. Atomically consume token (single-use) and verify expiration
+    const nowIso = new Date().toISOString()
+    const { data: consumedToken, error: consumeError } = await supabase
       .from('mobile_link_tokens')
+      .delete()
+      .eq('token', normalizedToken)
+      .gt('expires_at', nowIso)
       .select('user_id, expires_at')
-      .eq('token', token)
-      .single()
+      .maybeSingle()
 
-    if (linkError || !linkData) {
-      console.log('[exchange-link-token] Token not found:', linkError?.message)
+    if (consumeError) {
+      console.error(
+        '[exchange-link-token] Failed to consume token:',
+        consumeError.message
+      )
+      return new Response(
+        JSON.stringify({ error: 'Failed to exchange token' }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    if (!consumedToken) {
+      const { data: existingToken, error: existingTokenError } = await supabase
+        .from('mobile_link_tokens')
+        .select('expires_at')
+        .eq('token', normalizedToken)
+        .maybeSingle()
+
+      if (existingTokenError) {
+        console.error(
+          '[exchange-link-token] Failed to verify token status:',
+          existingTokenError.message
+        )
+        return new Response(
+          JSON.stringify({ error: 'Failed to exchange token' }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        )
+      }
+
+      if (existingToken && new Date(existingToken.expires_at) <= new Date(nowIso)) {
+        console.log('[exchange-link-token] Token expired')
+        return new Response(
+          JSON.stringify({ error: 'Token expired' }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        )
+      }
+
+      console.log('[exchange-link-token] Invalid token')
       return new Response(
         JSON.stringify({ error: 'Invalid token' }),
         {
@@ -54,27 +104,9 @@ Deno.serve(async (req) => {
       )
     }
 
-    // 2. Check if token has expired
-    const expiresAt = new Date(linkData.expires_at)
-    const now = new Date()
-
-    if (expiresAt < now) {
-      console.log('[exchange-link-token] Token expired:', {
-        expiresAt,
-        now,
-      })
-      return new Response(
-        JSON.stringify({ error: 'Token expired' }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      )
-    }
-
-    // 3. Get user details
+    // 2. Get user details
     const { data: userData, error: userError } =
-      await supabase.auth.admin.getUserById(linkData.user_id)
+      await supabase.auth.admin.getUserById(consumedToken.user_id)
 
     if (userError || !userData.user) {
       console.log('[exchange-link-token] User not found:', userError?.message)
@@ -89,7 +121,7 @@ Deno.serve(async (req) => {
 
     const user = userData.user
 
-    // 4. Generate new session for mobile device
+    // 3. Generate new session for mobile device
     // Use magic link generation which returns session tokens
     const { data: linkGenData, error: linkGenError } =
       await supabase.auth.admin.generateLink({
@@ -99,6 +131,22 @@ Deno.serve(async (req) => {
       })
 
     if (linkGenError || !linkGenData) {
+      // Best-effort restore so transient auth issues don't force users to re-open QR.
+      if (new Date(consumedToken.expires_at) > new Date()) {
+        const { error: restoreError } = await supabase.from('mobile_link_tokens').insert({
+          user_id: consumedToken.user_id,
+          token: normalizedToken,
+          expires_at: consumedToken.expires_at,
+        })
+
+        if (restoreError) {
+          console.error(
+            '[exchange-link-token] Failed to restore token after session error:',
+            restoreError.message
+          )
+        }
+      }
+
       console.log(
         '[exchange-link-token] Failed to generate session:',
         linkGenError?.message
@@ -112,10 +160,7 @@ Deno.serve(async (req) => {
       )
     }
 
-    // 5. Delete the token (single-use) - fire and forget
-    supabase.from('mobile_link_tokens').delete().eq('token', token).then()
-
-    // 6. Return session tokens to mobile app
+    // 4. Return session tokens to mobile app
     console.log('[exchange-link-token] Successfully exchanged token for user:', {
       user_id: user.id,
       is_anonymous: user.is_anonymous,
@@ -138,10 +183,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[exchange-link-token] Unexpected error:', error)
     return new Response(
-      JSON.stringify({
-        error: 'Internal server error',
-        message: error.message,
-      }),
+      JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -93,7 +93,9 @@
       "mcp__cloudflare-api__search",
       "mcp__plugin_supabase_supabase__deploy_edge_function",
       "mcp__plugin_supabase_supabase__apply_migration",
-      "mcp__plugin_supabase_supabase__execute_sql"
+      "mcp__plugin_supabase_supabase__execute_sql",
+      "mcp__plugin_supabase_supabase__list_projects",
+      "mcp__plugin_supabase_supabase__list_edge_functions"
     ]
   },
   "enableAllProjectMcpServers": true,

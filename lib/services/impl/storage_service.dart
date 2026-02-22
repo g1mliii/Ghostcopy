@@ -57,6 +57,7 @@ class StorageService implements IStorageService {
         'action': 'upload',
         'path': storagePath,
         'contentType': mimeType,
+        'size': bytes.length,
       });
 
       final presignedUrl = presignData['presignedUrl'] as String;

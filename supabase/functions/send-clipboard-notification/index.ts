@@ -175,11 +175,16 @@ Deno.serve(async (req: Request) => {
 
     // Only fetch from DB if not from webhook
     if (!clipboardItem) {
+      // Recency check: only allow notifications for items created in the last 5 minutes.
+      // Prevents replay-based notification spam using old clipboard_ids.
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
       const { data: dbItem, error: clipboardError } = await supabaseClient
         .from('clipboard')
         .select('id, content_type, rich_text_format, file_size_bytes, content')
         .eq('id', clipboard_id)
         .eq('user_id', user.id)  // Security: ensure user owns this item
+        .gte('created_at', fiveMinutesAgo)
         .single();
 
       if (clipboardError || !dbItem) {
@@ -403,7 +408,7 @@ Deno.serve(async (req: Request) => {
   } catch (error: any) {
     console.error('[Notification] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
