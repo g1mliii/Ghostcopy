@@ -2,11 +2,11 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/clipboard_item.dart';
 import '../repositories/clipboard_repository.dart';
+import 'compression_service.dart';
 
 /// Interface for widget data management and sync
 abstract class IWidgetService {
@@ -51,6 +51,9 @@ class WidgetService implements IWidgetService {
   // Reference to clipboard repository (nullable for re-initialization)
   IClipboardRepository? _clipboardRepository;
 
+  // Compression service for thumbnail generation
+  ICompressionService? _compressionService;
+
   /// Initialize the widget service and set up method channel handlers
   @override
   Future<void> initialize() async {
@@ -79,8 +82,9 @@ class WidgetService implements IWidgetService {
         return;
       }
 
-      // Get repository instance
+      // Get repository and compression service instances
       _clipboardRepository = ClipboardRepository.instance;
+      _compressionService = CompressionService.instance;
 
       // Set up method call handler for widget refresh requests
       _channel.setMethodCallHandler(_handleMethodCall);
@@ -280,15 +284,10 @@ class WidgetService implements IWidgetService {
 
   /// Cache image thumbnail for widget
   ///
-  /// Downloads image from Supabase Storage, downsamples to 40x40px,
-  /// compresses to JPEG @ 80% quality, and saves to local cache.
+  /// Downloads image from storage, uses CompressionService to downsample
+  /// to 40x40px JPEG @ 80% quality, and saves to local cache.
   ///
   /// Returns local file path or null if caching failed
-  ///
-  /// Memory Management:
-  /// - Image bytes only held in memory during processing
-  /// - Downsampled image kept only in JPEG output
-  /// - Original bytes immediately discarded
   Future<String?> _cacheThumbnailForWidget(ClipboardItem item) async {
     if (!item.isImage) return null;
 
@@ -307,7 +306,7 @@ class WidgetService implements IWidgetService {
         }
       }
 
-      // Download image from Supabase Storage
+      // Download image from storage
       final repo = _clipboardRepository;
       if (repo == null) {
         debugPrint('[WidgetService] Repository not initialized for thumbnail');
@@ -323,40 +322,34 @@ class WidgetService implements IWidgetService {
         '[WidgetService] Downloaded image ${item.id}: ${bytes.lengthInBytes} bytes',
       );
 
-      // Decode image
-      final image = img.decodeImage(bytes);
-      if (image == null) {
-        debugPrint('[WidgetService] Failed to decode image ${item.id}');
+      // Use CompressionService for thumbnail generation
+      final compression = _compressionService;
+      if (compression == null) {
+        debugPrint('[WidgetService] CompressionService not initialized');
         return null;
       }
 
-      // Downsample to 40x40 (thumbnail size for widget)
-      final thumbnail = img.copyResize(
-        image,
-        width: 40,
-        height: 40,
-        interpolation: img.Interpolation.linear,
-      );
-
-      // Encode as JPEG @ 80% quality
-      final jpegBytes = Uint8List.fromList(
-        img.encodeJpg(thumbnail, quality: 80),
+      final result = await compression.compressImage(
+        bytes,
+        item.mimeType ?? 'image/jpeg',
+        maxDimension: 40,
+        jpegQuality: 80,
       );
 
       debugPrint(
         '[WidgetService] Thumbnail compressed: '
-        '${bytes.lengthInBytes} → ${jpegBytes.lengthInBytes} bytes',
+        '${bytes.lengthInBytes} → ${result.compressedSize} bytes',
       );
 
       // Save to cache
-      await thumbnailFile.writeAsBytes(jpegBytes);
+      await thumbnailFile.writeAsBytes(result.bytes);
 
-      debugPrint('[WidgetService] ✅ Cached thumbnail: ${thumbnailFile.path}');
+      debugPrint('[WidgetService] Cached thumbnail: ${thumbnailFile.path}');
 
       return thumbnailFile.path;
     } on Exception catch (e) {
       debugPrint(
-        '[WidgetService] ❌ Failed to cache thumbnail for ${item.id}: $e',
+        '[WidgetService] Failed to cache thumbnail for ${item.id}: $e',
       );
       return null;
     }

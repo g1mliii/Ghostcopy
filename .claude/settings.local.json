@@ -87,7 +87,13 @@
       "Bash(npm install)",
       "Bash(npm run build:css:*)",
       "Bash(claude mcp:*)",
-      "Bash(npx skills:*)"
+      "Bash(npx skills:*)",
+      "WebFetch(domain:blog.cloudflare.com)",
+      "mcp__cloudflare-api__execute",
+      "mcp__cloudflare-api__search",
+      "mcp__plugin_supabase_supabase__deploy_edge_function",
+      "mcp__plugin_supabase_supabase__apply_migration",
+      "mcp__plugin_supabase_supabase__execute_sql"
     ]
   },
   "enableAllProjectMcpServers": true,

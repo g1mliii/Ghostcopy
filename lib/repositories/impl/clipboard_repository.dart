@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/compression_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/storage_service.dart';
@@ -31,13 +32,15 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
+    ICompressionService? compressionService,
   }) {
     // For testing with custom dependencies, create a new instance
-    if (client != null || encryptionService != null || storageService != null) {
+    if (client != null || encryptionService != null || storageService != null || compressionService != null) {
       return ClipboardRepository._internal(
         client: client,
         encryptionService: encryptionService,
         storageService: storageService,
+        compressionService: compressionService,
       );
     }
     // Otherwise, return singleton
@@ -48,9 +51,11 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
+    ICompressionService? compressionService,
   }) : _client = client ?? Supabase.instance.client,
        _encryptionService = encryptionService ?? EncryptionService.instance,
-       _storageService = storageService ?? StorageService.instance;
+       _storageService = storageService ?? StorageService.instance,
+       _compressionService = compressionService ?? CompressionService.instance;
 
   // Singleton instance
   static final ClipboardRepository instance = ClipboardRepository._internal();
@@ -58,6 +63,7 @@ class ClipboardRepository implements IClipboardRepository {
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
   final IStorageService _storageService;
+  final ICompressionService _compressionService;
   bool _encryptionInitialized = false;
 
   // Security constants
@@ -228,17 +234,40 @@ class ClipboardRepository implements IClipboardRepository {
       final storageId = DateTime.now().millisecondsSinceEpoch.toString();
       final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
 
+      // Compress images before upload (skip GIFs to preserve animation)
+      var uploadBytes = fileBytes;
+      var uploadMimeType = mimeType;
+      if (contentType.isImage && mimeType != 'image/gif') {
+        try {
+          final result = await _compressionService.compressImage(
+            fileBytes,
+            mimeType,
+          );
+          if (result.wasCompressed) {
+            debugPrint(
+              '[Repository] Compressed: ${fileBytes.length} → ${result.compressedSize} bytes '
+              '(${(result.compressionRatio * 100).toStringAsFixed(0)}%)',
+            );
+            uploadBytes = result.bytes;
+            uploadMimeType = result.mimeType;
+          }
+        } on Exception catch (e) {
+          debugPrint('[Repository] ⚠ Compression failed, uploading original: $e');
+          // Graceful fallback: upload original bytes
+        }
+      }
+
       debugPrint(
-        '[Repository] ↑ Uploading to storage (${fileBytes.length} bytes): $filename',
+        '[Repository] ↑ Uploading to storage (${uploadBytes.length} bytes): $filename',
       );
 
       // 1. Upload to Storage first
       final uploadResult = await _storageService.uploadFile(
         userId: userId,
         clipboardId: storageId,
-        bytes: fileBytes,
+        bytes: uploadBytes,
         filename: filename,
-        mimeType: mimeType,
+        mimeType: uploadMimeType,
       );
 
       // 2. Insert to database with correct storage path (no placeholder, no UPDATE!)
@@ -256,8 +285,8 @@ class ClipboardRepository implements IClipboardRepository {
                   .toList(), // null = broadcast to all devices
               'content': uploadResult.publicUrl,
               'content_type': contentType.value,
-              'mime_type': mimeType,
-              'file_size_bytes': fileBytes.length,
+              'mime_type': uploadMimeType,
+              'file_size_bytes': uploadBytes.length,
               'storage_path': uploadResult.storagePath,
               if (metadata.isNotEmpty) 'metadata': metadata,
               'is_encrypted': false, // Files NOT encrypted
@@ -373,6 +402,27 @@ class ClipboardRepository implements IClipboardRepository {
       final storageId = DateTime.now().millisecondsSinceEpoch.toString();
       final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
 
+      // Compress images before upload (skip GIFs to preserve animation)
+      var uploadBytes = fileBytes;
+      var uploadMimeType = mimeType;
+      if (contentType.isImage && mimeType != 'image/gif') {
+        try {
+          final result = await _compressionService.compressImage(
+            fileBytes,
+            mimeType,
+          );
+          if (result.wasCompressed) {
+            debugPrint(
+              '[Repository] Compressed: ${fileBytes.length} → ${result.compressedSize} bytes',
+            );
+            uploadBytes = result.bytes;
+            uploadMimeType = result.mimeType;
+          }
+        } on Exception catch (e) {
+          debugPrint('[Repository] ⚠ Compression failed, uploading original: $e');
+        }
+      }
+
       debugPrint('[Repository] ↑ Uploading to storage: $filename');
 
       yield 0.3; // Starting upload
@@ -380,9 +430,9 @@ class ClipboardRepository implements IClipboardRepository {
       final uploadResult = await _storageService.uploadFile(
         userId: userId,
         clipboardId: storageId,
-        bytes: fileBytes,
+        bytes: uploadBytes,
         filename: filename,
-        mimeType: mimeType,
+        mimeType: uploadMimeType,
       );
 
       yield 0.7; // Upload complete
@@ -400,8 +450,8 @@ class ClipboardRepository implements IClipboardRepository {
               .toList(),
           'content': uploadResult.publicUrl,
           'content_type': contentType.value,
-          'mime_type': mimeType,
-          'file_size_bytes': fileBytes.length,
+          'mime_type': uploadMimeType,
+          'file_size_bytes': uploadBytes.length,
           'storage_path': uploadResult.storagePath,
           if (metadata.isNotEmpty) 'metadata': metadata,
           'is_encrypted': false,

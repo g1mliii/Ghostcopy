@@ -180,6 +180,19 @@ GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com  # Optional, f
 
 For Google OAuth setup, see `GOOGLE_OAUTH_SETUP.md`.
 
+## MCP Servers
+
+### Cloudflare Code Mode MCP
+**Server URL**: `https://mcp.cloudflare.com/mcp`
+
+The Cloudflare Code Mode MCP provides access to the entire Cloudflare API (2,500+ endpoints) through a highly efficient interface:
+- **`search()`** - Query the OpenAPI specification programmatically to discover API capabilities
+- **`execute()`** - Write authenticated JavaScript code to make API calls and chain operations
+
+Both tools execute in a secure V8 sandbox isolate with no file system access. Use this MCP for any Cloudflare API integration needs—it reduces token usage by 99.9% compared to traditional MCP implementations.
+
+**Authorization**: OAuth 2.1
+
 ## Platform Notes
 
 **Windows**: Hotkeys and tray work out of the box
