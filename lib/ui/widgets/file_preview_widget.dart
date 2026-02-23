@@ -62,7 +62,7 @@ class FilePreviewWidget extends StatelessWidget {
                 '$size • ${item.contentType.value}',
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.white.withValues(alpha:0.6),
+                  color: GhostColors.whiteAlpha60,
                 ),
               ),
             ],
@@ -76,10 +76,10 @@ class FilePreviewWidget extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: GhostColors.surface.withValues(alpha:0.5),
+        color: GhostColors.surfaceAlpha50,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: GhostColors.primary.withValues(alpha:0.3),
+          color: GhostColors.primaryAlpha30,
 
         ),
       ),
@@ -88,7 +88,7 @@ class FilePreviewWidget extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: GhostColors.primary.withValues(alpha:0.1),
+              color: GhostColors.primaryAlpha10,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -117,7 +117,7 @@ class FilePreviewWidget extends StatelessWidget {
                   size,
                   style: TextStyle(
                     fontSize: 14,
-                    color: Colors.white.withValues(alpha:0.7),
+                    color: GhostColors.whiteAlpha70,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -125,7 +125,7 @@ class FilePreviewWidget extends StatelessWidget {
                   item.contentType.value.replaceAll('_', ' ').toUpperCase(),
                   style: TextStyle(
                     fontSize: 12,
-                    color: GhostColors.primary.withValues(alpha:0.8),
+                    color: GhostColors.primaryAlpha80,
                     fontWeight: FontWeight.w500,
                   ),
                 ),

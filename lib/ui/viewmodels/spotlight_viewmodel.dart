@@ -139,6 +139,31 @@ class SpotlightViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clear pending clipboard payload from paste/upload preview.
+  ///
+  /// If [clearText] is true, also clears the text payload and transformation state
+  /// so the composer returns to an empty text-entry state.
+  void clearClipboardPayload({bool clearText = false}) {
+    final hasClipboardPayload = _clipboardContent != null;
+    final hasTextPayload = _content.isNotEmpty;
+    if (!hasClipboardPayload && (!clearText || !hasTextPayload)) {
+      return;
+    }
+
+    _clipboardContent = null;
+
+    if (clearText) {
+      _content = '';
+      _detectedContentType = null;
+      _transformationResult = null;
+      _jwtTransformFuture = null;
+      _contentDetectionTimer?.cancel();
+      _contentDetectionTimer = null;
+    }
+
+    notifyListeners();
+  }
+
   /// Toggle platform selection
   void togglePlatform(String platform) {
     if (_selectedPlatforms.contains(platform)) {

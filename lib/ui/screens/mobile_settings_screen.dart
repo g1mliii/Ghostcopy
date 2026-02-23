@@ -383,6 +383,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
       ),
       body: ListView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
+        cacheExtent: 300,
         children: [
           // Features section (moved to top)
           _buildSectionHeader('Features'),
@@ -448,7 +452,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           // User info
           ListTile(
             leading: CircleAvatar(
-              backgroundColor: GhostColors.primary.withValues(alpha: 0.2),
+              backgroundColor: GhostColors.primaryAlpha20,
               child: Icon(
                 isAnonymous ? Icons.person_outline : Icons.person,
                 color: GhostColors.primary,
@@ -847,7 +851,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: GhostColors.primary.withValues(alpha: 0.2),
+            color: GhostColors.primaryAlpha20,
             borderRadius: BorderRadius.circular(8),
           ),
           child: const Icon(

@@ -105,8 +105,14 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     }
 
     // Use CDN (fast path) with custom cache manager
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(widget.borderRadius),
+    // Perf: Use Container with decoration instead of ClipRRect to avoid
+    // saveLayer on raster thread. clipBehavior on the Container achieves
+    // the same visual clipping without the GPU overhead.
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(widget.borderRadius),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: CachedNetworkImage(
         imageUrl: widget.item.content,
         width: widget.width,
@@ -186,8 +192,12 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
                 _decodedImage = snapshot.data;
               }
 
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(widget.borderRadius),
+              // Perf: Container with clipBehavior instead of ClipRRect
+              return Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(widget.borderRadius),
+                ),
+                clipBehavior: Clip.antiAlias,
                 child: RawImage(
                   image: snapshot.data,
                   width: widget.width,
@@ -358,14 +368,14 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         children: [
           Icon(
             Icons.broken_image_outlined,
-            color: GhostColors.textMuted.withValues(alpha: 0.5),
+            color: GhostColors.textMutedAlpha50,
             size: 32,
           ),
           const SizedBox(height: 8),
           Text(
             message,
             style: TextStyle(
-              color: GhostColors.textMuted.withValues(alpha: 0.7),
+              color: GhostColors.textMutedAlpha70,
               fontSize: 11,
             ),
           ),

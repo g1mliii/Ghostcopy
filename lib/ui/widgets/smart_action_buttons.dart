@@ -178,7 +178,7 @@ class SmartActionButtons extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: GhostColors.textMuted.withValues(alpha: 0.3),
+                color: GhostColors.textMutedAlpha30,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),

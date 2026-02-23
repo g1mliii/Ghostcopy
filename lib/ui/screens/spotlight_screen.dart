@@ -62,6 +62,29 @@ class SpotlightScreen extends StatefulWidget {
     super.key,
   });
 
+  /// Cached panel decorations to avoid recreation on every build
+  static final _leftPanelDecoration = BoxDecoration(
+    color: GhostColors.surfaceLight,
+    boxShadow: const [
+      BoxShadow(
+        color: Color(0x80000000), // Colors.black with alpha 0.5
+        blurRadius: 20,
+        offset: Offset(5, 0),
+      ),
+    ],
+  );
+
+  static final _rightPanelDecoration = BoxDecoration(
+    color: GhostColors.surfaceLight,
+    boxShadow: const [
+      BoxShadow(
+        color: Color(0x80000000),
+        blurRadius: 20,
+        offset: Offset(-5, 0),
+      ),
+    ],
+  );
+
   final bool openSettingsOnShow;
   final VoidCallback? onSettingsOpened;
 
@@ -134,6 +157,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   DateTime? _lastFocusTime;
   bool _isRebuildScheduled = false;
 
+  // Cached preview data to avoid recomputation on every build
+  ClipboardItem? _cachedFilePreviewItem;
+  ClipboardContent? _cachedFilePreviewSourceContent;
+
   // Settings state (for UI display only - actual values in SettingsService)
   bool _autoSendEnabled = false;
   int _staleDurationMinutes = 5;
@@ -168,9 +195,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Load settings for UI state
     _initializeSettings();
 
-    // Set up animations (150ms, ease-out)
+    // Set up animations (100ms, ease-out - snappy spotlight appear)
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 100),
       vsync: this,
     );
 
@@ -182,9 +209,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
 
-    // Set up history slide animation (200ms)
+    // Set up history slide animation (120ms for snappy feel)
     _historySlideController = AnimationController(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 120),
       vsync: this,
     );
 
@@ -199,9 +226,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           ),
         );
 
-    // Set up settings slide animation (200ms)
+    // Set up settings slide animation (120ms for snappy feel)
     _settingsSlideController = AnimationController(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 120),
       vsync: this,
     );
 
@@ -216,9 +243,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           ),
         );
 
-    // Set up auth slide animation (200ms)
+    // Set up auth slide animation (120ms for snappy feel)
     _authSlideController = AnimationController(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 120),
       vsync: this,
     );
 
@@ -332,22 +359,26 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // _viewModel.refreshHistory and _debouncedLoadHistory removed - now in ViewModel
 
-  /// Handle tap on auth overlay to close auth panel
-  void _handleAuthOverlayTap() {
-    _authSlideController.reverse();
-    setState(() => _activePanel = SpotlightPanel.none);
-  }
+  /// Close any active panel with animation, then update state after completion.
+  /// Awaits the reverse animation to prevent the panel from being removed
+  /// from the widget tree before the slide-out animation finishes.
+  Future<void> _closeActivePanel() async {
+    final panel = _activePanel;
+    if (panel == SpotlightPanel.none) return;
 
-  /// Handle tap on settings overlay to close settings panel
-  void _handleSettingsOverlayTap() {
-    _settingsSlideController.reverse();
-    setState(() => _activePanel = SpotlightPanel.none);
-  }
-
-  /// Handle tap on history overlay to close history panel
-  void _handleHistoryOverlayTap() {
-    _historySlideController.reverse();
-    setState(() => _activePanel = SpotlightPanel.none);
+    switch (panel) {
+      case SpotlightPanel.auth:
+        await _authSlideController.reverse();
+      case SpotlightPanel.settings:
+        await _settingsSlideController.reverse();
+      case SpotlightPanel.history:
+        await _historySlideController.reverse();
+      case SpotlightPanel.none:
+        return;
+    }
+    if (mounted) {
+      setState(() => _activePanel = SpotlightPanel.none);
+    }
   }
 
   /// Initialize settings service and load saved settings
@@ -495,7 +526,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     // Aggressive Tray Optimization:
     // 1. Clear clipboard content to release large strings/buffers
-    _viewModel.updateClipboardContent(null);
+    final hasAttachment =
+        (_viewModel.clipboardContent?.hasFile ?? false) ||
+        (_viewModel.clipboardContent?.hasImage ?? false);
+    _viewModel.clearClipboardPayload(clearText: hasAttachment);
+    if (hasAttachment) {
+      _textController.clear();
+    }
 
     // 2. Clear Image Cache to release texture memory immediately
     PaintingBinding.instance.imageCache.clear();
@@ -523,6 +560,48 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           await _windowService.hideSpotlight();
         }
       },
+    );
+  }
+
+  void _clearPendingAttachmentPreview({bool requestFocus = true}) {
+    final hasAttachment =
+        (_viewModel.clipboardContent?.hasFile ?? false) ||
+        (_viewModel.clipboardContent?.hasImage ?? false);
+    if (!hasAttachment) {
+      return;
+    }
+
+    _viewModel.clearClipboardPayload(clearText: true);
+    _textController.clear();
+
+    if (requestFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _textFieldFocusNode.requestFocus();
+        }
+      });
+    }
+
+    debugPrint('[Spotlight] Cleared pending attachment preview');
+  }
+
+  Widget _buildAttachmentClearButton({required String tooltip}) {
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceAlpha85,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: GhostColors.glassBorder),
+      ),
+      child: IconButton(
+        onPressed: _clearPendingAttachmentPreview,
+        icon: const Icon(Icons.close_rounded, size: 14),
+        color: GhostColors.textMuted,
+        tooltip: tooltip,
+        splashRadius: 14,
+        padding: EdgeInsets.zero,
+      ),
     );
   }
 
@@ -670,26 +749,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         actions: <Type, Action<Intent>>{
           DismissIntent: CallbackAction<DismissIntent>(
             onInvoke: (intent) {
-              // Handle Escape key
-              if (_showAuth) {
-                _authSlideController.reverse();
-                setState(() => _activePanel = SpotlightPanel.none);
-              } else if (_showSettings) {
-                _settingsSlideController.reverse();
-                setState(() => _activePanel = SpotlightPanel.none);
-              } else if (_showHistory) {
-                _historySlideController.reverse();
-                setState(() => _activePanel = SpotlightPanel.none);
+              // Handle Escape key - close active panel or hide window
+              if (_activePanel != SpotlightPanel.none) {
+                _closeActivePanel();
               } else {
                 // Clear file content to free memory before closing
                 if ((_viewModel.clipboardContent?.hasFile ?? false) ||
                     (_viewModel.clipboardContent?.hasImage ?? false)) {
-                  setState(() {
-                    _viewModel.updateClipboardContent(null);
-                    debugPrint(
-                      '[Spotlight] Cleared file/image content (freed memory)',
-                    );
-                  });
+                  _clearPendingAttachmentPreview(requestFocus: false);
+                  debugPrint(
+                    '[Spotlight] Cleared file/image content (freed memory)',
+                  );
                 }
                 _windowService.hideSpotlight();
               }
@@ -704,74 +774,68 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             backgroundColor: GhostColors.surface,
             body: Stack(
               children: [
-                // Main content
-                FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: ScaleTransition(
-                    scale: _scaleAnimation,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          20,
-                          50,
-                          20,
-                          20,
-                        ), // Extra top padding for buttons
-                        child: SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _buildHeader(),
-                              const SizedBox(height: 12),
-                              _buildTextField(),
-                              const SizedBox(height: 10),
-                              // Show transformer previews if content is transformable
-                              if (_viewModel
-                                      .detectedContentType
-                                      ?.isTransformable ??
-                                  false)
-                                ..._buildTransformerUI(),
-                              _buildPlatformSelector(),
-                              const SizedBox(height: 12),
-                              _buildSendButton(),
-                              if (_viewModel.errorMessage != null) ...[
-                                const SizedBox(height: 10),
-                                _buildErrorMessage(),
-                              ],
-                            ],
+                // Main content - wrapped in IgnorePointer when a panel is open
+                // to skip hit-testing the entire main content tree (perf: reduces
+                // hit-test depth from ~123 to ~40 layers when panels are open)
+                IgnorePointer(
+                  ignoring: _activePanel != SpotlightPanel.none,
+                  child: RepaintBoundary(
+                    child: FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: ScaleTransition(
+                        scale: _scaleAnimation,
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(
+                              20,
+                              50,
+                              20,
+                              20,
+                            ), // Extra top padding for buttons
+                            child: SingleChildScrollView(
+                              physics: const ClampingScrollPhysics(),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _buildHeader(),
+                                  const SizedBox(height: 12),
+                                  _buildTextField(),
+                                  const SizedBox(height: 10),
+                                  // Show transformer previews if content is transformable
+                                  if (_viewModel
+                                          .detectedContentType
+                                          ?.isTransformable ??
+                                      false)
+                                    ..._buildTransformerUI(),
+                                  _buildPlatformSelector(),
+                                  const SizedBox(height: 12),
+                                  _buildSendButton(),
+                                  if (_viewModel.errorMessage != null) ...[
+                                    const SizedBox(height: 10),
+                                    _buildErrorMessage(),
+                                  ],
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
+                ), // Close IgnorePointer
                 // Settings button - Top Left
                 Positioned(top: 12, left: 12, child: _buildSettingsButton()),
                 // History button - Top Right
                 Positioned(top: 12, right: 12, child: _buildHistoryButton()),
-                // Click-outside overlay to close auth
-                if (_showAuth)
+                // Click-outside overlay to close any active panel
+                // Uses HitTestBehavior.opaque to catch taps without walking
+                // child tree (perf: stops hit-test traversal immediately)
+                if (_activePanel != SpotlightPanel.none)
                   Positioned.fill(
                     child: GestureDetector(
-                      onTap: _handleAuthOverlayTap,
-                      child: Container(color: Colors.transparent),
-                    ),
-                  ),
-                // Click-outside overlay to close settings
-                if (_showSettings)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _handleSettingsOverlayTap,
-                      child: Container(color: Colors.transparent),
-                    ),
-                  ),
-                // Click-outside overlay to close history
-                if (_showHistory)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _handleHistoryOverlayTap,
-                      child: Container(color: Colors.transparent),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _closeActivePanel,
                     ),
                   ),
                 // Auth panel overlay (left side, wider than settings)
@@ -812,8 +876,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       isActive: _showSettings,
       onTap: () {
         if (_showSettings) {
-          _settingsSlideController.reverse();
-          setState(() => _activePanel = SpotlightPanel.none);
+          _closeActivePanel();
         } else {
           setState(() => _activePanel = SpotlightPanel.settings);
           _settingsSlideController.forward();
@@ -829,8 +892,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       isActive: _showHistory,
       onTap: () {
         if (_showHistory) {
-          _historySlideController.reverse();
-          setState(() => _activePanel = SpotlightPanel.none);
+          _closeActivePanel();
         } else {
           setState(() => _activePanel = SpotlightPanel.history);
           _historySlideController.forward();
@@ -858,13 +920,33 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       decoration: BoxDecoration(
         color: GhostColors.surfaceLight,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.3)),
+        border: Border.all(color: GhostColors.primaryAlpha30),
       ),
       child: Column(
         children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Image ready to send',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              _buildAttachmentClearButton(tooltip: 'Remove image'),
+            ],
+          ),
+          const SizedBox(height: 8),
           // Image thumbnail
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+          // Perf: Container with clipBehavior instead of ClipRRect to
+          // avoid saveLayer on raster thread
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+            ),
+            clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 80),
               child: Image.memory(
@@ -906,36 +988,63 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   /// Build file preview (shown when clipboard contains file)
+  /// Caches the temp ClipboardItem to avoid re-detecting file type on every build
   Widget? _buildFilePreview() {
     final content = _viewModel.clipboardContent;
     // Check for null content, no file flag, or missing bytes
     if (content == null || !content.hasFile || content.fileBytes == null) {
+      _cachedFilePreviewItem = null;
+      _cachedFilePreviewSourceContent = null;
       return null;
     }
 
-    final fileBytes = content.fileBytes!;
-    final filename = content.filename ?? 'file';
+    // Recompute when clipboard content instance changes to avoid stale metadata.
+    if (_cachedFilePreviewItem == null ||
+        !identical(_cachedFilePreviewSourceContent, content)) {
+      final fileBytes = content.fileBytes!;
+      final filename = content.filename ?? 'file';
 
-    // Create a temporary clipboard item for the preview widget
-    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-      fileBytes,
-      filename,
-    );
+      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+        fileBytes,
+        filename,
+      );
 
-    final tempItem = ClipboardItem(
-      id: '0',
-      userId: '',
-      content: '',
-      deviceType: '',
-      createdAt: DateTime.now(),
-      contentType: fileTypeInfo.contentType,
-      fileSizeBytes: fileBytes.length,
-      metadata: ClipboardMetadata(originalFilename: filename),
-    );
+      _cachedFilePreviewItem = ClipboardItem(
+        id: '0',
+        userId: '',
+        content: '',
+        deviceType: '',
+        createdAt: DateTime.now(),
+        contentType: fileTypeInfo.contentType,
+        fileSizeBytes: fileBytes.length,
+        metadata: ClipboardMetadata(originalFilename: filename),
+      );
+      _cachedFilePreviewSourceContent = content;
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: FilePreviewWidget(item: tempItem),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'File ready to send',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              _buildAttachmentClearButton(tooltip: 'Remove file'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          FilePreviewWidget(item: _cachedFilePreviewItem!),
+        ],
+      ),
     );
   }
 
@@ -1102,7 +1211,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               }
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: GhostColors.primary.withValues(alpha: 0.8),
+              backgroundColor: GhostColors.primaryAlpha80,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 8),
               shape: RoundedRectangleBorder(
@@ -1132,9 +1241,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             decoration: BoxDecoration(
               color: GhostColors.surfaceLight,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: GhostColors.primary.withValues(alpha: 0.3),
-              ),
+              border: Border.all(color: GhostColors.primaryAlpha30),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1299,9 +1406,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               decoration: BoxDecoration(
                 color: GhostColors.surfaceLight,
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: GhostColors.primary.withValues(alpha: 0.3),
-                ),
+                border: Border.all(color: GhostColors.primaryAlpha30),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1360,7 +1465,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                         '⏎',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.white.withValues(alpha: 0.7),
+                          color: GhostColors.whiteAlpha70,
                         ),
                       ),
                     ],
@@ -1376,9 +1481,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.red.shade900.withValues(alpha: 0.2),
+        color: GhostColors.redDarkAlpha20,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.red.shade400.withValues(alpha: 0.3)),
+        border: Border.all(color: GhostColors.redLightAlpha30),
       ),
       child: Row(
         children: [
@@ -1398,20 +1503,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Build settings panel (slide-in from left)
   Widget _buildSettingsPanel() {
     // Cache settings panel content to prevent rebuilds during animation
+    // Perf: HitTestBehavior.opaque stops hit-test propagation to the
+    // dismiss overlay behind this panel without walking extra tree nodes
     final panelContent = GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {}, // Prevent closing when clicking inside panel
       child: Container(
         width: 280,
-        decoration: BoxDecoration(
-          color: GhostColors.surfaceLight,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              blurRadius: 20,
-              offset: const Offset(5, 0),
-            ),
-          ],
-        ),
+        decoration: SpotlightScreen._leftPanelDecoration,
         child: Column(
           children: [
             // Header
@@ -1437,10 +1536,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                     icon: const Icon(Icons.close, size: 18),
                     color: GhostColors.textSecondary,
                     tooltip: 'Close settings', // FIX #27: Accessibility
-                    onPressed: () async {
-                      await _settingsSlideController.reverse();
-                      setState(() => _activePanel = SpotlightPanel.none);
-                    },
+                    onPressed: _closeActivePanel,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -1463,12 +1559,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 onEncryptionChanged: _viewModel.refreshHistory,
                 onClose: _handleSettingsClose,
                 onOpenAuth: () async {
-                  // Close settings panel first to prevent memory leak
+                  // Close settings panel first, then open auth
                   await _settingsSlideController.reverse();
-                  setState(() {
-                    _activePanel = SpotlightPanel.auth;
-                  });
-                  await _authSlideController.forward();
+                  if (!mounted) return;
+                  setState(() => _activePanel = SpotlightPanel.auth);
+                  unawaited(_authSlideController.forward());
                 },
                 onAutoSendChanged: (value) {
                   setState(() => _autoSendEnabled = value);
@@ -1506,19 +1601,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Widget _buildAuthPanel() {
     // Cache auth panel content to prevent rebuilds
     final panelContent = GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {}, // Prevent closing when clicking inside panel
       child: Container(
         width: 400, // Wider than Settings (280px)
-        decoration: BoxDecoration(
-          color: GhostColors.surfaceLight,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              blurRadius: 20,
-              offset: const Offset(5, 0),
-            ),
-          ],
-        ),
+        decoration: SpotlightScreen._leftPanelDecoration,
         child: Column(
           children: [
             // Header
@@ -1541,10 +1628,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
                     color: GhostColors.textSecondary,
-                    onPressed: () async {
-                      await _authSlideController.reverse();
-                      setState(() => _activePanel = SpotlightPanel.none);
-                    },
+                    onPressed: _closeActivePanel,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -1610,40 +1694,23 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   /// Handle closing the settings panel
-  Future<void> _handleSettingsClose() async {
-    await _settingsSlideController.reverse();
-    setState(() => _activePanel = SpotlightPanel.none);
-  }
+  void _handleSettingsClose() => _closeActivePanel();
 
   /// Handle closing the auth panel
-  Future<void> _handleAuthClose() async {
-    await _authSlideController.reverse();
-    setState(() => _activePanel = SpotlightPanel.none);
-  }
+  void _handleAuthClose() => _closeActivePanel();
 
   /// Handle closing the history panel
-  Future<void> _handleHistoryClose() async {
-    await _historySlideController.reverse();
-    setState(() => _activePanel = SpotlightPanel.none);
-  }
+  Future<void> _handleHistoryClose() async => _closeActivePanel();
 
   /// Build history panel (slide-in from right)
   Widget _buildHistoryPanel() {
     // Cache the panel content to prevent rebuilds during animation (performance)
     final panelContent = GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {}, // Prevent closing when clicking inside panel
       child: Container(
         width: 280,
-        decoration: BoxDecoration(
-          color: GhostColors.surfaceLight,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              blurRadius: 20,
-              offset: const Offset(-5, 0),
-            ),
-          ],
-        ),
+        decoration: SpotlightScreen._rightPanelDecoration,
         child: _HistoryPanelContent(
           historyItems: _viewModel.historyItems,
           isLoading: _viewModel.isLoadingHistory,
@@ -1669,7 +1736,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 }
 
 /// Platform selection chip widget
-class _PlatformChip extends StatefulWidget {
+/// Perf: StatelessWidget since it has no mutable state - avoids State allocation
+class _PlatformChip extends StatelessWidget {
   const _PlatformChip({
     required this.label,
     required this.icon,
@@ -1677,67 +1745,54 @@ class _PlatformChip extends StatefulWidget {
     required this.onTap,
   });
 
+  static const _borderRadius = BorderRadius.all(Radius.circular(6));
+
   final String label;
   final IconData icon;
   final bool isSelected;
   final VoidCallback onTap;
 
   @override
-  State<_PlatformChip> createState() => _PlatformChipState();
-}
-
-class _PlatformChipState extends State<_PlatformChip> {
-  bool _isHovered = false;
-
-  @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onTap,
-          borderRadius: BorderRadius.circular(6),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: widget.isSelected
-                  ? GhostColors.primary
-                  : _isHovered
-                  ? GhostColors.surfaceLight
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: widget.isSelected
-                    ? Colors.transparent
-                    : GhostColors.surfaceLight,
-              ),
+    return Material(
+      color: isSelected ? GhostColors.primary : Colors.transparent,
+      borderRadius: _borderRadius,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: _borderRadius,
+        hoverColor: isSelected ? null : GhostColors.surfaceLight,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: _borderRadius,
+            border: Border.all(
+              color: isSelected
+                  ? Colors.transparent
+                  : GhostColors.surfaceLight,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  widget.icon,
-                  size: 14,
-                  color: widget.isSelected
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: isSelected
+                    ? Colors.white
+                    : GhostColors.textSecondary,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: isSelected
                       ? Colors.white
                       : GhostColors.textSecondary,
                 ),
-                const SizedBox(width: 5),
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: widget.isSelected
-                        ? Colors.white
-                        : GhostColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1856,6 +1911,12 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
     return text[0].toUpperCase() + text.substring(1);
   }
 
+  int? _findFilteredIndexByKey(Key key) {
+    if (key is! ValueKey<String>) return null;
+    final index = _filteredItems.indexWhere((item) => item.id == key.value);
+    return index == -1 ? null : index;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -1913,11 +1974,14 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
               : RepaintBoundary(
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8),
+                    physics: const ClampingScrollPhysics(),
+                    cacheExtent: 200, // Pre-build items 200px offscreen
+                    findChildIndexCallback: _findFilteredIndexByKey,
                     itemCount: _filteredItems.length,
                     itemBuilder: (context, index) {
                       final item = _filteredItems[index];
                       return RepaintBoundary(
-                        key: ValueKey(item.id),
+                        key: ValueKey<String>(item.id),
                         child: _HistoryItemContent(
                           item: item,
                           clipboardRepository: widget.clipboardRepository,
@@ -2039,8 +2103,24 @@ class _HistoryItemContent extends StatefulWidget {
 }
 
 class _HistoryItemContentState extends State<_HistoryItemContent> {
-  bool _isHovered = false;
+  final ValueNotifier<bool> _isHovered = ValueNotifier(false);
   bool _isExpanded = false;
+  // Perf: Cache lowercase device string to avoid creating new String per build
+  late String _deviceLower = widget.device.toLowerCase();
+
+  @override
+  void didUpdateWidget(covariant _HistoryItemContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.device != widget.device) {
+      _deviceLower = widget.device.toLowerCase();
+    }
+  }
+
+  @override
+  void dispose() {
+    _isHovered.dispose();
+    super.dispose();
+  }
 
   /// Build content preview based on content type
   Widget _buildContentPreview() {
@@ -2084,18 +2164,14 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       children: [
         Row(
           children: [
-            Icon(
-              icon,
-              size: 11,
-              color: GhostColors.primary.withValues(alpha: 0.8),
-            ),
+            Icon(icon, size: 11, color: GhostColors.primaryAlpha80),
             const SizedBox(width: 3),
             Text(
               label,
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
-                color: GhostColors.primary.withValues(alpha: 0.8),
+                color: GhostColors.primaryAlpha80,
               ),
             ),
           ],
@@ -2245,124 +2321,121 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onSecondaryTapDown: (details) {
-        _showContextMenu(context, details.globalPosition);
-      },
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onTap,
-          child: MouseRegion(
-            onEnter: (_) => setState(() => _isHovered = true),
-            onExit: (_) => setState(() => _isHovered = false),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: _isHovered
-                  ? GhostColors.surface.withValues(alpha: 0.7)
-                  : Colors.transparent,
-              child: Column(
+    // Perf: Merged GestureDetector+MouseRegion+InkWell into single InkWell
+    // with onSecondaryTapDown. Reduces hit-test layers from 5 to 2 per item.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        onSecondaryTapDown: (details) {
+          _showContextMenu(context, details.globalPosition);
+        },
+        onHover: (hovering) => _isHovered.value = hovering,
+        hoverColor: GhostColors.surfaceAlpha70,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _buildContentPreview()),
-                      if (!widget.item.isImage &&
-                          !widget.item.isFile &&
-                          widget.item.content.length > 100) ...[
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () =>
-                              setState(() => _isExpanded = !_isExpanded),
-                          child: AnimatedRotation(
-                            turns: _isExpanded ? 0.5 : 0,
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(
-                              Icons.expand_more,
-                              size: 16,
-                              color: GhostColors.primary.withValues(
-                                alpha: _isHovered ? 1 : 0.6,
-                              ),
+                  Expanded(child: _buildContentPreview()),
+                  if (!widget.item.isImage &&
+                      !widget.item.isFile &&
+                      widget.item.content.length > 100) ...[
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () =>
+                          setState(() => _isExpanded = !_isExpanded),
+                      child: AnimatedRotation(
+                        turns: _isExpanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: _isHovered,
+                          builder: (context, hovered, _) => Icon(
+                            Icons.expand_more,
+                            size: 16,
+                            color: GhostColors.primary.withValues(
+                              alpha: hovered ? 1 : 0.6,
                             ),
                           ),
                         ),
-                      ],
-                    ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    _getDeviceIconByType(_deviceLower),
+                    size: 12,
+                    color: GhostColors.textMuted,
                   ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(
-                        _getDeviceIconByType(widget.device.toLowerCase()),
-                        size: 12,
-                        color: GhostColors.textMuted,
+                  const SizedBox(width: 4),
+                  Text(
+                    widget.device,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.arrow_forward,
+                    size: 10,
+                    color: GhostColors.primaryAlpha70,
+                  ),
+                  const SizedBox(width: 6),
+                  if (widget.item.targetDeviceTypes == null ||
+                      widget.item.targetDeviceTypes!.isEmpty)
+                    const Text(
+                      'All',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: GhostColors.primary,
+                        fontWeight: FontWeight.w600,
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        widget.device,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: GhostColors.textMuted,
-                        ),
+                    )
+                  else if (widget.item.targetDeviceTypes!.length == 1)
+                    Icon(
+                      _getDeviceIconByType(
+                        widget.item.targetDeviceTypes!.first,
                       ),
-                      const SizedBox(width: 6),
-                      Icon(
-                        Icons.arrow_forward,
-                        size: 10,
-                        color: GhostColors.primary.withValues(alpha: 0.7),
+                      size: 12,
+                      color: GhostColors.primary,
+                    )
+                  else
+                    Text(
+                      '${widget.item.targetDeviceTypes!.length}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: GhostColors.primary,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(width: 6),
-                      if (widget.item.targetDeviceTypes == null ||
-                          widget.item.targetDeviceTypes!.isEmpty)
-                        Text(
-                          'All',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: GhostColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      else if (widget.item.targetDeviceTypes!.length == 1)
-                        Icon(
-                          _getDeviceIconByType(
-                            widget.item.targetDeviceTypes!.first,
-                          ),
-                          size: 12,
-                          color: GhostColors.primary,
-                        )
-                      else
-                        Text(
-                          '${widget.item.targetDeviceTypes!.length}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: GhostColors.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '•',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: GhostColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.timeAgo,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: GhostColors.textMuted,
-                        ),
-                      ),
-                    ],
+                    ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    '\u2022',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.timeAgo,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: GhostColors.textMuted,
+                    ),
                   ),
                 ],
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -2391,34 +2464,45 @@ class _HoverableIconButton extends StatefulWidget {
 }
 
 class _HoverableIconButtonState extends State<_HoverableIconButton> {
-  bool _isHovered = false;
+  static const _borderRadius = BorderRadius.all(Radius.circular(8));
+  final ValueNotifier<bool> _isHovered = ValueNotifier(false);
+
+  @override
+  void dispose() {
+    _isHovered.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isHighlighted = widget.isActive || _isHovered;
-
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: InkWell(
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: isHighlighted
-                ? GhostColors.primary.withValues(alpha: 0.1)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            widget.icon,
-            size: 22,
-            color: isHighlighted
-                ? GhostColors.primary
-                : GhostColors.textSecondary,
-          ),
-        ),
+      onEnter: (_) => _isHovered.value = true,
+      onExit: (_) => _isHovered.value = false,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _isHovered,
+        builder: (context, isHovered, _) {
+          final isHighlighted = widget.isActive || isHovered;
+          return InkWell(
+            onTap: widget.onTap,
+            borderRadius: _borderRadius,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isHighlighted
+                    ? GhostColors.primaryAlpha10
+                    : Colors.transparent,
+                borderRadius: _borderRadius,
+              ),
+              child: Icon(
+                widget.icon,
+                size: 22,
+                color: isHighlighted
+                    ? GhostColors.primary
+                    : GhostColors.textSecondary,
+              ),
+            ),
+          );
+        },
       ),
     );
   }

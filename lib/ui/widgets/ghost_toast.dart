@@ -141,11 +141,11 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
   Color _getBackgroundColor() {
     switch (widget.type) {
       case GhostToastType.success:
-        return GhostColors.success.withValues(alpha: 0.15);
+        return GhostColors.successAlpha15;
       case GhostToastType.error:
-        return Colors.red.shade900.withValues(alpha: 0.3);
+        return GhostColors.redDarkAlpha30;
       case GhostToastType.info:
-        return GhostColors.surface.withValues(alpha: 0.95);
+        return GhostColors.surfaceAlpha95;
     }
   }
 
@@ -178,11 +178,11 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
                 color: _getBackgroundColor(),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: GhostColors.glassBorder.withValues(alpha: 0.3),
+                  color: GhostColors.glassBorderAlpha30,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
+                    color: GhostColors.blackAlpha30,
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),

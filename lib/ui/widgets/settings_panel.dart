@@ -81,6 +81,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   // Cache expensive computations
   String? _cachedDeviceText;
+  late final ValueNotifier<int> _staleDurationMinutesNotifier;
+  bool _isDraggingStaleDuration = false;
 
   // Separate debounce timers per field to prevent data loss
   Timer? _webhookDebounceTimer;
@@ -90,6 +92,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
   @override
   void initState() {
     super.initState();
+    _staleDurationMinutesNotifier = ValueNotifier<int>(
+      widget.staleDurationMinutes,
+    );
     // Load async data immediately without waiting
     _loadTargetDevices();
     _loadAutoStartSetting();
@@ -97,6 +102,15 @@ class _SettingsPanelState extends State<SettingsPanel> {
     _loadUrlShorteningStatus();
     _loadWebhookStatus();
     _loadObsidianStatus();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_isDraggingStaleDuration &&
+        widget.staleDurationMinutes != _staleDurationMinutesNotifier.value) {
+      _staleDurationMinutesNotifier.value = widget.staleDurationMinutes;
+    }
   }
 
   @override
@@ -115,6 +129,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     _webhookUrlController.dispose();
     _obsidianVaultPathController.dispose();
     _obsidianFileNameController.dispose();
+    _staleDurationMinutesNotifier.dispose();
     super.dispose();
   }
 
@@ -135,13 +150,17 @@ class _SettingsPanelState extends State<SettingsPanel> {
     // Execute any pending vault path write
     if (_vaultPathDebounceTimer?.isActive ?? false) {
       _vaultPathDebounceTimer?.cancel();
-      widget.settingsService.setObsidianVaultPath(_obsidianVaultPathController.text);
+      widget.settingsService.setObsidianVaultPath(
+        _obsidianVaultPathController.text,
+      );
     }
 
     // Execute any pending file name write
     if (_fileNameDebounceTimer?.isActive ?? false) {
       _fileNameDebounceTimer?.cancel();
-      widget.settingsService.setObsidianFileName(_obsidianFileNameController.text);
+      widget.settingsService.setObsidianFileName(
+        _obsidianFileNameController.text,
+      );
     }
   }
 
@@ -174,20 +193,25 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
     if (!enabled && widget.authService.currentUser != null) {
       // Ensure service is initialized with user ID
-      await widget.encryptionService!.initialize(widget.authService.currentUser!.id);
+      await widget.encryptionService!.initialize(
+        widget.authService.currentUser!.id,
+      );
 
       hasBackup = await widget.encryptionService!.hasCloudBackup();
 
       // If we have a backup, try to auto-restore immediately (user convenience)
       if (hasBackup) {
-        debugPrint('[SettingsPanel] Backup found, attempting auto-restore on load...');
+        debugPrint(
+          '[SettingsPanel] Backup found, attempting auto-restore on load...',
+        );
         try {
-          final restored = await widget.encryptionService!.autoRestoreFromCloud();
+          final restored = await widget.encryptionService!
+              .autoRestoreFromCloud();
           if (restored) {
-             // If restored successfully, we are now enabled!
-             enabled = true;
-             // Notify parent to refresh history
-             widget.onEncryptionChanged?.call();
+            // If restored successfully, we are now enabled!
+            enabled = true;
+            // Notify parent to refresh history
+            widget.onEncryptionChanged?.call();
           }
         } on Exception catch (e) {
           debugPrint('[SettingsPanel] Auto-restore on load failed: $e');
@@ -277,7 +301,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
       final userId = widget.authService.currentUserId;
       if (userId == null) {
         // User not authenticated - should not happen
-        debugPrint('[SettingsPanel] Cannot enable encryption: user not authenticated');
+        debugPrint(
+          '[SettingsPanel] Cannot enable encryption: user not authenticated',
+        );
         return;
       }
 
@@ -306,16 +332,16 @@ class _SettingsPanelState extends State<SettingsPanel> {
     try {
       // 1. Attempt auto-restore from cloud
       final success = await widget.encryptionService!.autoRestoreFromCloud();
-      
+
       if (mounted) {
         Navigator.pop(context); // Close loading dialog
-        
+
         if (success) {
           setState(() {
             _encryptionEnabled = true;
-            _hasBackup = true; 
+            _hasBackup = true;
           });
-          
+
           widget.onEncryptionChanged?.call();
 
           ScaffoldMessenger.of(context).showSnackBar(
@@ -355,9 +381,11 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (success && mounted) {
       setState(() => _encryptionEnabled = true);
       widget.onEncryptionChanged?.call();
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Passphrase set manually. History decrypted.')),
+        const SnackBar(
+          content: Text('Passphrase set manually. History decrypted.'),
+        ),
       );
     }
   }
@@ -385,22 +413,31 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
     _cachedDeviceText = _autoSendTargetDevices.isEmpty
         ? 'All devices'
-        : _autoSendTargetDevices.map((d) {
-            final device = devices.firstWhere((item) => item.$1 == d);
-            return device.$3;
-          }).join(', ');
+        : _autoSendTargetDevices
+              .map((d) {
+                final device = devices.firstWhere((item) => item.$1 == d);
+                return device.$3;
+              })
+              .join(', ');
 
     return _cachedDeviceText!;
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final isDesktop =
+        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
     // NOTE: Individual builder methods (_buildSettingToggle, _buildTextField, etc.)
     // already wrap their content in RepaintBoundary. No need for additional wrapping here.
-    return ListView(
+    final settingsList = ListView(
       padding: const EdgeInsets.all(12),
+      physics: isDesktop
+          ? const ClampingScrollPhysics()
+          : const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+      cacheExtent: 300, // Pre-build settings items offscreen for smooth scroll
       children: [
         // 1. Most Important: Feature Toggles
         // Auto-send toggle
@@ -451,6 +488,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
               _buildTextField(
                 label: 'Webhook URL',
                 controller: _webhookUrlController,
+                hintText: 'https://hooks.example.com/ghostcopy',
+                keyboardType: TextInputType.url,
                 onChanged: (value) async {
                   await widget.settingsService.setWebhookUrl(value);
                 },
@@ -480,6 +519,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
               _buildTextField(
                 label: 'Vault Path',
                 controller: _obsidianVaultPathController,
+                hintText: '/Users/you/Documents/ObsidianVault',
                 onChanged: (value) async {
                   await widget.settingsService.setObsidianVaultPath(value);
                 },
@@ -490,6 +530,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
               _buildTextField(
                 label: 'File Name',
                 controller: _obsidianFileNameController,
+                hintText: 'clipboard.md',
                 onChanged: (value) async {
                   await widget.settingsService.setObsidianFileName(value);
                 },
@@ -507,17 +548,33 @@ class _SettingsPanelState extends State<SettingsPanel> {
         // 2. Configuration & Behavior
         // Stale duration slider (only show if in smart mode)
         if (widget.autoReceiveBehavior == AutoReceiveBehavior.smart) ...[
-          _buildSettingSlider(
-            title: 'Clipboard staleness',
-            subtitle: 'Auto-paste after ${widget.staleDurationMinutes} min',
-            value: widget.staleDurationMinutes.toDouble(),
-            min: 1,
-            max: 60,
-            divisions: 59,
-            onChanged: widget.onStaleDurationChanged,
-            onChangeEnd: (value) async {
-              await widget.settingsService.setClipboardStaleDurationMinutes(value);
-            },
+          ValueListenableBuilder<int>(
+            valueListenable: _staleDurationMinutesNotifier,
+            builder: (context, staleDurationMinutes, _) => _buildSettingSlider(
+              title: 'Clipboard staleness',
+              subtitle: 'Auto-paste after $staleDurationMinutes min',
+              value: staleDurationMinutes.toDouble(),
+              min: 1,
+              max: 60,
+              divisions: 59,
+              onChangeStart: () {
+                _isDraggingStaleDuration = true;
+              },
+              onChanged: (value) {
+                if (_staleDurationMinutesNotifier.value != value) {
+                  _staleDurationMinutesNotifier.value = value;
+                }
+              },
+              onChangeEnd: (value) async {
+                _isDraggingStaleDuration = false;
+                if (widget.staleDurationMinutes != value) {
+                  widget.onStaleDurationChanged(value);
+                }
+                await widget.settingsService.setClipboardStaleDurationMinutes(
+                  value,
+                );
+              },
+            ),
           ),
           const SizedBox(height: 10),
         ],
@@ -556,14 +613,14 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
         // 4. Set and Forget (System Settings)
         if (isDesktop) ...[
-           Text(
+          Text(
             'SYSTEM',
             style: GhostTypography.caption.copyWith(
               color: GhostColors.textMuted,
             ),
           ),
           const SizedBox(height: 12),
-           if (widget.autoStartService != null) ...[
+          if (widget.autoStartService != null) ...[
             _buildSettingToggle(
               title: 'Launch at startup',
               subtitle: 'Start GhostCopy when you log in',
@@ -574,7 +631,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 } else {
                   await widget.autoStartService!.disable();
                 }
-                await widget.settingsService.setAutoStartEnabled(enabled: value);
+                await widget.settingsService.setAutoStartEnabled(
+                  enabled: value,
+                );
                 if (mounted) {
                   setState(() => _autoStartEnabled = value);
                 }
@@ -613,13 +672,23 @@ class _SettingsPanelState extends State<SettingsPanel> {
         // 6. Account
         Text(
           'ACCOUNT',
-          style: GhostTypography.caption.copyWith(
-            color: GhostColors.textMuted,
-          ),
+          style: GhostTypography.caption.copyWith(color: GhostColors.textMuted),
         ),
         const SizedBox(height: 12),
         _buildAccountButton(),
       ],
+    );
+
+    if (!isDesktop) {
+      return settingsList;
+    }
+
+    return ScrollbarTheme(
+      data: ScrollbarTheme.of(context).copyWith(
+        thickness: const WidgetStatePropertyAll<double>(4),
+        radius: const Radius.circular(3),
+      ),
+      child: settingsList,
     );
   }
 
@@ -653,7 +722,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
           onChanged: onChanged,
           activeTrackColor: GhostColors.primary,
           thumbColor: WidgetStateProperty.all(GhostColors.primary),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 4,
+          ),
         ),
       ),
     );
@@ -665,7 +737,19 @@ class _SettingsPanelState extends State<SettingsPanel> {
     required ValueChanged<String> onChanged,
     required Timer? Function() getTimer,
     required void Function(Timer?) setTimer,
+    String? hintText,
+    TextInputType keyboardType = TextInputType.text,
   }) {
+    const inputRadius = BorderRadius.all(Radius.circular(6));
+    const inputBorder = OutlineInputBorder(
+      borderRadius: inputRadius,
+      borderSide: BorderSide(color: GhostColors.glassBorder),
+    );
+    const focusedInputBorder = OutlineInputBorder(
+      borderRadius: inputRadius,
+      borderSide: BorderSide(color: GhostColors.primary, width: 1.5),
+    );
+
     return RepaintBoundary(
       child: Container(
         padding: const EdgeInsets.all(10),
@@ -673,30 +757,53 @@ class _SettingsPanelState extends State<SettingsPanel> {
           color: GhostColors.surface,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: TextField(
-          controller: controller,
-          style: GhostTypography.body.copyWith(
-            fontSize: 12,
-            color: GhostColors.textPrimary,
-          ),
-          decoration: InputDecoration(
-            labelText: label,
-            labelStyle: GhostTypography.caption.copyWith(
-              color: GhostColors.textMuted,
-            ),
-            border: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-          ),
-          onChanged: (value) {
-            // Use field-specific timer to prevent data loss
-            getTimer()?.cancel();
-            setTimer(
-              Timer(
-                const Duration(milliseconds: 500),
-                () => onChanged(value),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: GhostTypography.body.copyWith(
+                fontSize: 13,
+                color: GhostColors.textPrimary,
               ),
-            );
-          },
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              keyboardType: keyboardType,
+              cursorColor: GhostColors.primary,
+              style: GhostTypography.body.copyWith(
+                fontSize: 12,
+                color: GhostColors.textPrimary,
+              ),
+              decoration: InputDecoration(
+                hintText: hintText,
+                hintStyle: GhostTypography.caption.copyWith(
+                  color: GhostColors.textMutedAlpha70,
+                ),
+                isDense: true,
+                filled: true,
+                fillColor: GhostColors.surfaceLight,
+                border: inputBorder,
+                enabledBorder: inputBorder,
+                focusedBorder: focusedInputBorder,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
+              onChanged: (value) {
+                // Use field-specific timer to prevent data loss
+                getTimer()?.cancel();
+                setTimer(
+                  Timer(
+                    const Duration(milliseconds: 500),
+                    () => onChanged(value),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -709,6 +816,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     required double min,
     required double max,
     required int divisions,
+    required VoidCallback onChangeStart,
     required ValueChanged<int> onChanged,
     required ValueChanged<int> onChangeEnd,
   }) {
@@ -720,75 +828,80 @@ class _SettingsPanelState extends State<SettingsPanel> {
           borderRadius: BorderRadius.circular(8),
         ),
         child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: GhostTypography.body.copyWith(
-              fontSize: 13,
-              color: GhostColors.textPrimary,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: GhostTypography.body.copyWith(
+                fontSize: 13,
+                color: GhostColors.textPrimary,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: GhostTypography.caption.copyWith(
-              color: GhostColors.textMuted,
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+              ),
             ),
-          ),
-          Slider(
-            value: value,
-            min: min,
-            max: max,
-            divisions: divisions,
-            activeColor: GhostColors.primary,
-            inactiveColor: GhostColors.surface,
-            onChanged: (val) => onChanged(val.toInt()),
-            onChangeEnd: (val) => onChangeEnd(val.toInt()),
-          ),
-        ],
+            Slider(
+              value: value,
+              min: min,
+              max: max,
+              divisions: divisions,
+              activeColor: GhostColors.primary,
+              inactiveColor: GhostColors.surface,
+              onChangeStart: (_) => onChangeStart(),
+              onChanged: (val) => onChanged(val.toInt()),
+              onChangeEnd: (val) => onChangeEnd(val.toInt()),
+            ),
+          ],
+        ),
       ),
-    ),
     );
   }
 
   Widget _buildAutoReceiveBehaviorSelector() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.download,
-                size: 14,
-                color: GhostColors.primary,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'Auto-receive from other devices',
-                style: GhostTypography.body.copyWith(
-                  fontSize: 13,
-                  color: GhostColors.textPrimary,
+    return RepaintBoundary(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: GhostColors.surface,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.download,
+                  size: 14,
+                  color: GhostColors.primary,
                 ),
+                const SizedBox(width: 6),
+                Text(
+                  'Auto-receive from other devices',
+                  style: GhostTypography.body.copyWith(
+                    fontSize: 13,
+                    color: GhostColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...AutoReceiveBehavior.values.map(
+              (behavior) => _AutoReceiveBehaviorOption(
+                behavior: behavior,
+                isSelected: widget.autoReceiveBehavior == behavior,
+                onTap: () async {
+                  await widget.settingsService.setAutoReceiveBehavior(behavior);
+                  widget.onAutoReceiveBehaviorChanged(behavior);
+                },
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...AutoReceiveBehavior.values.map((behavior) => _AutoReceiveBehaviorOption(
-            behavior: behavior,
-            isSelected: widget.autoReceiveBehavior == behavior,
-            onTap: () async {
-              await widget.settingsService.setAutoReceiveBehavior(behavior);
-              widget.onAutoReceiveBehaviorChanged(behavior);
-            },
-          )),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -806,11 +919,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           children: const [
             Row(
               children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 14,
-                  color: GhostColors.primary,
-                ),
+                Icon(Icons.info_outline, size: 14, color: GhostColors.primary),
                 SizedBox(width: 6),
                 Text(
                   'About Auto-Receive',
@@ -849,47 +958,49 @@ class _SettingsPanelState extends State<SettingsPanel> {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
-          children: [
-            Icon(
-              widget.authService.isAnonymous ? Icons.person_outline : Icons.verified_user,
-              size: 18,
-              color: GhostColors.primary,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.authService.isAnonymous
-                        ? 'Anonymous User'
-                        : widget.authService.currentUser?.email ?? '',
-                    style: GhostTypography.body.copyWith(
-                      fontSize: 13,
-                      color: GhostColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    widget.authService.isAnonymous
-                        ? 'Tap to upgrade account'
-                        : 'Manage account',
-                    style: GhostTypography.caption.copyWith(
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                ],
+            children: [
+              Icon(
+                widget.authService.isAnonymous
+                    ? Icons.person_outline
+                    : Icons.verified_user,
+                size: 18,
+                color: GhostColors.primary,
               ),
-            ),
-            const Icon(
-              Icons.chevron_right,
-              size: 16,
-              color: GhostColors.textMuted,
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.authService.isAnonymous
+                          ? 'Anonymous User'
+                          : widget.authService.currentUser?.email ?? '',
+                      style: GhostTypography.body.copyWith(
+                        fontSize: 13,
+                        color: GhostColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.authService.isAnonymous
+                          ? 'Tap to upgrade account'
+                          : 'Manage account',
+                      style: GhostTypography.caption.copyWith(
+                        color: GhostColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 16,
+                color: GhostColors.textMuted,
+              ),
+            ],
+          ),
         ),
       ),
-    ),
     );
   }
 
@@ -912,11 +1023,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.devices,
-                size: 14,
-                color: GhostColors.primary,
-              ),
+              const Icon(Icons.devices, size: 14, color: GhostColors.primary),
               const SizedBox(width: 6),
               Text(
                 'Send to devices',
@@ -941,17 +1048,21 @@ class _SettingsPanelState extends State<SettingsPanel> {
             runSpacing: 8,
             children: devices.map((device) {
               final (type, icon, label) = device;
-              final isSelected = _autoSendTargetDevices.isEmpty ||
+              final isSelected =
+                  _autoSendTargetDevices.isEmpty ||
                   _autoSendTargetDevices.contains(type);
 
               return InkWell(
                 onTap: () => _toggleDevice(type),
                 borderRadius: BorderRadius.circular(6),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? GhostColors.primary.withValues(alpha: 0.2)
+                        ? GhostColors.primaryAlpha20
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
@@ -1016,7 +1127,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
               Icon(
                 _encryptionEnabled ? Icons.lock : Icons.lock_open,
                 size: 18,
-                color: _encryptionEnabled ? GhostColors.success : GhostColors.textMuted,
+                color: _encryptionEnabled
+                    ? GhostColors.success
+                    : GhostColors.textMuted,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -1035,8 +1148,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
                       _encryptionEnabled
                           ? 'Clipboard encrypted with your passphrase'
                           : _hasBackup
-                              ? 'Backup found - restore to decrypt items'
-                              : 'Protect clipboard with passphrase',
+                          ? 'Backup found - restore to decrypt items'
+                          : 'Protect clipboard with passphrase',
                       style: GhostTypography.caption.copyWith(
                         color: GhostColors.textMuted,
                       ),
@@ -1049,13 +1162,13 @@ class _SettingsPanelState extends State<SettingsPanel> {
                   onPressed: _restoreFromBackup,
                   style: FilledButton.styleFrom(
                     backgroundColor: GhostColors.primary,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     minimumSize: Size.zero,
                   ),
-                  child: const Text(
-                    'Restore',
-                    style: TextStyle(fontSize: 12),
-                  ),
+                  child: const Text('Restore', style: TextStyle(fontSize: 12)),
                 )
               else
                 FilledButton(
@@ -1064,7 +1177,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     backgroundColor: _encryptionEnabled
                         ? GhostColors.textMuted
                         : GhostColors.primary,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     minimumSize: Size.zero,
                   ),
                   child: Text(
@@ -1079,15 +1195,17 @@ class _SettingsPanelState extends State<SettingsPanel> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: GhostColors.primary.withValues(alpha: 0.1),
+                color: GhostColors.primaryAlpha10,
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: GhostColors.primary.withValues(alpha: 0.3),
-                ),
+                border: Border.all(color: GhostColors.primaryAlpha30),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.info_outline, size: 14, color: GhostColors.primary),
+                  Icon(
+                    Icons.info_outline,
+                    size: 14,
+                    color: GhostColors.primary,
+                  ),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -1140,9 +1258,7 @@ class _AutoReceiveBehaviorOption extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected
-                ? GhostColors.primary.withValues(alpha: 0.15)
-                : Colors.transparent,
+            color: isSelected ? GhostColors.primaryAlpha15 : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: isSelected ? GhostColors.primary : GhostColors.surface,
@@ -1167,7 +1283,9 @@ class _AutoReceiveBehaviorOption extends StatelessWidget {
                     color: isSelected
                         ? GhostColors.textPrimary
                         : GhostColors.textSecondary,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    fontWeight: isSelected
+                        ? FontWeight.w600
+                        : FontWeight.normal,
                   ),
                 ),
               ),

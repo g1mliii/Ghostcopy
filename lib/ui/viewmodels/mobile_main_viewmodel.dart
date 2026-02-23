@@ -186,6 +186,17 @@ class MobileMainViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clear pending clipboard attachment (image/file) from paste area state.
+  void clearPendingAttachment() {
+    if (_clipboardContent == null && _sendErrorMessage == null) {
+      return;
+    }
+
+    _clipboardContent = null;
+    _sendErrorMessage = null;
+    notifyListeners();
+  }
+
   /// Populate from system clipboard
   /// Returns display text and updates _clipboardContent
   Future<(String displayText, ClipboardContent? content)?>

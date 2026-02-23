@@ -52,6 +52,10 @@ class MobileMainScreen extends StatefulWidget {
 class _MobileMainScreenState extends State<MobileMainScreen>
     with WidgetsBindingObserver {
   late final MobileMainViewModel _viewModel;
+  late final ITransformerService _transformerService =
+      locator<ITransformerService>();
+  late final IClipboardRepository _clipboardRepository =
+      locator<IClipboardRepository>();
   bool _isRebuildScheduled = false;
 
   // Flutter platform widgets (must stay in widget)
@@ -161,6 +165,45 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         unawaited(precacheImage(MemoryImage(result.$2!.imageBytes!), context));
       }
     }
+  }
+
+  void _clearPendingAttachmentPreview() {
+    final hasAttachment =
+        (_viewModel.clipboardContent?.hasImage ?? false) ||
+        (_viewModel.clipboardContent?.hasFile ?? false);
+    if (!hasAttachment) {
+      return;
+    }
+
+    final currentText = _pasteController.text.trim();
+    final isGeneratedAttachmentText =
+        currentText.startsWith('[Image: ') || currentText.startsWith('[File: ');
+
+    _viewModel.clearPendingAttachment();
+    if (isGeneratedAttachmentText) {
+      _pasteController.clear();
+    }
+    debugPrint('[MobileMain] Cleared pending attachment preview');
+  }
+
+  Widget _buildAttachmentClearButton({required String tooltip}) {
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceAlpha85,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: GhostColors.glassBorder),
+      ),
+      child: IconButton(
+        onPressed: _clearPendingAttachmentPreview,
+        icon: const Icon(Icons.close_rounded, size: 14),
+        color: GhostColors.textMuted,
+        tooltip: tooltip,
+        splashRadius: 14,
+        padding: EdgeInsets.zero,
+      ),
+    );
   }
 
   Future<void> _initDeepLinks() async {
@@ -571,7 +614,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected
-              ? GhostColors.primary.withValues(alpha: 0.2)
+              ? GhostColors.primaryAlpha20
               : GhostColors.background,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
@@ -728,7 +771,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: GhostColors.primary.withValues(alpha: 0.2),
+                color: GhostColors.primaryAlpha20,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(
@@ -822,6 +865,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         color: GhostColors.primary,
         backgroundColor: GhostColors.surface,
         child: CustomScrollView(
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
           slivers: [
             // Paste area section
             SliverToBoxAdapter(child: _buildPasteArea()),
@@ -849,18 +895,16 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: GhostColors.primary.withValues(alpha: 0.15),
+                        color: GhostColors.primaryAlpha15,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: GhostColors.primary.withValues(alpha: 0.3),
-                        ),
+                        border: Border.all(color: GhostColors.primaryAlpha30),
                       ),
                       child: Text(
                         '10 recent',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: GhostColors.primary.withValues(alpha: 0.9),
+                          color: GhostColors.primaryAlpha90,
                         ),
                       ),
                     ),
@@ -883,7 +927,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   decoration: InputDecoration(
                     hintText: 'Search clips...',
                     hintStyle: TextStyle(
-                      color: GhostColors.textMuted.withValues(alpha: 0.6),
+                      color: GhostColors.textMutedAlpha60,
                     ),
                     prefixIcon: const Icon(
                       Icons.search,
@@ -955,17 +999,43 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       decoration: BoxDecoration(
         color: GhostColors.surfaceLight,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.3)),
+        border: Border.all(color: GhostColors.primaryAlpha30),
       ),
       child: Column(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Image ready to send',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              _buildAttachmentClearButton(tooltip: 'Remove image'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Perf: Container with clipBehavior instead of ClipRRect to
+          // avoid saveLayer on raster thread
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+            ),
+            clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 80),
               child: Image.memory(
                 imageBytes,
                 fit: BoxFit.contain,
+                cacheHeight:
+                    (80 *
+                            MediaQuery.devicePixelRatioOf(
+                              context,
+                            ).clamp(1.0, 2.0))
+                        .round(),
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
                     height: 80,
@@ -988,6 +1058,61 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               fontSize: 11,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilePreview() {
+    final content = _viewModel.clipboardContent;
+    if (content?.hasFile != true || content?.fileBytes == null) {
+      return const SizedBox.shrink();
+    }
+
+    final filename = content!.filename ?? 'file';
+    final sizeKB = (content.fileBytes!.length / 1024).toStringAsFixed(1);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: GhostColors.primaryAlpha30),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.insert_drive_file_rounded,
+            size: 24,
+            color: GhostColors.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  filename,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GhostTypography.body.copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$sizeKB KB',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _buildAttachmentClearButton(tooltip: 'Remove file'),
         ],
       ),
     );
@@ -1024,6 +1149,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 ],
               ),
             ),
+            if (_viewModel.clipboardContent?.hasFile ?? false)
+              _buildFilePreview(),
             if (_viewModel.clipboardContent?.hasImage ?? false)
               _buildImagePreview(),
             Padding(
@@ -1038,7 +1165,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 decoration: InputDecoration(
                   hintText: 'Paste or type content here...',
                   hintStyle: TextStyle(
-                    color: GhostColors.textMuted.withValues(alpha: 0.6),
+                    color: GhostColors.textMutedAlpha60,
                   ),
                   border: InputBorder.none,
                   isDense: true,
@@ -1226,7 +1353,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           onPressed: _viewModel.isSending ? null : _handleSend,
           style: FilledButton.styleFrom(
             backgroundColor: GhostColors.primary,
-            disabledBackgroundColor: GhostColors.primary.withValues(alpha: 0.5),
+            disabledBackgroundColor: GhostColors.primaryAlpha50,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
             ),
@@ -1300,7 +1427,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               Icon(
                 Icons.content_paste_off_outlined,
                 size: 48,
-                color: GhostColors.textMuted.withValues(alpha: 0.5),
+                color: GhostColors.textMutedAlpha50,
               ),
               const SizedBox(height: 16),
               Text(
@@ -1320,54 +1447,64 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     return SliverPadding(
       padding: const EdgeInsets.only(bottom: 20),
       sliver: SliverList(
-        delegate: SliverChildBuilderDelegate((context, index) {
-          final item = _viewModel.filteredHistoryItems[index];
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final item = _viewModel.filteredHistoryItems[index];
 
-          final cachedDecrypted = _viewModel.decryptedContentCache[item.id];
-          final cachedDetection = _viewModel.detectionCache[item.id];
+            final cachedDecrypted = _viewModel.decryptedContentCache[item.id];
+            final cachedDetection = _viewModel.detectionCache[item.id];
 
-          return RepaintBoundary(
-            child: _HistoryItemContent(
-              key: ValueKey(item.id),
-              item: item,
-              transformerService: locator<ITransformerService>(),
-              clipboardRepository: locator<IClipboardRepository>(),
-              encryptionService: _viewModel.encryptionService,
-              cachedDecryptedContent: cachedDecrypted,
-              cachedDetectionResult: cachedDetection,
-              onContentDecrypted: (content) {
-                _viewModel.cacheDecryptedContent(item.id, content);
-              },
-              onContentDetected: (result) {
-                _viewModel.cacheDetectionResult(item.id, result);
-              },
-              onTap: () => _viewModel.handleHistoryItemTap(
-                item,
-                onSuccess: (msg) {
-                  if (mounted) {
-                    showGhostToast(
-                      context,
-                      msg,
-                      icon: Icons.copy,
-                      type: GhostToastType.success,
-                      duration: const Duration(seconds: 1),
-                    );
-                  }
+            return RepaintBoundary(
+              key: ValueKey<String>(item.id),
+              child: _HistoryItemContent(
+                item: item,
+                transformerService: _transformerService,
+                clipboardRepository: _clipboardRepository,
+                encryptionService: _viewModel.encryptionService,
+                cachedDecryptedContent: cachedDecrypted,
+                cachedDetectionResult: cachedDetection,
+                onContentDecrypted: (content) {
+                  _viewModel.cacheDecryptedContent(item.id, content);
                 },
-                onError: (msg) {
-                  if (mounted) {
-                    showGhostToast(
-                      context,
-                      msg,
-                      icon: Icons.error,
-                      type: GhostToastType.error,
-                    );
-                  }
+                onContentDetected: (result) {
+                  _viewModel.cacheDetectionResult(item.id, result);
                 },
+                onTap: () => _viewModel.handleHistoryItemTap(
+                  item,
+                  onSuccess: (msg) {
+                    if (mounted) {
+                      showGhostToast(
+                        context,
+                        msg,
+                        icon: Icons.copy,
+                        type: GhostToastType.success,
+                        duration: const Duration(seconds: 1),
+                      );
+                    }
+                  },
+                  onError: (msg) {
+                    if (mounted) {
+                      showGhostToast(
+                        context,
+                        msg,
+                        icon: Icons.error,
+                        type: GhostToastType.error,
+                      );
+                    }
+                  },
+                ),
               ),
-            ),
-          );
-        }, childCount: _viewModel.filteredHistoryItems.length),
+            );
+          },
+          childCount: _viewModel.filteredHistoryItems.length,
+          findChildIndexCallback: (key) {
+            if (key is! ValueKey<String>) return null;
+            final index = _viewModel.filteredHistoryItems.indexWhere(
+              (item) => item.id == key.value,
+            );
+            return index == -1 ? null : index;
+          },
+        ),
       ),
     );
   }
@@ -1399,6 +1536,9 @@ class _DeviceChip extends StatelessWidget {
     required this.onTap,
   });
 
+  // Perf: const BorderRadius avoids allocation per build
+  static const _borderRadius = BorderRadius.all(Radius.circular(20));
+
   final String label;
   final IconData icon;
   final bool isSelected;
@@ -1407,16 +1547,15 @@ class _DeviceChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.transparent,
+      color: isSelected ? GhostColors.primary : GhostColors.surface,
+      borderRadius: _borderRadius,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+        borderRadius: _borderRadius,
+        child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? GhostColors.primary : GhostColors.surface,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: _borderRadius,
             border: Border.all(
               color: isSelected ? GhostColors.primary : GhostColors.glassBorder,
             ),
@@ -1460,7 +1599,6 @@ class _HistoryItemContent extends StatefulWidget {
     required this.transformerService,
     required this.clipboardRepository,
     required this.onTap,
-    super.key,
     this.encryptionService,
     this.cachedDecryptedContent,
     this.cachedDetectionResult,
@@ -1795,18 +1933,14 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       children: [
         Row(
           children: [
-            Icon(
-              icon,
-              size: 14,
-              color: GhostColors.primary.withValues(alpha: 0.8),
-            ),
+            Icon(icon, size: 14, color: GhostColors.primaryAlpha80),
             const SizedBox(width: 4),
             Text(
               label,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: GhostColors.primary.withValues(alpha: 0.8),
+                color: GhostColors.primaryAlpha80,
               ),
             ),
           ],
@@ -1914,7 +2048,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                         child: Icon(
                           Icons.expand_more,
                           size: 18,
-                          color: GhostColors.primary.withValues(alpha: 0.7),
+                          color: GhostColors.primaryAlpha70,
                         ),
                       ),
                     ),
@@ -1965,13 +2099,13 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                     Icon(
                       Icons.arrow_forward,
                       size: 11,
-                      color: GhostColors.primary.withValues(alpha: 0.7),
+                      color: GhostColors.primaryAlpha70,
                     ),
                     const SizedBox(width: 5),
                     Icon(
                       Icons.devices,
                       size: 13,
-                      color: GhostColors.primary.withValues(alpha: 0.7),
+                      color: GhostColors.primaryAlpha70,
                     ),
                   ],
                 ],

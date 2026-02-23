@@ -34,6 +34,9 @@ set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
 set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}")
 set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE}")
 set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
+# Flutter's custom Profile config does not exist in many third-party imported
+# targets (including Firebase). Map Profile to Release for imported libraries.
+set(CMAKE_MAP_IMPORTED_CONFIG_PROFILE Release)
 
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)

@@ -236,9 +236,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: GhostColors.glassBorder, width: 2),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: () {
+      clipBehavior: Clip.antiAlias,
+      child: () {
           final controller = _scannerController;
           return controller != null
               ? Stack(
@@ -267,7 +266,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                   ),
                 );
         }(),
-      ),
     );
   }
 
@@ -275,9 +273,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.red.withValues(alpha: 0.1),
+        color: GhostColors.redAlpha10,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+        border: Border.all(color: GhostColors.redAlpha30),
       ),
       child: Row(
         children: [
@@ -448,9 +446,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       margin: const EdgeInsets.only(top: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.red.withValues(alpha: 0.1),
+        color: GhostColors.redAlpha10,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+        border: Border.all(color: GhostColors.redAlpha30),
       ),
       child: Row(
         children: [
