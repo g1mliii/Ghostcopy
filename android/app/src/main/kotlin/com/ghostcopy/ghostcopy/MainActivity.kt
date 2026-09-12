@@ -241,21 +241,40 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * MainActivity is exported (it is the LAUNCHER), so any installed app can
+     * send it an explicit intent with an arbitrary action and extras - an
+     * <intent-filter> is not required for explicit intents. This handler must
+     * therefore treat every extra as untrusted.
+     *
+     * `clipboard_content` is deliberately NOT honoured here. Trusting it let a
+     * malicious app write straight to the system clipboard (e.g. substituting a
+     * wallet address) while the toast displayed an attacker-supplied device
+     * name to make the swap look like a legitimate GhostCopy sync. The only
+     * in-app caller, CopyActivity, forwards *just* clipboard_id for the
+     * fetch-from-database path, so nothing legitimate needs the content extra.
+     *
+     * clipboard_id is safe to accept: it is resolved through the Flutter method
+     * channel against Supabase under RLS, so it can only ever return a row
+     * belonging to the signed-in user. The worst an attacker achieves is making
+     * the user re-copy one of their own clips.
+     */
     private fun handleCopyAction(intent: Intent) {
-        val clipboardContent = intent.getStringExtra("clipboard_content") ?: ""
         val clipboardId = intent.getStringExtra("clipboard_id") ?: ""
         val contentType = intent.getStringExtra("content_type") ?: "text"
-        val richTextFormat = intent.getStringExtra("rich_text_format") ?: ""
         val deviceType = intent.getStringExtra("device_type") ?: "Another device"
         val fromNotification = intent.getBooleanExtra("from_notification", false)
 
-        if (clipboardContent.isNotEmpty()) {
-            // Direct copy from small content in FCM payload
-            copyToClipboard(clipboardContent, contentType, richTextFormat, deviceType)
-        } else if (clipboardId.isNotEmpty() && fromNotification) {
-            // Fallback: Fetch full content from database using clipboard_id
+        if (intent.hasExtra("clipboard_content")) {
+            Log.w(TAG, "⚠️ Ignoring clipboard_content on COPY_ACTION - untrusted source")
+        }
+
+        if (clipboardId.isNotEmpty() && fromNotification) {
+            // Fetch content from the database using clipboard_id (RLS-scoped).
             Log.d(TAG, "📥 Fetching clipboard item $clipboardId from database")
             fetchAndCopyClipboardItem(clipboardId, contentType, deviceType)
+        } else {
+            Log.w(TAG, "⚠️ COPY_ACTION without a usable clipboard_id - ignoring")
         }
     }
 
@@ -349,6 +368,18 @@ class MainActivity : FlutterActivity() {
      * - Encrypted: Copy encrypted text (user decrypts in app)
      */
     private fun handleWidgetItemClick(intent: Intent) {
+        // MainActivity is exported (LAUNCHER), so an explicit intent with this
+        // action can be sent by any installed app - an <intent-filter> is not
+        // required for explicit delivery. This handler copies an intent-supplied
+        // content_preview to the system clipboard and reads an intent-supplied
+        // thumbnail path from disk, so the caller must be proven to be us.
+        // The widget's own PendingIntent carries the token; an external caller
+        // cannot read it out of app-private SharedPreferences.
+        if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
+            Log.w(TAG, "⚠️ Rejected WIDGET_ITEM_CLICK from an untrusted caller")
+            return
+        }
+
         try {
             val clipboardId = intent.getStringExtra(ClipboardWidgetFactory.KEY_CLIPBOARD_ID) ?: ""
             val contentType = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_TYPE) ?: "text"

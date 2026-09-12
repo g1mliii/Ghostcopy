@@ -65,14 +65,32 @@ class PassphraseSyncService implements IPassphraseSyncService {
     if (user.userMetadata?[_storageKey] == null) return false;
 
     try {
-      final updatedMetadata =
-          Map<String, dynamic>.from(user.userMetadata ?? {})
-            ..remove(_storageKey);
+      // GoTrue MERGES user_metadata: PUT /user iterates the supplied map,
+      // setting non-null values and deleting ONLY keys whose value is
+      // explicitly null. Keys absent from the map are left untouched. Sending a
+      // copy of the metadata with the key removed therefore deletes nothing -
+      // it must be sent as an explicit null.
+      await _supabase.auth.updateUser(
+        UserAttributes(data: {_storageKey: null}),
+      );
 
-      await _supabase.auth.updateUser(UserAttributes(data: updatedMetadata));
+      // Confirm rather than assume. This purge is the ONLY remediation for a
+      // passphrase that is already server-recoverable, so a silent failure
+      // would leave the user exposed while reporting success.
+      final refreshed = await _supabase.auth.getUser();
+      final stillPresent = refreshed.user?.userMetadata?[_storageKey] != null;
+
+      if (stillPresent) {
+        debugPrint(
+          '[PassphraseSyncService] ❌ Legacy passphrase backup STILL PRESENT '
+          'after delete attempt - treat this passphrase as compromised and '
+          'rotate it',
+        );
+        return false;
+      }
 
       debugPrint(
-        '[PassphraseSyncService] Purged legacy passphrase backup from '
+        '[PassphraseSyncService] ✓ Purged legacy passphrase backup from '
         'user_metadata',
       );
       return true;

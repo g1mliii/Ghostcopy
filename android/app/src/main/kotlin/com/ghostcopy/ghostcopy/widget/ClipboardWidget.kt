@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.widget.RemoteViews
+import com.ghostcopy.ghostcopy.IntentAuth
 import com.ghostcopy.ghostcopy.MainActivity
 import com.ghostcopy.ghostcopy.R
 import java.text.SimpleDateFormat
@@ -72,6 +73,9 @@ class ClipboardWidget : AppWidgetProvider() {
       val itemClickIntent = Intent(context, MainActivity::class.java).apply {
         action = ACTION_WIDGET_ITEM_CLICK
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        // Proves the intent originated in this app - MainActivity is exported
+        // and would otherwise accept this action from any installed app.
+        putExtra(IntentAuth.EXTRA_TOKEN, IntentAuth.token(context))
       }
       val itemClickPendingIntent = PendingIntent.getActivity(
         context,

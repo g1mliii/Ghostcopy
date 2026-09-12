@@ -124,8 +124,41 @@ Deno.serve(async (req: Request) => {
     let clipboardItemFromWebhook: any = null;
 
     if (body.record) {
+      // The `record` shape comes from the database trigger, which authenticates
+      // with the service-role key. It was previously accepted from ANY caller
+      // and used verbatim as the clipboard row: no ownership check, no
+      // existence check, bypassing both the RLS-scoped fetch below and its
+      // 5-minute replay window. Anonymous sign-in is enabled, so any actor
+      // could mint a JWT, register a device row holding someone else's FCM
+      // token, and POST an arbitrary `record` to push attacker-chosen content
+      // straight into that victim's clipboard - and set is_encrypted
+      // themselves to opt out of the encrypted-content suppression below.
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      const authHeader = req.headers.get('Authorization');
+      const isServiceRole =
+        !!serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`;
+
+      if (!isServiceRole) {
+        console.warn('[Notification] Rejected `record` payload from non-service-role caller');
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
       // Webhook payload format from database
       const record = body.record;
+
+      // Even from the trigger, never send for a row the authenticated user does
+      // not own.
+      if (record.user_id && record.user_id !== user.id) {
+        console.warn('[Notification] record.user_id does not match caller - refusing');
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
       clipboard_id = record.id;
       device_type = record.device_type;
       target_device_types = record.target_device_type; // Can be null, array, or single string
