@@ -1419,26 +1419,83 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
 
     if (_viewModel.filteredHistoryItems.isEmpty) {
+      // Encrypted clips that the local passphrase cannot open are dropped from
+      // the list, so "no history" would be actively misleading here: the clips
+      // exist, they just cannot be read on this device yet. This is the normal
+      // state after signing in somewhere new, since the passphrase is
+      // deliberately never uploaded to the server.
+      final lockedCount = _viewModel.undecryptableItemCount;
+
       return SliverFillRemaining(
         child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.content_paste_off_outlined,
-                size: 48,
-                color: GhostColors.textMutedAlpha50,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _viewModel.historySearchQuery.isNotEmpty
-                    ? 'No clips match your search'
-                    : 'No clipboard history yet',
-                style: GhostTypography.body.copyWith(
-                  color: GhostColors.textMuted,
-                ),
-              ),
-            ],
+          child: ValueListenableBuilder<int>(
+            valueListenable: lockedCount,
+            builder: (context, locked, _) {
+              if (locked > 0 && _viewModel.historySearchQuery.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.lock_outline,
+                        size: 48,
+                        color: GhostColors.primary.withValues(alpha: 0.7),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        locked == 1
+                            ? '1 encrypted clip'
+                            : '$locked encrypted clips',
+                        style: GhostTypography.body.copyWith(
+                          color: GhostColors.textPrimary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Enter your passphrase to unlock them. It is never '
+                        'sent to the server, so it has to be entered on each '
+                        'device.',
+                        style: GhostTypography.caption.copyWith(
+                          color: GhostColors.textMuted,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        // Settings is where the passphrase is entered; this
+                        // helper already reloads history on return, so the
+                        // clips appear as soon as the passphrase is accepted.
+                        onPressed: _navigateToSettings,
+                        icon: const Icon(Icons.key_outlined, size: 18),
+                        label: const Text('Enter passphrase'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.content_paste_off_outlined,
+                    size: 48,
+                    color: GhostColors.textMutedAlpha50,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _viewModel.historySearchQuery.isNotEmpty
+                        ? 'No clips match your search'
+                        : 'No clipboard history yet',
+                    style: GhostTypography.body.copyWith(
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       );

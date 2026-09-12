@@ -1,4 +1,5 @@
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import '../models/clipboard_item.dart';
 
@@ -6,6 +7,16 @@ export 'impl/clipboard_repository.dart';
 
 /// Abstract interface for clipboard data operations
 abstract class IClipboardRepository {
+  /// Number of items in the most recent history load that could not be
+  /// decrypted, i.e. rows stored with is_encrypted = true that the local
+  /// passphrase does not open.
+  ///
+  /// Such items are omitted from the returned list, so without this signal a
+  /// user who signs in on a new device - or whose passphrase does not match -
+  /// simply sees an empty history with no explanation. The UI uses this to
+  /// prompt for the passphrase instead.
+  ValueListenable<int> get undecryptableItemCount;
+
   /// Insert a new clipboard item and return it with generated ID
   Future<ClipboardItem> insert(ClipboardItem item);
 

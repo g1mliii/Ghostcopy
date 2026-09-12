@@ -66,6 +66,13 @@ class ClipboardRepository implements IClipboardRepository {
   final ICompressionService _compressionService;
   bool _encryptionInitialized = false;
 
+  /// Items in the last history load that could not be decrypted. See
+  /// IClipboardRepository.undecryptableItemCount.
+  final ValueNotifier<int> _undecryptableItemCount = ValueNotifier<int>(0);
+
+  @override
+  ValueListenable<int> get undecryptableItemCount => _undecryptableItemCount;
+
   // Security constants
   static const int maxContentLength = 102400; // 100KB
   static const int maxDeviceNameLength = 255;
@@ -1096,6 +1103,7 @@ class ClipboardRepository implements IClipboardRepository {
     await _ensureEncryptionInitialized();
 
     final decryptedItems = <ClipboardItem>[];
+    var undecryptable = 0;
     for (final item in items) {
       try {
         // Only decrypt if item is marked as encrypted
@@ -1123,9 +1131,21 @@ class ClipboardRepository implements IClipboardRepository {
         );
       } on EncryptionException catch (e) {
         debugPrint('Failed to decrypt item ${item.id}: $e');
-        // Skip items that fail to decrypt
+        // Skip items that fail to decrypt, but COUNT them. Dropping them
+        // silently meant a user signing in on a new device (or with a
+        // mismatched passphrase) saw a completely empty history with no
+        // explanation - the content is there, it just cannot be opened.
+        undecryptable++;
         continue;
       }
+    }
+
+    _undecryptableItemCount.value = undecryptable;
+    if (undecryptable > 0) {
+      debugPrint(
+        '[Repository] ⚠️ $undecryptable encrypted item(s) could not be '
+        'decrypted - passphrase missing or does not match',
+      );
     }
     return decryptedItems;
   }

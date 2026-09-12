@@ -48,6 +48,12 @@ class MobileMainViewModel extends ChangeNotifier {
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
+
+  /// Encrypted clips in the last history load that the local passphrase could
+  /// not open. They are excluded from [historyItems], so the UI shows a
+  /// passphrase prompt rather than an empty-history message.
+  ValueListenable<int> get undecryptableItemCount =>
+      _clipboardRepo.undecryptableItemCount;
   final IDeviceService _deviceService;
   final ISecurityService _securityService;
   final ISettingsService _settingsService;
