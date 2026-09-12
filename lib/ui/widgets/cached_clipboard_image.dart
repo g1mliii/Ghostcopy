@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/impl/encryption_service.dart';
 import '../theme/colors.dart';
 
 /// Smart image widget that uses CDN for fast loading with API fallback
@@ -50,12 +51,32 @@ class CachedClipboardImage extends StatefulWidget {
 }
 
 class _CachedClipboardImageState extends State<CachedClipboardImage> {
+  /// Whether this device holds a passphrase, so an encrypted image can be
+  /// shown rather than reported as a load failure. Resolved once in initState
+  /// because build() cannot await.
+  bool _canDecrypt = false;
+
   bool _useFallback = false;
   Uint8List? _fallbackImageBytes;
   bool _isLoadingFallback = false;
   ui.Image? _decodedImage; // Track decoded image for disposal
   Future<ui.Image>? _fallbackDecodeFuture;
   int? _fallbackDecodeKey;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.item.isEncrypted) {
+      unawaited(_resolveCanDecrypt());
+    }
+  }
+
+  Future<void> _resolveCanDecrypt() async {
+    final enabled = await EncryptionService.instance.isEnabled();
+    if (mounted && enabled != _canDecrypt) {
+      setState(() => _canDecrypt = enabled);
+    }
+  }
 
   @override
   void didUpdateWidget(covariant CachedClipboardImage oldWidget) {
@@ -94,6 +115,14 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     // Validate that item is an image
     if (!widget.item.isImage) {
       return _buildErrorWidget('Not an image');
+    }
+
+    // An encrypted image on a device without the passphrase is not an error -
+    // the bytes are fine, this device just cannot read them. downloadFile
+    // returns null in that case, which would otherwise render as a generic
+    // "Failed to load" and look like a bug.
+    if (widget.item.isEncrypted && !_canDecrypt) {
+      return _buildLockedWidget();
     }
 
     // The R2 bucket is PRIVATE. `content` holds a public r2.dev URL written
@@ -368,6 +397,41 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   }
 
   /// Build error widget
+  /// Shown for an encrypted image this device holds no passphrase for.
+  Widget _buildLockedWidget() {
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: GhostColors.surface,
+        borderRadius: BorderRadius.circular(widget.borderRadius),
+        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.lock_outline,
+            color: GhostColors.primary,
+            size: 28,
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              'Encrypted - add your passphrase in Settings to view',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: GhostColors.textMutedAlpha70,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildErrorWidget(String message) {
     return Container(
       width: widget.width,

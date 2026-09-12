@@ -1193,9 +1193,15 @@ class ClipboardRepository implements IClipboardRepository {
         // enabled. The bytes are decrypted in downloadFile() instead.
         final isStoredObject = (item.storagePath ?? '').isNotEmpty;
 
-        if (item.isEncrypted && !isStoredObject && !canDecrypt) {
+        if (item.isEncrypted && !canDecrypt) {
           undecryptable++;
-          continue;
+          // Text rows are dropped: their content IS the ciphertext and there
+          // is nothing meaningful to show. File and image rows are kept - the
+          // row itself holds a readable filename, size and timestamp, and only
+          // the bytes in R2 are unreadable. Hiding them would make files
+          // silently disappear from history the moment encryption was enabled
+          // on another device.
+          if (!isStoredObject) continue;
         }
 
         // Only decrypt if item is marked as encrypted

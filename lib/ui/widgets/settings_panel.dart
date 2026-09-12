@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
 import '../../services/device_service.dart';
@@ -308,16 +309,69 @@ class _SettingsPanelState extends State<SettingsPanel> {
         return;
       }
 
+      // If this account already has clips this desktop cannot read, the user
+      // needs to ENTER their existing passphrase, not invent a new one. Two
+      // desktops is the common case for that. The old route into restore mode
+      // was gated on _hasBackup i.e. hasCloudBackup(), which always returns
+      // false now that cloud backup is removed - so Set mode was the only
+      // possible outcome and a second machine would silently create a second,
+      // incompatible key.
+      final repo = ClipboardRepository.instance;
+      final lockedBefore = repo.undecryptableItemCount.value;
+      final hasExistingEncrypted = lockedBefore > 0;
+
       final success = await showPassphraseDialog(
         context,
         widget.encryptionService!,
         userId,
+        isRestoreMode: hasExistingEncrypted,
       );
 
-      if (success && mounted) {
+      if (!success || !mounted) return;
+
+      // Verify against real data: setPassphrase() accepts anything, so only
+      // decrypting an actual clip proves the passphrase is right. Success is a
+      // DROP in the locked count, not reaching zero - history can hold clips
+      // under several passphrases and those stay locked by design.
+      if (hasExistingEncrypted) {
+        await repo.getHistory();
+        if (!mounted) return;
+
+        final lockedAfter = repo.undecryptableItemCount.value;
+        debugPrint(
+          '[SettingsPanel] Passphrase check: locked $lockedBefore -> $lockedAfter',
+        );
+
+        if (lockedAfter >= lockedBefore) {
+          await widget.encryptionService!.clearPassphrase();
+          if (!mounted) return;
+          setState(() => _encryptionEnabled = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('That passphrase did not unlock any of your clips'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+
         setState(() => _encryptionEnabled = true);
         widget.onEncryptionChanged?.call();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              lockedAfter > 0
+                  ? '${lockedBefore - lockedAfter} clip(s) unlocked. '
+                        '$lockedAfter still use a different passphrase.'
+                  : 'Passphrase accepted - your clips are unlocked',
+            ),
+          ),
+        );
+        return;
       }
+
+      setState(() => _encryptionEnabled = true);
+      widget.onEncryptionChanged?.call();
     }
   }
 
