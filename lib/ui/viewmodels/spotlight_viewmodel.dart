@@ -32,16 +32,13 @@ import '../../services/transformer_service.dart';
 /// - Pausable wrappers (widget lifecycle)
 class SpotlightViewModel extends ChangeNotifier {
   SpotlightViewModel({
-    required IAuthService authService,
+    required this._authService,
     required IClipboardRepository clipboardRepository,
     required IClipboardSyncService clipboardSyncService,
-    required ITransformerService transformerService,
-    required INotificationService notificationService,
-  }) : _authService = authService,
-       _clipboardRepo = clipboardRepository,
-       _syncService = clipboardSyncService,
-       _transformerService = transformerService,
-       _notificationService = notificationService;
+    required this._transformerService,
+    required this._notificationService,
+  }) : _clipboardRepo = clipboardRepository,
+       _syncService = clipboardSyncService;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;

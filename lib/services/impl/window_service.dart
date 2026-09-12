@@ -25,8 +25,7 @@ import '../window_service.dart';
 /// - Non-essential UI streams (search filters, etc.)
 /// - DO NOT register Realtime clipboard sync stream as Pausable!
 class WindowService implements IWindowService {
-  WindowService({ILifecycleController? lifecycleController})
-    : _lifecycleController = lifecycleController;
+  WindowService({this._lifecycleController});
 
   final ILifecycleController? _lifecycleController;
   bool _isVisible = false;

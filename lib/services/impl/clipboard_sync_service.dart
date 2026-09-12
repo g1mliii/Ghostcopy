@@ -31,28 +31,20 @@ import '../webhook_service.dart';
 /// - Push notification coordination
 class ClipboardSyncService implements IClipboardSyncService {
   ClipboardSyncService({
-    required IClipboardRepository clipboardRepository,
-    required ISettingsService settingsService,
-    required ISecurityService securityService,
+    required this._clipboardRepository,
+    required this._settingsService,
+    required this._securityService,
     SupabaseClient? supabaseClient,
     IClipboardService? clipboardService,
     ITempFileService? tempFileService,
-    INotificationService? notificationService,
-    IGameModeService? gameModeService,
-    IUrlShortenerService? urlShortenerService,
-    IWebhookService? webhookService,
-    IObsidianService? obsidianService,
-  }) : _clipboardRepository = clipboardRepository,
-       _settingsService = settingsService,
-       _securityService = securityService,
-       _supabaseClient = supabaseClient ?? Supabase.instance.client,
+    this._notificationService,
+    this._gameModeService,
+    this._urlShortenerService,
+    this._webhookService,
+    this._obsidianService,
+  }) : _supabaseClient = supabaseClient ?? Supabase.instance.client,
        _clipboardService = clipboardService ?? ClipboardService.instance,
-       _tempFileService = tempFileService ?? TempFileService.instance,
-       _notificationService = notificationService,
-       _gameModeService = gameModeService,
-       _urlShortenerService = urlShortenerService,
-       _webhookService = webhookService,
-       _obsidianService = obsidianService;
+       _tempFileService = tempFileService ?? TempFileService.instance;
 
   final IClipboardRepository _clipboardRepository;
   final ISettingsService _settingsService;

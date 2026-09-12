@@ -18,10 +18,9 @@ import '../window_service.dart';
 /// This ensures toasts are always visible, even when app is in tray.
 class NotificationService implements INotificationService {
   NotificationService({
-    IWindowService? windowService,
-    IGameModeService? gameModeService,
-  }) : _windowService = windowService,
-       _gameModeService = gameModeService;
+    this._windowService,
+    this._gameModeService,
+  });
 
   final IWindowService? _windowService;
   final IGameModeService? _gameModeService;

@@ -17,10 +17,9 @@ import '../lifecycle_controller.dart';
 /// Single source of truth for all app lifecycle management.
 class LifecycleController implements ILifecycleController {
   LifecycleController({
-    required IClipboardSyncService clipboardSyncService,
-    required ISettingsService settingsService,
-  }) : _clipboardSyncService = clipboardSyncService,
-       _settingsService = settingsService;
+    required this._clipboardSyncService,
+    required this._settingsService,
+  });
 
   final IClipboardSyncService _clipboardSyncService;
   final ISettingsService _settingsService;

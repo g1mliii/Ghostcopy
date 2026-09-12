@@ -39,16 +39,12 @@ import '../../services/widget_service.dart';
 /// - Animations (_StaggeredHistoryItem)
 class MobileMainViewModel extends ChangeNotifier {
   MobileMainViewModel({
-    required IAuthService authService,
+    required this._authService,
     required IClipboardRepository clipboardRepository,
-    required IDeviceService deviceService,
-    required ISecurityService securityService,
-    required ISettingsService settingsService,
-  }) : _authService = authService,
-       _clipboardRepo = clipboardRepository,
-       _deviceService = deviceService,
-       _securityService = securityService,
-       _settingsService = settingsService;
+    required this._deviceService,
+    required this._securityService,
+    required this._settingsService,
+  }) : _clipboardRepo = clipboardRepository;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
