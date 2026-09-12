@@ -63,6 +63,18 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   Future<ui.Image>? _fallbackDecodeFuture;
   int? _fallbackDecodeKey;
 
+  /// Convert a layout dimension to a decode dimension.
+  ///
+  /// Callers legitimately pass `double.infinity` (the desktop history tile uses
+  /// `width: double.infinity` to fill its row). `infinity.toInt()` throws
+  /// "Unsupported operation: Infinity", which surfaced as a broken preview on
+  /// every image. NaN and non-positive values are equally unusable as decode
+  /// targets, so all of them mean "decode at natural size".
+  int? _decodeDimension(double? value) {
+    if (value == null || !value.isFinite || value <= 0) return null;
+    return value.toInt();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -87,8 +99,8 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         oldWidget.item.content != widget.item.content ||
         oldWidget.item.storagePath != widget.item.storagePath;
     final didTargetSizeChange =
-        oldWidget.width?.toInt() != widget.width?.toInt() ||
-        oldWidget.height?.toInt() != widget.height?.toInt();
+        _decodeDimension(oldWidget.width) != _decodeDimension(widget.width) ||
+        _decodeDimension(oldWidget.height) != _decodeDimension(widget.height);
 
     if (didSourceChange) {
       _useFallback = false;
@@ -291,16 +303,16 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   Future<ui.Image> _getDecodeFuture(Uint8List bytes) {
     final decodeKey = Object.hash(
       bytes,
-      widget.width?.toInt(),
-      widget.height?.toInt(),
+      _decodeDimension(widget.width),
+      _decodeDimension(widget.height),
     );
 
     if (_fallbackDecodeFuture == null || _fallbackDecodeKey != decodeKey) {
       _fallbackDecodeKey = decodeKey;
       _fallbackDecodeFuture = _decodeImageInIsolate(
         bytes,
-        targetWidth: widget.width?.toInt(),
-        targetHeight: widget.height?.toInt(),
+        targetWidth: _decodeDimension(widget.width),
+        targetHeight: _decodeDimension(widget.height),
       );
     }
 
