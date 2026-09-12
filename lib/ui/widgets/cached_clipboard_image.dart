@@ -96,8 +96,15 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       return _buildErrorWidget('Not an image');
     }
 
-    // Check if we have a valid URL for CDN
+    // The R2 bucket is PRIVATE. `content` holds a public r2.dev URL written
+    // when it was public, and that now returns 401 for every object - so the
+    // CDN path cannot succeed and would just burn a failed request before
+    // falling back. Whenever the row has a storage_path, go straight to the
+    // signed-URL download instead.
+    final hasStoragePath = (widget.item.storagePath ?? '').isNotEmpty;
+
     final hasValidUrl =
+        !hasStoragePath &&
         widget.item.content.isNotEmpty &&
         widget.item.content.startsWith('http');
 

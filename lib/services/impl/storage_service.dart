@@ -97,10 +97,23 @@ class StorageService implements IStorageService {
     try {
       debugPrint('[StorageService] ↓ Downloading from R2: $storagePath');
 
-      // R2 bucket is public — direct download, no Supabase bandwidth cost
-      final url = '$_r2PublicUrlBase/$storagePath';
+      // The bucket is PRIVATE. It used to be public and this method fetched
+      // `$_r2PublicUrlBase/$storagePath` directly, but public access is now
+      // disabled - that URL returns 401 for every object, so images sat on a
+      // loading spinner forever. Ask the edge function for a short-lived
+      // signed URL instead, which is what its `download` action exists for.
+      final presign = await _callEdgeFunctionJson({
+        'action': 'download',
+        'path': storagePath,
+      });
+
+      final downloadUrl = presign['downloadUrl'] as String?;
+      if (downloadUrl == null || downloadUrl.isEmpty) {
+        throw StorageException('No download URL returned for $storagePath');
+      }
+
       final response = await http
-          .get(Uri.parse(url))
+          .get(Uri.parse(downloadUrl))
           .timeout(const Duration(minutes: 2));
 
       if (response.statusCode != 200) {
