@@ -532,6 +532,89 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     );
   }
 
+  /// Ask for the 6-digit PIN shown on the sending device.
+  ///
+  /// Returns null if the user cancels. A wrong PIN does not consume the link
+  /// token server-side, so retrying does not require a new QR code.
+  Future<String?> _promptForPin() async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          String? error;
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              void submit() {
+                final value = controller.text.trim();
+                if (!RegExp(r'^\d{6}$').hasMatch(value)) {
+                  setDialogState(() => error = 'Enter the 6 digits');
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              }
+
+              return AlertDialog(
+                backgroundColor: GhostColors.surface,
+                title: const Text(
+                  'Enter PIN',
+                  style: TextStyle(color: GhostColors.textPrimary),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Type the 6-digit PIN shown next to the QR code on your '
+                      'other device.',
+                      style: GhostTypography.caption.copyWith(
+                        color: GhostColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: GhostColors.textPrimary,
+                        fontSize: 24,
+                        letterSpacing: 8,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        errorText: error,
+                        hintText: '000000',
+                        hintStyle: const TextStyle(
+                          color: GhostColors.textMuted,
+                          letterSpacing: 8,
+                        ),
+                      ),
+                      onSubmitted: (_) => submit(),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(onPressed: submit, child: const Text('Link')),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
   // QR Code handlers
   Future<void> _onQRCodeDetected(BarcodeCapture capture) async {
     if (_qrScanning) return; // Prevent multiple scans
@@ -567,10 +650,19 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       }
 
       final linkToken = qrData['link_token'] as String?;
-      final encryptedPassphrase = qrData['passphrase_encrypted'] as String?;
 
       if (linkToken == null || linkToken.isEmpty) {
         throw Exception('Invalid QR code: missing token.');
+      }
+
+      // The QR is useless without the PIN shown on the sending device. A wrong
+      // PIN does not consume the token, so the user can simply retype it.
+      if (!mounted) return;
+      final pin = await _promptForPin();
+      if (pin == null) {
+        // Cancelled - drop out of scanning state without an error.
+        if (mounted) setState(() => _qrScanning = false);
+        return;
       }
 
       debugPrint('[QR] Exchanging link token...');
@@ -578,7 +670,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // Call edge function to exchange token for session
       final response = await supabase.functions.invoke(
         'exchange-link-token',
-        body: {'token': linkToken},
+        body: {'token': linkToken, 'pin': pin},
       );
 
       if (response.status != 200 || response.data == null) {
@@ -589,7 +681,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       }
 
       final data = response.data as Map<String, dynamic>;
-      final refreshToken = data['refresh_token'] as String;
+      // Nullable cast: this used to be `as String`, and when the server
+      // returned no tokens the resulting TypeError was an Error, not an
+      // Exception - so `on Exception catch` below never caught it, the scanner
+      // hung on a spinner forever, and the single-use token was already gone.
+      final refreshToken = data['refresh_token'] as String?;
+      if (refreshToken == null || refreshToken.isEmpty) {
+        throw Exception(
+          'The server did not return a session. Please generate a new QR code.',
+        );
+      }
 
       debugPrint('[QR] ✅ Got session tokens, setting session...');
 
@@ -598,30 +699,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       debugPrint('[QR] ✅ Session set');
 
-      // Import passphrase if included in QR code
-      if (encryptedPassphrase != null) {
-        debugPrint('[QR] Importing encrypted passphrase...');
-        try {
-          // Use shared singleton instance
-          final encryptionService = EncryptionService.instance;
-          final userId = supabase.auth.currentUser?.id;
-          if (userId != null) {
-            await encryptionService.initialize(userId);
-            final imported = await encryptionService.importPassphraseFromQr(
-              encryptedPassphrase,
-            );
-            if (imported) {
-              debugPrint('[QR] ✅ Passphrase imported successfully');
-            } else {
-              debugPrint('[QR] ⚠️ Failed to import passphrase');
-            }
-            // NOTE: EncryptionService is a singleton - do NOT dispose it
-          }
-        } on Exception catch (e) {
-          debugPrint('[QR] ⚠️ Passphrase import error: $e');
-          // Continue anyway - encryption is optional
-        }
-      }
+      // The QR deliberately no longer carries the passphrase - it used to be
+      // "encrypted" with a key placed in the same payload, so a photograph of
+      // the screen yielded it outright. If the account has encrypted clips,
+      // history shows a prompt to enter the passphrase by hand.
 
       // Register device and update FCM token
       if (mounted) {
@@ -635,7 +716,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         debugPrint('[QR] ✅ QR authentication complete');
         widget.onAuthComplete();
       }
-    } on Exception catch (e) {
+    } on Object catch (e) {
+      // Catch Object, not Exception: a failed cast throws TypeError, which is
+      // an Error. Catching only Exception left the scanner spinning forever on
+      // exactly the failure that happened most often.
       if (mounted) {
         setState(() {
           _qrError = e.toString().replaceAll('Exception: ', '');
