@@ -10,6 +10,7 @@ import '../../services/clipboard_cache_manager.dart';
 import '../../services/compression_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
 import '../clipboard_repository.dart';
 
@@ -632,12 +633,26 @@ class ClipboardRepository implements IClipboardRepository {
       return null;
     }
 
-    try {
-      debugPrint('[Repository] ↓ Downloading: ${item.storagePath}');
+    final storagePath = item.storagePath!;
 
-      final bytes = await _storageService.downloadFile(item.storagePath!);
+    // Serve from RAM when we already have the bytes. Downloads now go through
+    // a freshly signed URL every time (the bucket is private), so nothing
+    // upstream caches them - without this, scrolling history re-downloads the
+    // same image from R2 on every rebuild and bills egress for it.
+    final cached = MediaMemoryCache.instance.get(storagePath);
+    if (cached != null) {
+      debugPrint('[Repository] ⚡ Cache hit: $storagePath (${cached.length} bytes)');
+      return cached;
+    }
+
+    try {
+      debugPrint('[Repository] ↓ Downloading: $storagePath');
+
+      final bytes = await _storageService.downloadFile(storagePath);
 
       debugPrint('[Repository] ✓ Downloaded: ${bytes.length} bytes');
+
+      MediaMemoryCache.instance.put(storagePath, bytes);
 
       return bytes;
     } on Exception catch (e) {
@@ -859,6 +874,11 @@ class ClipboardRepository implements IClipboardRepository {
           .delete()
           .eq('id', id)
           .eq('user_id', userId); // Explicit filter for defense in depth
+
+      // Drop the downloaded bytes for this clip from RAM.
+      if (item?.storagePath != null) {
+        MediaMemoryCache.instance.remove(item!.storagePath!);
+      }
 
       // FIXED: Remove from image cache if it's an image
       if (item != null && item.isImage && item.content.isNotEmpty) {
@@ -1203,6 +1223,8 @@ class ClipboardRepository implements IClipboardRepository {
     // Belongs to the signed-out user's history. Leaving it set would show the
     // next user a "N encrypted clips" prompt for clips that are not theirs.
     _undecryptableItemCount.value = 0;
+    // Same reasoning for the downloaded bytes.
+    MediaMemoryCache.instance.clear();
   }
 
   @override

@@ -13,6 +13,7 @@ import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
@@ -1023,6 +1024,8 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Called on system memory pressure
   void onMemoryPressure() {
+    // Downloaded media is the largest thing this app holds in RAM.
+    MediaMemoryCache.instance.clear();
     debugPrint(
       '[MobileMainVM] System memory pressure detected - clearing caches',
     );
