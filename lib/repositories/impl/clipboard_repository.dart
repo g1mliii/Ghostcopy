@@ -1194,12 +1194,16 @@ class ClipboardRepository implements IClipboardRepository {
   void reset() {
     debugPrint('[ClipboardRepository] Resetting repository state');
     _encryptionInitialized = false;
+    // Belongs to the signed-out user's history. Leaving it set would show the
+    // next user a "N encrypted clips" prompt for clips that are not theirs.
+    _undecryptableItemCount.value = 0;
   }
 
   @override
   void dispose() {
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
     _encryptionInitialized = false;
+    _undecryptableItemCount.value = 0;
   }
 
   /// Gets current device type based on platform

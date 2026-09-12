@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../locator.dart';
 import '../../main.dart';
+import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
@@ -198,22 +200,60 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         return; // _restoreFromBackup handles UI updates
       }
 
-      // Show passphrase setup dialog (Set Mode)
+      // If this account already has encrypted clips that this device cannot
+      // read, the user needs to ENTER their existing passphrase - not invent a
+      // new one. Offering Set mode here is what produced mismatched keys and
+      // InvalidCipherTextException on every clip.
+      final repo = locator<IClipboardRepository>();
+      final hasExistingEncrypted = repo.undecryptableItemCount.value > 0;
+
       final success = await showPassphraseDialog(
         context,
         _encryptionService!,
         userId,
+        isRestoreMode: hasExistingEncrypted,
       );
 
-      if (success && mounted) {
-         setState(() => _encryptionEnabled = true);
-         ScaffoldMessenger.of(context).showSnackBar(
+      if (!success || !mounted) return;
+
+      // Verify against real data. setPassphrase() accepts anything; only
+      // attempting to decrypt an actual clip proves the passphrase is right.
+      if (hasExistingEncrypted) {
+        setState(() => _encryptionLoading = true);
+        await repo.getHistory();
+        if (!mounted) return;
+
+        if (repo.undecryptableItemCount.value > 0) {
+          await _encryptionService!.clearPassphrase();
+          if (!mounted) return;
+          setState(() {
+            _encryptionEnabled = false;
+            _encryptionLoading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Encryption enabled'),
-              backgroundColor: GhostColors.success,
+              content: Text(
+                'That passphrase does not match your existing clips',
+              ),
+              backgroundColor: Colors.red,
             ),
           );
+          return;
+        }
+        setState(() => _encryptionLoading = false);
       }
+
+      setState(() => _encryptionEnabled = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            hasExistingEncrypted
+                ? 'Passphrase accepted - your clips are unlocked'
+                : 'Encryption enabled',
+          ),
+          backgroundColor: GhostColors.success,
+        ),
+      );
     } else {
       // Disable encryption
       final confirmed = await _showConfirmDialog(

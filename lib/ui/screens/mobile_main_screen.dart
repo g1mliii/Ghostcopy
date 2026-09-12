@@ -9,6 +9,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/auth_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/transformer_service.dart';
 import '../theme/colors.dart';
@@ -741,6 +742,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _navigateToSettings() async {
+    final authService = locator<IAuthService>();
+    final userBefore = authService.currentUserId;
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => MobileSettingsScreen(
@@ -751,11 +755,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       ),
     );
 
-    // Refresh history when returning from settings (encryption keys may have changed)
-    if (mounted) {
+    if (!mounted) return;
+
+    // Signing out swaps in a fresh anonymous account. Clearing only the two
+    // derived caches left the previous user's clips on screen and in memory
+    // until a load replaced them, so drop the whole per-user state instead.
+    if (authService.currentUserId != userBefore) {
+      debugPrint('[MobileMain] Account changed - clearing user state');
+      _viewModel.clearUserState();
+    } else {
+      // Same account: encryption keys may have changed, so caches are stale.
       _viewModel.clearCaches();
-      await _viewModel.loadHistory();
     }
+
+    await _viewModel.loadHistory();
   }
 
   @override

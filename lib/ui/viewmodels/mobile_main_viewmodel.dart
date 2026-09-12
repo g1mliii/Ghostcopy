@@ -1042,6 +1042,25 @@ class MobileMainViewModel extends ChangeNotifier {
     _detectionCache.clear();
   }
 
+  /// Drop every trace of the signed-out account's data.
+  ///
+  /// [clearCaches] only empties the two derived caches; the history list,
+  /// filtered view, search query and device targeting all survived a sign-out,
+  /// so the previous user's clips stayed on screen until the next load
+  /// replaced them - and stayed in memory regardless.
+  void clearUserState() {
+    _decryptedContentCache.clear();
+    _detectionCache.clear();
+    _historyItems = [];
+    _filteredHistoryItems = [];
+    _historySearchQuery = '';
+    _selectedDeviceTypes.clear();
+    _sendErrorMessage = null;
+    _historyError = null;
+    _clipboardContent = null;
+    if (!_isDisposed) notifyListeners();
+  }
+
   // ========== CACHE MANAGEMENT ==========
 
   /// Add item to decrypted content cache with LRU eviction
