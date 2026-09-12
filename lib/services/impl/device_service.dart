@@ -177,6 +177,42 @@ class DeviceService implements IDeviceService {
 
       debugPrint('[DeviceService] ✅ FCM token updated');
     } on PostgrestException catch (e) {
+      if (e.code == '23505') {
+        // devices_fcm_token_global_unique: this registration token is still
+        // claimed by a row on another account, usually because the device
+        // switched accounts without the old rows being cleaned up. Reclaim it,
+        // otherwise push silently never arrives on this device.
+        debugPrint(
+          '[DeviceService] ⚠️ FCM token already claimed by another account - '
+          'reclaiming it for this device',
+        );
+        try {
+          await _supabase
+              .from('devices')
+              .delete()
+              .eq('fcm_token', fcmToken)
+              .neq('id', _currentDeviceId!);
+
+          await _supabase
+              .from('devices')
+              .update({
+                'fcm_token': fcmToken,
+                'last_active': DateTime.now().toUtc().toIso8601String(),
+              })
+              .eq('id', _currentDeviceId!);
+
+          debugPrint('[DeviceService] ✅ FCM token reclaimed');
+          return;
+        } on Exception catch (retryError) {
+          // RLS scopes the delete to the caller's own rows, so a row owned by a
+          // different account cannot be removed from here and this will fail.
+          debugPrint(
+            '[DeviceService] ❌ Could not reclaim FCM token - push will not '
+            'arrive on this device: $retryError',
+          );
+          return;
+        }
+      }
       debugPrint(
         '[DeviceService] ❌ Postgres error updating FCM token: ${e.message}',
       );

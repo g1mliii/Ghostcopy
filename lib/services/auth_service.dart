@@ -65,10 +65,6 @@ abstract class IAuthService {
   /// entered by hand on each device.
   Future<({String tokenHash, String pin})> generateMobileLinkToken();
 
-  /// Sign in using a mobile link token
-  /// Returns AuthResponse with user data or error if token is expired/invalid
-  Future<AuthResponse> signInWithToken(String token);
-
   /// Send password reset email to user
   /// Returns true if email sent successfully, false otherwise
   /// User will receive an email with a link to reset their password

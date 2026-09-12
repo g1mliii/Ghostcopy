@@ -694,6 +694,23 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       debugPrint('[QR] ✅ Got session tokens, setting session...');
 
+      // Release this device's rows from the account we are leaving, BEFORE
+      // switching. devices.fcm_token is now globally unique, so a device that
+      // re-links to a second account otherwise collides on
+      // devices_fcm_token_global_unique; DeviceService swallows the 23505 into
+      // a debugPrint and push notifications then silently never arrive. The
+      // email and Google sign-in paths already do this - the QR path did not.
+      final previousUserId = locator<IAuthService>().currentUserId;
+      final wasAnonymous = locator<IAuthService>().isAnonymous;
+      if (wasAnonymous && previousUserId != null) {
+        try {
+          await locator<IAuthService>().cleanupOldAccountData(previousUserId);
+        } on Object catch (e) {
+          debugPrint('[QR] ⚠️ Could not clean up previous account: $e');
+          // Non-fatal: the token conflict is handled in updateFcmToken too.
+        }
+      }
+
       // Set session in Supabase client using refresh token
       await supabase.auth.setSession(refreshToken);
 

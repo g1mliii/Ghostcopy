@@ -374,33 +374,6 @@ class AuthService implements IAuthService {
     }
   }
 
-  @override
-  Future<AuthResponse> signInWithToken(String token) async {
-    try {
-      // Verify token exists and is not expired
-      final result = await _client
-          .from('mobile_link_tokens')
-          .select('user_id, expires_at')
-          .eq('token', token)
-          .single();
-
-      final expiresAt = DateTime.parse(result['expires_at'] as String);
-      if (DateTime.now().isAfter(expiresAt)) {
-        throw Exception('Token has expired');
-      }
-
-      // Sign in as this user
-      // Note: This requires a custom Supabase Edge Function to exchange
-      // the token for a session. For now, we'll throw a not implemented error.
-      // The user_id from the token would be: result['user_id']
-      throw UnimplementedError(
-        'Token-based sign in requires custom Edge Function implementation',
-      );
-    } on PostgrestException catch (e) {
-      debugPrint('[AuthService] Token verification failed: ${e.message}');
-      throw Exception('Invalid or expired token');
-    }
-  }
 
   @override
   Future<bool> sendPasswordResetEmail(String email) async {
