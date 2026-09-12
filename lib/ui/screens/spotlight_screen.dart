@@ -8,23 +8,24 @@ import 'package:flutter/services.dart';
 
 import 'package:window_manager/window_manager.dart';
 
+
+
+
+
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
-
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
-
 import '../../services/hotkey_service.dart';
 import '../../services/impl/encryption_service.dart';
-
 import '../../services/lifecycle_controller.dart';
+import '../../services/media_memory_cache.dart';
 import '../../services/notification_service.dart';
-
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
@@ -541,6 +542,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     // 3. Unfocus text fields to release IME resources
     FocusManager.instance.primaryFocus?.unfocus();
+
+    // 4. Release downloaded media bytes. MediaMemoryCache holds up to 24MB of
+    // image/file data to avoid re-downloading from R2 while browsing history -
+    // valuable with the window open, pure overhead once it is hidden, which is
+    // ~99% of the app's life. Anything needed again is re-fetched on reopen.
+    MediaMemoryCache.instance.clear();
 
     debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
   }
