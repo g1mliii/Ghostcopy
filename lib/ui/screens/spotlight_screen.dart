@@ -749,9 +749,99 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
   }
 
+  /// Stage a file that arrived by drag-and-drop, exactly as the upload button
+  /// does: load it into the preview and let the user press Send.
+  Future<void> _stageDroppedFile(String path) async {
+    try {
+      final fileObj = File(path);
+      if (!fileObj.existsSync()) return;
+
+      final filename = path.split(Platform.pathSeparator).last;
+
+      // Check length before reading, so a huge file is rejected without ever
+      // being pulled into memory.
+      final fileSizeBytes = await fileObj.length();
+      if (fileSizeBytes > 10485760) {
+        if (mounted) {
+          _notificationService.showToast(
+            message: 'File too large: $filename (max 10MB)',
+            type: NotificationType.error,
+          );
+        }
+        return;
+      }
+
+      final bytes = await fileObj.readAsBytes();
+      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        filename,
+      );
+
+      if (!mounted) return;
+
+      final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
+      final displayText = 'File ready to send: $filename ($sizeKB KB)';
+      _viewModel.setFileContent(
+        ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
+        displayText,
+      );
+      _textController.text = displayText;
+
+      _notificationService.showToast(
+        message: 'Dropped: $filename',
+        type: NotificationType.success,
+      );
+    } on Object catch (e) {
+      debugPrint('[Spotlight] Failed to stage dropped file: $e');
+      if (mounted) {
+        _notificationService.showToast(
+          message: 'Could not read dropped file',
+          type: NotificationType.error,
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Shortcuts(
+    // Accept files and images dropped onto the window, so dragging something in
+    // works as well as the upload button - and mirrors dragging clips out.
+    return DropRegion(
+      formats: const [
+        ...Formats.standardFormats,
+      ],
+      hitTestBehavior: HitTestBehavior.opaque,
+      onDropOver: (event) {
+        // Only offer a copy cursor for things we can actually accept.
+        final item = event.session.items.firstOrNull;
+        if (item == null) return DropOperation.none;
+        return item.canProvide(Formats.fileUri)
+            ? DropOperation.copy
+            : DropOperation.none;
+      },
+      onPerformDrop: (event) async {
+        for (final item in event.session.items) {
+          final reader = item.dataReader;
+          if (reader == null) continue;
+          if (!reader.canProvide(Formats.fileUri)) continue;
+
+          // getValue is callback-based; bridge it to a Future so drops are
+          // staged one at a time rather than racing each other.
+          final completer = Completer<Uri?>();
+          reader.getValue(
+            Formats.fileUri,
+            completer.complete,
+            onError: (_) => completer.complete(null),
+          );
+          final uri = await completer.future;
+          if (uri == null) continue;
+
+          await _stageDroppedFile(uri.toFilePath());
+          // One attachment at a time: the send flow stages a single file.
+          break;
+        }
+      },
+      child: Shortcuts(
       shortcuts: <ShortcutActivator, Intent>{
         const SingleActivator(LogicalKeyboardKey.escape): const DismissIntent(),
       },
@@ -859,7 +949,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           ), // Close Scaffold
         ), // Close Focus
       ), // Close Actions
-    ); // Close Shortcuts
+      ), // Close Shortcuts
+    ); // Close DropRegion
   }
 
   /// Build header with icon and title (centered)
