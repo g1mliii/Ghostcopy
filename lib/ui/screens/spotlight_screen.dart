@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'package:window_manager/window_manager.dart';
@@ -610,7 +611,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       // Set flag to prevent window blur from closing window
       _viewModel.setFilePickerOpen(isOpen: true);
 
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         onFileLoading: (status) => debugPrint('File loading: $status'),
       );
 
@@ -1062,9 +1063,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // File preview (if clipboard has file) - cached to avoid double construction
-          if (cachedFilePreview != null) cachedFilePreview,
+          ?cachedFilePreview,
           // Image preview (if clipboard has image) - cached to avoid double construction
-          if (cachedImagePreview != null) cachedImagePreview,
+          ?cachedImagePreview,
           // FIXED: Hide text field when file/image present (text is ignored anyway)
           if (!hasFile && !hasImage)
             TextField(
@@ -1975,7 +1976,7 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     physics: const ClampingScrollPhysics(),
-                    cacheExtent: 200, // Pre-build items 200px offscreen
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(200), // Pre-build items 200px offscreen
                     findChildIndexCallback: _findFilteredIndexByKey,
                     itemCount: _filteredItems.length,
                     itemBuilder: (context, index) {
@@ -2199,7 +2200,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
           widget.item.metadata?.originalFilename ??
           'file.${widget.item.contentType.value}';
 
-      final savePath = await FilePicker.platform.saveFile(
+      final savePath = await FilePicker.saveFile(
         dialogTitle: 'Save File',
         fileName: filename,
       );

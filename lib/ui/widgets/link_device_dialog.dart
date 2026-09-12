@@ -88,8 +88,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
       // 4. Build QR data JSON
       final qrDataMap = {
         'link_token': tokenHash,
-        if (encryptedPassphrase != null)
-          'passphrase_encrypted': encryptedPassphrase,
+        'passphrase_encrypted': ?encryptedPassphrase,
         'version': 1,
       };
 

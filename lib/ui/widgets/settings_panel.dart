@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
@@ -437,7 +438,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           : const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
-      cacheExtent: 300, // Pre-build settings items offscreen for smooth scroll
+      scrollCacheExtent: const ScrollCacheExtent.pixels(300), // Pre-build settings items offscreen for smooth scroll
       children: [
         // 1. Most Important: Feature Toggles
         // Auto-send toggle

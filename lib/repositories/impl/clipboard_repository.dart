@@ -224,9 +224,9 @@ class ClipboardRepository implements IClipboardRepository {
 
       // Build metadata with original filename
       final metadata = <String, dynamic>{
-        if (width != null) 'width': width,
-        if (height != null) 'height': height,
-        if (originalFilename != null) 'original_filename': originalFilename,
+        'width': ?width,
+        'height': ?height,
+        'original_filename': ?originalFilename,
       };
 
       // FIXED: Upload file FIRST to avoid race condition with realtime INSERT event
@@ -392,9 +392,9 @@ class ClipboardRepository implements IClipboardRepository {
       );
 
       final metadata = <String, dynamic>{
-        if (width != null) 'width': width,
-        if (height != null) 'height': height,
-        if (originalFilename != null) 'original_filename': originalFilename,
+        'width': ?width,
+        'height': ?height,
+        'original_filename': ?originalFilename,
       };
 
       // FIXED: Upload file FIRST to avoid race condition with realtime INSERT event

@@ -1,5 +1,6 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../main.dart';
@@ -386,7 +387,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
-        cacheExtent: 300,
+        scrollCacheExtent: const ScrollCacheExtent.pixels(300),
         children: [
           // Features section (moved to top)
           _buildSectionHeader('Features'),

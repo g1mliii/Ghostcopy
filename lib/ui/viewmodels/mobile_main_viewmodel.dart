@@ -599,7 +599,7 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onError,
   }) async {
     try {
-      final result = await FilePicker.platform.pickFiles();
+      final result = await FilePicker.pickFiles();
       if (result == null) return;
 
       final file = result.files.single;

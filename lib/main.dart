@@ -101,7 +101,7 @@ Future<void> main(List<String> args) async {
     TempFileService.instance.cleanupTempFiles(),
 
     // Initialize Supabase with session persistence
-    Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
+    Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
 
     // Register custom URL scheme for OAuth callbacks (Windows only)
     if (Platform.isWindows)

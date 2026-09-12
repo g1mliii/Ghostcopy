@@ -82,7 +82,7 @@ class NotificationService implements INotificationService {
     );
 
     await _flutterLocalNotificationsPlugin.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: _onNotificationResponse,
     );
 
@@ -274,10 +274,10 @@ class NotificationService implements INotificationService {
         '[NotificationService] Attempting to show system notification ID: $id',
       );
       await _flutterLocalNotificationsPlugin.show(
-        id,
-        title,
-        body,
-        details,
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: details,
         payload: actionLabel,
       );
       debugPrint(
