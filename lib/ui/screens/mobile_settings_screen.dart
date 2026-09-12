@@ -13,6 +13,7 @@ import '../../services/settings_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../widgets/passphrase_dialog.dart';
+import 'mobile_welcome_screen.dart';
 
 /// Mobile settings screen
 ///
@@ -185,6 +186,39 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         Navigator.of(context).pop();
       }
     }
+  }
+
+  /// Open the welcome screen so an anonymous user can sign in, create an
+  /// account, or link this device by QR.
+  ///
+  /// The welcome screen is normally only reached at launch (main.dart gates it
+  /// on _mobileAuthComplete), so after a sign-out there was no path back to it.
+  Future<void> _handleSignIn() async {
+    final userBefore = widget.authService.currentUserId;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => MobileWelcomeScreen(
+          onAuthComplete: () {
+            // Close the welcome screen; settings re-reads state below.
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    // The account may now be a different one: re-read everything that is
+    // scoped to the user rather than leaving the previous account's state on
+    // screen.
+    if (widget.authService.currentUserId != userBefore) {
+      debugPrint('[MobileSettings] Account changed after sign-in');
+      await _initializeEncryption();
+      await _loadDevices();
+    }
+
+    if (mounted) setState(() {});
   }
 
   Future<void> _handleEncryptionToggle(bool enabled) async {
@@ -548,6 +582,33 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           ),
 
           const Divider(height: 1, color: GhostColors.glassBorder),
+
+          // Anonymous users need a route back to sign-in. Signing out drops the
+          // user onto a fresh temporary account, and the welcome screen is only
+          // shown at launch - so without this there was no way to sign in again
+          // or link to an existing account short of reinstalling.
+          if (isAnonymous)
+            ListTile(
+              leading: const Icon(
+                Icons.login,
+                color: GhostColors.primary,
+                size: 20,
+              ),
+              title: const Text(
+                'Sign In or Create Account',
+                style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+              ),
+              subtitle: const Text(
+                'Scan a QR code from another device, or use email',
+                style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+              ),
+              trailing: const Icon(
+                Icons.chevron_right,
+                color: GhostColors.textMuted,
+                size: 20,
+              ),
+              onTap: _handleSignIn,
+            ),
 
           // Sign out button (only for authenticated users)
           if (!isAnonymous)
