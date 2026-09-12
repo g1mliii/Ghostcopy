@@ -20,6 +20,22 @@ class _EncryptParams {
   final Uint8List keyBytes;
 }
 
+/// Parameters for background byte encryption (files and images)
+class _EncryptBytesParams {
+  const _EncryptBytesParams({required this.plain, required this.keyBytes});
+
+  final Uint8List plain;
+  final Uint8List keyBytes;
+}
+
+/// Parameters for background byte decryption (files and images)
+class _DecryptBytesParams {
+  const _DecryptBytesParams({required this.cipher, required this.keyBytes});
+
+  final Uint8List cipher;
+  final Uint8List keyBytes;
+}
+
 /// Parameters for background decryption
 class _DecryptParams {
   const _DecryptParams({required this.ciphertext, required this.keyBytes});
@@ -416,6 +432,84 @@ class EncryptionService implements IEncryptionService {
   }
 
   /// Static encryption helper that can run in isolate
+  @override
+  Future<Uint8List> encryptBytes(Uint8List plain) async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+    // Pass through when encryption is off, so callers do not have to branch.
+    final key = _keyBytes;
+    if (key == null) return plain;
+
+    // Files are large by definition; always use an isolate to keep the UI and
+    // the tray-mode event loop responsive.
+    return compute(
+      _encryptBytesSync,
+      _EncryptBytesParams(plain: plain, keyBytes: key),
+    );
+  }
+
+  @override
+  Future<Uint8List> decryptBytes(Uint8List cipher) async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+    final key = _keyBytes;
+    if (key == null) return cipher;
+
+    return compute(
+      _decryptBytesSync,
+      _DecryptBytesParams(cipher: cipher, keyBytes: key),
+    );
+  }
+
+  /// Encrypt raw bytes for R2 upload.
+  ///
+  /// Deliberately NOT the base64 string path: that inflates by ~33%, which is
+  /// why files were left unencrypted ("too large, would exceed 10MB limit
+  /// after base64"). Encrypting the bytes themselves costs 16 bytes of IV plus
+  /// a 16-byte GCM tag - a flat 32 bytes - so a 10MB file stays a 10MB file.
+  ///
+  /// Layout: [16-byte IV][ciphertext+tag]
+  static Uint8List _encryptBytesSync(_EncryptBytesParams params) {
+    try {
+      final key = enc.Key(params.keyBytes);
+      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
+      final iv = enc.IV.fromSecureRandom(16);
+
+      final encrypted = encrypter.encryptBytes(params.plain, iv: iv);
+
+      final out = Uint8List(iv.bytes.length + encrypted.bytes.length)
+        ..setRange(0, iv.bytes.length, iv.bytes)
+        ..setRange(iv.bytes.length, iv.bytes.length + encrypted.bytes.length,
+            encrypted.bytes);
+      return out;
+    } on Exception catch (e) {
+      throw EncryptionException('Byte encryption failed: $e');
+    }
+  }
+
+  static Uint8List _decryptBytesSync(_DecryptBytesParams params) {
+    try {
+      if (params.cipher.length <= 16) {
+        throw EncryptionException('Ciphertext too short to contain an IV');
+      }
+      final key = enc.Key(params.keyBytes);
+      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
+
+      final iv = enc.IV(Uint8List.sublistView(params.cipher, 0, 16));
+      final body = Uint8List.sublistView(params.cipher, 16);
+
+      return Uint8List.fromList(
+        encrypter.decryptBytes(enc.Encrypted(body), iv: iv),
+      );
+    } on EncryptionException {
+      rethrow;
+    } on Exception catch (e) {
+      throw EncryptionException('Byte decryption failed: $e');
+    }
+  }
+
   static String _encryptSync(_EncryptParams params) {
     try {
       // Create encrypter with AES GCM mode

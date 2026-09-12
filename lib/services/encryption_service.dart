@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 /// Abstract interface for encryption operations
 abstract class IEncryptionService {
   /// Check if encryption is enabled (passphrase set)
@@ -39,6 +41,20 @@ abstract class IEncryptionService {
   /// Decrypt ciphertext content (only if encryption enabled)
   /// Returns ciphertext unchanged if encryption disabled
   Future<String> decrypt(String ciphertext);
+
+  /// Encrypt raw bytes (files and images) for upload to R2.
+  ///
+  /// Unlike [encrypt], this does not base64 the payload. Base64 inflates by
+  /// ~33%, which is why files were historically left unencrypted - it would
+  /// have pushed them past the 10MB limit. Encrypting the bytes directly costs
+  /// a flat 32 bytes (16-byte IV + 16-byte GCM tag).
+  ///
+  /// Returns the input unchanged when encryption is not enabled.
+  Future<Uint8List> encryptBytes(Uint8List plain);
+
+  /// Reverse of [encryptBytes]. Returns the input unchanged when encryption is
+  /// not enabled, so callers can pass through unencrypted legacy objects.
+  Future<Uint8List> decryptBytes(Uint8List cipher);
 
   /// Initialize encryption service with user-specific context
   Future<void> initialize(String userId);

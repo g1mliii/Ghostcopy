@@ -265,6 +265,20 @@ class ClipboardRepository implements IClipboardRepository {
         }
       }
 
+      // Encrypt the bytes themselves before they leave the device.
+      //
+      // Files and images used to be stored in the clear even with a passphrase
+      // set - the comment said "too large, would exceed 10MB limit after
+      // base64". That is true of the base64 string path, but encrypting raw
+      // bytes costs a flat 32 bytes (IV + GCM tag), so the limit is unaffected.
+      // Without this, turning on end-to-end encryption protected your text and
+      // left your screenshots and documents readable to anyone with R2 access.
+      final filesEncrypted = await _encryptionService.isEnabled();
+      if (filesEncrypted) {
+        uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
+        debugPrint('[Repository] 🔒 Encrypted ${uploadBytes.length} bytes for upload');
+      }
+
       debugPrint(
         '[Repository] ↑ Uploading to storage (${uploadBytes.length} bytes): $filename',
       );
@@ -302,7 +316,9 @@ class ClipboardRepository implements IClipboardRepository {
               'file_size_bytes': uploadBytes.length,
               'storage_path': uploadResult.storagePath,
               if (metadata.isNotEmpty) 'metadata': metadata,
-              'is_encrypted': false, // Files NOT encrypted
+              // The R2 object is encrypted; the row's `content` (a filename)
+              // is not, which is why this is not gated on content.
+              'is_encrypted': filesEncrypted,
             })
             .select()
             .single();
@@ -436,6 +452,14 @@ class ClipboardRepository implements IClipboardRepository {
         }
       }
 
+      // Encrypt the bytes before they leave the device - see the note in
+      // insertFile. Costs a flat 32 bytes, so the 10MB limit is unaffected.
+      final filesEncrypted = await _encryptionService.isEnabled();
+      if (filesEncrypted) {
+        uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
+        debugPrint('[Repository] 🔒 Encrypted ${uploadBytes.length} bytes for upload');
+      }
+
       debugPrint('[Repository] ↑ Uploading to storage: $filename');
 
       yield 0.3; // Starting upload
@@ -468,7 +492,7 @@ class ClipboardRepository implements IClipboardRepository {
           'file_size_bytes': uploadBytes.length,
           'storage_path': uploadResult.storagePath,
           if (metadata.isNotEmpty) 'metadata': metadata,
-          'is_encrypted': false,
+          'is_encrypted': filesEncrypted,
         });
 
         yield 0.9; // Database record created
@@ -648,10 +672,31 @@ class ClipboardRepository implements IClipboardRepository {
     try {
       debugPrint('[Repository] ↓ Downloading: $storagePath');
 
-      final bytes = await _storageService.downloadFile(storagePath);
+      final raw = await _storageService.downloadFile(storagePath);
 
-      debugPrint('[Repository] ✓ Downloaded: ${bytes.length} bytes');
+      debugPrint('[Repository] ✓ Downloaded: ${raw.length} bytes');
 
+      // Decrypt only when the row says the object is encrypted. Objects
+      // uploaded before file encryption existed are stored in the clear and
+      // carry is_encrypted = false, so they pass straight through - this must
+      // stay keyed on the flag rather than on whether a passphrase is set.
+      var bytes = raw;
+      if (item.isEncrypted) {
+        await _ensureEncryptionInitialized();
+        if (!await _encryptionService.isEnabled()) {
+          debugPrint(
+            '[Repository] 🔒 ${item.storagePath} is encrypted but no '
+            'passphrase is set on this device',
+          );
+          return null;
+        }
+        bytes = await _encryptionService.decryptBytes(raw);
+        debugPrint('[Repository] 🔓 Decrypted to ${bytes.length} bytes');
+      }
+
+      // Cache the PLAINTEXT: the cache is in-process and cleared on hide,
+      // sign-out and memory pressure, and caching ciphertext would mean
+      // re-running AES on every cache hit.
       MediaMemoryCache.instance.put(storagePath, bytes);
 
       return bytes;
@@ -1141,13 +1186,20 @@ class ClipboardRepository implements IClipboardRepository {
 
     for (final item in items) {
       try {
-        if (item.isEncrypted && !canDecrypt) {
+        // For file and image rows, is_encrypted describes the R2 OBJECT, not
+        // the row's `content` - which holds the filename in the clear so it
+        // stays searchable. Running decrypt() over a filename would throw and
+        // silently drop every image from history the moment encryption was
+        // enabled. The bytes are decrypted in downloadFile() instead.
+        final isStoredObject = (item.storagePath ?? '').isNotEmpty;
+
+        if (item.isEncrypted && !isStoredObject && !canDecrypt) {
           undecryptable++;
           continue;
         }
 
         // Only decrypt if item is marked as encrypted
-        final contentToShow = item.isEncrypted
+        final contentToShow = (item.isEncrypted && !isStoredObject)
             ? await _encryptionService.decrypt(item.content)
             : item.content; // Return plaintext as-is
 
