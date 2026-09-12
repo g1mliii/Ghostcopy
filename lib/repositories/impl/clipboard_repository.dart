@@ -1104,8 +1104,22 @@ class ClipboardRepository implements IClipboardRepository {
 
     final decryptedItems = <ClipboardItem>[];
     var undecryptable = 0;
+
+    // EncryptionService.decrypt() returns its input UNCHANGED when no key is
+    // loaded (encryption_service.dart: `if (_keyBytes == null) return
+    // ciphertext;`) rather than throwing. Without this check an encrypted item
+    // on a device with no passphrase sails through as "successfully decrypted"
+    // and the raw `IV:ciphertext` string is rendered in history, copied to the
+    // clipboard, and shown in the widget.
+    final canDecrypt = await _encryptionService.isEnabled();
+
     for (final item in items) {
       try {
+        if (item.isEncrypted && !canDecrypt) {
+          undecryptable++;
+          continue;
+        }
+
         // Only decrypt if item is marked as encrypted
         final contentToShow = item.isEncrypted
             ? await _encryptionService.decrypt(item.content)

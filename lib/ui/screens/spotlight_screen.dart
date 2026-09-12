@@ -1962,14 +1962,64 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                 )
               : _filteredItems.isEmpty
               ? Center(
-                  child: Text(
-                    _searchQuery.isNotEmpty
-                        ? 'No results found'
-                        : 'No clipboard history yet',
-                    style: const TextStyle(
-                      color: GhostColors.textMuted,
-                      fontSize: 13,
-                    ),
+                  // Encrypted clips this device has no passphrase for are
+                  // dropped from the list, so "no history" would be wrong -
+                  // the clips exist and simply cannot be read here yet. Same
+                  // treatment as mobile; this is the normal state on any
+                  // device that has not had the passphrase entered, since it
+                  // is deliberately never synced through the server.
+                  child: ValueListenableBuilder<int>(
+                    valueListenable:
+                        widget.clipboardRepository.undecryptableItemCount,
+                    builder: (context, locked, _) {
+                      if (locked > 0 && _searchQuery.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.lock_outline,
+                                size: 32,
+                                color: GhostColors.primary,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                locked == 1
+                                    ? '1 encrypted clip'
+                                    : '$locked encrypted clips',
+                                style: const TextStyle(
+                                  color: GhostColors.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Enter your passphrase in Settings to unlock '
+                                'them. It is never sent to the server, so it '
+                                'has to be entered on each device.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: GhostColors.textMuted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return Text(
+                        _searchQuery.isNotEmpty
+                            ? 'No results found'
+                            : 'No clipboard history yet',
+                        style: const TextStyle(
+                          color: GhostColors.textMuted,
+                          fontSize: 13,
+                        ),
+                      );
+                    },
                   ),
                 )
               : RepaintBoundary(

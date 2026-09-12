@@ -326,7 +326,7 @@ class AuthService implements IAuthService {
   }
 
   @override
-  Future<String> generateMobileLinkToken() async {
+  Future<({String tokenHash, String pin})> generateMobileLinkToken() async {
     final userId = currentUser?.id;
     if (userId == null) {
       throw Exception('User must be authenticated to generate link token');
@@ -342,6 +342,13 @@ class AuthService implements IAuthService {
     final bytes = utf8.encode(tokenData);
     final hash = sha256.convert(bytes).toString();
 
+    // 6-digit PIN shown on this device's screen and typed on the receiving
+    // one. Only its SHA-256 is stored, and the server matches it as part of
+    // consuming the token - so a photographed QR alone cannot link a device,
+    // and a wrong PIN does not burn the single-use token.
+    final pin = (_secureRandom.nextInt(900000) + 100000).toString();
+    final pinHash = sha256.convert(utf8.encode(pin)).toString();
+
     // Token expires in 5 minutes
     final expiresAt = DateTime.now()
         .add(const Duration(minutes: 5))
@@ -352,6 +359,7 @@ class AuthService implements IAuthService {
       await _client.from('mobile_link_tokens').insert({
         'user_id': userId,
         'token': hash,
+        'pin_hash': pinHash,
         'expires_at': expiresAt,
       });
 
@@ -359,8 +367,7 @@ class AuthService implements IAuthService {
         '[AuthService] Generated mobile link token (expires in 5 min)',
       );
 
-      // Return token in deep link format
-      return 'ghostcopy://link?token=$hash';
+      return (tokenHash: hash, pin: pin);
     } on PostgrestException catch (e) {
       debugPrint('[AuthService] Failed to store token: ${e.message}');
       throw Exception('Failed to generate link token');
