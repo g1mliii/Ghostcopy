@@ -36,6 +36,7 @@ import 'services/obsidian_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
+import 'services/single_instance.dart';
 import 'services/system_power_service.dart';
 import 'services/temp_file_service.dart';
 import 'services/transformer_service.dart';
@@ -88,6 +89,22 @@ Future<void> main(List<String> args) async {
       // Log other errors normally
       FlutterError.presentError(details);
     };
+  }
+
+  // Only one desktop instance may run. Without this, the ghostcopy:// registry
+  // entry starts a whole second app every time Google OAuth redirects back -
+  // second window, second tray icon, second hotkey - and the callback lands in
+  // that new process, so the running app never signs in and the browser sits
+  // on the callback page forever.
+  //
+  // --send-file is exempt: it is a headless one-shot that uploads and exits
+  // without any UI, so a second process there is harmless and simpler.
+  if (_isDesktop() && !args.contains('--send-file')) {
+    final isPrimary = await SingleInstance.instance.acquire(args);
+    if (!isPrimary) {
+      // Arguments were handed to the running instance; nothing else to do.
+      exit(0);
+    }
   }
 
   // Check if app was launched at startup (for hidden mode)
@@ -262,6 +279,21 @@ Future<void> main(List<String> args) async {
     // Register global hotkey (Requirement 1.1, 3.4)
     // Default: Ctrl+Shift+S to show Spotlight window
     // Note: We'll set the callback in MyApp since it needs state access
+
+    // Complete OAuth when the browser hands us back a ghostcopy:// callback -
+    // either in this launch's arguments (app was closed) or forwarded from a
+    // later launch by SingleInstance (app was already running). Without this
+    // nothing ever consumed the callback, so signing in with Google appeared
+    // to do nothing and left the browser tab open.
+    unawaited(_handleDeepLinkArgs(args));
+    SingleInstance.instance.incomingArguments.listen((forwarded) {
+      unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
+      // A second launch without a URL is the user asking for the app, so show
+      // the window rather than silently doing nothing.
+      if (!forwarded.contains('ghostcopy://')) {
+        unawaited(locator<IWindowService>().showSpotlight());
+      }
+    });
 
     runApp(MyApp(launchedAtStartup: launchedAtStartup));
   } else {
@@ -797,6 +829,36 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+
+
+/// Feed a ghostcopy:// callback URL to Supabase so the session is established.
+///
+/// Handles both `ghostcopy://auth-callback` (Google OAuth) and
+/// `ghostcopy://reset-password`.
+Future<void> _handleDeepLinkArgs(List<String> args) async {
+  final link = args.firstWhere(
+    (a) => a.startsWith('ghostcopy://'),
+    orElse: () => '',
+  );
+  if (link.isEmpty) return;
+
+  debugPrint('[Main] 🔗 Handling deep link: $link');
+  try {
+    final uri = Uri.parse(link);
+    // Supabase returns the tokens in the fragment or query depending on flow;
+    // getSessionFromUrl handles both and persists the session.
+    await Supabase.instance.client.auth.getSessionFromUrl(uri);
+    debugPrint('[Main] ✅ Session established from deep link');
+
+    // Bring the app forward so the user sees that sign-in worked - they are
+    // currently looking at a browser window.
+    if (locator.isRegistered<IWindowService>()) {
+      await locator<IWindowService>().showSpotlight();
+    }
+  } on Object catch (e) {
+    debugPrint('[Main] ⚠️ Failed to handle deep link: $e');
+  }
+}
 
 /// Upload a file passed on the command line, then return so main() can exit.
 ///
