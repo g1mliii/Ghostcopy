@@ -151,7 +151,7 @@ COMMENT ON FUNCTION "public"."broadcast_clipboard_changes"() IS 'Broadcasts clip
 
 CREATE OR REPLACE FUNCTION "public"."check_clipboard_rate_limit"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
+    SET "search_path" TO 'public', 'pg_temp'
     AS $$
 DECLARE
   current_count int;
@@ -224,7 +224,7 @@ Returns clear error message with wait time when limit exceeded.';
 
 CREATE OR REPLACE FUNCTION "public"."check_devices_rate_limit"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
+    SET "search_path" TO 'public', 'pg_temp'
     AS $$
 DECLARE
   device_count int;
@@ -258,7 +258,7 @@ Users must delete old devices before registering new ones if at limit.';
 
 CREATE OR REPLACE FUNCTION "public"."cleanup_old_clipboard_items"("p_user_id" "uuid", "p_keep_count" integer DEFAULT 15) RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
+    SET "search_path" TO 'public', 'pg_temp'
     AS $$                                                                                                                                                                                     
   declare                                                                                                                                                                                   
     v_to_delete record;                                                                                                                                                                     
@@ -301,7 +301,7 @@ COMMENT ON FUNCTION "public"."cleanup_old_clipboard_items"("p_user_id" "uuid", "
 
 CREATE OR REPLACE FUNCTION "public"."cleanup_old_clipboard_items_deep"() RETURNS TABLE("deleted_count" bigint, "processed_users" bigint)
     LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
+    SET "search_path" TO 'public', 'pg_temp'
     AS $$
 DECLARE
   v_deleted      bigint := 0;
@@ -666,6 +666,7 @@ CREATE TABLE IF NOT EXISTS "public"."clipboard" (
     "rich_text_format" "public"."rich_text_format_enum",
     CONSTRAINT "check_file_size_limit" CHECK ((("file_size_bytes" IS NULL) OR ("file_size_bytes" <= 10485760))),
     CONSTRAINT "check_storage_for_files" CHECK (((("content_type" = ANY (ARRAY['text'::"public"."content_type_enum", 'html'::"public"."content_type_enum", 'markdown'::"public"."content_type_enum"])) AND ("storage_path" IS NULL)) OR (("content_type" <> ALL (ARRAY['text'::"public"."content_type_enum", 'html'::"public"."content_type_enum", 'markdown'::"public"."content_type_enum"])) AND ("storage_path" IS NOT NULL)))),
+    CONSTRAINT "clipboard_storage_path_owned_by_user" CHECK ((("storage_path" IS NULL) OR ("storage_path" ~~ (("user_id")::"text" || '/%'::"text")))),
     CONSTRAINT "enforce_private_only" CHECK (("is_public" = false))
 );
 
@@ -745,7 +746,10 @@ CREATE TABLE IF NOT EXISTS "public"."mobile_link_tokens" (
     "user_id" "uuid" NOT NULL,
     "token" "text" NOT NULL,
     "expires_at" timestamp with time zone NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "pin_hash" "text",
+    CONSTRAINT "mobile_link_tokens_pin_hash_required" CHECK ((("pin_hash" IS NOT NULL) AND ("pin_hash" ~ '^[a-f0-9]{64}$'::"text"))),
+    CONSTRAINT "mobile_link_tokens_token_sha256" CHECK (("token" ~ '^[a-f0-9]{64}$'::"text"))
 );
 
 
@@ -780,11 +784,6 @@ ALTER TABLE ONLY "public"."clipboard"
 
 
 
-ALTER TABLE "public"."clipboard"
-    ADD CONSTRAINT "clipboard_storage_path_owned_by_user" CHECK ((("storage_path" IS NULL) OR ("storage_path" ~~ (("user_id")::"text" || '/%'::"text")))) NOT VALID;
-
-
-
 ALTER TABLE ONLY "public"."devices"
     ADD CONSTRAINT "devices_pkey" PRIMARY KEY ("id");
 
@@ -792,6 +791,11 @@ ALTER TABLE ONLY "public"."devices"
 
 ALTER TABLE ONLY "public"."devices"
     ADD CONSTRAINT "devices_user_type_name_unique" UNIQUE ("user_id", "device_type", "device_name");
+
+
+
+ALTER TABLE "public"."mobile_link_tokens"
+    ADD CONSTRAINT "mobile_link_tokens_max_ttl" CHECK (("expires_at" <= ("created_at" + '00:10:00'::interval))) NOT VALID;
 
 
 
@@ -805,11 +809,6 @@ ALTER TABLE ONLY "public"."mobile_link_tokens"
 
 
 
-ALTER TABLE "public"."mobile_link_tokens"
-    ADD CONSTRAINT "mobile_link_tokens_token_sha256" CHECK (("token" ~ '^[a-f0-9]{64}$'::"text")) NOT VALID;
-
-
-
 ALTER TABLE ONLY "public"."devices"
     ADD CONSTRAINT "unique_user_token" UNIQUE ("user_id", "fcm_token");
 
@@ -817,6 +816,10 @@ ALTER TABLE ONLY "public"."devices"
 
 ALTER TABLE ONLY "public"."user_rate_limit"
     ADD CONSTRAINT "user_rate_limit_pkey" PRIMARY KEY ("user_id");
+
+
+
+CREATE UNIQUE INDEX "devices_fcm_token_global_unique" ON "public"."devices" USING "btree" ("fcm_token") WHERE ("fcm_token" IS NOT NULL);
 
 
 
@@ -864,15 +867,7 @@ CREATE INDEX "idx_devices_user_device_type" ON "public"."devices" USING "btree" 
 
 
 
-CREATE INDEX "idx_devices_user_id" ON "public"."devices" USING "btree" ("user_id");
-
-
-
 CREATE INDEX "idx_mobile_link_tokens_expires_at" ON "public"."mobile_link_tokens" USING "btree" ("expires_at");
-
-
-
-CREATE INDEX "idx_mobile_link_tokens_token" ON "public"."mobile_link_tokens" USING "btree" ("token");
 
 
 
@@ -880,19 +875,7 @@ CREATE INDEX "idx_mobile_link_tokens_user_id" ON "public"."mobile_link_tokens" U
 
 
 
-CREATE INDEX "idx_user_rate_limit_user_id" ON "public"."user_rate_limit" USING "btree" ("user_id");
-
-
-
 CREATE OR REPLACE TRIGGER "cleanup_storage_after_clipboard_delete" AFTER DELETE ON "public"."clipboard" FOR EACH ROW EXECUTE FUNCTION "public"."cleanup_storage_on_clipboard_delete"();
-
-
-
-CREATE OR REPLACE TRIGGER "clipboard_broadcast_changes" AFTER INSERT OR DELETE OR UPDATE ON "public"."clipboard" FOR EACH ROW EXECUTE FUNCTION "public"."broadcast_clipboard_changes"();
-
-
-
-COMMENT ON TRIGGER "clipboard_broadcast_changes" ON "public"."clipboard" IS 'Emits per-user clipboard Broadcast events for active clients. FCM and storage triggers remain separate.';
 
 
 
@@ -927,7 +910,7 @@ Generous limit allows multiple platforms (Windows, macOS, Android, iOS, Linux, e
 
 
 ALTER TABLE ONLY "public"."clipboard"
-    ADD CONSTRAINT "clipboard_new_user_id_fkey1" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id");
+    ADD CONSTRAINT "clipboard_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -1023,6 +1006,10 @@ ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
 
 
 
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."clipboard";
 
 
 
@@ -1330,33 +1317,30 @@ GRANT ALL ON FUNCTION "public"."notify_mobile_devices_on_clipboard_insert"() TO 
 
 
 
-GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."app_config" TO "anon";
-GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."app_config" TO "authenticated";
+GRANT SELECT ON TABLE "public"."app_config" TO "anon";
+GRANT SELECT ON TABLE "public"."app_config" TO "authenticated";
 GRANT ALL ON TABLE "public"."app_config" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."clipboard" TO "anon";
-GRANT ALL ON TABLE "public"."clipboard" TO "authenticated";
 GRANT ALL ON TABLE "public"."clipboard" TO "service_role";
 GRANT SELECT ON TABLE "public"."clipboard" TO "supabase_realtime_admin";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."clipboard" TO "authenticated";
 
 
 
-GRANT ALL ON SEQUENCE "public"."clipboard_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."clipboard_id_seq" TO "authenticated";
 GRANT ALL ON SEQUENCE "public"."clipboard_id_seq" TO "service_role";
+GRANT USAGE ON SEQUENCE "public"."clipboard_id_seq" TO "authenticated";
 
 
 
-GRANT ALL ON TABLE "public"."devices" TO "anon";
-GRANT ALL ON TABLE "public"."devices" TO "authenticated";
 GRANT ALL ON TABLE "public"."devices" TO "service_role";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."devices" TO "authenticated";
 
 
 
-GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE "public"."mobile_link_tokens" TO "anon";
-GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE "public"."mobile_link_tokens" TO "authenticated";
+GRANT INSERT,DELETE,UPDATE ON TABLE "public"."mobile_link_tokens" TO "anon";
+GRANT INSERT,DELETE,UPDATE ON TABLE "public"."mobile_link_tokens" TO "authenticated";
 GRANT ALL ON TABLE "public"."mobile_link_tokens" TO "service_role";
 
 
@@ -1396,8 +1380,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUN
 
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
 
 
