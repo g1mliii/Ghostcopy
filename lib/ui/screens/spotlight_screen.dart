@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-
+import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 import 'package:window_manager/window_manager.dart';
 
 
@@ -23,6 +24,7 @@ import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/hotkey_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/impl/temp_file_service.dart';
 import '../../services/lifecycle_controller.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/notification_service.dart';
@@ -2418,13 +2420,55 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     }
   }
 
+  /// Build the payload for dragging this clip out of the app.
+  ///
+  /// Files and images are offered as real files so Explorer/Finder accept a
+  /// drop onto the desktop: the bytes are fetched (decrypted on the way
+  /// through by downloadFile) and written to a temp file, then offered as a
+  /// file URI. Text clips are offered as plain text so they can be dropped
+  /// into an editor.
+  ///
+  /// Returns null when there is nothing draggable, which cancels the drag.
+  Future<DragItem?> _buildDragItem(DragItemRequest request) async {
+    final item = widget.item;
+
+    if (item.requiresDownload) {
+      final bytes = await widget.clipboardRepository.downloadFile(item);
+      if (bytes == null || bytes.isEmpty) return null;
+
+      final filename =
+          item.metadata?.originalFilename ??
+          'ghostcopy-${item.id}.${item.contentType.value}';
+
+      // Reuses the temp file service, which already sweeps these up
+      // periodically, so dragging does not leak files.
+      final file = await TempFileService.instance.saveTempFile(bytes, filename);
+
+      return DragItem(
+        localData: {'clipboard_id': item.id},
+        suggestedName: filename,
+      )..add(Formats.fileUri(file.uri));
+    }
+
+    if (item.content.isEmpty) return null;
+
+    return DragItem(
+      localData: {'clipboard_id': item.id},
+      suggestedName: 'clip.txt',
+    )..add(Formats.plainText(item.content));
+  }
+
   @override
   Widget build(BuildContext context) {
     // Perf: Merged GestureDetector+MouseRegion+InkWell into single InkWell
     // with onSecondaryTapDown. Reduces hit-test layers from 5 to 2 per item.
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
+    return DragItemWidget(
+      allowedOperations: () => const [DropOperation.copy],
+      dragItemProvider: _buildDragItem,
+      child: DraggableWidget(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
         onTap: widget.onTap,
         onSecondaryTapDown: (details) {
           _showContextMenu(context, details.globalPosition);
@@ -2536,6 +2580,8 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
               ),
             ],
           ),
+        ),
+      ),
         ),
       ),
     );
