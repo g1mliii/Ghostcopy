@@ -411,6 +411,13 @@ class MobileMainViewModel extends ChangeNotifier {
       return;
     }
 
+    // Staged file (picked or shared in). Goes through the same Send button as
+    // everything else so device targeting applies.
+    if (_clipboardContent?.hasFile ?? false) {
+      await _sendFile(onSendSuccess: onSendSuccess);
+      return;
+    }
+
     final content = pasteText.trim();
     if (content.isEmpty) {
       _sendErrorMessage = 'Please paste or type content to send';
@@ -471,6 +478,64 @@ class MobileMainViewModel extends ChangeNotifier {
   }
 
   /// Send image from clipboard content
+  /// Send a staged file, honouring the selected device chips.
+  ///
+  /// Mirrors _sendImage. Files previously uploaded straight from the picker,
+  /// which bypassed this entirely and therefore always went to every device.
+  Future<void> _sendFile({VoidCallback? onSendSuccess}) async {
+    final content = _clipboardContent;
+    if (content?.hasFile != true) return;
+
+    _isSending = true;
+    _sendErrorMessage = null;
+    notifyListeners();
+
+    try {
+      final bytes = content!.fileBytes!;
+      final filename = content.filename ?? 'file';
+      final typeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        filename,
+      );
+
+      List<String>? targetTypes;
+      if (_selectedDeviceTypes.isNotEmpty) {
+        targetTypes = _selectedDeviceTypes.toList();
+      }
+
+      await _clipboardRepo.insertFile(
+        userId: _authService.currentUserId!,
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        deviceName: null,
+        fileBytes: bytes,
+        originalFilename: filename,
+        contentType: typeInfo.contentType,
+        mimeType: typeInfo.mimeType,
+        targetDeviceTypes: targetTypes,
+      );
+
+      debugPrint(
+        '[MobileMainVM] Sent file $filename '
+        '(${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+      );
+
+      if (!_isDisposed) {
+        _clipboardContent = null;
+        _isSending = false;
+        notifyListeners();
+        onSendSuccess?.call();
+        unawaited(loadHistory());
+      }
+    } on Exception catch (e) {
+      debugPrint('[MobileMainVM] Failed to send file: $e');
+      if (!_isDisposed) {
+        _isSending = false;
+        _sendErrorMessage = 'Failed to send file';
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> _sendImage({VoidCallback? onSendSuccess}) async {
     if (_clipboardContent?.hasImage != true) return;
 
@@ -571,38 +636,30 @@ class MobileMainViewModel extends ChangeNotifier {
 
       final bytes = await image.readAsBytes();
 
+      // Only the mime type is needed now: _sendImage derives ContentType from
+      // it at send time.
       String mimeType;
-      ContentType contentType;
 
       final path = image.path.toLowerCase();
       if (path.endsWith('.png')) {
         mimeType = 'image/png';
-        contentType = ContentType.imagePng;
       } else if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
         mimeType = 'image/jpeg';
-        contentType = ContentType.imageJpeg;
       } else if (path.endsWith('.gif')) {
         mimeType = 'image/gif';
-        contentType = ContentType.imageGif;
       } else {
         mimeType = 'image/jpeg';
-        contentType = ContentType.imageJpeg;
       }
 
-      await _clipboardRepo.insertImage(
-        userId: _authService.currentUserId ?? '',
-        deviceType: ClipboardRepository.getCurrentDeviceType(),
-        deviceName: null,
-        imageBytes: bytes,
-        mimeType: mimeType,
-        contentType: contentType,
-      );
-
+      // STAGE, don't send. Picking an image now behaves like pasting one:
+      // it appears in the preview and the user presses Send. Sending straight
+      // from the picker skipped the device chips entirely, so every picked
+      // image went to all devices regardless of what was selected.
       if (!_isDisposed) {
+        _clipboardContent = ClipboardContent.image(bytes, mimeType);
         _isUploadingImage = false;
         notifyListeners();
         onSuccess?.call();
-        unawaited(loadHistory());
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to upload image: $e');
@@ -644,25 +701,22 @@ class MobileMainViewModel extends ChangeNotifier {
         if (!shouldContinue) return;
       }
 
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
       final fileTypeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
         file.name,
       );
 
-      await _clipboardRepo.insertFile(
-        userId: _authService.currentUserId!,
-        deviceType: deviceType,
-        deviceName: null,
-        fileBytes: bytes,
-        originalFilename: file.name,
-        contentType: fileTypeInfo.contentType,
-        mimeType: fileTypeInfo.mimeType,
-      );
-
+      // STAGE, don't send - same reasoning as images above. This path used to
+      // upload immediately on pick, which both skipped the preview and ignored
+      // the selected device chips.
       if (!_isDisposed) {
+        _clipboardContent = ClipboardContent.file(
+          bytes,
+          file.name,
+          fileTypeInfo.mimeType,
+        );
+        notifyListeners();
         onSuccess?.call(file.name);
-        unawaited(loadHistory());
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] File pick failed: $e');

@@ -187,6 +187,156 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     debugPrint('[MobileMain] Cleared pending attachment preview');
   }
 
+  /// Offer image or file in one place.
+  ///
+  /// Previously these were two separate controls - an icon by the paste box and
+  /// a floating action button - that behaved differently: the image one staged
+  /// a preview, the file one uploaded immediately and ignored the device chips.
+  /// Both now stage an attachment and are sent with the Send button.
+  Future<void> _showAttachSheet() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: GhostColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: GhostColors.textMutedAlpha50,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(
+                Icons.add_photo_alternate_outlined,
+                color: GhostColors.primary,
+              ),
+              title: const Text(
+                'Image',
+                style: TextStyle(color: GhostColors.textPrimary),
+              ),
+              subtitle: const Text(
+                'Pick from your gallery',
+                style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
+              ),
+              onTap: () => Navigator.of(context).pop('image'),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.insert_drive_file_outlined,
+                color: GhostColors.primary,
+              ),
+              title: const Text(
+                'File',
+                style: TextStyle(color: GhostColors.textPrimary),
+              ),
+              subtitle: const Text(
+                'Any file up to 10MB',
+                style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
+              ),
+              onTap: () => Navigator.of(context).pop('file'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'image') {
+      await _viewModel.handleImageUpload(
+        onSuccess: () {
+          if (mounted) {
+            showGhostToast(
+              context,
+              'Image attached - press Send',
+              icon: Icons.image_outlined,
+              type: GhostToastType.success,
+            );
+          }
+        },
+        onError: (msg) {
+          if (mounted) {
+            showGhostToast(
+              context,
+              msg,
+              icon: Icons.error,
+              type: GhostToastType.error,
+            );
+          }
+        },
+      );
+      return;
+    }
+
+    await _viewModel.handleFilePick(
+      onLargeFileConfirm: (sizeMB) async {
+        if (!mounted) return false;
+        return await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                backgroundColor: GhostColors.surface,
+                title: const Text(
+                  'Large File',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: GhostColors.textPrimary,
+                  ),
+                ),
+                content: Text(
+                  'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: GhostColors.textMuted,
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Attach'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+      },
+      onSuccess: (filename) {
+        if (mounted) {
+          showGhostToast(
+            context,
+            '$filename attached - press Send',
+            icon: Icons.attach_file,
+            type: GhostToastType.success,
+          );
+        }
+      },
+      onError: (msg) {
+        if (mounted) {
+          showGhostToast(
+            context,
+            msg,
+            icon: Icons.error,
+            type: GhostToastType.error,
+          );
+        }
+      },
+    );
+  }
+
   Widget _buildAttachmentClearButton({required String tooltip}) {
     return Container(
       width: 28,
@@ -809,70 +959,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _viewModel.handleFilePick(
-          onLargeFileConfirm: (sizeMB) async {
-            if (!mounted) return false;
-            final shouldContinue =
-                await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    backgroundColor: GhostColors.surface,
-                    title: const Text(
-                      'Large File Warning',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: GhostColors.textPrimary,
-                      ),
-                    ),
-                    content: Text(
-                      'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: GhostColors.textMuted,
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        child: const Text('Upload'),
-                      ),
-                    ],
-                  ),
-                ) ??
-                false;
-            return shouldContinue;
-          },
-          onSuccess: (filename) {
-            if (mounted) {
-              showGhostToast(
-                context,
-                'File uploaded: $filename',
-                icon: Icons.upload_file,
-                type: GhostToastType.success,
-              );
-            }
-          },
-          onError: (msg) {
-            if (mounted) {
-              showGhostToast(
-                context,
-                msg,
-                icon: Icons.error,
-                type: GhostToastType.error,
-              );
-            }
-          },
-        ),
-        backgroundColor: GhostColors.primary,
-        tooltip: 'Attach file',
-        child: const Icon(Icons.attach_file, color: Colors.white),
-      ),
       body: RefreshIndicator(
         onRefresh: _viewModel.handleRefresh,
         color: GhostColors.primary,
@@ -1201,33 +1287,15 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
               child: Row(
                 children: [
+                  // One attach control for both images and files. They used
+                  // to be separate buttons in different places that behaved
+                  // differently, which made the difference feel arbitrary.
                   IconButton(
-                    onPressed: () => _viewModel.handleImageUpload(
-                      onSuccess: () {
-                        if (mounted) {
-                          showGhostToast(
-                            context,
-                            'Image uploaded successfully',
-                            icon: Icons.check_circle,
-                            type: GhostToastType.success,
-                          );
-                        }
-                      },
-                      onError: (msg) {
-                        if (mounted) {
-                          showGhostToast(
-                            context,
-                            msg,
-                            icon: Icons.error,
-                            type: GhostToastType.error,
-                          );
-                        }
-                      },
-                    ),
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    onPressed: _showAttachSheet,
+                    icon: const Icon(Icons.attach_file),
                     color: GhostColors.primary,
                     iconSize: 20,
-                    tooltip: 'Upload image',
+                    tooltip: 'Attach image or file',
                     padding: const EdgeInsets.all(8),
                     constraints: const BoxConstraints(),
                   ),
