@@ -216,14 +216,28 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
       if (!success || !mounted) return;
 
-      // Verify against real data. setPassphrase() accepts anything; only
-      // attempting to decrypt an actual clip proves the passphrase is right.
+      // Verify against real data. setPassphrase() accepts anything, so only
+      // actually decrypting a clip proves the passphrase is right.
+      //
+      // The test is whether the locked count DROPPED, not whether it reached
+      // zero. History can legitimately contain clips encrypted under several
+      // different passphrases - anything from before a passphrase change, or
+      // from another device that had a different one - and those stay locked
+      // forever by design. Requiring zero rejected correct passphrases
+      // whenever any older clip was unopenable.
       if (hasExistingEncrypted) {
+        final lockedBefore = repo.undecryptableItemCount.value;
         setState(() => _encryptionLoading = true);
         await repo.getHistory();
         if (!mounted) return;
 
-        if (repo.undecryptableItemCount.value > 0) {
+        final lockedAfter = repo.undecryptableItemCount.value;
+        debugPrint(
+          '[MobileSettings] Passphrase check: locked $lockedBefore -> '
+          '$lockedAfter',
+        );
+
+        if (lockedAfter >= lockedBefore) {
           await _encryptionService!.clearPassphrase();
           if (!mounted) return;
           setState(() {
@@ -233,14 +247,30 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'That passphrase does not match your existing clips',
+                'That passphrase did not unlock any of your clips',
               ),
               backgroundColor: Colors.red,
             ),
           );
           return;
         }
+
         setState(() => _encryptionLoading = false);
+
+        if (lockedAfter > 0) {
+          // Partial success is the expected outcome after a passphrase change.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '${lockedBefore - lockedAfter} clip(s) unlocked. $lockedAfter '
+                'still use a different passphrase.',
+              ),
+              backgroundColor: GhostColors.success,
+            ),
+          );
+          setState(() => _encryptionEnabled = true);
+          return;
+        }
       }
 
       setState(() => _encryptionEnabled = true);
