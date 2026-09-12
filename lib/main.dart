@@ -16,6 +16,7 @@ import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/device_service.dart';
 import 'services/fcm_service.dart';
+import 'services/file_type_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/hotkey_service.dart';
 import 'services/impl/auth_service.dart';
@@ -108,6 +109,11 @@ Future<void> main(List<String> args) async {
       _registerWindowsUrlScheme()
     else
       Future<void>.value(),
+
+    if (Platform.isWindows)
+      _registerWindowsContextMenu()
+    else
+      Future<void>.value(),
   ]);
 
   // Initialize services that depend on Supabase
@@ -117,6 +123,16 @@ Future<void> main(List<String> args) async {
   locator
     ..registerSingleton<IAuthService>(authService)
     ..registerSingleton<IDeviceService>(deviceService);
+
+  // Launched from the Explorer context menu ("Send with GhostCopy"). Send the
+  // file and exit WITHOUT building a window, tray icon or hotkey - otherwise
+  // every right-click would leave a second instance and a duplicate tray icon
+  // behind. This runs before any UI is created for that reason.
+  final sendFileIndex = args.indexOf('--send-file');
+  if (sendFileIndex != -1 && sendFileIndex + 1 < args.length) {
+    await _sendFileFromCommandLine(args[sendFileIndex + 1], authService);
+    exit(0);
+  }
 
   // PARALLEL GROUP 2: Auth and Device initialization (both depend on Supabase)
   if (_isDesktop()) {
@@ -778,6 +794,89 @@ class _MyAppState extends State<MyApp> {
 
     // Mobile main screen - show after auth complete
     return const MobileMainScreen();
+  }
+}
+
+
+/// Upload a file passed on the command line, then return so main() can exit.
+///
+/// Used by the Windows Explorer context menu. Deliberately minimal: no window,
+/// no tray, no hotkey - just auth, upload, done.
+Future<void> _sendFileFromCommandLine(
+  String path,
+  IAuthService authService,
+) async {
+  try {
+    final file = File(path);
+    if (!file.existsSync()) {
+      debugPrint('[SendFile] ✗ No such file: $path');
+      return;
+    }
+
+    final bytes = await file.readAsBytes();
+
+    // Matches the 10MB ceiling enforced by the DB CHECK and storage-presign.
+    const maxBytes = 10485760;
+    if (bytes.length > maxBytes) {
+      debugPrint(
+        '[SendFile] ✗ ${file.path} is ${bytes.length} bytes, over the 10MB limit',
+      );
+      return;
+    }
+
+    await authService.initialize();
+    final userId = authService.currentUserId;
+    if (userId == null) {
+      debugPrint('[SendFile] ✗ Not signed in');
+      return;
+    }
+
+    final filename = path.split(Platform.pathSeparator).last;
+    // Sniffs magic bytes and falls back to the extension, matching how the
+    // drop/paste paths classify files.
+    final typeInfo = FileTypeService.instance.detectFromBytes(bytes, filename);
+
+    await ClipboardRepository.instance.insertFile(
+      userId: userId,
+      deviceType: ClipboardRepository.getCurrentDeviceType(),
+      deviceName: ClipboardRepository.getCurrentDeviceName(),
+      fileBytes: bytes,
+      mimeType: typeInfo.mimeType,
+      contentType: typeInfo.contentType,
+      originalFilename: filename,
+    );
+
+    debugPrint('[SendFile] ✅ Sent $filename (${bytes.length} bytes)');
+  } on Object catch (e) {
+    debugPrint('[SendFile] ✗ Failed to send $path: $e');
+  }
+}
+
+/// Add "Send with GhostCopy" to the Explorer right-click menu for all files.
+///
+/// Written under HKCU so no elevation is needed. `*` covers every file type.
+/// The command passes the clicked path as --send-file, which main() handles
+/// before any UI exists.
+Future<void> _registerWindowsContextMenu() async {
+  try {
+    final exePath = Platform.resolvedExecutable;
+    const key = r'HKCU\Software\Classes\*\shell\GhostCopySend';
+
+    await Process.run('reg', [
+      'add', key, '/ve', '/d', 'Send with GhostCopy', '/f',
+    ]);
+    await Process.run('reg', [
+      'add', key, '/v', 'Icon', '/d', '"$exePath",0', '/f',
+    ]);
+    await Process.run('reg', [
+      'add', r'$key' r'\command', '/ve', '/d',
+      '"$exePath" --send-file "%1"', '/f',
+    ]);
+
+    debugPrint('[Main] ✅ Registered "Send with GhostCopy" context menu');
+  } on Exception catch (e) {
+    debugPrint('[Main] ⚠️ Failed to register context menu: $e');
+    // Non-fatal - continue app startup
   }
 }
 
