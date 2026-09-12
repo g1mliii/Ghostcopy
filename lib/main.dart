@@ -746,14 +746,9 @@ class _MyAppState extends State<MyApp> {
   void _hideTrayMenu() {
     setState(() => _showingTrayMenu = false);
     locator<IWindowService>().hideSpotlight();
-
-    // Test toast notification when minimizing to tray (with delay to ensure window is hidden)
-    Future.delayed(const Duration(milliseconds: 500), () {
-      locator<INotificationService>().showToast(
-        message: 'App closed to tray',
-        duration: const Duration(seconds: 3),
-      );
-    });
+    // No "App closed to tray" toast: hiding to the tray is the app's normal
+    // resting state, so announcing it every time is noise. It was also a
+    // fire-and-forget Future.delayed that could fire after disposal.
   }
 
   Future<void> _openSettingsFromTray() async {
