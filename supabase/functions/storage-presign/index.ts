@@ -1,158 +1,283 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { S3Client, DeleteObjectCommand, PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.600.0';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.600.0';
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 };
-
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
 const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID') ?? '';
 const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
 // .trim() guards against accidental whitespace when secrets are set via dashboard copy-paste
 const R2_BUCKET_NAME = (Deno.env.get('R2_BUCKET_NAME') ?? 'ghostcopy-files').trim();
-const R2_PUBLIC_URL = (Deno.env.get('R2_PUBLIC_URL') ?? '').trim();
-
+const DOWNLOAD_URL_TTL_SECONDS = 300;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const STORAGE_RATE_LIMITS = {
+  upload: 20,
+  download: 120,
+  delete: 30
+};
+const storageRateLimitCache = new Map();
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
     accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey: R2_SECRET_ACCESS_KEY,
+    secretAccessKey: R2_SECRET_ACCESS_KEY
   },
-  forcePathStyle: false,
+  forcePathStyle: false
 });
-
-async function authenticate(req: Request): Promise<{ userId: string | null; error: Response | null }> {
+async function authenticate(req) {
   const authHeader = req.headers.get('Authorization') ?? '';
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-
   if (authHeader === `Bearer ${serviceRoleKey}`) {
-    return { userId: 'service-role', error: null };
+    return {
+      userId: 'service-role',
+      error: null
+    };
   }
-
-  const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    { global: { headers: { Authorization: authHeader } } },
-  );
-
+  const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
+    global: {
+      headers: {
+        Authorization: authHeader
+      }
+    }
+  });
   const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
   if (userError || !user) {
     return {
       userId: null,
-      error: new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      error: new Response(JSON.stringify({
+        error: 'Unauthorized'
+      }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }),
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      })
     };
   }
-
-  return { userId: user.id, error: null };
+  return {
+    userId: user.id,
+    error: null
+  };
 }
-
-Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+function checkStorageRateLimit(userId, action) {
+  const nowMs = Date.now();
+  const cacheKey = `${userId}:${action}`;
+  const maxCalls = STORAGE_RATE_LIMITS[action];
+  for (const [key, entry] of storageRateLimitCache.entries()){
+    if (nowMs - entry.windowStartMs > RATE_LIMIT_WINDOW_MS) {
+      storageRateLimitCache.delete(key);
+    }
   }
-
+  const current = storageRateLimitCache.get(cacheKey);
+  if (current == null || nowMs - current.windowStartMs > RATE_LIMIT_WINDOW_MS) {
+    storageRateLimitCache.set(cacheKey, {
+      count: 1,
+      windowStartMs: nowMs
+    });
+    return {
+      allowed: true,
+      retryAfterSeconds: 0
+    };
+  }
+  if (current.count >= maxCalls) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((RATE_LIMIT_WINDOW_MS - (nowMs - current.windowStartMs)) / 1000));
+    return {
+      allowed: false,
+      retryAfterSeconds
+    };
+  }
+  storageRateLimitCache.set(cacheKey, {
+    count: current.count + 1,
+    windowStartMs: current.windowStartMs
+  });
+  return {
+    allowed: true,
+    retryAfterSeconds: 0
+  };
+}
+Deno.serve(async (req)=>{
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', {
+      headers: corsHeaders
+    });
+  }
   try {
     const body = await req.json();
     const { action, path } = body;
-
-    if (
-      typeof action !== 'string' ||
-      typeof path !== 'string' ||
-      action.length === 0 ||
-      path.length === 0
-    ) {
-      return new Response(JSON.stringify({ error: 'Missing action or path' }), {
+    if (typeof action !== 'string' || typeof path !== 'string' || action.length === 0 || path.length === 0) {
+      return new Response(JSON.stringify({
+        error: 'Missing action or path'
+      }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
       });
     }
-
+    if (action !== 'upload' && action !== 'download' && action !== 'delete') {
+      return new Response(JSON.stringify({
+        error: 'Invalid action'
+      }), {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    if (path.startsWith('/') || path.includes('..') || path.includes('\\') || path.includes('\u0000') || path.split('/').some((segment)=>segment.length === 0)) {
+      return new Response(JSON.stringify({
+        error: 'Invalid storage path'
+      }), {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
     const { userId, error: authError } = await authenticate(req);
     if (authError) return authError;
-
-    const expectedPrefix = `${userId!}/`;
-    if (userId !== 'service-role' && !path.startsWith(expectedPrefix)) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+    // A privileged trigger calls this function with the service key. It must
+    // still prove the R2 object belongs to the row owner; otherwise the
+    // service role becomes a confused deputy for arbitrary-object deletion.
+    const ownerId = userId === 'service-role' ? typeof body.ownerId === 'string' ? body.ownerId : null : userId;
+    if (ownerId == null || !path.startsWith(`${ownerId}/`)) {
+      return new Response(JSON.stringify({
+        error: 'Forbidden'
+      }), {
         status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
       });
     }
-
+    const isUserAction = userId !== 'service-role';
+    const isRateLimitedAction = action === 'upload' || action === 'download' || action === 'delete';
+    if (isUserAction && isRateLimitedAction) {
+      const rateLimit = checkStorageRateLimit(userId, action);
+      if (!rateLimit.allowed) {
+        return new Response(JSON.stringify({
+          error: 'Rate limit exceeded',
+          retryAfter: rateLimit.retryAfterSeconds
+        }), {
+          status: 429,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+            'Retry-After': rateLimit.retryAfterSeconds.toString()
+          }
+        });
+      }
+    }
     if (action === 'upload') {
       // Server-side file size enforcement (matches client 10MB limit)
       const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-      // `size` is REQUIRED. It was previously optional, and omitting it skipped
-      // the limit check below *and* left ContentLength off the signed command,
-      // so the returned URL accepted an object of any size for a full hour.
-      // Anonymous sign-in is enabled, so anyone could mint a JWT and upload
-      // unbounded data to R2 at the project's expense.
-      const size = typeof body.size === 'number' && Number.isFinite(body.size)
-        ? body.size
-        : null;
-
+      // `size` is REQUIRED. It was optional, and omitting it skipped the limit
+      // check AND left ContentLength off the signed command - so the returned
+      // URL accepted an object of any size for a full hour. Anonymous sign-in
+      // is enabled, so anyone could mint a JWT and upload unbounded data to R2.
+      const size = typeof body.size === 'number' && Number.isFinite(body.size) ? body.size : null;
       if (size === null) {
-        return new Response(
-          JSON.stringify({ error: 'size is required for upload' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        );
+        return new Response(JSON.stringify({
+          error: 'size is required for upload'
+        }), {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
       }
-
       if (!Number.isInteger(size) || size <= 0 || size > MAX_FILE_SIZE) {
-        return new Response(
-          JSON.stringify({ error: 'File size must be between 1 byte and 10MB' }),
-          { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        );
+        return new Response(JSON.stringify({
+          error: 'File size must be between 1 byte and 10MB'
+        }), {
+          status: 413,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
       }
-
       // Generate presigned PUT URL — client uploads directly to R2 (zero Supabase bandwidth)
       // ContentType is intentionally omitted from the command so the signed headers
       // only include 'host', allowing the client to PUT without matching a content-type.
-      // ContentLength is always set, locking the presigned URL to that exact size.
+      // When size is provided, ContentLength locks the presigned URL to that exact size.
+      // ContentLength is always signed now, pinning the URL to that exact size.
       const command = new PutObjectCommand({
         Bucket: R2_BUCKET_NAME,
         Key: path,
-        ContentLength: size,
+        ContentLength: size
       });
-      const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-      const publicUrl = `${R2_PUBLIC_URL}/${path}`;
-
+      const presignedUrl = await getSignedUrl(s3Client, command, {
+        expiresIn: 3600
+      });
       console.log(`[storage-presign] Presigned upload URL generated for: ${path}`);
-
-      return new Response(
-        JSON.stringify({ presignedUrl, publicUrl }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({
+        presignedUrl,
+        storagePath: path
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
     }
-
+    if (action === 'download') {
+      const command = new GetObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: path
+      });
+      const downloadUrl = await getSignedUrl(s3Client, command, {
+        expiresIn: DOWNLOAD_URL_TTL_SECONDS
+      });
+      console.log(`[storage-presign] Signed download URL generated for: ${path}`);
+      return new Response(JSON.stringify({
+        downloadUrl,
+        expiresIn: DOWNLOAD_URL_TTL_SECONDS
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
     if (action === 'delete') {
       await s3Client.send(new DeleteObjectCommand({
         Bucket: R2_BUCKET_NAME,
-        Key: path,
+        Key: path
       }));
       console.log(`[storage-presign] Deleted: ${path}`);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({
+        success: true
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
     }
-
-    return new Response(JSON.stringify({ error: 'Invalid action' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-
-  } catch (error: any) {
+  } catch (error) {
     console.error('[storage-presign] Error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-    );
+    return new Response(JSON.stringify({
+      error: 'Internal server error'
+    }), {
+      status: 500,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json'
+      }
+    });
   }
 });
