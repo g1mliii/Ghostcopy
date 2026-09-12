@@ -26,6 +26,10 @@ class MainActivity : FlutterActivity() {
     private var shareChannel: MethodChannel? = null
     private var widgetChannel: MethodChannel? = null
 
+    // Guards against re-copying the same clip every time the activity resumes
+    // while a notification-launched intent is still attached.
+    private var lastHandledFcmClipboardId: String? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -85,9 +89,46 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // A tapped push notification launches this activity normally - the
+        // backend no longer sets an FCM clickAction, so nothing routes to
+        // COPY_ACTION and tapping used to just open the app and stop there.
+        // FCM delivers the message's `data` entries as intent extras, so the
+        // clip id arrives here; fetch and copy it through the existing
+        // RLS-scoped path.
+        handleFcmLaunchIntent(intent)
+    }
+
+    /**
+     * Copy the clip a push notification refers to, if this launch came from one.
+     *
+     * Only `clipboard_id` is trusted: it is resolved against Supabase under RLS
+     * and can therefore only ever return a row belonging to the signed-in user.
+     * Any content in the extras is ignored - the push deliberately carries none.
+     */
+    private fun handleFcmLaunchIntent(launchIntent: Intent?) {
+        val extras = launchIntent?.extras ?: return
+        val clipboardId = extras.getString("clipboard_id") ?: return
+        if (clipboardId.isEmpty() || clipboardId == lastHandledFcmClipboardId) return
+
+        lastHandledFcmClipboardId = clipboardId
+        val contentType = extras.getString("content_type") ?: "text"
+        val deviceType = extras.getString("device_type") ?: "Another device"
+
+        Log.d(TAG, "📬 Launched from notification for clip $clipboardId")
+        fetchAndCopyClipboardItem(clipboardId, contentType, deviceType)
+
+        // Don't re-copy on the next resume (e.g. returning from the background).
+        launchIntent.removeExtra("clipboard_id")
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the intent so Flutter can access it
+
+        // A notification tapped while the app is already running arrives here.
+        handleFcmLaunchIntent(intent)
 
         // Handle share intent from another app
         if (intent.action == Intent.ACTION_SEND) {

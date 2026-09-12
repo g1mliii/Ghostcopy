@@ -290,7 +290,12 @@ class ClipboardRepository implements IClipboardRepository {
               'target_device_type': targetDeviceTypes
                   ?.map(_validateDeviceType)
                   .toList(), // null = broadcast to all devices
-              'content': uploadResult.publicUrl,
+              // content is NOT NULL and used to hold a public r2.dev URL.
+              // The bucket is private now, so that URL 401s and is worse than
+              // useless - history search matches on content, so it made every
+              // image match a search for "r2". The filename is what a user
+              // would actually search for; the bytes live at storage_path.
+              'content': originalFilename ?? filename,
               'content_type': contentType.value,
               'mime_type': uploadMimeType,
               'file_size_bytes': uploadBytes.length,
@@ -308,7 +313,7 @@ class ClipboardRepository implements IClipboardRepository {
         return ClipboardItem(
           id: clipId,
           userId: userId,
-          content: uploadResult.publicUrl,
+          content: originalFilename ?? filename,
           deviceName: deviceName,
           deviceType: deviceType,
           targetDeviceTypes: targetDeviceTypes,
@@ -455,7 +460,8 @@ class ClipboardRepository implements IClipboardRepository {
           'target_device_type': targetDeviceTypes
               ?.map(_validateDeviceType)
               .toList(),
-          'content': uploadResult.publicUrl,
+          // See note above: filename, not a now-dead public URL.
+          'content': originalFilename ?? filename,
           'content_type': contentType.value,
           'mime_type': uploadMimeType,
           'file_size_bytes': uploadBytes.length,

@@ -1012,6 +1012,13 @@ class MobileMainViewModel extends ChangeNotifier {
   void onAppResumed() {
     debugPrint('[MobileMainVM] App resumed - Resuming Realtime subscription');
     _historySubscription?.resume();
+
+    // Re-fetch, don't just resume. Push notifications deliberately carry no
+    // clipboard content - the body literally says "Open GhostCopy to view it"
+    // - so opening the app IS the sync step. Resuming the subscription only
+    // restores the flow of future events; anything that arrived while the app
+    // was backgrounded would never appear until a manual pull-to-refresh.
+    unawaited(loadHistory());
   }
 
   /// Called on system memory pressure

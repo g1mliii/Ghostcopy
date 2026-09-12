@@ -10,7 +10,8 @@ import '../storage_service.dart';
 ///
 /// Upload: get presigned URL from edge function → Flutter PUTs directly to R2
 ///         (client → R2 direct, no Supabase bandwidth cost)
-/// Download: GET directly from R2 public URL (bucket is public, no auth needed)
+/// Download: ask storage-presign for a short-lived signed GET URL. The bucket
+/// is PRIVATE; public r2.dev access is disabled and returns 401 for every key.
 /// Delete: call edge function which deletes from R2 server-side
 class StorageService implements IStorageService {
   factory StorageService({SupabaseClient? client}) {
@@ -28,9 +29,6 @@ class StorageService implements IStorageService {
   final SupabaseClient _client;
   static const String _edgeFunctionName = 'storage-presign';
 
-  /// R2 public URL — matches R2_PUBLIC_URL in edge function secrets
-  static const String _r2PublicUrlBase =
-      'https://pub-17ef3eab5b964206b0ec1359b6fd8c53.r2.dev';
 
   @override
   Future<void> initialize() async {
@@ -61,8 +59,6 @@ class StorageService implements IStorageService {
       });
 
       final presignedUrl = presignData['presignedUrl'] as String;
-      final publicUrl = presignData['publicUrl'] as String? ??
-          '$_r2PublicUrlBase/$storagePath';
 
       debugPrint('[StorageService] → PUT directly to R2 presigned URL');
 
@@ -82,7 +78,6 @@ class StorageService implements IStorageService {
 
       return UploadResult(
         storagePath: storagePath,
-        publicUrl: publicUrl,
         fileSizeBytes: bytes.length,
       );
     } catch (e) {
@@ -98,7 +93,7 @@ class StorageService implements IStorageService {
       debugPrint('[StorageService] ↓ Downloading from R2: $storagePath');
 
       // The bucket is PRIVATE. It used to be public and this method fetched
-      // `$_r2PublicUrlBase/$storagePath` directly, but public access is now
+      // the public r2.dev URL directly, but public access is now
       // disabled - that URL returns 401 for every object, so images sat on a
       // loading spinner forever. Ask the edge function for a short-lived
       // signed URL instead, which is what its `download` action exists for.
