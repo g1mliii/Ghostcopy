@@ -17,6 +17,7 @@ import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
 import '../widgets/ghost_toast.dart';
+import '../widgets/native_toast.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
@@ -1688,13 +1689,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   item,
                   onSuccess: (msg) {
                     if (mounted) {
-                      showGhostToast(
-                        context,
-                        msg,
-                        icon: Icons.copy,
-                        type: GhostToastType.success,
-                        duration: const Duration(seconds: 1),
-                      );
+                      // Native Toast on Android: a copy confirmation should
+                      // look like the system, not like the app.
+                      unawaited(showNativeToast(context, msg, icon: Icons.copy));
                     }
                   },
                   onError: (msg) {

@@ -71,6 +71,17 @@ class ClipboardRepository implements IClipboardRepository {
   /// IClipboardRepository.undecryptableItemCount.
   final ValueNotifier<int> _undecryptableItemCount = ValueNotifier<int>(0);
 
+  /// Downloads currently in progress, keyed by storage_path.
+  ///
+  /// Several widgets routinely ask for the same image at once - a history tile
+  /// and an expanded preview, or two tiles across a rebuild. Without this they
+  /// all miss the cache (nothing is in it yet) and each runs its own signed-URL
+  /// request, R2 fetch and AES decrypt for identical bytes. Observed in the
+  /// logs as the same object downloaded and "Decrypted to N bytes" twice,
+  /// milliseconds apart, which is most of the first-load latency on mobile.
+  final Map<String, Future<Uint8List?>> _inFlightDownloads =
+      <String, Future<Uint8List?>>{};
+
   @override
   ValueListenable<int> get undecryptableItemCount => _undecryptableItemCount;
 
@@ -669,6 +680,30 @@ class ClipboardRepository implements IClipboardRepository {
       return cached;
     }
 
+    // Join an identical request already running rather than starting a second.
+    final inFlight = _inFlightDownloads[storagePath];
+    if (inFlight != null) {
+      debugPrint('[Repository] ⏳ Joining in-flight download: $storagePath');
+      return inFlight;
+    }
+
+    // Registered before any await so a concurrent caller sees it immediately.
+    final future = _downloadAndDecrypt(item, storagePath);
+    _inFlightDownloads[storagePath] = future;
+    try {
+      return await future;
+    } finally {
+      // remove() hands back the Future we just awaited; discarding it here is
+      // the point of the cleanup.
+      // ignore: unawaited_futures
+      _inFlightDownloads.remove(storagePath);
+    }
+  }
+
+  Future<Uint8List?> _downloadAndDecrypt(
+    ClipboardItem item,
+    String storagePath,
+  ) async {
     try {
       debugPrint('[Repository] ↓ Downloading: $storagePath');
 

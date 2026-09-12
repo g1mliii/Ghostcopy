@@ -55,6 +55,32 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // Native toast channel. Flutter's in-app toast is a custom overlay that
+        // does not look like the platform, so short confirmations ("Copied to
+        // clipboard") go through android.widget.Toast instead.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            NOTIFICATION_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "showNativeToast" -> {
+                    val message = call.argument<String>("message")
+                    if (message.isNullOrEmpty()) {
+                        result.error("INVALID_ARGS", "message is required", null)
+                    } else {
+                        val long = call.argument<Boolean>("long") ?: false
+                        Toast.makeText(
+                            this,
+                            message,
+                            if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
+                        ).show()
+                        result.success(true)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         // Method channel for widget updates
         widgetChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
