@@ -987,6 +987,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ),
             ),
 
+            // Locked-clips banner. This must sit OUTSIDE the history list,
+            // because encrypted clips this device cannot open are dropped from
+            // the list entirely - so when other readable clips exist the list
+            // is not empty, the empty-state never renders, and the locked ones
+            // would disappear with no explanation at all.
+            _buildLockedClipsBanner(),
+
             // History list
             _buildHistoryList(),
           ],
@@ -1397,6 +1404,76 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ],
                 ),
         ),
+      ),
+    );
+  }
+
+  /// Banner shown whenever this device holds clips it cannot decrypt.
+  ///
+  /// Rendered above the history list rather than inside its empty state: the
+  /// locked clips are removed from the list, so if anything readable exists
+  /// the list is non-empty and an empty-state message would never appear.
+  Widget _buildLockedClipsBanner() {
+    return SliverToBoxAdapter(
+      child: ValueListenableBuilder<int>(
+        valueListenable: _viewModel.undecryptableItemCount,
+        builder: (context, locked, _) {
+          if (locked == 0) return const SizedBox.shrink();
+
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Material(
+              color: GhostColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: _navigateToSettings,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.lock_outline,
+                        color: GhostColors.primary,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              locked == 1
+                                  ? '1 clip is encrypted'
+                                  : '$locked clips are encrypted',
+                              style: GhostTypography.body.copyWith(
+                                color: GhostColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Tap to enter your passphrase. It is never sent '
+                              'to the server, so each device needs it once.',
+                              style: GhostTypography.caption.copyWith(
+                                color: GhostColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right,
+                        color: GhostColors.textMuted,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

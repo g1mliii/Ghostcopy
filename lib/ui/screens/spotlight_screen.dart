@@ -1954,6 +1954,47 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
           controller: _searchController,
           onChanged: _filterHistory,
         ),
+        // Locked-clips banner. Outside the list for the same reason as mobile:
+        // undecryptable clips are removed from the list, so when readable ones
+        // exist the empty-state never renders and they would vanish silently.
+        ValueListenableBuilder<int>(
+          valueListenable: widget.clipboardRepository.undecryptableItemCount,
+          builder: (context, locked, _) {
+            if (locked == 0) return const SizedBox.shrink();
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: GhostColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.lock_outline,
+                    size: 16,
+                    color: GhostColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      locked == 1
+                          ? '1 clip is encrypted - enter your passphrase in '
+                                'Settings to unlock it'
+                          : '$locked clips are encrypted - enter your '
+                                'passphrase in Settings to unlock them',
+                      style: const TextStyle(
+                        color: GhostColors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
         // History list
         Expanded(
           child: widget.isLoading
