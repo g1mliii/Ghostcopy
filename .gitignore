@@ -70,6 +70,10 @@ secrets/
 *.pem
 *.p12
 *.key
+*.p8
+*.jks
+*.keystore
+key.properties
 
 # Firebase configs (contain API keys)
 android/app/google-services.json
