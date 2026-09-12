@@ -318,11 +318,35 @@ class MobileMainViewModel extends ChangeNotifier {
         _cleanupCache();
         notifyListeners();
 
-        // Auto-copy latest item if it's from another device
+        // Auto-copy the latest item, but only when it genuinely came from
+        // another device AND was targeted at this one. Previously this copied
+        // any new row, so a clip sent to "Windows only" still overwrote the
+        // phone's clipboard - the exact leak device targeting exists to stop.
+        // Mirrors the desktop checks in ClipboardSyncService.
         if (items.isNotEmpty) {
           final latest = items.first;
           if (oldFirstId == null || latest.id != oldFirstId) {
-            unawaited(_autoCopyToClipboard(latest));
+            final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+            final isFromDifferentDevice =
+                latest.deviceName == null ||
+                currentDeviceName == null ||
+                latest.deviceName != currentDeviceName;
+
+            final targets = latest.targetDeviceTypes;
+            final isTargetedToMe =
+                targets == null ||
+                targets.isEmpty ||
+                targets.contains(ClipboardRepository.getCurrentDeviceType());
+
+            if (isFromDifferentDevice && isTargetedToMe) {
+              unawaited(_autoCopyToClipboard(latest));
+            } else {
+              debugPrint(
+                '[MobileMainVM] Skipped auto-copy '
+                '(fromOtherDevice=$isFromDifferentDevice, '
+                'targeted=$isTargetedToMe)',
+              );
+            }
           }
         }
       },
@@ -392,11 +416,10 @@ class MobileMainViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Encrypt if enabled
-      var finalContent = content;
-      if (_encryptionService != null && await _encryptionService!.isEnabled()) {
-        finalContent = await _encryptionService!.encrypt(content);
-      }
+      // NOTE: do NOT encrypt here. ClipboardRepository.insert() encrypts
+      // when encryption is enabled; doing it here as well stored E(E(content))
+      // against is_encrypted=true, so readers decrypted once and got ciphertext.
+      final finalContent = content;
 
       // Determine target devices
       List<String>? targetTypes;
@@ -674,21 +697,11 @@ class MobileMainViewModel extends ChangeNotifier {
           XFile(tempFile.path),
         ], text: 'Shared via GhostCopy');
       } else if (item.isRichText) {
-        var finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        if (_decryptedContentCache[item.id] == null &&
-            _encryptionService != null &&
-            item.isEncrypted) {
-          try {
-            finalContent = await _encryptionService!.decrypt(item.content);
-            _cacheDecryptedContent(item.id, finalContent);
-          } on Exception catch (e) {
-            debugPrint(
-              '[MobileMainVM] Decryption failed, using raw content: $e',
-            );
-            finalContent = item.content;
-          }
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
           await clipboardService.writeHtml(finalContent);
@@ -698,21 +711,11 @@ class MobileMainViewModel extends ChangeNotifier {
 
         onSuccess?.call('Copied ${item.richTextFormat?.value ?? "rich text"}');
       } else {
-        var finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        if (_decryptedContentCache[item.id] == null &&
-            _encryptionService != null &&
-            item.isEncrypted) {
-          try {
-            finalContent = await _encryptionService!.decrypt(item.content);
-            _cacheDecryptedContent(item.id, finalContent);
-          } on Exception catch (e) {
-            debugPrint(
-              '[MobileMainVM] Decryption failed, using raw content: $e',
-            );
-            finalContent = item.content;
-          }
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         await clipboardService.writeText(finalContent);
         onSuccess?.call('Copied to clipboard');
@@ -936,11 +939,11 @@ class MobileMainViewModel extends ChangeNotifier {
       } else {
         final clipboardService = ClipboardService.instance;
 
-        // Decrypt if needed before copying to clipboard
-        var content = item.content;
-        if (_encryptionService != null && item.isEncrypted) {
-          content = await _encryptionService!.decrypt(content);
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final content = item.content;
 
         switch (item.contentType) {
           case ContentType.html:
@@ -1128,10 +1131,11 @@ class MobileMainViewModel extends ChangeNotifier {
           '[MobileMainVM] Auto-copied image to clipboard (${bytes.length} bytes)',
         );
       } else if (item.isRichText) {
-        var finalContent = item.content;
-        if (_encryptionService != null && item.isEncrypted) {
-          finalContent = await _encryptionService!.decrypt(item.content);
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
           await clipboardService.writeHtml(finalContent);
@@ -1143,10 +1147,11 @@ class MobileMainViewModel extends ChangeNotifier {
           '[MobileMainVM] Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard',
         );
       } else {
-        var finalContent = item.content;
-        if (_encryptionService != null && item.isEncrypted) {
-          finalContent = await _encryptionService!.decrypt(item.content);
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = item.content;
 
         await clipboardService.writeText(finalContent);
         debugPrint('[MobileMainVM] Auto-copied text to clipboard');

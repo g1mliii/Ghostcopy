@@ -1663,26 +1663,12 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       }
     }
 
-    var content = widget.item.content;
-    if (_decryptedContent == null &&
-        widget.encryptionService != null &&
-        widget.item.isEncrypted) {
-      try {
-        content = await widget.encryptionService!.decrypt(content);
-        _decryptedContent = content;
-
-        widget.onContentDecrypted?.call(content);
-
-        if (mounted) {
-          setState(() {});
-        }
-      } on Exception catch (e) {
-        debugPrint('[HistoryItem] Failed to decrypt: $e');
-        _decryptedContent = content;
-      }
-    } else {
-      _decryptedContent = content;
-    }
+    // Content is already plaintext: getHistory()/watchHistory() run
+    // _decryptItems() before items reach the UI. isEncrypted is kept as
+    // metadata (the home-screen widget uses it to suppress previews), so it
+    // must not be used to trigger a second decrypt here.
+    final content = widget.item.content;
+    _decryptedContent = content;
 
     if (_detectionResult == null) {
       final detectionResult = await widget.transformerService.detectContentType(
