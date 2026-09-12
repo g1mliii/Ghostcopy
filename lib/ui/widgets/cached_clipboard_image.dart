@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -223,8 +224,12 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       return _buildLoadingIndicator();
     }
 
-    // Start loading
-    _loadFallbackImage();
+    // Start loading after this frame. Calling it directly from build() reached
+    // a synchronous setState() inside _loadFallbackImage (it runs before the
+    // first await), triggering "setState() called during build".
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadFallbackImage());
+    });
 
     return _buildLoadingIndicator();
   }
@@ -316,9 +321,10 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   Future<void> _loadFallbackImage() async {
     if (_isLoadingFallback) return;
 
-    setState(() {
-      _isLoadingFallback = true;
-    });
+    // Plain assignment, not setState: the caller already renders the loading
+    // indicator for this state, so no rebuild is needed, and this method can be
+    // reached from a build-adjacent path where setState would be illegal.
+    _isLoadingFallback = true;
 
     try {
       debugPrint(

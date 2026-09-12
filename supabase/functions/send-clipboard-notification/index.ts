@@ -205,13 +205,24 @@ Deno.serve(async (req: Request) => {
     const isImage = contentType.startsWith('image_');
     const isRichText = contentType === 'html' || contentType === 'markdown';
 
+    // Encrypted rows store ciphertext. Shipping that in the push payload is
+    // useless to the client (FirebaseMessagingService writes the data payload
+    // straight to the clipboard without decrypting) and pointless to leak, so
+    // encrypted items always take the clipboard_id fetch path instead.
+    const isEncrypted = clipboardItem.is_encrypted === true;
+
     // For FCM data payload, include content if it's small enough (< 4KB max FCM payload)
     // Large content will be fetched by app using clipboard_id after notification tap
     let clipboardContent = '';
-    if (!isImage && clipboardItem.content && clipboardItem.content.length < 4096) {
+    if (
+      !isImage &&
+      !isEncrypted &&
+      clipboardItem.content &&
+      clipboardItem.content.length < 4096
+    ) {
       clipboardContent = clipboardItem.content;
     }
-    // If content is too large or is an image, app will fetch via clipboard_id
+    // If content is too large, encrypted, or an image, app fetches via clipboard_id
 
     // Determine notification title and body based on content type
     let notificationTitle: string;
@@ -227,6 +238,11 @@ Deno.serve(async (req: Request) => {
         ? `Image (${sizeKB}KB) - Tap to view`
         : 'Tap to view image';
       console.log(`[Notification] Image detected (${sizeKB}KB) - using fallback notification`);
+    } else if (isEncrypted) {
+      // Never render a preview of an end-to-end encrypted clip: the visible
+      // notification body appears on the lock screen.
+      notificationTitle = `New clip from ${device_type}`;
+      notificationBody = 'Encrypted clip - tap to view';
     } else if (isRichText) {
       const format = clipboardItem.rich_text_format || 'rich text';
       notificationTitle = `New ${format} from ${device_type}`;
@@ -320,7 +336,11 @@ Deno.serve(async (req: Request) => {
             rich_text_format: clipboardItem.rich_text_format || '',
             // For images, app will fetch from storage using clipboard_id
             is_image: isImage ? 'true' : 'false',
-            // Include content if small enough for native handlers
+            // Tells native handlers that clipboard_content is deliberately
+            // empty and the row must be fetched and decrypted via clipboard_id.
+            is_encrypted: isEncrypted ? 'true' : 'false',
+            // Include content if small enough for native handlers.
+            // Always empty when is_encrypted is 'true'.
             clipboard_content: clipboardContent,
           },
           // Android configuration with click intent

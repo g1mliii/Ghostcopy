@@ -1,32 +1,36 @@
-/// Abstract interface for passphrase cloud backup/restore operations
+/// Abstract interface for passphrase cloud backup/restore operations.
 ///
-/// Provides automatic backup of encryption passphrase to Supabase user metadata
-/// for authenticated users (email/password and OAuth). Anonymous users cannot
-/// use cloud backup.
+/// CLOUD BACKUP IS DISABLED. The previous implementation derived the backup
+/// encryption key from the user's email and user_id with a constant salt
+/// compiled into the app, then stored the ciphertext in Supabase
+/// `user_metadata`. Every input to that key was known to the server, so the
+/// backup offered no protection: anyone with database access or a user's
+/// access token could recover the passphrase and decrypt all clipboard
+/// history. That defeats the entire point of end-to-end encryption.
 ///
-/// Security:
-/// - Passphrase encrypted with derived key (email:user_id)
-/// - AES-256-GCM authenticated encryption
-/// - Automatic backup when passphrase is set
-/// - Automatic restore on login
+/// The backup/restore methods are retained so existing callers keep compiling,
+/// but they are inert: uploads are refused and restores return nothing.
+/// [deleteCloudBackup] remains functional and is used to purge passphrases
+/// that earlier builds already uploaded.
+///
+/// Passphrase transfer between devices happens via the QR/manual flow instead.
 abstract class IPassphraseSyncService {
-  /// Check if cloud backup exists for current user
+  /// Always false - cloud backup is disabled.
   Future<bool> hasCloudBackup();
 
-  /// Upload passphrase to cloud (encrypted with derived key)
-  /// Returns true if successful, false if user is anonymous or upload failed
+  /// Inert. Always returns false without writing anything.
   Future<bool> uploadToCloud(String passphrase);
 
-  /// Download and restore passphrase from cloud
-  /// Returns true if successful, false if no backup or restore failed
+  /// Inert. Always returns false.
   Future<bool> downloadFromCloud();
 
-  /// Delete cloud backup (when user disables encryption)
+  /// Removes any passphrase backup a previous build stored in user_metadata.
+  /// Still functional so existing users get their exposed passphrase purged.
   Future<bool> deleteCloudBackup();
 
-  /// Check if current user can use cloud backup (authenticated users only)
+  /// Always false - cloud backup is disabled.
   Future<bool> canUseCloudBackup();
-  /// Get the decrypted passphrase from cloud backup
-  /// Returns null if no backup exists or decryption failed
+
+  /// Inert. Always returns null.
   Future<String?> getPassphraseFromCloud();
 }

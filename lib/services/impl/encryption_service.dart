@@ -190,13 +190,11 @@ class EncryptionService implements IEncryptionService {
       // Derive encryption key
       await _deriveKey(passphrase);
 
-      // Auto-backup to cloud if available
+      // Cloud backup is disabled: it encrypted the passphrase with a key
+      // derived purely from server-known values, so the server could recover
+      // it. Instead of uploading, purge anything an earlier build left behind.
       if (_passphraseSync != null) {
-        final canBackup = await _passphraseSync.canUseCloudBackup();
-        if (canBackup) {
-          debugPrint('[EncryptionService] Backing up to cloud...');
-          await _passphraseSync.uploadToCloud(passphrase);
-        }
+        await _passphraseSync.deleteCloudBackup();
       }
 
       debugPrint('[EncryptionService] ✅ Encryption enabled successfully');
@@ -254,45 +252,18 @@ class EncryptionService implements IEncryptionService {
       throw StateError('EncryptionService not initialized');
     }
 
-    // Check if passphrase already exists locally
-    final existingPassphrase = await _secureStorage.read(key: _passphraseKey);
-    if (existingPassphrase != null && existingPassphrase.isNotEmpty) {
-      debugPrint(
-        '[EncryptionService] Passphrase already exists locally, skipping restore',
-      );
-      return false;
+    // Cloud restore is disabled - see PassphraseSyncService. The backup key was
+    // derived entirely from server-known values, so restoring from it (and the
+    // upload that fed it) defeated end-to-end encryption. Passphrases now move
+    // between devices via the QR/manual transfer flow only.
+    //
+    // Opportunistically purge any backup an earlier build uploaded, so users
+    // stop carrying a server-recoverable passphrase in their user_metadata.
+    if (_passphraseSync != null) {
+      await _passphraseSync.deleteCloudBackup();
     }
 
-    // Try to get passphrase from cloud backup
-    if (_passphraseSync == null) {
-      debugPrint('[EncryptionService] PassphraseSync not available');
-      return false;
-    }
-
-    try {
-      final cloudPassphrase = await _passphraseSync.getPassphraseFromCloud();
-      if (cloudPassphrase == null || cloudPassphrase.isEmpty) {
-        debugPrint('[EncryptionService] No cloud backup found');
-        return false;
-      }
-
-      debugPrint('[EncryptionService] Found cloud backup, restoring...');
-
-      // Store the passphrase locally
-      final success = await setPassphrase(cloudPassphrase);
-      if (success) {
-        debugPrint('[EncryptionService] ✅ Passphrase auto-restored from cloud');
-      } else {
-        debugPrint(
-          '[EncryptionService] ❌ Failed to restore passphrase from cloud',
-        );
-      }
-
-      return success;
-    } on Exception catch (e) {
-      debugPrint('[EncryptionService] Failed to auto-restore from cloud: $e');
-      return false;
-    }
+    return false;
   }
 
   @override

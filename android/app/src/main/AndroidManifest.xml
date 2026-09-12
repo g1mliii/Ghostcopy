@@ -4,7 +4,10 @@
     <application
         android:label="ghostcopy"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         
 
         <activity
@@ -65,9 +68,20 @@
         </activity>
 
         <!-- Transparent copy activity for notifications -->
+        <!--
+            exported="false": this activity writes its `clipboard_content` extra
+            straight to the system clipboard. While exported with no permission,
+            any installed app could fire
+            Intent("com.ghostcopy.ghostcopy.COPY_ACTION") and silently replace
+            the user's clipboard (e.g. swapping a wallet address), with the
+            toast showing an attacker-supplied device name to make it look
+            legitimate. FCM's clickAction PendingIntent is constructed in this
+            app's own process, and Android allows same-UID callers to start
+            non-exported components, so notification taps still work.
+        -->
         <activity
             android:name=".CopyActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:noHistory="true"
             android:excludeFromRecents="true"

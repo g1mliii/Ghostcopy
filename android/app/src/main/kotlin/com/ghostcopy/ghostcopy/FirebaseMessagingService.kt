@@ -39,8 +39,12 @@ class FirebaseMessagingService : FirebaseMessagingService() {
       val fileSize = data["file_size"]
       val filename = data["filename"]
       val mimeType = data["mime_type"]
+      // The server omits clipboard_content for end-to-end encrypted rows. Guard
+      // on the flag as well so a payload from an older backend can never write
+      // ciphertext to the clipboard or preview it on the home screen.
+      val isEncrypted = data["is_encrypted"] == "true"
 
-      Log.d(TAG, "📬 FCM received: id=$clipboardId, type=$contentType, size=${clipboardContent.length}")
+      Log.d(TAG, "📬 FCM received: id=$clipboardId, type=$contentType, size=${clipboardContent.length}, encrypted=$isEncrypted")
 
       // Determine if this is a file/image
       val isFile = contentType.startsWith("file_")
@@ -51,6 +55,9 @@ class FirebaseMessagingService : FirebaseMessagingService() {
         // Files/images cannot be auto-copied to clipboard on Android
         // User must tap notification to download and share
         Log.d(TAG, "📎 File/image notification - user must tap to download")
+      } else if (isEncrypted) {
+        // Only the Flutter side holds the passphrase; it decrypts on tap.
+        Log.d(TAG, "🔒 Encrypted clip - skipping auto-copy, user must open app")
       } else if (clipboardContent.isNotEmpty()) {
         // Text content - auto-copy to clipboard
         autoCopyToClipboard(clipboardContent)
@@ -66,7 +73,8 @@ class FirebaseMessagingService : FirebaseMessagingService() {
           isFile = isFile,
           isImage = isImage,
           displaySize = fileSize,
-          filename = filename
+          filename = filename,
+          isEncrypted = isEncrypted
         )
       }
     } catch (e: Exception) {
@@ -102,6 +110,7 @@ class FirebaseMessagingService : FirebaseMessagingService() {
     isImage: Boolean = false,
     displaySize: String? = null,
     filename: String? = null,
+    isEncrypted: Boolean = false,
   ) {
     try {
       val dataManager = WidgetDataManager.getInstance(this)
@@ -110,6 +119,10 @@ class FirebaseMessagingService : FirebaseMessagingService() {
       val preview = when {
         isFile && filename != null -> filename
         isImage && displaySize != null -> "Image ($displaySize)"
+        // Never put encrypted content on the home screen. The widget renders a
+        // lock placeholder from isEncrypted, matching WidgetService on the
+        // Flutter side.
+        isEncrypted -> ""
         else -> contentPreview.take(100)
       }
 
@@ -121,7 +134,7 @@ class FirebaseMessagingService : FirebaseMessagingService() {
         thumbnailPath = null, // Images downloaded separately
         deviceType = "mobile",
         createdAt = Instant.now().toString(),
-        isEncrypted = false, // FCM data is unencrypted
+        isEncrypted = isEncrypted,
         isFile = isFile,
         isImage = isImage,
         displaySize = displaySize,
