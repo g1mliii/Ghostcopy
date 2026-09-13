@@ -198,13 +198,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         _screenshotProtection = enabled;
         _screenshotProtectionLoading = false;
       });
-      showGhostToast(
-        context,
-        enabled
-            ? 'Screenshots and screen recording blocked'
-            : 'Screenshots allowed - your clips can be captured',
-        type: GhostToastType.success,
-      );
     } on Exception catch (e) {
       debugPrint('[Settings] Failed to set screenshot protection: $e');
       if (mounted) setState(() => _screenshotProtectionLoading = false);
@@ -356,13 +349,17 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       }
 
       setState(() => _encryptionEnabled = true);
-      showGhostToast(
-        context,
-        hasExistingEncrypted
-            ? 'Passphrase accepted - your clips are unlocked'
-            : 'Encryption enabled',
-        type: GhostToastType.success,
-      );
+      // No toast for the plain "encryption is now on" case - the switch has
+      // already moved and says exactly that. Only outcomes the switch CANNOT
+      // express still speak up: a passphrase that unlocked nothing, or one that
+      // unlocked some clips but not all.
+      if (hasExistingEncrypted) {
+        showGhostToast(
+          context,
+          'Passphrase accepted - your clips are unlocked',
+          type: GhostToastType.success,
+        );
+      }
     } else {
       // Disable encryption
       final confirmed = await _showConfirmDialog(
@@ -873,12 +870,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           _autoShortenUrls = enabled;
           _urlShortenerLoading = false;
         });
-
-        showGhostToast(
-          context,
-          enabled ? 'URL shortening enabled' : 'URL shortening disabled',
-          type: GhostToastType.success,
-        );
       }
     } on Exception catch (e) {
       debugPrint('Failed to update URL shortening setting: $e');
