@@ -71,11 +71,13 @@ class MobileMainViewModel extends ChangeNotifier {
   ClipboardContent? _clipboardContent;
   ClipboardContent? get clipboardContent => _clipboardContent;
 
-
   // ========== DEVICE STATE ==========
 
   List<Device> _devices = [];
   List<Device> get devices => _devices;
+
+  /// Cache for [deviceTypeTargets]. Invalidated wherever _devices changes.
+  List<DeviceTypeTarget>? _deviceTypeTargetsCache;
 
   /// The user's devices collapsed to one entry per device TYPE.
   ///
@@ -88,11 +90,10 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Grouping here keeps the selector honest while preserving what was good
   /// about it: when a type has exactly one device, that device's name IS an
   /// accurate label for the type, so it is still shown.
-  /// Cached because the getter allocates a map and sorts, and the chip row
-  /// reads it from build() - so it recomputed on every rebuild for a list that
-  /// changes only when devices are loaded. Invalidated with _devices.
-  List<DeviceTypeTarget>? _deviceTypeTargetsCache;
-
+  ///
+  /// Cached: this allocates a map and sorts, and the chip row reads it from
+  /// build(), so it recomputed on every rebuild for a list that only changes
+  /// when devices load.
   List<DeviceTypeTarget> get deviceTypeTargets =>
       _deviceTypeTargetsCache ??= _computeDeviceTypeTargets();
 
@@ -126,13 +127,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
   List<ClipboardItem> _filteredHistoryItems = [];
   List<ClipboardItem> get filteredHistoryItems => _filteredHistoryItems;
-
-  /// Suppresses the composer's auto-paste for exactly one resume.
-  ///
-  /// See [_shareFile]: a share sheet, file picker or image picker backgrounds
-  /// the app, and the resume on the way back would otherwise read the clipboard
-  /// and make Android report it to the user.
-  bool _skipNextClipboardRead = false;
 
   /// True only while a pull-to-refresh is running.
   ///
@@ -288,16 +282,6 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Returns display text and updates _clipboardContent
   Future<(String displayText, ClipboardContent? content)?>
   populateFromClipboard() async {
-    // Set when this app itself sent the user out to a system sheet, so the
-    // resume on the way back is ours and not the user returning to the app to
-    // paste something. Reading here would trip the OS clipboard-access warning
-    // for a read nobody asked for.
-    if (_skipNextClipboardRead) {
-      _skipNextClipboardRead = false;
-      debugPrint('[MobileMainVM] Skipping auto-paste (returned from share)');
-      return null;
-    }
-
     try {
       final clipboardService = ClipboardService.instance;
       final clipboardContent = await clipboardService.read();
@@ -620,7 +604,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
         // Reload history (non-blocking)
         unawaited(loadHistory());
-
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to send: $e');
@@ -773,10 +756,6 @@ class MobileMainViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Same reason as _shareFile: the picker backgrounds the app, and the
-      // resume coming back must not trip the OS clipboard-access warning.
-      _skipNextClipboardRead = true;
-
       final picker = ImagePicker();
       final image = await picker.pickImage(
         source: ImageSource.gallery,
@@ -838,10 +817,6 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onError,
   }) async {
     try {
-      // Same reason as _shareFile: the picker backgrounds the app, and the
-      // resume coming back must not trip the OS clipboard-access warning.
-      _skipNextClipboardRead = true;
-
       final result = await FilePicker.pickFiles();
       if (result == null) return;
 
@@ -951,13 +926,6 @@ class MobileMainViewModel extends ChangeNotifier {
   /// presented as a popover there and must be anchored to the widget that
   /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
   Future<void> _shareFile(String path, Rect? sharePositionOrigin) async {
-    // Dismissing the share sheet resumes the app, and the composer's auto-paste
-    // reads the clipboard on every resume - which on Android 12+ makes the OS
-    // announce "GhostCopy pasted from clipboard" seconds after the user shared
-    // an image, as if the app had grabbed something behind their back. Nothing
-    // was pasted; the read just was not wanted here.
-    _skipNextClipboardRead = true;
-
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(path)],
@@ -1477,7 +1445,6 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to auto-copy: $e');
     }
   }
-
 
   // ========== DISPOSAL ==========
 

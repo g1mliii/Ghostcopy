@@ -284,8 +284,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       _viewModel.onAppPaused();
     } else if (state == AppLifecycleState.resumed) {
       _viewModel.onAppResumed();
-      // Auto-paste from clipboard
-      _populateFromClipboard();
+      // Deliberately no clipboard read here. Auto-pasting on every resume made
+      // Android announce "GhostCopy pasted from your clipboard" each time the
+      // user switched back to the app - reporting a read nobody asked for. It
+      // is an explicit choice in the Attach sheet now. Desktop keeps its
+      // auto-populate: the Spotlight is summoned to send something, so reading
+      // the clipboard is the point of opening it.
     }
   }
 
@@ -300,9 +304,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       ..clearLiveImages();
   }
 
-  Future<void> _populateFromClipboard() async {
+  /// Returns true when something was actually pulled off the clipboard, so the
+  /// caller can tell the user rather than leaving a tap with no feedback.
+  Future<bool> _populateFromClipboard() async {
     final result = await _viewModel.populateFromClipboard();
-    if (result != null && mounted) {
+    if (result == null) return false;
+    if (mounted) {
       _pasteController.text = result.$1;
       _pasteController.selection = TextSelection.fromPosition(
         TextPosition(offset: result.$1.length),
@@ -313,6 +320,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         unawaited(precacheImage(MemoryImage(result.$2!.imageBytes!), context));
       }
     }
+    return true;
   }
 
   void _clearPendingAttachmentPreview() {
@@ -361,6 +369,26 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ),
             ),
             const SizedBox(height: 8),
+            // Clipboard paste is an explicit action here rather than something
+            // that happens on every resume. The composer's text field already
+            // takes a normal keyboard paste; this exists for the things it
+            // cannot hold - images, files and rich text - which previously only
+            // ever arrived via the auto-paste that ran on resume.
+            ListTile(
+              leading: const Icon(
+                Icons.content_paste_outlined,
+                color: GhostColors.primary,
+              ),
+              title: const Text(
+                'Paste from clipboard',
+                style: TextStyle(color: GhostColors.textPrimary),
+              ),
+              subtitle: const Text(
+                'Image, file or rich text you copied',
+                style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
+              ),
+              onTap: () => Navigator.of(context).pop('paste'),
+            ),
             ListTile(
               leading: const Icon(
                 Icons.add_photo_alternate_outlined,
@@ -398,6 +426,18 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
 
     if (!mounted || choice == null) return;
+
+    if (choice == 'paste') {
+      final pasted = await _populateFromClipboard();
+      if (!mounted) return;
+      showGhostToast(
+        context,
+        pasted ? 'Pasted - press Send' : 'Nothing on the clipboard',
+        icon: pasted ? Icons.content_paste : Icons.content_paste_off,
+        type: pasted ? GhostToastType.success : GhostToastType.info,
+      );
+      return;
+    }
 
     if (choice == 'image') {
       await _viewModel.handleImageUpload(
