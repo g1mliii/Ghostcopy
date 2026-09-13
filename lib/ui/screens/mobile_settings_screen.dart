@@ -19,6 +19,7 @@ import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
+import '../widgets/ghost_toast.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
 
@@ -188,25 +189,21 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     try {
       await widget.settingsService.setScreenshotProtection(enabled: enabled);
       if (Platform.isAndroid) {
-        await _nativeChannel.invokeMethod<bool>(
-          'setScreenshotProtection',
-          {'enabled': enabled},
-        );
+        await _nativeChannel.invokeMethod<bool>('setScreenshotProtection', {
+          'enabled': enabled,
+        });
       }
       if (!mounted) return;
       setState(() {
         _screenshotProtection = enabled;
         _screenshotProtectionLoading = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            enabled
-                ? 'Screenshots and screen recording blocked'
-                : 'Screenshots allowed - your clips can be captured',
-          ),
-          backgroundColor: GhostColors.success,
-        ),
+      showGhostToast(
+        context,
+        enabled
+            ? 'Screenshots and screen recording blocked'
+            : 'Screenshots allowed - your clips can be captured',
+        type: GhostToastType.success,
       );
     } on Exception catch (e) {
       debugPrint('[Settings] Failed to set screenshot protection: $e');
@@ -335,11 +332,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             _encryptionEnabled = false;
             _encryptionLoading = false;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('That passphrase did not unlock any of your clips'),
-              backgroundColor: Colors.red,
-            ),
+          showGhostToast(
+            context,
+            'That passphrase did not unlock any of your clips',
+            type: GhostToastType.error,
           );
           return;
         }
@@ -348,14 +344,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
         if (lockedAfter > 0) {
           // Partial success is the expected outcome after a passphrase change.
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${lockedBefore - lockedAfter} clip(s) unlocked. $lockedAfter '
-                'still use a different passphrase.',
-              ),
-              backgroundColor: GhostColors.success,
-            ),
+          showGhostToast(
+            context,
+            '${lockedBefore - lockedAfter} clip(s) unlocked. $lockedAfter '
+            'still use a different passphrase.',
+            type: GhostToastType.success,
           );
           setState(() => _encryptionEnabled = true);
           return;
@@ -363,15 +356,12 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       }
 
       setState(() => _encryptionEnabled = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            hasExistingEncrypted
-                ? 'Passphrase accepted - your clips are unlocked'
-                : 'Encryption enabled',
-          ),
-          backgroundColor: GhostColors.success,
-        ),
+      showGhostToast(
+        context,
+        hasExistingEncrypted
+            ? 'Passphrase accepted - your clips are unlocked'
+            : 'Encryption enabled',
+        type: GhostToastType.success,
       );
     } else {
       // Disable encryption
@@ -411,9 +401,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
         if (success) {
           setState(() => _encryptionEnabled = true);
-          ScaffoldMessenger.of(
+          showGhostToast(
             context,
-          ).showSnackBar(const SnackBar(content: Text('Passphrase restored!')));
+            'Passphrase restored',
+            type: GhostToastType.success,
+          );
         } else {
           // 2. Fallback to manual entry
           final userId = widget.authService.currentUserId;
@@ -427,8 +419,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
             if (manualSuccess && mounted) {
               setState(() => _encryptionEnabled = true);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Passphrase restored manually!')),
+              showGhostToast(
+                context,
+                'Passphrase restored',
+                type: GhostToastType.success,
               );
             }
           }
@@ -437,9 +431,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     } on Exception catch (e) {
       if (mounted) {
         setState(() => _encryptionLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        showGhostToast(context, 'Error: $e', type: GhostToastType.error);
       }
     }
   }
@@ -462,18 +454,16 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             _devices = _devices.where((d) => d.id != deviceId).toList();
           });
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Device removed'),
-              backgroundColor: GhostColors.success,
-            ),
+          showGhostToast(
+            context,
+            'Device removed',
+            type: GhostToastType.success,
           );
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Failed to remove device'),
-              backgroundColor: Colors.red.shade400,
-            ),
+          showGhostToast(
+            context,
+            'Failed to remove device',
+            type: GhostToastType.error,
           );
         }
       }
@@ -884,24 +874,20 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           _urlShortenerLoading = false;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              enabled ? 'URL shortening enabled' : 'URL shortening disabled',
-            ),
-            backgroundColor: GhostColors.success,
-          ),
+        showGhostToast(
+          context,
+          enabled ? 'URL shortening enabled' : 'URL shortening disabled',
+          type: GhostToastType.success,
         );
       }
     } on Exception catch (e) {
       debugPrint('Failed to update URL shortening setting: $e');
       if (mounted) {
         setState(() => _urlShortenerLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Failed to update setting'),
-            backgroundColor: Colors.red.shade400,
-          ),
+        showGhostToast(
+          context,
+          'Failed to update setting',
+          type: GhostToastType.error,
         );
       }
     }
@@ -918,26 +904,53 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       child: Column(
         children: [
           // URL shortening toggle
-          SwitchListTile.adaptive(
-            secondary: const Icon(
-              Icons.link,
-              color: GhostColors.primary,
-              size: 20,
-            ),
-            title: const Text(
-              'Auto-Shorten URLs',
-              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
-            ),
-            subtitle: const Text(
-              'Automatically shorten long URLs before sending',
-              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-            ),
+          _settingSwitch(
+            icon: Icons.link,
+            title: 'Auto-Shorten URLs',
+            subtitle: 'Automatically shorten long URLs before sending',
             value: _autoShortenUrls,
-            activeTrackColor: GhostColors.success,
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
         ],
       ),
+    );
+  }
+
+  /// One switch row, so every toggle in Settings is the same size and colour.
+  ///
+  /// They had drifted: two set activeTrackColor to the success green while the
+  /// third used the accent, so the Security section showed two different "on"
+  /// colours side by side. Colour now comes from AppTheme.switchTheme alone.
+  ///
+  /// Scaled down because Material 3's switch is 52x32 - next to 14px type in a
+  /// list it reads as the heaviest thing on the screen.
+  Widget _settingSwitch({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool>? onChanged,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: GhostColors.primary, size: 20),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+      ),
+      trailing: Transform.scale(
+        scale: 0.8,
+        child: Switch(
+          value: value,
+          onChanged: onChanged,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+      // The whole row toggles, which SwitchListTile gave for free.
+      onTap: onChanged == null ? null : () => onChanged(!value),
     );
   }
 
@@ -954,45 +967,24 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           // Android only: iOS has no FLAG_SECURE equivalent, so showing the
           // switch there would promise protection the platform cannot give.
           if (Platform.isAndroid) ...[
-            SwitchListTile.adaptive(
-              secondary: const Icon(
-                Icons.screenshot_outlined,
-                color: GhostColors.primary,
-                size: 20,
-              ),
-              title: const Text(
-                'Block Screenshots',
-                style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
-              ),
-              subtitle: const Text(
-                'Also hides clips in the app switcher and screen shares',
-                style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-              ),
+            _settingSwitch(
+              icon: Icons.screenshot_outlined,
+              title: 'Block Screenshots',
+              subtitle:
+                  'Also hides clips in the app switcher and screen shares',
               value: _screenshotProtection,
               onChanged: _screenshotProtectionLoading
                   ? null
                   : _handleScreenshotProtectionChange,
-              activeThumbColor: GhostColors.primary,
             ),
             const Divider(height: 1, color: GhostColors.border),
           ],
           // Encryption toggle
-          SwitchListTile.adaptive(
-            secondary: const Icon(
-              Icons.lock_outline,
-              color: GhostColors.primary,
-              size: 20,
-            ),
-            title: const Text(
-              'End-to-End Encryption',
-              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
-            ),
-            subtitle: const Text(
-              'Encrypt clipboard items with a passphrase',
-              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-            ),
+          _settingSwitch(
+            icon: Icons.lock_outline,
+            title: 'End-to-End Encryption',
+            subtitle: 'Encrypt clipboard items with a passphrase',
             value: _encryptionEnabled,
-            activeTrackColor: GhostColors.success,
             onChanged: _encryptionLoading ? null : _handleEncryptionToggle,
           ),
 
@@ -1074,11 +1066,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
 
     if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not open the browser'),
-          backgroundColor: Colors.red,
-        ),
+      showGhostToast(
+        context,
+        'Could not open the browser',
+        type: GhostToastType.error,
       );
     }
   }
