@@ -13,6 +13,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
+import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
@@ -45,8 +46,6 @@ class MobileSettingsScreen extends StatefulWidget {
   @override
   State<MobileSettingsScreen> createState() => _MobileSettingsScreenState();
 }
-
-
 
 class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   // Device list state
@@ -101,7 +100,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       // Check for backup if encryption is disabled
       if (!enabled) {
         hasBackup = await _encryptionService!.hasCloudBackup();
-        
+
         // Auto-restore attempt on load (same as desktop)
         if (hasBackup) {
           try {
@@ -229,7 +228,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     if (enabled) {
       final userId = widget.authService.currentUserId;
       if (userId == null) return;
-      
+
       // If we have a backup, try restore flow first
       if (_hasBackup) {
         await _restoreFromBackup();
@@ -282,9 +281,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text(
-                'That passphrase did not unlock any of your clips',
-              ),
+              content: Text('That passphrase did not unlock any of your clips'),
               backgroundColor: Colors.red,
             ),
           );
@@ -352,15 +349,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     try {
       // 1. Attempt auto-restore
       final success = await _encryptionService!.autoRestoreFromCloud();
-      
+
       if (mounted) {
         setState(() => _encryptionLoading = false);
-        
+
         if (success) {
           setState(() => _encryptionEnabled = true);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Passphrase restored!')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Passphrase restored!')));
         } else {
           // 2. Fallback to manual entry
           final userId = widget.authService.currentUserId;
@@ -371,7 +368,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               userId,
               isRestoreMode: true,
             );
-            
+
             if (manualSuccess && mounted) {
               setState(() => _encryptionEnabled = true);
               ScaffoldMessenger.of(context).showSnackBar(
@@ -442,8 +439,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -454,6 +449,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         elevation: 0,
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
+        toolbarHeight: 62,
+        titleSpacing: GhostSpacing.gutter,
         // Match the main screen: AppBar would otherwise pick its own overlay
         // style from the background colour and re-opaque the status bar.
         systemOverlayStyle: const SystemUiOverlayStyle(
@@ -483,31 +480,31 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           _buildSectionHeader('Features'),
           _buildFeaturesSection(),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: GhostSpacing.sectionLoose),
 
           // Devices section
           _buildSectionHeader('Devices'),
           _buildDevicesSection(),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: GhostSpacing.sectionLoose),
 
           // Security section
           _buildSectionHeader('Security'),
           _buildSecuritySection(),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: GhostSpacing.sectionLoose),
 
           // Account section (moved to bottom)
           _buildSectionHeader('Account'),
           _buildAccountSection(),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: GhostSpacing.sectionLoose),
 
           // About section
           _buildSectionHeader('About'),
           _buildAboutSection(),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: GhostSpacing.sectionLoose),
         ],
       ),
     );
@@ -515,7 +512,12 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   Widget _buildSectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      padding: const EdgeInsets.fromLTRB(
+        GhostSpacing.gutter,
+        GhostSpacing.gutter,
+        GhostSpacing.gutter,
+        8,
+      ),
       child: Text(
         title,
         style: GhostTypography.caption.copyWith(
@@ -532,11 +534,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     final isAnonymous = widget.authService.isAnonymous;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
       decoration: BoxDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder),
+        borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        border: Border.all(color: GhostColors.border),
       ),
       child: Column(
         children: [
@@ -567,7 +569,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
           ),
 
-          const Divider(height: 1, color: GhostColors.glassBorder),
+          const Divider(height: 1, color: GhostColors.border),
 
           // Anonymous users need a route back to sign-in. Signing out drops the
           // user onto a fresh temporary account, and the welcome screen is only
@@ -613,11 +615,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   Widget _buildDevicesSection() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
       decoration: BoxDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder),
+        borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        border: Border.all(color: GhostColors.border),
       ),
       child: _devicesLoading
           ? Padding(
@@ -645,7 +647,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _devices.length,
               separatorBuilder: (context, index) =>
-                  const Divider(height: 1, color: GhostColors.glassBorder),
+                  const Divider(height: 1, color: GhostColors.border),
               itemBuilder: (context, index) {
                 final device = _devices[index];
                 final isCurrent =
@@ -719,7 +721,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   Future<void> _loadAutoClearSetting() async {
     setState(() => _autoClearLoading = true);
     try {
-      final seconds = await widget.settingsService.getClipboardAutoClearSeconds();
+      final seconds = await widget.settingsService
+          .getClipboardAutoClearSeconds();
       if (mounted) {
         setState(() {
           _autoClearSeconds = seconds;
@@ -765,9 +768,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              enabled
-                  ? 'URL shortening enabled'
-                  : 'URL shortening disabled',
+              enabled ? 'URL shortening enabled' : 'URL shortening disabled',
             ),
             backgroundColor: GhostColors.success,
           ),
@@ -826,11 +827,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   Widget _buildFeaturesSection() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
       decoration: BoxDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder),
+        borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        border: Border.all(color: GhostColors.border),
       ),
       child: Column(
         children: [
@@ -853,7 +854,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             activeTrackColor: GhostColors.success,
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
-
         ],
       ),
     );
@@ -861,11 +861,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   Widget _buildSecuritySection() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
       decoration: BoxDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder),
+        borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        border: Border.all(color: GhostColors.border),
       ),
       child: Column(
         children: [
@@ -891,7 +891,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
           // Explicit "Restore" button if has backup but currently disabled
           if (!_encryptionEnabled && _hasBackup) ...[
-            const Divider(height: 1, color: GhostColors.glassBorder),
+            const Divider(height: 1, color: GhostColors.border),
             ListTile(
               leading: const Icon(
                 Icons.restore,
@@ -914,7 +914,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
           ],
 
-          const Divider(height: 1, color: GhostColors.glassBorder),
+          const Divider(height: 1, color: GhostColors.border),
 
           // Clipboard auto-clear dropdown
           ListTile(
@@ -958,11 +958,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   Widget _buildAboutSection() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
       decoration: BoxDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder),
+        borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        border: Border.all(color: GhostColors.border),
       ),
       child: ListTile(
         leading: Container(

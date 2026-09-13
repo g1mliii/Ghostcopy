@@ -98,10 +98,11 @@ class MobileMainViewModel extends ChangeNotifier {
       byType.putIfAbsent(device.deviceType, () => <Device>[]).add(device);
     }
 
-    final targets = byType.entries
-        .map((e) => DeviceTypeTarget(deviceType: e.key, devices: e.value))
-        .toList()
-      ..sort((a, b) => a.deviceType.compareTo(b.deviceType));
+    final targets =
+        byType.entries
+            .map((e) => DeviceTypeTarget(deviceType: e.key, devices: e.value))
+            .toList()
+          ..sort((a, b) => a.deviceType.compareTo(b.deviceType));
     return targets;
   }
 
@@ -186,11 +187,7 @@ class MobileMainViewModel extends ChangeNotifier {
     // to be the ONLY source of the initial list, so a realtime failure left
     // the screen on a spinner even though a plain REST fetch would have
     // worked.
-    await Future.wait([
-      _initializeEncryption(),
-      loadDevices(),
-      loadHistory(),
-    ]);
+    await Future.wait([_initializeEncryption(), loadDevices(), loadHistory()]);
   }
 
   Future<void> _initializeEncryption() async {
@@ -407,7 +404,8 @@ class MobileMainViewModel extends ChangeNotifier {
         if (items.isNotEmpty) {
           final latest = items.first;
           if (oldFirstId == null || latest.id != oldFirstId) {
-            final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+            final currentDeviceName =
+                ClipboardRepository.getCurrentDeviceName();
             final isFromDifferentDevice =
                 latest.deviceName == null ||
                 currentDeviceName == null ||
@@ -1497,8 +1495,9 @@ class DeviceTypeTarget {
     'linux' => 'Linux',
     'android' => 'Android',
     'ios' => 'iOS',
-    _ => deviceType.isEmpty
-        ? deviceType
-        : deviceType[0].toUpperCase() + deviceType.substring(1),
+    _ =>
+      deviceType.isEmpty
+          ? deviceType
+          : deviceType[0].toUpperCase() + deviceType.substring(1),
   };
 }

@@ -89,18 +89,12 @@ class Adaptive {
     Color? color,
   }) {
     if (isIOS) {
-      return CupertinoActivityIndicator(
-        radius: size / 2,
-        color: color,
-      );
+      return CupertinoActivityIndicator(radius: size / 2, color: color);
     }
     return SizedBox(
       width: size,
       height: size,
-      child: CircularProgressIndicator(
-        strokeWidth: strokeWidth,
-        color: color,
-      ),
+      child: CircularProgressIndicator(strokeWidth: strokeWidth, color: color),
     );
   }
 

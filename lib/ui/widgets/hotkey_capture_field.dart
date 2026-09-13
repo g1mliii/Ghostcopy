@@ -49,11 +49,7 @@ class _HotkeyCapture extends State<HotkeyCapture> {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.keyboard,
-                size: 14,
-                color: GhostColors.primary,
-              ),
+              const Icon(Icons.keyboard, size: 14, color: GhostColors.primary),
               const SizedBox(width: 6),
               Text(
                 'Global Hotkey',
@@ -70,9 +66,7 @@ class _HotkeyCapture extends State<HotkeyCapture> {
                 ? 'Press a key combination...'
                 : 'Current: $hotkeyText',
             style: GhostTypography.caption.copyWith(
-              color: _isRecording
-                  ? GhostColors.primary
-                  : GhostColors.textMuted,
+              color: _isRecording ? GhostColors.primary : GhostColors.textMuted,
             ),
           ),
           const SizedBox(height: 8),
@@ -209,7 +203,8 @@ class _HotkeyCapture extends State<HotkeyCapture> {
 
       // Capture letter/number keys
       final keyLabel = event.logicalKey.keyLabel.toLowerCase();
-      if (keyLabel.length == 1 && (_ctrlPressed || _shiftPressed || _altPressed || _metaPressed)) {
+      if (keyLabel.length == 1 &&
+          (_ctrlPressed || _shiftPressed || _altPressed || _metaPressed)) {
         // Valid hotkey captured
         final newHotkey = HotKey(
           key: keyLabel,

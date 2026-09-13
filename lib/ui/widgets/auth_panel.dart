@@ -64,7 +64,9 @@ class _AuthPanelState extends State<AuthPanel> {
     // Auto-restore passphrase from cloud backup if available
     final userId = widget.authService.currentUserId;
     if (userId != null) {
-      debugPrint('[AuthPanel] Post-login: restoring passphrase for user $userId');
+      debugPrint(
+        '[AuthPanel] Post-login: restoring passphrase for user $userId',
+      );
       final encryptionService = EncryptionService.instance;
       await encryptionService.initialize(userId);
 
@@ -80,7 +82,8 @@ class _AuthPanelState extends State<AuthPanel> {
         final hasPassphrase = await encryptionService.isEnabled();
         if (!hasPassphrase) {
           widget.notificationService.showToast(
-            message: 'No encryption passphrase found. Enable encryption in Settings.',
+            message:
+                'No encryption passphrase found. Enable encryption in Settings.',
           );
         }
       }
@@ -425,7 +428,9 @@ class _AuthPanelState extends State<AuthPanel> {
         // Clean up anonymous account data BEFORE switching accounts
         // This way user is still authenticated as the old account
         if (wasAnonymous && currentUserId != null) {
-          debugPrint('[AuthPanel] Cleaning up anonymous account before switching');
+          debugPrint(
+            '[AuthPanel] Cleaning up anonymous account before switching',
+          );
           await widget.authService.cleanupOldAccountData(currentUserId);
         }
 
@@ -559,7 +564,9 @@ class _AuthPanelState extends State<AuthPanel> {
 
         // Clean up anonymous account data BEFORE switching accounts
         if (wasAnonymous && currentUserId != null) {
-          debugPrint('[AuthPanel] Cleaning up anonymous account before switching');
+          debugPrint(
+            '[AuthPanel] Cleaning up anonymous account before switching',
+          );
           await widget.authService.cleanupOldAccountData(currentUserId);
         }
 

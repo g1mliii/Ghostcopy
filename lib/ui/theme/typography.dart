@@ -13,8 +13,7 @@ class GhostTypography {
   static const fontFamily = 'Inter';
   static const monoFontFamily = 'JetBrains Mono';
 
-  static bool get _isApple =>
-      !kIsWeb && (Platform.isIOS || Platform.isMacOS);
+  static bool get _isApple => !kIsWeb && (Platform.isIOS || Platform.isMacOS);
 
   /// The UI font for the platform the app is running on.
   ///

@@ -177,9 +177,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
               decoration: BoxDecoration(
                 color: _getBackgroundColor(),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: GhostColors.glassBorderAlpha30,
-                ),
+                border: Border.all(color: GhostColors.glassBorderAlpha30),
                 boxShadow: [
                   BoxShadow(
                     color: GhostColors.blackAlpha30,

@@ -10,6 +10,7 @@ import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/transformer_service.dart';
 import '../platform_adaptive.dart';
@@ -963,6 +964,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         onRefresh: _viewModel.handleRefresh,
         color: GhostColors.primary,
         backgroundColor: GhostColors.surface,
+        // Sit the spinner above the composer instead of on top of it. At the
+        // default displacement its circular backdrop overlaps the composer's
+        // top edge, which reads as a stray disc behind the card.
+        displacement: 16,
         child: CustomScrollView(
           physics: Adaptive.scrollPhysics,
           slivers: [
@@ -1296,27 +1301,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   Widget _buildDeviceSelector() {
     final targets = _viewModel.deviceTypeTargets;
 
+    // No "Send to" caption and no platform count above the row. The chips name
+    // the destinations and the button restates the choice, so both were
+    // labelling something already legible.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Send to',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textMuted,
-              ),
-            ),
-            Text(
-              '${targets.length} platform${targets.length == 1 ? '' : 's'}',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.accentText,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 9),
         SizedBox(
           height: GhostSpacing.chipHeight,
           child: _viewModel.devicesLoading
@@ -1805,7 +1795,7 @@ class _DeviceChip extends StatelessWidget {
   });
 
   static const _radius = BorderRadius.all(
-    Radius.circular(GhostSpacing.controlRadius),
+    Radius.circular(GhostSpacing.chipRadius),
   );
 
   final String label;
@@ -2042,12 +2032,30 @@ class _HistoryRowState extends State<_HistoryRow> {
               width: GhostSpacing.thumbSize,
               height: GhostSpacing.thumbSize,
             )
-          : const Icon(
-              Icons.insert_drive_file_outlined,
-              color: GhostColors.accentText,
-              size: 23,
-            ),
+          : Icon(_fileIcon(item), color: GhostColors.accentText, size: 23),
     );
+  }
+
+  /// Icon for a file row, by type rather than one generic page glyph.
+  ///
+  /// FileTypeService already maps ContentType to an icon (PDF, doc, txt, zip,
+  /// audio, video) - the row was ignoring it and drawing the same sheet of
+  /// paper for everything. Falls back to the filename extension when the row
+  /// was stored before type detection, or came in as fileOther.
+  static IconData _fileIcon(ClipboardItem item) {
+    final service = FileTypeService.instance;
+
+    if (item.contentType != ContentType.fileOther) {
+      return service.getFileIcon(item.contentType);
+    }
+
+    final filename = item.metadata?.originalFilename;
+    if (filename != null && filename.contains('.')) {
+      return service.getFileIcon(
+        service.detectFromExtension(filename).contentType,
+      );
+    }
+    return Icons.insert_drive_file;
   }
 
   /// `source • time → destination`, one compact line.

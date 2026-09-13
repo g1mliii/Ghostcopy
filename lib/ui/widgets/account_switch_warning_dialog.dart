@@ -5,25 +5,18 @@ import 'package:flutter/material.dart';
 /// Informs user that switching accounts will erase their current clipboard history
 /// Returns true if user confirms, false if cancelled
 class AccountSwitchWarningDialog extends StatelessWidget {
-  const AccountSwitchWarningDialog({
-    required this.clipboardCount,
-    super.key,
-  });
+  const AccountSwitchWarningDialog({required this.clipboardCount, super.key});
 
   final int clipboardCount;
 
   /// Show the warning dialog and return user's choice
   /// Returns true if user confirmed, false if cancelled
-  static Future<bool> show(
-    BuildContext context,
-    int clipboardCount,
-  ) async {
+  static Future<bool> show(BuildContext context, int clipboardCount) async {
     return await showDialog<bool>(
-      context: context,
-      builder: (context) => AccountSwitchWarningDialog(
-        clipboardCount: clipboardCount,
-      ),
-    ) ??
+          context: context,
+          builder: (context) =>
+              AccountSwitchWarningDialog(clipboardCount: clipboardCount),
+        ) ??
         false;
   }
 
@@ -40,11 +33,7 @@ class AccountSwitchWarningDialog extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       title: Row(
         children: [
-          Icon(
-            Icons.warning_rounded,
-            color: warningColor,
-            size: 24,
-          ),
+          Icon(Icons.warning_rounded, color: warningColor, size: 24),
           const SizedBox(width: 12),
           const Text(
             'Switch Account?',
@@ -62,10 +51,7 @@ class AccountSwitchWarningDialog extends StatelessWidget {
         children: [
           Text(
             'You have $clipboardCount clipboard item${clipboardCount != 1 ? 's' : ''} in your current account.',
-            style: const TextStyle(
-              color: textSecondaryColor,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: textSecondaryColor, fontSize: 14),
           ),
           const SizedBox(height: 12),
           Container(
@@ -73,9 +59,7 @@ class AccountSwitchWarningDialog extends StatelessWidget {
             decoration: BoxDecoration(
               color: bgDarkColor,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: warningColor.withValues(alpha: 0.3),
-              ),
+              border: Border.all(color: warningColor.withValues(alpha: 0.3)),
             ),
             child: const Text(
               'Signing into a different account will permanently erase this history.',
@@ -98,10 +82,7 @@ class AccountSwitchWarningDialog extends StatelessWidget {
         ),
         TextButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text(
-            'Continue',
-            style: TextStyle(color: warningColor),
-          ),
+          child: const Text('Continue', style: TextStyle(color: warningColor)),
         ),
       ],
     );

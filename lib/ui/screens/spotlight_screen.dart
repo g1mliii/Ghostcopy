@@ -1,17 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 import 'package:window_manager/window_manager.dart';
-
-
-
-
 
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
@@ -810,9 +805,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Accept files and images dropped onto the window, so dragging something in
     // works as well as the upload button - and mirrors dragging clips out.
     return DropRegion(
-      formats: const [
-        ...Formats.standardFormats,
-      ],
+      formats: const [...Formats.standardFormats],
       hitTestBehavior: HitTestBehavior.opaque,
       onDropOver: (event) {
         // Only offer a copy cursor for things we can actually accept.
@@ -845,113 +838,115 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         }
       },
       child: Shortcuts(
-      shortcuts: <ShortcutActivator, Intent>{
-        const SingleActivator(LogicalKeyboardKey.escape): const DismissIntent(),
-      },
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          DismissIntent: CallbackAction<DismissIntent>(
-            onInvoke: (intent) {
-              // Handle Escape key - close active panel or hide window
-              if (_activePanel != SpotlightPanel.none) {
-                _closeActivePanel();
-              } else {
-                // Clear file content to free memory before closing
-                if ((_viewModel.clipboardContent?.hasFile ?? false) ||
-                    (_viewModel.clipboardContent?.hasImage ?? false)) {
-                  _clearPendingAttachmentPreview(requestFocus: false);
-                  debugPrint(
-                    '[Spotlight] Cleared file/image content (freed memory)',
-                  );
-                }
-                _windowService.hideSpotlight();
-              }
-              return null;
-            },
-          ),
+        shortcuts: <ShortcutActivator, Intent>{
+          const SingleActivator(LogicalKeyboardKey.escape):
+              const DismissIntent(),
         },
-        child: Focus(
-          autofocus: true,
-          descendantsAreFocusable: true,
-          child: Scaffold(
-            backgroundColor: GhostColors.surface,
-            body: Stack(
-              children: [
-                // Main content - wrapped in IgnorePointer when a panel is open
-                // to skip hit-testing the entire main content tree (perf: reduces
-                // hit-test depth from ~123 to ~40 layers when panels are open)
-                IgnorePointer(
-                  ignoring: _activePanel != SpotlightPanel.none,
-                  child: RepaintBoundary(
-                    child: FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: ScaleTransition(
-                        scale: _scaleAnimation,
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(
-                              20,
-                              50,
-                              20,
-                              20,
-                            ), // Extra top padding for buttons
-                            child: SingleChildScrollView(
-                              physics: const ClampingScrollPhysics(),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  _buildHeader(),
-                                  const SizedBox(height: 12),
-                                  _buildTextField(),
-                                  const SizedBox(height: 10),
-                                  // Show transformer previews if content is transformable
-                                  if (_viewModel
-                                          .detectedContentType
-                                          ?.isTransformable ??
-                                      false)
-                                    ..._buildTransformerUI(),
-                                  _buildPlatformSelector(),
-                                  const SizedBox(height: 12),
-                                  _buildSendButton(),
-                                  if (_viewModel.errorMessage != null) ...[
+        child: Actions(
+          actions: <Type, Action<Intent>>{
+            DismissIntent: CallbackAction<DismissIntent>(
+              onInvoke: (intent) {
+                // Handle Escape key - close active panel or hide window
+                if (_activePanel != SpotlightPanel.none) {
+                  _closeActivePanel();
+                } else {
+                  // Clear file content to free memory before closing
+                  if ((_viewModel.clipboardContent?.hasFile ?? false) ||
+                      (_viewModel.clipboardContent?.hasImage ?? false)) {
+                    _clearPendingAttachmentPreview(requestFocus: false);
+                    debugPrint(
+                      '[Spotlight] Cleared file/image content (freed memory)',
+                    );
+                  }
+                  _windowService.hideSpotlight();
+                }
+                return null;
+              },
+            ),
+          },
+          child: Focus(
+            autofocus: true,
+            descendantsAreFocusable: true,
+            child: Scaffold(
+              backgroundColor: GhostColors.surface,
+              body: Stack(
+                children: [
+                  // Main content - wrapped in IgnorePointer when a panel is open
+                  // to skip hit-testing the entire main content tree (perf: reduces
+                  // hit-test depth from ~123 to ~40 layers when panels are open)
+                  IgnorePointer(
+                    ignoring: _activePanel != SpotlightPanel.none,
+                    child: RepaintBoundary(
+                      child: FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: ScaleTransition(
+                          scale: _scaleAnimation,
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                50,
+                                20,
+                                20,
+                              ), // Extra top padding for buttons
+                              child: SingleChildScrollView(
+                                physics: const ClampingScrollPhysics(),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _buildHeader(),
+                                    const SizedBox(height: 12),
+                                    _buildTextField(),
                                     const SizedBox(height: 10),
-                                    _buildErrorMessage(),
+                                    // Show transformer previews if content is transformable
+                                    if (_viewModel
+                                            .detectedContentType
+                                            ?.isTransformable ??
+                                        false)
+                                      ..._buildTransformerUI(),
+                                    _buildPlatformSelector(),
+                                    const SizedBox(height: 12),
+                                    _buildSendButton(),
+                                    if (_viewModel.errorMessage != null) ...[
+                                      const SizedBox(height: 10),
+                                      _buildErrorMessage(),
+                                    ],
                                   ],
-                                ],
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ), // Close IgnorePointer
-                // Settings button - Top Left
-                Positioned(top: 12, left: 12, child: _buildSettingsButton()),
-                // History button - Top Right
-                Positioned(top: 12, right: 12, child: _buildHistoryButton()),
-                // Click-outside overlay to close any active panel
-                // Uses HitTestBehavior.opaque to catch taps without walking
-                // child tree (perf: stops hit-test traversal immediately)
-                if (_activePanel != SpotlightPanel.none)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _closeActivePanel,
+                  ), // Close IgnorePointer
+                  // Settings button - Top Left
+                  Positioned(top: 12, left: 12, child: _buildSettingsButton()),
+                  // History button - Top Right
+                  Positioned(top: 12, right: 12, child: _buildHistoryButton()),
+                  // Click-outside overlay to close any active panel
+                  // Uses HitTestBehavior.opaque to catch taps without walking
+                  // child tree (perf: stops hit-test traversal immediately)
+                  if (_activePanel != SpotlightPanel.none)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _closeActivePanel,
+                      ),
                     ),
-                  ),
-                // Auth panel overlay (left side, wider than settings)
-                if (_showAuth) _buildAuthPanel(),
-                // Settings panel overlay (left side)
-                if (_showSettings) _buildSettingsPanel(),
-                // History panel overlay (right side)
-                if (_showHistory) _buildHistoryPanel(),
-              ],
-            ), // Close Stack (body)
-          ), // Close Scaffold
-        ), // Close Focus
-      ), // Close Actions
+                  // Auth panel overlay (left side, wider than settings)
+                  if (_showAuth) _buildAuthPanel(),
+                  // Settings panel overlay (left side)
+                  if (_showSettings) _buildSettingsPanel(),
+                  // History panel overlay (right side)
+                  if (_showHistory) _buildHistoryPanel(),
+                ],
+              ), // Close Stack (body)
+            ), // Close Scaffold
+          ), // Close Focus
+        ), // Close Actions
       ), // Close Shortcuts
     ); // Close DropRegion
   }
@@ -1047,9 +1042,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           // Perf: Container with clipBehavior instead of ClipRRect to
           // avoid saveLayer on raster thread
           Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-            ),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(6)),
             clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 80),
@@ -1870,9 +1863,7 @@ class _PlatformChip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: _borderRadius,
             border: Border.all(
-              color: isSelected
-                  ? Colors.transparent
-                  : GhostColors.surfaceLight,
+              color: isSelected ? Colors.transparent : GhostColors.surfaceLight,
             ),
           ),
           child: Row(
@@ -1881,9 +1872,7 @@ class _PlatformChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: isSelected
-                    ? Colors.white
-                    : GhostColors.textSecondary,
+                color: isSelected ? Colors.white : GhostColors.textSecondary,
               ),
               const SizedBox(width: 5),
               Text(
@@ -1891,9 +1880,7 @@ class _PlatformChip extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
-                  color: isSelected
-                      ? Colors.white
-                      : GhostColors.textSecondary,
+                  color: isSelected ? Colors.white : GhostColors.textSecondary,
                 ),
               ),
             ],
@@ -2170,7 +2157,9 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     physics: const ClampingScrollPhysics(),
-                    scrollCacheExtent: const ScrollCacheExtent.pixels(200), // Pre-build items 200px offscreen
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(
+                      200,
+                    ), // Pre-build items 200px offscreen
                     findChildIndexCallback: _findFilteredIndexByKey,
                     itemCount: _filteredItems.length,
                     itemBuilder: (context, index) {
@@ -2563,119 +2552,119 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-        onTap: widget.onTap,
-        onSecondaryTapDown: (details) {
-          _showContextMenu(context, details.globalPosition);
-        },
-        onHover: (hovering) => _isHovered.value = hovering,
-        hoverColor: GhostColors.surfaceAlpha70,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+            onTap: widget.onTap,
+            onSecondaryTapDown: (details) {
+              _showContextMenu(context, details.globalPosition);
+            },
+            onHover: (hovering) => _isHovered.value = hovering,
+            hoverColor: GhostColors.surfaceAlpha70,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: _buildContentPreview()),
-                  if (!widget.item.isImage &&
-                      !widget.item.isFile &&
-                      widget.item.content.length > 100) ...[
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () =>
-                          setState(() => _isExpanded = !_isExpanded),
-                      child: AnimatedRotation(
-                        turns: _isExpanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: ValueListenableBuilder<bool>(
-                          valueListenable: _isHovered,
-                          builder: (context, hovered, _) => Icon(
-                            Icons.expand_more,
-                            size: 16,
-                            color: GhostColors.primary.withValues(
-                              alpha: hovered ? 1 : 0.6,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _buildContentPreview()),
+                      if (!widget.item.isImage &&
+                          !widget.item.isFile &&
+                          widget.item.content.length > 100) ...[
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () =>
+                              setState(() => _isExpanded = !_isExpanded),
+                          child: AnimatedRotation(
+                            turns: _isExpanded ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: ValueListenableBuilder<bool>(
+                              valueListenable: _isHovered,
+                              builder: (context, hovered, _) => Icon(
+                                Icons.expand_more,
+                                size: 16,
+                                color: GhostColors.primary.withValues(
+                                  alpha: hovered ? 1 : 0.6,
+                                ),
+                              ),
                             ),
                           ),
                         ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        _getDeviceIconByType(_deviceLower),
+                        size: 12,
+                        color: GhostColors.textMuted,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.device,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 10,
+                        color: GhostColors.primaryAlpha70,
+                      ),
+                      const SizedBox(width: 6),
+                      if (widget.item.targetDeviceTypes == null ||
+                          widget.item.targetDeviceTypes!.isEmpty)
+                        const Text(
+                          'All',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: GhostColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else if (widget.item.targetDeviceTypes!.length == 1)
+                        Icon(
+                          _getDeviceIconByType(
+                            widget.item.targetDeviceTypes!.first,
+                          ),
+                          size: 12,
+                          color: GhostColors.primary,
+                        )
+                      else
+                        Text(
+                          '${widget.item.targetDeviceTypes!.length}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: GhostColors.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '\u2022',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.timeAgo,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(
-                    _getDeviceIconByType(_deviceLower),
-                    size: 12,
-                    color: GhostColors.textMuted,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    widget.device,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Icon(
-                    Icons.arrow_forward,
-                    size: 10,
-                    color: GhostColors.primaryAlpha70,
-                  ),
-                  const SizedBox(width: 6),
-                  if (widget.item.targetDeviceTypes == null ||
-                      widget.item.targetDeviceTypes!.isEmpty)
-                    const Text(
-                      'All',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: GhostColors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    )
-                  else if (widget.item.targetDeviceTypes!.length == 1)
-                    Icon(
-                      _getDeviceIconByType(
-                        widget.item.targetDeviceTypes!.first,
-                      ),
-                      size: 12,
-                      color: GhostColors.primary,
-                    )
-                  else
-                    Text(
-                      '${widget.item.targetDeviceTypes!.length}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: GhostColors.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    '\u2022',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.timeAgo,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
         ),
       ),
     );

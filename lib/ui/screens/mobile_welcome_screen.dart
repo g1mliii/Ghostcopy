@@ -134,9 +134,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             // this sits on GhostColors.surface, which is near-black.
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Image.asset(
-                'assets/icons/logo_white.png',
-              ),
+              child: Image.asset('assets/icons/logo_white.png'),
             ),
           ),
           const SizedBox(height: 16),
@@ -243,36 +241,36 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       ),
       clipBehavior: Clip.antiAlias,
       child: () {
-          final controller = _scannerController;
-          return controller != null
-              ? Stack(
-                  children: [
-                    MobileScanner(
-                      controller: controller,
-                      onDetect: _onQRCodeDetected,
-                    ),
-                    if (_qrScanning)
-                      Container(
-                        color: Colors.black54,
-                        child: Center(
-                          child: Adaptive.progressIndicator(
-                            size: 32,
-                            strokeWidth: 3,
-                            color: GhostColors.primary,
-                          ),
+        final controller = _scannerController;
+        return controller != null
+            ? Stack(
+                children: [
+                  MobileScanner(
+                    controller: controller,
+                    onDetect: _onQRCodeDetected,
+                  ),
+                  if (_qrScanning)
+                    Container(
+                      color: Colors.black54,
+                      child: Center(
+                        child: Adaptive.progressIndicator(
+                          size: 32,
+                          strokeWidth: 3,
+                          color: GhostColors.primary,
                         ),
                       ),
-                  ],
-                )
-              : Center(
-                  child: Text(
-                    'Switch to this tab to activate scanner',
-                    style: GhostTypography.caption.copyWith(
-                      color: GhostColors.textMuted,
                     ),
+                ],
+              )
+            : Center(
+                child: Text(
+                  'Switch to this tab to activate scanner',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
                   ),
-                );
-        }(),
+                ),
+              );
+      }(),
     );
   }
 

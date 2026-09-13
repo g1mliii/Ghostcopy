@@ -492,7 +492,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
           : const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
-      scrollCacheExtent: const ScrollCacheExtent.pixels(300), // Pre-build settings items offscreen for smooth scroll
+      scrollCacheExtent: const ScrollCacheExtent.pixels(
+        300,
+      ), // Pre-build settings items offscreen for smooth scroll
       children: [
         // 1. Most Important: Feature Toggles
         // Auto-send toggle

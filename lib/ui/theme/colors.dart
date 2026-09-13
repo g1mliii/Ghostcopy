@@ -5,10 +5,16 @@ class GhostColors {
   // Private constructor to prevent instantiation
   GhostColors._();
 
-  // Background layers
-  static const background = Color(0xFF0E0F13); // Deep black
-  static const surface = Color(0xFF18191F); // Card surfaces
-  static const surfaceLight = Color(0xFF22232B); // Elevated surfaces
+  // Background layers.
+  //
+  // Neutral greys, matching the desktop app. The redesign handoff proposed
+  // cooler values (#0E0F13 / #18191F / #22232B) which carry a blue cast - on a
+  // real panel they read as tinted rather than grey, and made the surfaces
+  // look like they had a gradient across them. One neutral ramp for both
+  // platforms instead.
+  static const background = Color(0xFF0D0D0F); // Deep black
+  static const surface = Color(0xFF1A1A1D); // Card surfaces
+  static const surfaceLight = Color(0xFF2A2A2D); // Elevated surfaces
 
   // Accent colors
   static const primary = Color(0xFF6670FF); // Purple-blue accent
@@ -31,8 +37,9 @@ class GhostColors {
 
   /// Hairline between grouped rows and around surfaces. An opaque grey rather
   /// than the translucent glassBorder, so stacked rows in a grouped list do
-  /// not accumulate brightness where they meet.
-  static const border = Color(0xFF30323C);
+  /// not accumulate brightness where they meet. Neutral, to match the ramp
+  /// above rather than tinting every edge blue.
+  static const border = Color(0xFF33333A);
 
   // Text
   static const textPrimary = Color(0xFFF5F6FA);

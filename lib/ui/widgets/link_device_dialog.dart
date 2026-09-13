@@ -81,10 +81,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
       // passphrase and a token redeemable for an account session. The
       // passphrase is now typed by hand on each device; the QR only carries
       // the link token, which is useless without the PIN below.
-      final qrDataMap = {
-        'link_token': link.tokenHash,
-        'version': 2,
-      };
+      final qrDataMap = {'link_token': link.tokenHash, 'version': 2};
 
       if (!mounted) return;
 
@@ -140,9 +137,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: GhostColors.background,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400),
         child: Padding(
@@ -153,11 +148,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
               // Header
               Row(
                 children: [
-                  Icon(
-                    Icons.qr_code_2,
-                    color: GhostColors.primary,
-                    size: 24,
-                  ),
+                  Icon(Icons.qr_code_2, color: GhostColors.primary, size: 24),
                   const SizedBox(width: 12),
                   Text(
                     'Link New Device',
@@ -222,10 +213,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                       Text(
                         _errorMessage!,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.red,
-                        ),
+                        style: TextStyle(fontSize: 12, color: Colors.red),
                       ),
                       const SizedBox(height: 16),
                       TextButton(
@@ -248,9 +236,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                       data: _qrData!,
                       size: 200,
                       backgroundColor: Colors.white,
-                      eyeStyle: const QrEyeStyle(
-                        eyeShape: QrEyeShape.square,
-                      ),
+                      eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square),
                       dataModuleStyle: const QrDataModuleStyle(
                         dataModuleShape: QrDataModuleShape.square,
                       ),
@@ -265,10 +251,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                 const SizedBox(height: 20),
                 Text(
                   'Enter this PIN on your phone',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: GhostColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
                 ),
                 const SizedBox(height: 8),
                 Container(
@@ -395,10 +378,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
         const SizedBox(width: 12),
         Text(
           text,
-          style: TextStyle(
-            fontSize: 13,
-            color: GhostColors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 13, color: GhostColors.textSecondary),
         ),
       ],
     );

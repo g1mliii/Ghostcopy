@@ -25,11 +25,15 @@ class GhostSpacing {
   /// show a sliver of the container behind their corners.
   static const double surfaceRadiusInner = 14;
 
-  /// Corner radius for chips and the search field.
-  static const double controlRadius = 12;
+  /// Corner radius for chips. Matches the desktop Spotlight's platform chips,
+  /// so the same control reads the same on both platforms.
+  static const double chipRadius = 6;
 
-  /// Corner radius for the primary button.
-  static const double buttonRadius = 13;
+  /// Corner radius for the search field and other inline controls.
+  static const double controlRadius = 10;
+
+  /// Corner radius for the primary button, matching desktop's send button.
+  static const double buttonRadius = 8;
 
   /// Corner radius for a thumbnail inside a row.
   static const double thumbRadius = 10;
