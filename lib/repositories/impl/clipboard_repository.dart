@@ -1206,18 +1206,29 @@ class ClipboardRepository implements IClipboardRepository {
 
   /// Decrypt clipboard items content (only if encrypted)
   Future<List<ClipboardItem>> _decryptItems(List<ClipboardItem> items) async {
-    await _ensureEncryptionInitialized();
+    // canDecrypt gates every item below, because EncryptionService.decrypt()
+    // returns its input UNCHANGED when no key is loaded
+    // (encryption_service.dart: `if (_keyBytes == null) return ciphertext;`)
+    // rather than throwing. Without this an encrypted item on a device with no
+    // passphrase sails through as "successfully decrypted" and the raw
+    // `IV:ciphertext` string is rendered in history, copied to the clipboard,
+    // and shown in the widget.
+    //
+    // Resolving it must not throw: this runs inside watchHistory()'s asyncMap,
+    // so ANY throw here becomes a stream error that terminates the realtime
+    // subscription for good. A momentarily-null session during a token refresh
+    // is not a reason to kill sync - treat it as "cannot decrypt right now"
+    // and show whatever is readable.
+    var canDecrypt = false;
+    try {
+      await _ensureEncryptionInitialized();
+      canDecrypt = await _encryptionService.isEnabled();
+    } on Exception catch (e) {
+      debugPrint('[Repository] Encryption unavailable for this batch: $e');
+    }
 
     final decryptedItems = <ClipboardItem>[];
     var undecryptable = 0;
-
-    // EncryptionService.decrypt() returns its input UNCHANGED when no key is
-    // loaded (encryption_service.dart: `if (_keyBytes == null) return
-    // ciphertext;`) rather than throwing. Without this check an encrypted item
-    // on a device with no passphrase sails through as "successfully decrypted"
-    // and the raw `IV:ciphertext` string is rendered in history, copied to the
-    // clipboard, and shown in the widget.
-    final canDecrypt = await _encryptionService.isEnabled();
 
     for (final item in items) {
       try {
@@ -1262,12 +1273,19 @@ class ClipboardRepository implements IClipboardRepository {
             createdAt: item.createdAt,
           ),
         );
-      } on EncryptionException catch (e) {
+      } on Exception catch (e) {
         debugPrint('Failed to decrypt item ${item.id}: $e');
         // Skip items that fail to decrypt, but COUNT them. Dropping them
         // silently meant a user signing in on a new device (or with a
         // mismatched passphrase) saw a completely empty history with no
         // explanation - the content is there, it just cannot be opened.
+        //
+        // Catches Exception, not just EncryptionException: decrypt() also
+        // throws FormatException on a payload that is not valid base64 (a row
+        // written before the current format, say). That is not an
+        // EncryptionException, so it escaped this handler, propagated through
+        // asyncMap and permanently killed the realtime stream - one unreadable
+        // row took down sync for the whole session.
         undecryptable++;
         continue;
       }

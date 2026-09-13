@@ -108,6 +108,8 @@ class MobileMainViewModel extends ChangeNotifier {
   String get historySearchQuery => _historySearchQuery;
 
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
+  Timer? _realtimeReconnectTimer;
+  int _realtimeRetryCount = 0;
 
   // ========== CACHES ==========
 
@@ -146,6 +148,11 @@ class MobileMainViewModel extends ChangeNotifier {
     _historyLoading = true;
     notifyListeners();
     subscribeToRealtimeUpdates();
+    // Do not let first paint depend on the websocket. The stream used to be
+    // the ONLY source of the initial list, so a realtime failure left the
+    // screen on a spinner or an error with no history at all - even though a
+    // plain REST fetch would have worked fine.
+    await loadHistory();
   }
 
   Future<void> _initializeEncryption() async {
@@ -289,8 +296,14 @@ class MobileMainViewModel extends ChangeNotifier {
       final items = await _clipboardRepo.getHistory();
       if (!_isDisposed) {
         _historyItems = items;
-        _filteredHistoryItems = items;
+        _filterHistory(_historySearchQuery);
         _historyLoading = false;
+        // A successful fetch is what "pull to refresh" promised, so the error
+        // MUST be cleared here. It previously survived until sign-out, and
+        // _buildHistoryList() returns the error pane before it ever looks at
+        // the items - so one realtime hiccup hid the list permanently and
+        // pulling to refresh appeared to do nothing at all.
+        _historyError = null;
         _cleanupCache();
         notifyListeners();
 
@@ -305,6 +318,12 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to load history: $e');
       if (!_isDisposed) {
         _historyLoading = false;
+        // Only claim failure when there is nothing on screen. Replacing a good
+        // list with a full-page error because a refresh failed loses the
+        // user's clips over a dropped connection.
+        if (_historyItems.isEmpty) {
+          _historyError = 'Failed to load history. Pull to refresh.';
+        }
         notifyListeners();
       }
     }
@@ -312,9 +331,25 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Subscribe to realtime history updates
   void subscribeToRealtimeUpdates() {
-    _historySubscription = _clipboardRepo.watchHistory().listen(
+    final Stream<List<ClipboardItem>> stream;
+    try {
+      // watchHistory() throws synchronously when there is no session, which
+      // bypasses onError entirely and previously escaped initialize() as an
+      // unhandled exception - leaving historyLoading stuck true forever.
+      stream = _clipboardRepo.watchHistory();
+    } on Exception catch (e) {
+      debugPrint('[MobileMainVM] Could not open realtime stream: $e');
+      _scheduleRealtimeReconnect();
+      return;
+    }
+
+    _historySubscription = stream.listen(
       (items) {
         if (_isDisposed) return;
+
+        // The stream is alive again; forget any previous backoff.
+        _realtimeRetryCount = 0;
+        _historyError = null;
 
         final oldFirstId = _historyItems.isNotEmpty
             ? _historyItems.first.id
@@ -360,13 +395,47 @@ class MobileMainViewModel extends ChangeNotifier {
       },
       onError: (Object error) {
         debugPrint('[MobileMainVM] Realtime subscription error: $error');
-        if (!_isDisposed) {
-          _historyLoading = false;
+        if (_isDisposed) return;
+
+        _historyLoading = false;
+        // Keep whatever is already on screen. Only a cold failure - nothing
+        // loaded at all - justifies replacing the list with an error pane.
+        if (_historyItems.isEmpty) {
           _historyError = 'Failed to load history. Pull to refresh.';
-          notifyListeners();
         }
+        notifyListeners();
+
+        // A stream error ends the subscription, and nothing re-armed it: one
+        // dropped websocket meant new clips silently stopped arriving for the
+        // rest of the session, with pull-to-refresh the only way to see
+        // anything. Re-subscribe, and fall back to a one-shot fetch so the
+        // list is correct even while realtime is still down.
+        _scheduleRealtimeReconnect();
       },
     );
+  }
+
+  /// Re-arm the realtime subscription after an error, backing off so a server
+  /// outage does not turn into a reconnect loop.
+  void _scheduleRealtimeReconnect() {
+    if (_isDisposed || _realtimeReconnectTimer?.isActive == true) return;
+
+    final attempt = ++_realtimeRetryCount;
+    // 2s, 4s, 8s, 16s, 30s, 30s...
+    final seconds = attempt >= 5 ? 30 : 1 << attempt;
+    debugPrint(
+      '[MobileMainVM] Reconnecting realtime in ${seconds}s (attempt $attempt)',
+    );
+
+    _realtimeReconnectTimer = Timer(Duration(seconds: seconds), () async {
+      if (_isDisposed) return;
+      await _historySubscription?.cancel();
+      _historySubscription = null;
+      subscribeToRealtimeUpdates();
+      // Realtime only delivers changes from here on, so fetch the rows that
+      // landed while the connection was down.
+      await loadHistory();
+    });
   }
 
   /// Filter history based on search query
@@ -1298,6 +1367,8 @@ class MobileMainViewModel extends ChangeNotifier {
 
     _historySubscription?.cancel();
     _historySubscription = null;
+    _realtimeReconnectTimer?.cancel();
+    _realtimeReconnectTimer = null;
     _clipboardClearTimer?.cancel();
     _clipboardClearTimer = null;
     _searchDebounceTimer?.cancel();

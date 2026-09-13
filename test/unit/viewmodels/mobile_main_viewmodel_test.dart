@@ -117,4 +117,78 @@ void main() {
     expect(viewModel.sendErrorMessage, 'Please paste or type content to send');
     expect(viewModel.isSending, isFalse);
   });
+
+  group('history error lifecycle', () {
+    ClipboardItem item(String id) => ClipboardItem(
+      id: id,
+      userId: 'u1',
+      content: 'clip $id',
+      deviceType: 'windows',
+      createdAt: DateTime(2026),
+    );
+
+    test('a failed load reports an error when nothing is on screen', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+
+      await viewModel.loadHistory();
+
+      expect(viewModel.historyError, isNotNull);
+      expect(viewModel.historyLoading, isFalse);
+    });
+
+    test('a successful load clears a previous error', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+      await viewModel.loadHistory();
+      expect(viewModel.historyError, isNotNull);
+
+      // Pull to refresh, and this time the fetch works.
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1')]);
+      await viewModel.loadHistory();
+
+      // The regression: historyError was only ever cleared on sign-out, and
+      // the UI returns the error pane before it looks at the items - so the
+      // list stayed hidden and pull-to-refresh looked like it did nothing.
+      expect(viewModel.historyError, isNull);
+      expect(viewModel.filteredHistoryItems, hasLength(1));
+    });
+
+    test('a failed refresh keeps the clips already loaded', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+      await viewModel.loadHistory();
+
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+      await viewModel.loadHistory();
+
+      // Losing the connection must not blank a list the user can still read.
+      expect(viewModel.filteredHistoryItems, hasLength(2));
+      expect(viewModel.historyError, isNull);
+    });
+
+    test('an active search survives a reload', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+      await viewModel.loadHistory();
+      viewModel.filterHistory('clip 2');
+      expect(viewModel.filteredHistoryItems, hasLength(1));
+
+      await viewModel.loadHistory();
+
+      // loadHistory used to assign the unfiltered list straight to
+      // _filteredHistoryItems, so a background refresh silently dropped the
+      // user's search.
+      expect(viewModel.filteredHistoryItems, hasLength(1));
+      expect(viewModel.filteredHistoryItems.single.id, '2');
+    });
+  });
 }
