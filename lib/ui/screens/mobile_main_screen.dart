@@ -2370,7 +2370,6 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       color: GhostColors.textMuted,
                     ),
                   ),
-                  const Spacer(),
                   // Where this clip was SENT. Previously an arrow plus a
                   // generic "devices" glyph, shown only when the clip was
                   // targeted - so it was the same icon whichever platforms
@@ -2378,22 +2377,37 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   // Absence meant "went everywhere", which is not something a
                   // missing icon can communicate. Now it always says so, in
                   // words.
-                  Icon(
-                    Icons.arrow_forward,
-                    size: 11,
-                    color: GhostColors.primaryAlpha70,
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      _targetLabel(widget.item.targetDeviceTypes),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: GhostColors.primary,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  //
+                  // One Expanded holding an end-aligned Row, rather than a
+                  // Spacer followed by a Flexible: those are both flex 1, so
+                  // the leftover width was split between them, and a loose
+                  // Flexible only draws as wide as its text - leaving the
+                  // unused half of its slot as dead space to the right of the
+                  // label. Here the Expanded owns all the slack and the inner
+                  // Row pushes its children flush against the right edge.
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Icon(
+                          Icons.arrow_forward,
+                          size: 11,
+                          color: GhostColors.primaryAlpha70,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            _targetLabel(widget.item.targetDeviceTypes),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: GhostColors.primary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
