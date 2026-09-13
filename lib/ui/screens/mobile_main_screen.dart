@@ -99,6 +99,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       TextEditingController();
   final ValueNotifier<String?> _sendError = ValueNotifier(null);
 
+  /// Whether the composer has text, for the toolbar's status line alone.
+  ///
+  /// Same reason as [_sendError]: a keystroke should repaint one label, not the
+  /// whole screen. Kept in sync from the field's onChanged and from anything
+  /// that sets the text programmatically (auto-paste, send, clear).
+  final ValueNotifier<bool> _composerHasText = ValueNotifier(false);
+
   // Share intent subscription
   StreamSubscription<List<SharedMediaFile>>? _intentDataStreamSubscription;
   StreamSubscription<Uri>? _linkSubscription;
@@ -125,6 +132,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
     // Focus drives the composer's border colour, so the surface itself shows
     // focus instead of the text field drawing its own outline.
+    _pasteController.addListener(_syncComposerHasText);
+
     _pasteFocusNode.addListener(() {
       if (_pasteFocusNode.hasFocus != _composerFocused && mounted) {
         setState(() => _composerFocused = _pasteFocusNode.hasFocus);
@@ -210,6 +219,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     return !_scrollIsDrag;
   }
 
+  /// Mirror "does the composer have text" into a notifier the toolbar listens
+  /// to, so the status line updates without rebuilding the screen.
+  ///
+  /// Driven by the controller rather than set at each call site: the text is
+  /// mutated from four places (typing, auto-paste, and two clears after send),
+  /// and hand-syncing all of them is how this kind of flag goes stale.
+  void _syncComposerHasText() {
+    final hasText = _pasteController.text.trim().isNotEmpty;
+    if (_composerHasText.value != hasText) {
+      _composerHasText.value = hasText;
+    }
+  }
+
   void _onViewModelChanged() {
     // Sync send error from ViewModel to ValueNotifier for fine-grained rebuilds
     if (_sendError.value != _viewModel.sendErrorMessage) {
@@ -239,9 +261,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       ..removeListener(_onViewModelChanged)
       ..dispose();
 
-    _pasteController.dispose();
+    _pasteController
+      ..removeListener(_syncComposerHasText)
+      ..dispose();
     _historySearchController.dispose();
     _sendError.dispose();
+    _composerHasText.dispose();
     _intentDataStreamSubscription?.cancel();
     _linkSubscription?.cancel();
 
@@ -1438,8 +1463,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 if (_sendError.value != null) {
                   _viewModel.clearSendError();
                 }
-                // The toolbar shows whether there is anything to send.
-                setState(() {});
+                // Nothing else needed here: _syncComposerHasText is driven by
+                // the controller, so it covers typing and the programmatic
+                // paths (auto-paste, clear after send) alike.
+                //
+                // This used to be setState(), which rebuilt the entire screen
+                // on every keystroke - and the history list is built eagerly,
+                // so that reconstructed every _HistoryRow (each doing
+                // decryption and content detection) per character typed.
               },
             ),
             const Divider(height: 1, color: GhostColors.border),
@@ -1490,8 +1521,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// were once separate buttons in different places that behaved differently,
   /// which made the distinction feel arbitrary.
   Widget _buildComposerToolbar({required bool hasAttachment}) {
-    final hasContent = _pasteController.text.trim().isNotEmpty || hasAttachment;
-
     return Padding(
       // 14 here plus Material's 2dp inset inside a zero-padding
       // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
@@ -1530,14 +1559,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           // flush right, and it still ellipsizes rather than pushing the Attach
           // button off a narrow screen.
           Expanded(
-            child: Text(
-              hasContent ? 'Ready to send' : 'Nothing to send yet',
-              textAlign: TextAlign.end,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
-                color: GhostColors.textMuted,
+            child: ValueListenableBuilder<bool>(
+              valueListenable: _composerHasText,
+              builder: (context, hasText, _) => Text(
+                (hasText || hasAttachment)
+                    ? 'Ready to send'
+                    : 'Nothing to send yet',
+                textAlign: TextAlign.end,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: GhostColors.textMuted,
+                ),
               ),
             ),
           ),

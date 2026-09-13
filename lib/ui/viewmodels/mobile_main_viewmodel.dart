@@ -88,7 +88,15 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Grouping here keeps the selector honest while preserving what was good
   /// about it: when a type has exactly one device, that device's name IS an
   /// accurate label for the type, so it is still shown.
-  List<DeviceTypeTarget> get deviceTypeTargets {
+  /// Cached because the getter allocates a map and sorts, and the chip row
+  /// reads it from build() - so it recomputed on every rebuild for a list that
+  /// changes only when devices are loaded. Invalidated with _devices.
+  List<DeviceTypeTarget>? _deviceTypeTargetsCache;
+
+  List<DeviceTypeTarget> get deviceTypeTargets =>
+      _deviceTypeTargetsCache ??= _computeDeviceTypeTargets();
+
+  List<DeviceTypeTarget> _computeDeviceTypeTargets() {
     final byType = <String, List<Device>>{};
     for (final device in _devices) {
       byType.putIfAbsent(device.deviceType, () => <Device>[]).add(device);
@@ -351,6 +359,7 @@ class MobileMainViewModel extends ChangeNotifier {
       );
       if (!_isDisposed) {
         _devices = devices;
+        _deviceTypeTargetsCache = null;
         _devicesLoading = false;
         _deviceError = null;
         notifyListeners();
@@ -1333,6 +1342,11 @@ class MobileMainViewModel extends ChangeNotifier {
     _filteredHistoryItems = [];
     _historySearchQuery = '';
     _selectedDeviceTypes.clear();
+    // The device list belongs to the account that just went away. It was left
+    // behind here, so after switching accounts the chip row still offered the
+    // PREVIOUS user's devices as send targets until a load replaced them.
+    _devices = [];
+    _deviceTypeTargetsCache = null;
     _sendErrorMessage = null;
     _historyError = null;
     _clipboardContent = null;
