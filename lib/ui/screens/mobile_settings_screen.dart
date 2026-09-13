@@ -1,6 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../locator.dart';
@@ -450,6 +451,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       appBar: AppBar(
         backgroundColor: GhostColors.surface,
         elevation: 0,
+        // Match the main screen: AppBar would otherwise pick its own overlay
+        // style from the background colour and re-opaque the status bar.
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
@@ -462,6 +470,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       ),
       body: ListView(
         physics: Adaptive.scrollPhysics,
+        // Edge-to-edge: keep the last row clear of the gesture bar.
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewPaddingOf(context).bottom,
+        ),
         scrollCacheExtent: const ScrollCacheExtent.pixels(300),
         children: [
           // Features section (moved to top)

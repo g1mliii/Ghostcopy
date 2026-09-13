@@ -885,16 +885,25 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       appBar: AppBar(
         backgroundColor: GhostColors.surface,
         elevation: 0,
+        // AppBar derives its own overlay style from the background colour,
+        // which would undo the transparent status bar set in main(). Pin it so
+        // the header's colour shows through the cutout strip with light
+        // glyphs over it.
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
         title: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: GhostColors.primaryAlpha20,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
+            // The real mark, matching the desktop Spotlight header. This was
+            // a generic Material copy glyph in a tinted box - placeholder art
+            // that shipped.
+            Image.asset(
+              'assets/icons/logo_white.png',
+              width: 28,
+              height: 28,
+              errorBuilder: (context, error, stack) => const Icon(
                 Icons.content_copy_rounded,
                 size: 18,
                 color: GhostColors.primary,
@@ -954,7 +963,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         border: Border.all(color: GhostColors.primaryAlpha30),
                       ),
                       child: Text(
-                        '10 recent',
+                        // Was hardcoded "10 recent" while the repository
+                        // fetches 15, so the badge contradicted the list.
+                        '${_viewModel.filteredHistoryItems.length} recent',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
@@ -1621,7 +1632,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
 
     return SliverPadding(
-      padding: const EdgeInsets.only(bottom: 20),
+      // Clear the gesture bar as well as the usual gap: the app draws
+      // edge-to-edge now, so the last row would otherwise sit under it.
+      padding: EdgeInsets.only(
+        bottom: 20 + MediaQuery.viewPaddingOf(context).bottom,
+      ),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
@@ -1948,8 +1963,29 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     return timeago.format(timestamp, locale: 'en_short');
   }
 
-  String _getDeviceLabel(String deviceType) {
-    return deviceType[0].toUpperCase() + deviceType.substring(1);
+  /// Proper platform names. Capitalising the first letter produced "Macos"
+  /// and "Ios", which look like typos rather than products.
+  String _getDeviceLabel(String deviceType) => switch (deviceType) {
+    'windows' => 'Windows',
+    'macos' => 'macOS',
+    'linux' => 'Linux',
+    'android' => 'Android',
+    'ios' => 'iOS',
+    _ => deviceType.isEmpty
+        ? deviceType
+        : deviceType[0].toUpperCase() + deviceType.substring(1),
+  };
+
+  /// Human-readable destination for a clip.
+  ///
+  /// target_device_type is a platform enum array: empty or null means the clip
+  /// went to every device on the account. Naming that case explicitly matters
+  /// more than the targeted one - "no icon" is not a message anybody reads.
+  String _targetLabel(List<String>? targets) {
+    if (targets == null || targets.isEmpty) return 'All devices';
+    if (targets.length == 1) return _getDeviceLabel(targets.first);
+    if (targets.length == 2) return targets.map(_getDeviceLabel).join(', ');
+    return '${targets.length} devices';
   }
 
   Widget _buildContentPreview(String displayContent) {
@@ -2331,21 +2367,32 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       color: GhostColors.textMuted,
                     ),
                   ),
-                  if (widget.item.targetDeviceTypes != null &&
-                      widget.item.targetDeviceTypes!.isNotEmpty) ...[
-                    const Spacer(),
-                    Icon(
-                      Icons.arrow_forward,
-                      size: 11,
-                      color: GhostColors.primaryAlpha70,
+                  const Spacer(),
+                  // Where this clip was SENT. Previously an arrow plus a
+                  // generic "devices" glyph, shown only when the clip was
+                  // targeted - so it was the same icon whichever platforms
+                  // were picked, and an untargeted clip showed nothing at all.
+                  // Absence meant "went everywhere", which is not something a
+                  // missing icon can communicate. Now it always says so, in
+                  // words.
+                  Icon(
+                    Icons.arrow_forward,
+                    size: 11,
+                    color: GhostColors.primaryAlpha70,
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      _targetLabel(widget.item.targetDeviceTypes),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: GhostColors.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                    const SizedBox(width: 5),
-                    Icon(
-                      Icons.devices,
-                      size: 13,
-                      color: GhostColors.primaryAlpha70,
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ],

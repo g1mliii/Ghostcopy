@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -424,6 +425,28 @@ Future<void> main(List<String> args) async {
         '[App] Push notifications will not work until Firebase is configured',
       );
     }
+
+    // Draw behind the status and navigation bars.
+    //
+    // The strip beside a punch-hole or notch holds only the clock, signal and
+    // battery - the OS draws those over whatever is underneath. Leaving it as
+    // an opaque bar wasted a band of screen on every modern phone. The AppBar
+    // now extends up into it (Material adds MediaQuery.padding.top to its own
+    // height automatically), so the header's surface colour runs to the very
+    // top and its content still begins below the cutout.
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        // Transparent, not coloured: the AppBar behind it supplies the colour.
+        statusBarColor: Colors.transparent,
+        // Light glyphs, because everything behind them is the dark theme.
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark, // iOS reads this one
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarContrastEnforced: false,
+      ),
+    );
 
     runApp(
       MyApp(
