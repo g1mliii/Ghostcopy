@@ -6,19 +6,38 @@ class GhostColors {
   GhostColors._();
 
   // Background layers
-  static const background = Color(0xFF0D0D0F); // Deep black
-  static const surface = Color(0xFF1A1A1D); // Card surfaces
-  static const surfaceLight = Color(0xFF2A2A2D); // Elevated surfaces
+  static const background = Color(0xFF0E0F13); // Deep black
+  static const surface = Color(0xFF18191F); // Card surfaces
+  static const surfaceLight = Color(0xFF22232B); // Elevated surfaces
 
   // Accent colors
-  static const primary = Color(0xFF5865F2); // Discord-like purple-blue
+  static const primary = Color(0xFF6670FF); // Purple-blue accent
   static const primaryHover = Color(0xFF4752C4);
   static const success = Color(0xFF3BA55C); // Green for confirmations
 
+  /// Fill for a SELECTED control (chips, toggles). A tint rather than the full
+  /// accent, so the Send button stays the only saturated purple on screen.
+  static const accentSoft = Color(0xFF292D55);
+
+  /// Text and icons on [accentSoft], and for accent-coloured metadata. Light
+  /// enough to stay legible on the soft fill, which white is not.
+  static const accentText = Color(0xFFAEB4FF);
+
+  /// Border for a selected or focused control.
+  static const accentBorder = Color(0xFF555EA6);
+
+  /// Disabled primary button.
+  static const accentDisabled = Color(0x99555CCB);
+
+  /// Hairline between grouped rows and around surfaces. An opaque grey rather
+  /// than the translucent glassBorder, so stacked rows in a grouped list do
+  /// not accumulate brightness where they meet.
+  static const border = Color(0xFF30323C);
+
   // Text
-  static const textPrimary = Color(0xFFFFFFFF);
+  static const textPrimary = Color(0xFFF5F6FA);
   static const textSecondary = Color(0xFFB9BBBE);
-  static const textMuted = Color(0xFF72767D);
+  static const textMuted = Color(0xFF989CA9);
 
   // Semantic colors for status/alerts
   static const warning = Color(0xFFFFB020); // Amber-like for warnings

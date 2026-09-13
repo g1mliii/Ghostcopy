@@ -410,6 +410,17 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   /// Build error widget
   /// Shown for an encrypted image this device holds no passphrase for.
+  /// True when this instance is rendering a list thumbnail rather than a
+  /// full-width preview.
+  ///
+  /// The placeholders below pair an icon with a sentence, which fits a
+  /// full-width preview and overflows a 52px thumbnail by more than its own
+  /// height. At thumbnail size the icon alone has to carry the meaning.
+  bool get _isCompact {
+    final height = widget.height;
+    return height != null && height < 96;
+  }
+
   Widget _buildLockedWidget() {
     return Container(
       width: widget.width,
@@ -419,28 +430,36 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         borderRadius: BorderRadius.circular(widget.borderRadius),
         border: Border.all(color: GhostColors.primary.withValues(alpha: 0.4)),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.lock_outline,
-            color: GhostColors.primary,
-            size: 28,
-          ),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              'Encrypted - add your passphrase in Settings to view',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: GhostColors.textMutedAlpha70,
-                fontSize: 11,
+      child: _isCompact
+          ? const Center(
+              child: Icon(
+                Icons.lock_outline,
+                color: GhostColors.primary,
+                size: 20,
               ),
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.lock_outline,
+                  color: GhostColors.primary,
+                  size: 28,
+                ),
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    'Encrypted - add your passphrase in Settings to view',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: GhostColors.textMutedAlpha70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -452,24 +471,33 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(widget.borderRadius),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.broken_image_outlined,
-            color: GhostColors.textMutedAlpha50,
-            size: 32,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            message,
-            style: TextStyle(
-              color: GhostColors.textMutedAlpha70,
-              fontSize: 11,
+      child: _isCompact
+          ? Center(
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: GhostColors.textMutedAlpha50,
+                size: 20,
+              ),
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.broken_image_outlined,
+                  color: GhostColors.textMutedAlpha50,
+                  size: 32,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: GhostColors.textMutedAlpha70,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 }

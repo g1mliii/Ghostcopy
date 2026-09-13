@@ -914,25 +914,38 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           statusBarIconBrightness: Brightness.light,
           statusBarBrightness: Brightness.dark,
         ),
+        toolbarHeight: 62,
+        titleSpacing: GhostSpacing.gutter,
         title: Row(
           children: [
-            // The real mark, matching the desktop Spotlight header. This was
-            // a generic Material copy glyph in a tinted box - placeholder art
-            // that shipped.
-            Image.asset(
-              'assets/icons/logo_white.png',
-              width: 28,
-              height: 28,
-              errorBuilder: (context, error, stack) => const Icon(
-                Icons.content_copy_rounded,
-                size: 18,
+            // The mark sits in an accent tile rather than floating loose, so
+            // the header has one solid anchor at 30px instead of a 28px image
+            // competing with the wordmark beside it.
+            Container(
+              width: 30,
+              height: 30,
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
                 color: GhostColors.primary,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Image.asset(
+                'assets/icons/logo_white.png',
+                color: Colors.white,
+                errorBuilder: (context, error, stack) => const Icon(
+                  Icons.content_copy_rounded,
+                  size: 17,
+                  color: Colors.white,
+                ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Text(
               'GhostCopy',
-              style: GhostTypography.headline.copyWith(fontSize: 18),
+              style: GhostTypography.headline.copyWith(
+                fontSize: 17,
+                letterSpacing: -0.2,
+              ),
             ),
           ],
         ),
@@ -940,9 +953,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             onPressed: _navigateToSettings,
-            color: GhostColors.textSecondary,
+            color: GhostColors.textMuted,
             tooltip: 'Settings',
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: RefreshIndicator(
@@ -952,136 +966,29 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         child: CustomScrollView(
           physics: Adaptive.scrollPhysics,
           slivers: [
-            // Paste area section
-            SliverToBoxAdapter(child: _buildPasteArea()),
-
-            // Device selector chips
-            SliverToBoxAdapter(child: _buildDeviceSelector()),
-
-            // Send button
-            SliverToBoxAdapter(child: _buildSendButton()),
-
-            // History section header
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  GhostSpacing.gutter,
-                  GhostSpacing.section + GhostSpacing.sectionTight,
-                  GhostSpacing.gutter,
-                  GhostSpacing.sectionTight,
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      'History',
-                      style: GhostTypography.headline.copyWith(fontSize: 16),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: GhostColors.primaryAlpha15,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: GhostColors.primaryAlpha30),
-                      ),
-                      child: Text(
-                        // Was hardcoded "10 recent" while the repository
-                        // fetches 15, so the badge contradicted the list.
-                        '${_viewModel.filteredHistoryItems.length} recent',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: GhostColors.primaryAlpha90,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            SliverPadding(
+              // One padded column for the whole page, so the composer, chips,
+              // button and history share a single left edge. Bottom clears the
+              // gesture bar, since the app draws edge-to-edge.
+              padding: EdgeInsets.fromLTRB(
+                GhostSpacing.gutter,
+                8,
+                GhostSpacing.gutter,
+                24 + MediaQuery.viewPaddingOf(context).bottom,
+              ),
+              sliver: SliverList.list(
+                children: [
+                  _buildPasteArea(),
+                  const SizedBox(height: 15),
+                  _buildDeviceSelector(),
+                  const SizedBox(height: 13),
+                  _buildSendButton(),
+                  const SizedBox(height: GhostSpacing.sectionLoose),
+                  _buildLockedClipsBanner(),
+                  _buildHistorySection(),
+                ],
               ),
             ),
-
-            // Search bar
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  GhostSpacing.gutter,
-                  0,
-                  GhostSpacing.gutter,
-                  GhostSpacing.sectionTight,
-                ),
-                child: TextField(
-                  controller: _historySearchController,
-                  onChanged: _viewModel.filterHistoryDebounced,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: GhostColors.textPrimary,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Search clips...',
-                    hintStyle: TextStyle(color: GhostColors.textMutedAlpha60),
-                    prefixIcon: const Icon(
-                      Icons.search,
-                      size: 18,
-                      color: GhostColors.textMuted,
-                    ),
-                    suffixIcon: _viewModel.historySearchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () {
-                              _historySearchController.clear();
-                              _viewModel.filterHistory('');
-                            },
-                            color: GhostColors.textMuted,
-                          )
-                        : null,
-                    filled: true,
-                    fillColor: GhostColors.surface,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(
-                        GhostSpacing.surfaceRadius,
-                      ),
-                      borderSide: const BorderSide(
-                        color: GhostColors.glassBorder,
-                      ),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(
-                        GhostSpacing.surfaceRadius,
-                      ),
-                      borderSide: const BorderSide(
-                        color: GhostColors.glassBorder,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(
-                        GhostSpacing.surfaceRadius,
-                      ),
-                      borderSide: const BorderSide(
-                        color: GhostColors.primary,
-                        width: 1.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-            // Locked-clips banner. This must sit OUTSIDE the history list,
-            // because encrypted clips this device cannot open are dropped from
-            // the list entirely - so when other readable clips exist the list
-            // is not empty, the empty-state never renders, and the locked ones
-            // would disappear with no explanation at all.
-            _buildLockedClipsBanner(),
-
-            // History list
-            _buildHistoryList(),
           ],
         ),
       ),
@@ -1231,32 +1138,36 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// borderless in every state - including focus, which inherited a 2px
   /// primary outline from the theme and lit the whole box up bright purple.
   /// Focus is now shown by the surface border alone.
+  /// The composer: one surface holding the text field, any staged
+  /// attachment, and a toolbar.
+  ///
+  /// Previously a card containing a separately-bordered text field - a card
+  /// inside a card - under a "Paste & Send" heading that only restated the
+  /// placeholder below it. The field is borderless in EVERY state: setting
+  /// only `border` left focusedBorder falling back to the theme's 2px primary
+  /// outline, which lit the whole box up on focus.
   Widget _buildPasteArea() {
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
         (_viewModel.clipboardContent?.hasImage ?? false);
 
     return RepaintBoundary(
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(
-          GhostSpacing.gutter,
-          GhostSpacing.section,
-          GhostSpacing.gutter,
-          0,
-        ),
-        constraints: const BoxConstraints(
-          minHeight: GhostSpacing.composerMinHeight,
-        ),
+      child: DecoratedBox(
         decoration: BoxDecoration(
           color: GhostColors.surface,
           borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
           border: Border.all(
-            // Quiet accent while focused rather than the full primary: the
-            // Send button is meant to be the only strong purple on screen.
             color: _composerFocused
-                ? GhostColors.primaryAlpha50
-                : GhostColors.glassBorder,
+                ? GhostColors.accentBorder
+                : GhostColors.border,
           ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x30000000),
+              blurRadius: 28,
+              offset: Offset(0, 8),
+            ),
+          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1269,50 +1180,40 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               if (_viewModel.clipboardContent?.hasImage ?? false)
                 _buildImagePreview(),
             ],
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                GhostSpacing.gutter,
-                GhostSpacing.sectionTight,
-                GhostSpacing.gutter,
-                0,
+            TextField(
+              controller: _pasteController,
+              focusNode: _pasteFocusNode,
+              // minLines sets the empty composer's height directly. Expanded
+              // cannot: this lives in a sliver, so incoming height is
+              // unbounded and a flex child has nothing to expand into.
+              minLines: 3,
+              maxLines: 5,
+              keyboardType: TextInputType.multiline,
+              style: const TextStyle(
+                fontSize: 16,
+                color: GhostColors.textPrimary,
               ),
-              child: TextField(
-                controller: _pasteController,
-                focusNode: _pasteFocusNode,
-                // minLines gives the empty composer its height directly.
-                // Expanded cannot: this lives in a sliver, so the incoming
-                // height is unbounded and a flex child has nothing to expand
-                // into - which threw "RenderFlex children have non-zero flex
-                // but incoming height constraints are unbounded".
-                minLines: 4,
-                maxLines: 8,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: GhostColors.textPrimary,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Paste or type something to send...',
-                  hintStyle: TextStyle(color: GhostColors.textMutedAlpha60),
-                  // Every state explicitly borderless and unfilled. Setting
-                  // only `border` leaves focusedBorder falling back to the
-                  // theme, which is where the bright outline came from.
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  focusedErrorBorder: InputBorder.none,
-                  filled: false,
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                onChanged: (value) {
-                  if (_sendError.value != null) {
-                    _viewModel.clearSendError();
-                  }
-                },
+              decoration: const InputDecoration(
+                hintText: 'Paste or type something…',
+                hintStyle: TextStyle(color: GhostColors.textMuted),
+                contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
               ),
+              onChanged: (value) {
+                if (_sendError.value != null) {
+                  _viewModel.clearSendError();
+                }
+                // The toolbar shows whether there is anything to send.
+                setState(() {});
+              },
             ),
-            _buildComposerToolbar(),
+            const Divider(height: 1, color: GhostColors.border),
+            _buildComposerToolbar(hasAttachment: hasAttachment),
             ValueListenableBuilder<String?>(
               valueListenable: _sendError,
               builder: (context, error, _) {
@@ -1326,18 +1227,18 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.error_outline,
-                        size: 14,
-                        color: Colors.red.shade400,
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        size: 15,
+                        color: GhostColors.errorLight,
                       ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           error,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 12,
-                            color: Colors.red.shade400,
+                            color: GhostColors.errorLight,
                           ),
                         ),
                       ),
@@ -1354,139 +1255,109 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// Bottom toolbar of the composer.
   ///
-  /// The attach control lives here, inside the surface it acts on, rather than
-  /// floating on its own. One control covers both images and files - they were
-  /// once separate buttons in different places that behaved differently, which
-  /// made the distinction feel arbitrary.
-  Widget _buildComposerToolbar() {
+  /// The attach control lives inside the surface it acts on rather than
+  /// floating below it, and one control covers both images and files - they
+  /// were once separate buttons in different places that behaved differently,
+  /// which made the distinction feel arbitrary.
+  Widget _buildComposerToolbar({required bool hasAttachment}) {
+    final hasContent = _pasteController.text.trim().isNotEmpty || hasAttachment;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        GhostSpacing.sectionTight,
-        0,
-        GhostSpacing.sectionTight,
-        GhostSpacing.sectionTight,
-      ),
+      padding: const EdgeInsets.fromLTRB(6, 4, 12, 5),
       child: Row(
         children: [
-          _ComposerToolbarButton(
-            icon: Icons.add_photo_alternate_outlined,
-            tooltip: 'Attach image or file',
-            onTap: _showAttachSheet,
-          ),
-          const Spacer(),
-          // Character count only once there is something to count, so the
-          // empty composer stays clean.
-          if (_pasteController.text.isNotEmpty)
-            Text(
-              '${_pasteController.text.characters.length}',
-              style: const TextStyle(
-                fontSize: 11,
-                color: GhostColors.textMuted,
+          TextButton.icon(
+            onPressed: _showAttachSheet,
+            icon: const Icon(Icons.attach_file_rounded, size: 17),
+            label: const Text('Attach'),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(GhostSpacing.minTouchTarget, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              foregroundColor: GhostColors.textMuted,
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(GhostSpacing.thumbRadius),
               ),
             ),
+          ),
+          const Spacer(),
+          Text(
+            hasContent ? 'Ready to send' : 'Nothing to send yet',
+            style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildDeviceSelector() {
+    final targets = _viewModel.deviceTypeTargets;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
-          child: Text(
-            'Send to',
-            style: GhostTypography.caption.copyWith(
-              color: GhostColors.textMuted,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Send to',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+              ),
             ),
-          ),
+            Text(
+              '${targets.length} platform${targets.length == 1 ? '' : 's'}',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.accentText,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 9),
         SizedBox(
-          height: 36,
+          height: GhostSpacing.chipHeight,
           child: _viewModel.devicesLoading
               ? Center(
                   child: Adaptive.progressIndicator(
-                    size: 16,
+                    size: 18,
                     color: GhostColors.primary,
                   ),
                 )
               : _viewModel.deviceError != null
-              ? GestureDetector(
-                  onTap: () => _viewModel.loadDevices(forceRefresh: true),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: GhostSpacing.gutter,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.error_outline,
-                          size: 14,
-                          color: Colors.red[300],
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            _viewModel.deviceError!,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: GhostColors.textMuted,
-                            ),
-                          ),
-                        ),
-                        const Icon(
-                          Icons.refresh,
-                          size: 14,
-                          color: GhostColors.primary,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : Builder(
-                  builder: (context) {
+              ? _buildDeviceError()
+              : ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  physics: Adaptive.scrollPhysics,
+                  itemCount: targets.length + 1,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return _DeviceChip(
+                        label: 'All devices',
+                        icon: Icons.devices_rounded,
+                        isSelected: _viewModel.selectedDeviceTypes.isEmpty,
+                        onTap: _viewModel.clearDeviceTypeSelection,
+                      );
+                    }
+
                     // One chip per device TYPE, not per device: the backend
                     // routes on target_device_type (a platform enum array) and
-                    // cannot address an individual machine. Rendering a chip
-                    // per device made two Windows PCs highlight together on a
-                    // single tap, because both resolve to the same type.
-                    final targets = _viewModel.deviceTypeTargets;
-
-                    return ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      physics: Adaptive.scrollPhysics,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: GhostSpacing.gutter,
+                    // cannot address an individual machine. A chip per device
+                    // made two Windows PCs highlight together on one tap.
+                    final target = targets[index - 1];
+                    return _DeviceChip(
+                      label: target.label,
+                      tooltip: 'Sends to ${target.deviceNames}',
+                      icon: _getDeviceIcon(target.deviceType),
+                      isSelected: _viewModel.selectedDeviceTypes.contains(
+                        target.deviceType,
                       ),
-                      itemCount: targets.length + 1,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
-                          return _DeviceChip(
-                            label: 'All Devices',
-                            icon: Icons.devices,
-                            isSelected: _viewModel.selectedDeviceTypes.isEmpty,
-                            onTap: () => _viewModel.clearDeviceTypeSelection(),
-                          );
-                        }
-
-                        final target = targets[index - 1];
-                        return _DeviceChip(
-                          label: target.label,
-                          tooltip: target.devices.length > 1
-                              ? 'Sends to ${target.deviceNames}'
-                              : null,
-                          icon: _getDeviceIcon(target.deviceType),
-                          isSelected: _viewModel.selectedDeviceTypes.contains(
-                            target.deviceType,
-                          ),
-                          onTap: () =>
-                              _viewModel.toggleDeviceType(target.deviceType),
-                        );
-                      },
+                      onTap: () =>
+                          _viewModel.toggleDeviceType(target.deviceType),
                     );
                   },
                 ),
@@ -1495,45 +1366,54 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  Widget _buildSendButton() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        GhostSpacing.gutter,
-        GhostSpacing.section,
-        GhostSpacing.gutter,
-        0,
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        // Taller than the 40px chips above it. The size difference is what
-        // marks this as the primary action, now that it is also the only
-        // saturated purple on the screen.
-        height: GhostSpacing.sendButtonHeight,
-        child: FilledButton(
-          onPressed: _viewModel.isSending ? null : _handleSend,
-          style: FilledButton.styleFrom(
-            backgroundColor: GhostColors.primary,
-            disabledBackgroundColor: GhostColors.primaryAlpha50,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+  Widget _buildDeviceError() {
+    return GestureDetector(
+      onTap: () => _viewModel.loadDevices(forceRefresh: true),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 14,
+            color: GhostColors.errorLight,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _viewModel.deviceError ?? 'Could not load devices',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+              ),
             ),
           ),
-          child: _viewModel.isSending
-              ? Adaptive.progressIndicator(color: Colors.white)
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.send_rounded, size: 18),
-                    const SizedBox(width: 8),
-                    Text(
-                      _sendButtonLabel(),
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
+          const Icon(Icons.refresh, size: 14, color: GhostColors.primary),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSendButton() {
+    return SizedBox(
+      width: double.infinity,
+      // Taller than the 38px chips above it. The size difference marks this as
+      // the primary action, now that it is the only saturated accent on the
+      // screen.
+      height: GhostSpacing.sendButtonHeight,
+      child: FilledButton.icon(
+        onPressed: _viewModel.isSending ? null : _handleSend,
+        icon: _viewModel.isSending
+            ? Adaptive.progressIndicator(size: 18, color: Colors.white)
+            : const Icon(Icons.send_rounded, size: 18),
+        label: Text(_viewModel.isSending ? 'Sending…' : _sendButtonLabel()),
+        style: FilledButton.styleFrom(
+          backgroundColor: GhostColors.primary,
+          disabledBackgroundColor: GhostColors.accentDisabled,
+          foregroundColor: Colors.white,
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(GhostSpacing.buttonRadius),
+          ),
         ),
       ),
     );
@@ -1559,266 +1439,282 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// locked clips are removed from the list, so if anything readable exists
   /// the list is non-empty and an empty-state message would never appear.
   Widget _buildLockedClipsBanner() {
-    return SliverToBoxAdapter(
-      child: ValueListenableBuilder<int>(
-        valueListenable: _viewModel.undecryptableItemCount,
-        builder: (context, locked, _) {
-          if (locked == 0) return const SizedBox.shrink();
+    return ValueListenableBuilder<int>(
+      valueListenable: _viewModel.undecryptableItemCount,
+      builder: (context, locked, _) {
+        if (locked == 0) return const SizedBox.shrink();
 
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-            child: Material(
-              color: GhostColors.primary.withValues(alpha: 0.12),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: GhostSpacing.sectionTight),
+          child: Material(
+            color: GhostColors.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+            child: InkWell(
               borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
-                onTap: _navigateToSettings,
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.lock_outline,
-                        color: GhostColors.primary,
-                        size: 22,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              locked == 1
-                                  ? '1 clip is encrypted'
-                                  : '$locked clips are encrypted',
-                              style: GhostTypography.body.copyWith(
-                                color: GhostColors.textPrimary,
-                                fontWeight: FontWeight.w600,
-                              ),
+              onTap: _navigateToSettings,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.lock_outline,
+                      color: GhostColors.primary,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            locked == 1
+                                ? '1 clip is encrypted'
+                                : '$locked clips are encrypted',
+                            style: GhostTypography.body.copyWith(
+                              color: GhostColors.textPrimary,
+                              fontWeight: FontWeight.w600,
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Tap to enter your passphrase. It is never sent '
-                              'to the server, so each device needs it once.',
-                              style: GhostTypography.caption.copyWith(
-                                color: GhostColors.textMuted,
-                              ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Tap to enter your passphrase. It is never sent '
+                            'to the server, so each device needs it once.',
+                            style: GhostTypography.caption.copyWith(
+                              color: GhostColors.textMuted,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                      const Icon(
-                        Icons.chevron_right,
-                        color: GhostColors.textMuted,
-                        size: 20,
-                      ),
-                    ],
-                  ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right,
+                      color: GhostColors.textMuted,
+                      size: 20,
+                    ),
+                  ],
                 ),
               ),
             ),
-          );
-        },
+          ),
+        );
+      },
+    );
+  }
+
+  /// History: heading, always-visible search, then one grouped list.
+  ///
+  /// Rows were individually floating cards, which cost a margin and a border
+  /// each and made fifteen clips read as fifteen separate objects. One
+  /// container with hairline dividers reads as a single list and fits far more
+  /// on screen.
+  Widget _buildHistorySection() {
+    final items = _viewModel.filteredHistoryItems;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Clipboard history',
+              style: GhostTypography.headline.copyWith(fontSize: 15),
+            ),
+            const SizedBox(width: 7),
+            Text(
+              '${items.length} recent',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        _buildHistorySearch(),
+        const SizedBox(height: GhostSpacing.sectionTight),
+        if (_viewModel.historyLoading)
+          SizedBox(
+            height: 120,
+            child: Center(
+              child: Adaptive.progressIndicator(
+                size: 28,
+                color: GhostColors.primary,
+              ),
+            ),
+          )
+        else if (_viewModel.historyError != null)
+          _buildHistoryMessage(
+            icon: Icons.error_outline_rounded,
+            message: _viewModel.historyError!,
+          )
+        else if (items.isEmpty)
+          _buildHistoryMessage(
+            icon: Icons.content_paste_off_outlined,
+            message: _viewModel.historySearchQuery.isNotEmpty
+                ? 'No clips match your search'
+                : 'Nothing here yet. Send something to get started.',
+          )
+        else
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: GhostColors.surface,
+              borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+              border: Border.all(color: GhostColors.border),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(
+                GhostSpacing.surfaceRadiusInner,
+              ),
+              child: Column(
+                children: [
+                  for (var index = 0; index < items.length; index++) ...[
+                    if (index > 0)
+                      const Divider(
+                        height: 1,
+                        indent: 14,
+                        endIndent: 14,
+                        color: GhostColors.border,
+                      ),
+                    _buildHistoryRow(items[index]),
+                  ],
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHistorySearch() {
+    return TextField(
+      controller: _historySearchController,
+      onChanged: _viewModel.filterHistoryDebounced,
+      style: const TextStyle(fontSize: 16, color: GhostColors.textPrimary),
+      decoration: InputDecoration(
+        hintText: 'Search clips…',
+        hintStyle: const TextStyle(color: GhostColors.textMuted),
+        prefixIcon: const Icon(
+          Icons.search_rounded,
+          size: 18,
+          color: GhostColors.textMuted,
+        ),
+        suffixIcon: _viewModel.historySearchQuery.isEmpty
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.close_rounded, size: 17),
+                color: GhostColors.textMuted,
+                tooltip: 'Clear search',
+                onPressed: () {
+                  _historySearchController.clear();
+                  _viewModel.filterHistory('');
+                },
+              ),
+        filled: true,
+        fillColor: GhostColors.surface,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+          borderSide: const BorderSide(color: GhostColors.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+          borderSide: const BorderSide(color: GhostColors.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+          borderSide: const BorderSide(color: GhostColors.accentBorder),
+        ),
       ),
     );
   }
 
-  Widget _buildHistoryList() {
-    if (_viewModel.historyLoading) {
-      return SliverFillRemaining(
-        child: Center(
-          child: Adaptive.progressIndicator(
-            size: 32,
-            strokeWidth: 3,
-            color: GhostColors.primary,
-          ),
-        ),
-      );
-    }
-
-    if (_viewModel.historyError != null) {
-      return SliverFillRemaining(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
-              const SizedBox(height: 16),
-              Text(
-                _viewModel.historyError!,
-                style: GhostTypography.body.copyWith(
-                  color: GhostColors.textMuted,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_viewModel.filteredHistoryItems.isEmpty) {
-      // Encrypted clips that the local passphrase cannot open are dropped from
-      // the list, so "no history" would be actively misleading here: the clips
-      // exist, they just cannot be read on this device yet. This is the normal
-      // state after signing in somewhere new, since the passphrase is
-      // deliberately never uploaded to the server.
-      final lockedCount = _viewModel.undecryptableItemCount;
-
-      return SliverFillRemaining(
-        child: Center(
-          child: ValueListenableBuilder<int>(
-            valueListenable: lockedCount,
-            builder: (context, locked, _) {
-              if (locked > 0 && _viewModel.historySearchQuery.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.lock_outline,
-                        size: 48,
-                        color: GhostColors.primary.withValues(alpha: 0.7),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        locked == 1
-                            ? '1 encrypted clip'
-                            : '$locked encrypted clips',
-                        style: GhostTypography.body.copyWith(
-                          color: GhostColors.textPrimary,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Enter your passphrase to unlock them. It is never '
-                        'sent to the server, so it has to be entered on each '
-                        'device.',
-                        style: GhostTypography.caption.copyWith(
-                          color: GhostColors.textMuted,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 20),
-                      FilledButton.icon(
-                        // Settings is where the passphrase is entered; this
-                        // helper already reloads history on return, so the
-                        // clips appear as soon as the passphrase is accepted.
-                        onPressed: _navigateToSettings,
-                        icon: const Icon(Icons.key_outlined, size: 18),
-                        label: const Text('Enter passphrase'),
-                      ),
-                    ],
-                  ),
-                );
-              }
-
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.content_paste_off_outlined,
-                    size: 48,
-                    color: GhostColors.textMutedAlpha50,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _viewModel.historySearchQuery.isNotEmpty
-                        ? 'No clips match your search'
-                        : 'No clipboard history yet',
-                    style: GhostTypography.body.copyWith(
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      );
-    }
-
-    return SliverPadding(
-      // Clear the gesture bar as well as the usual gap: the app draws
-      // edge-to-edge now, so the last row would otherwise sit under it.
-      padding: EdgeInsets.only(
-        bottom: 20 + MediaQuery.viewPaddingOf(context).bottom,
+  Widget _buildHistoryMessage({
+    required IconData icon,
+    required String message,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 16),
+      decoration: BoxDecoration(
+        color: GhostColors.surface,
+        borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        border: Border.all(color: GhostColors.border),
       ),
-      sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final item = _viewModel.filteredHistoryItems[index];
+      child: Column(
+        children: [
+          Icon(icon, color: GhostColors.textMuted),
+          const SizedBox(height: 9),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: GhostTypography.caption.copyWith(
+              fontSize: 13,
+              color: GhostColors.textMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-            final cachedDecrypted = _viewModel.decryptedContentCache[item.id];
-            final cachedDetection = _viewModel.detectionCache[item.id];
-
-            return RepaintBoundary(
-              key: ValueKey<String>(item.id),
-              child: Dismissible(
-                // Keyed on the clip id, not the index, so the correct row is
-                // removed when the list shifts under a realtime update.
-                key: ValueKey<String>('dismiss-${item.id}'),
-                // Left only. A right swipe is left free for a future action,
-                // and a single direction makes an accidental delete less
-                // likely on a list the user scrolls constantly.
-                direction: DismissDirection.endToStart,
-                background: _buildDeleteBackground(),
-                confirmDismiss: (_) => _confirmDeleteClip(item),
-                onDismissed: (_) => _deleteClip(item),
-                child: _HistoryItemContent(
-                  item: item,
-                  transformerService: _transformerService,
-                  clipboardRepository: _clipboardRepository,
-                  encryptionService: _viewModel.encryptionService,
-                  cachedDecryptedContent: cachedDecrypted,
-                  cachedDetectionResult: cachedDetection,
-                  onContentDecrypted: (content) {
-                    _viewModel.cacheDecryptedContent(item.id, content);
-                  },
-                  onContentDetected: (result) {
-                    _viewModel.cacheDetectionResult(item.id, result);
-                  },
-                  onTap: () => _viewModel.handleHistoryItemTap(
-                    item,
-                    sharePositionOrigin: _shareOrigin(),
-                    onSuccess: (msg) {
-                      // iOS has no system toast, so the tick IS the
-                      // confirmation there - fire it before the mounted check.
-                      Adaptive.successFeedback();
-                      if (mounted) {
-                        // Native Toast on Android: a copy confirmation should
-                        // look like the system, not like the app.
-                        unawaited(
-                          showNativeToast(context, msg, icon: Icons.copy),
-                        );
-                      }
-                    },
-                    onError: (msg) {
-                      if (mounted) {
-                        showGhostToast(
-                          context,
-                          msg,
-                          icon: Icons.error,
-                          type: GhostToastType.error,
-                        );
-                      }
-                    },
-                  ),
-                ),
-              ),
-            );
-          },
-          childCount: _viewModel.filteredHistoryItems.length,
-          findChildIndexCallback: (key) {
-            if (key is! ValueKey<String>) return null;
-            final index = _viewModel.filteredHistoryItems.indexWhere(
-              (item) => item.id == key.value,
-            );
-            return index == -1 ? null : index;
-          },
+  Widget _buildHistoryRow(ClipboardItem item) {
+    return Dismissible(
+      // Keyed on the clip id, not the index, so the correct row is removed
+      // when the list shifts under a realtime update.
+      key: ValueKey<String>('dismiss-${item.id}'),
+      // Left only. A right swipe is left free for a future action, and one
+      // direction makes an accidental delete less likely on a list the user
+      // scrolls constantly.
+      direction: DismissDirection.endToStart,
+      background: _buildDeleteBackground(),
+      confirmDismiss: (_) => _confirmDeleteClip(item),
+      onDismissed: (_) => _deleteClip(item),
+      child: RepaintBoundary(
+        key: ValueKey<String>(item.id),
+        child: _HistoryRow(
+          item: item,
+          transformerService: _transformerService,
+          clipboardRepository: _clipboardRepository,
+          encryptionService: _viewModel.encryptionService,
+          cachedDecryptedContent: _viewModel.decryptedContentCache[item.id],
+          cachedDetectionResult: _viewModel.detectionCache[item.id],
+          onContentDecrypted: (content) =>
+              _viewModel.cacheDecryptedContent(item.id, content),
+          onContentDetected: (result) =>
+              _viewModel.cacheDetectionResult(item.id, result),
+          onTap: () => _copyClip(item),
+          onCopy: () => _copyClip(item),
         ),
+      ),
+    );
+  }
+
+  /// Copy a clip to the clipboard, with platform-appropriate confirmation.
+  void _copyClip(ClipboardItem item) {
+    unawaited(
+      _viewModel.handleHistoryItemTap(
+        item,
+        sharePositionOrigin: _shareOrigin(),
+        onSuccess: (msg) {
+          // iOS has no system toast, so the tick IS the confirmation there -
+          // fire it before the mounted check.
+          Adaptive.successFeedback();
+          if (mounted) {
+            unawaited(showNativeToast(context, msg, icon: Icons.copy));
+          }
+        },
+        onError: (msg) {
+          if (mounted) {
+            showGhostToast(
+              context,
+              msg,
+              icon: Icons.error,
+              type: GhostToastType.error,
+            );
+          }
+        },
       ),
     );
   }
@@ -1898,6 +1794,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 }
 
 /// Device selection chip widget
+/// Destination chip: one platform, or "All devices".
 class _DeviceChip extends StatelessWidget {
   const _DeviceChip({
     required this.label,
@@ -1907,90 +1804,95 @@ class _DeviceChip extends StatelessWidget {
     this.tooltip,
   });
 
-  // Perf: const BorderRadius avoids allocation per build
-  static const _borderRadius = BorderRadius.all(Radius.circular(20));
+  static const _radius = BorderRadius.all(
+    Radius.circular(GhostSpacing.controlRadius),
+  );
 
   final String label;
   final IconData icon;
   final bool isSelected;
   final VoidCallback onTap;
 
-  /// Shown on long-press when the label covers more than one device, so the
-  /// user can still see exactly which machines a send will reach.
+  /// Long-press reveals the actual machines behind a platform, since the chip
+  /// deliberately names the platform rather than any one device.
   final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    final chip = _buildChip();
-    final message = tooltip;
-    return message == null ? chip : Tooltip(message: message, child: chip);
-  }
-
-  Widget _buildChip() {
-    return Material(
-      // A tint, not a fill. A solid purple chip competed with the Send button
-      // for the eye, and with several selected the row became a purple block
-      // that read as the loudest thing on screen - which the destination
-      // picker is not.
-      color: isSelected ? GhostColors.primaryAlpha15 : GhostColors.surface,
-      borderRadius: _borderRadius,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: _borderRadius,
-        child: Container(
-          height: GhostSpacing.chipHeight,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            borderRadius: _borderRadius,
-            border: Border.all(
-              color: isSelected
-                  ? GhostColors.primaryAlpha50
-                  : GhostColors.glassBorder,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 14,
+    final chip = Semantics(
+      selected: isSelected,
+      button: true,
+      child: Material(
+        // A tint, not a fill. A solid accent chip competed with the Send
+        // button, and several selected turned the row into a block that read
+        // as the loudest thing on screen - which a destination picker is not.
+        color: isSelected ? GhostColors.accentSoft : GhostColors.surface,
+        borderRadius: _radius,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: _radius,
+          child: Container(
+            height: GhostSpacing.chipHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              borderRadius: _radius,
+              border: Border.all(
                 color: isSelected
-                    ? GhostColors.primaryAlpha90
-                    : GhostColors.textSecondary,
+                    ? GhostColors.accentBorder
+                    : GhostColors.border,
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 15,
                   color: isSelected
-                      ? GhostColors.primaryAlpha90
-                      : GhostColors.textSecondary,
+                      ? GhostColors.accentText
+                      : GhostColors.textMuted,
                 ),
-              ),
-            ],
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: isSelected
+                        ? GhostColors.accentText
+                        : GhostColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
+
+    final message = tooltip;
+    return message == null ? chip : Tooltip(message: message, child: chip);
   }
 }
 
 /// History item with smart transformer detection and preview mode.
-/// Matches the desktop pattern — no per-item animation controllers.
+/// One row in the grouped history list.
 ///
-/// Performance optimizations:
-/// - Uses cached decrypted content to avoid re-decryption
-/// - Uses cached detection results to avoid re-detection
-/// - Stable ValueKey for efficient list updates
-/// - RepaintBoundary wrapper prevents unnecessary repaints
-class _HistoryItemContent extends StatefulWidget {
-  const _HistoryItemContent({
+/// Replaces the old floating card, which gave every clip a margin, a border
+/// and a full-width 120px image preview - two screenshots filled the screen
+/// and pushed everything else below the fold. A row is a 52px thumbnail, two
+/// lines of preview, one metadata line and a copy button.
+///
+/// Still stateful for the same reason the card was: content-type detection is
+/// async, and its result is cached in the ViewModel so scrolling does not
+/// re-run it.
+class _HistoryRow extends StatefulWidget {
+  const _HistoryRow({
     required this.item,
     required this.transformerService,
     required this.clipboardRepository,
     required this.onTap,
+    required this.onCopy,
     this.encryptionService,
     this.cachedDecryptedContent,
     this.cachedDetectionResult,
@@ -2007,93 +1909,199 @@ class _HistoryItemContent extends StatefulWidget {
   final ValueChanged<String>? onContentDecrypted;
   final ValueChanged<ContentDetectionResult>? onContentDetected;
   final VoidCallback onTap;
+  final VoidCallback onCopy;
 
   @override
-  State<_HistoryItemContent> createState() => _HistoryItemContentState();
+  State<_HistoryRow> createState() => _HistoryRowState();
 }
 
-class _HistoryItemContentState extends State<_HistoryItemContent> {
-  bool _isExpanded = false;
-
+class _HistoryRowState extends State<_HistoryRow> {
   ContentDetectionResult? _detectionResult;
-  String? _decryptedContent;
-  bool _isPreviewMode = false;
-
-  @override
-  void didUpdateWidget(_HistoryItemContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.item.content != oldWidget.item.content ||
-        widget.cachedDecryptedContent != oldWidget.cachedDecryptedContent ||
-        widget.encryptionService != oldWidget.encryptionService) {
-      _initializeContentDetection();
-    }
-  }
 
   @override
   void initState() {
     super.initState();
-    _initializeContentDetection();
+    unawaited(_detectContentType());
   }
 
-  Future<void> _initializeContentDetection() async {
-    if (widget.cachedDecryptedContent != null) {
-      _decryptedContent = widget.cachedDecryptedContent;
-
-      if (widget.cachedDetectionResult != null) {
-        _detectionResult = widget.cachedDetectionResult;
-        _isPreviewMode =
-            (widget.cachedDetectionResult!.type ==
-                    TransformerContentType.json ||
-                widget.cachedDetectionResult!.type ==
-                    TransformerContentType.jwt) &&
-            widget.cachedDecryptedContent!.length > 200;
-
-        if (mounted) {
-          setState(() {});
-        }
-        return;
-      }
+  @override
+  void didUpdateWidget(_HistoryRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.item.content != oldWidget.item.content) {
+      unawaited(_detectContentType());
     }
+  }
 
+  Future<void> _detectContentType() async {
+    if (widget.cachedDetectionResult != null) {
+      _detectionResult = widget.cachedDetectionResult;
+      return;
+    }
     // Content is already plaintext: getHistory()/watchHistory() run
     // _decryptItems() before items reach the UI. isEncrypted is kept as
     // metadata (the home-screen widget uses it to suppress previews), so it
     // must not be used to trigger a second decrypt here.
-    final content = widget.item.content;
-    _decryptedContent = content;
+    final result = await widget.transformerService.detectContentType(
+      widget.item.content,
+    );
+    if (!mounted) return;
+    widget.onContentDetected?.call(result);
+    setState(() => _detectionResult = result);
+  }
 
-    if (_detectionResult == null) {
-      final detectionResult = await widget.transformerService.detectContentType(
-        _decryptedContent ?? content,
-      );
-
-      if (!mounted) return;
-
-      _detectionResult = detectionResult;
-
-      widget.onContentDetected?.call(detectionResult);
-
-      _isPreviewMode =
-          (detectionResult.type == TransformerContentType.json ||
-              detectionResult.type == TransformerContentType.jwt) &&
-          (_decryptedContent ?? content).length > 200;
-
-      if (mounted) {
-        setState(() {});
-      }
+  /// What the row shows as its preview line.
+  String get _previewText {
+    final item = widget.item;
+    if (item.isImage) {
+      return item.metadata?.originalFilename ?? 'Image';
     }
+    if (item.isFile) {
+      return item.metadata?.originalFilename ?? 'File';
+    }
+    // Collapse whitespace so a multi-line clip does not waste both lines on
+    // indentation.
+    return item.content.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  String _formatTimeAgo(DateTime timestamp) {
-    return timeago.format(timestamp, locale: 'en_short');
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final hasLeading = item.isImage || item.isFile;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        // Long-press opens the full clip with its smart actions (JSON
+        // prettify, JWT decode). Those used to render inline in the expanded
+        // card; a compact row has no space for them, so they move to a sheet
+        // rather than being dropped.
+        onLongPress: () => _showDetail(context),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minHeight: GhostSpacing.historyRowMinHeight,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+            child: Row(
+              children: [
+                if (hasLeading) ...[_buildLeading(), const SizedBox(width: 11)],
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _previewText,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: GhostColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      _buildMetaLine(),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: widget.onCopy,
+                  tooltip: 'Copy clip',
+                  icon: const Icon(Icons.copy_rounded, size: 18),
+                  color: GhostColors.textMuted,
+                  constraints: const BoxConstraints(
+                    minWidth: GhostSpacing.minTouchTarget,
+                    minHeight: GhostSpacing.minTouchTarget,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
-  /// Human-readable destination for a clip.
-  ///
-  /// target_device_type is a platform enum array: empty or null means the clip
-  /// went to every device on the account. Naming that case explicitly matters
-  /// more than the targeted one - "no icon" is not a message anybody reads.
-  String _targetLabel(List<String>? targets) {
+  /// Thumbnail for an image, or a typed icon tile for a file.
+  Widget _buildLeading() {
+    final item = widget.item;
+
+    return Container(
+      width: GhostSpacing.thumbSize,
+      height: GhostSpacing.thumbSize,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: GhostColors.surfaceLight,
+        borderRadius: BorderRadius.circular(GhostSpacing.thumbRadius),
+      ),
+      child: item.isImage
+          ? CachedClipboardImage(
+              item: item,
+              clipboardRepository: widget.clipboardRepository,
+              width: GhostSpacing.thumbSize,
+              height: GhostSpacing.thumbSize,
+            )
+          : const Icon(
+              Icons.insert_drive_file_outlined,
+              color: GhostColors.accentText,
+              size: 23,
+            ),
+    );
+  }
+
+  /// `source • time → destination`, one compact line.
+  Widget _buildMetaLine() {
+    final item = widget.item;
+
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 5,
+      runSpacing: 3,
+      children: [
+        Icon(
+          _iconForDeviceType(item.deviceType),
+          size: 12,
+          color: GhostColors.textMuted,
+        ),
+        Text(
+          DeviceTypeTarget.platformLabel(item.deviceType),
+          style: const TextStyle(fontSize: 11, color: GhostColors.textMuted),
+        ),
+        const Text(
+          '•',
+          style: TextStyle(fontSize: 11, color: GhostColors.textMuted),
+        ),
+        Text(
+          timeago.format(item.createdAt, locale: 'en_short'),
+          style: const TextStyle(fontSize: 11, color: GhostColors.textMuted),
+        ),
+        const Text(
+          '→',
+          style: TextStyle(fontSize: 11, color: GhostColors.textMuted),
+        ),
+        Text(
+          // Always stated, including "All devices". The old UI showed a
+          // generic icon only when a clip WAS targeted, so absence had to mean
+          // "went everywhere" - which no missing icon can communicate.
+          _targetLabel(item.targetDeviceTypes),
+          style: const TextStyle(fontSize: 11, color: GhostColors.accentText),
+        ),
+      ],
+    );
+  }
+
+  static IconData _iconForDeviceType(String deviceType) =>
+      switch (deviceType.toLowerCase()) {
+        'windows' => Icons.laptop_windows,
+        'macos' => Icons.laptop_mac,
+        'linux' => Icons.laptop_chromebook,
+        'android' => Icons.phone_android,
+        'ios' => Icons.phone_iphone,
+        _ => Icons.devices,
+      };
+
+  static String _targetLabel(List<String>? targets) {
     if (targets == null || targets.isEmpty) return 'All devices';
     if (targets.length == 1) {
       return DeviceTypeTarget.platformLabel(targets.first);
@@ -2104,467 +2112,93 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     return '${targets.length} devices';
   }
 
-  Widget _buildContentPreview(String displayContent) {
-    if (widget.item.isImage) {
-      return _buildImagePreview();
-    }
+  /// Full clip in a sheet: the whole content, plus the smart actions that no
+  /// longer fit in a row.
+  void _showDetail(BuildContext context) {
+    Adaptive.impactFeedback();
+    final detection = _detectionResult;
 
-    if (widget.item.isFile) {
-      return _buildFilePreview();
-    }
-
-    if (widget.item.isRichText) {
-      return _buildRichTextPreview(displayContent);
-    }
-
-    return Text(
-      displayContent,
-      maxLines: _isExpanded ? null : (_isPreviewMode ? 3 : 2),
-      overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: 14,
-        color: GhostColors.textPrimary,
-        fontFamily:
-            _detectionResult?.type == TransformerContentType.json ||
-                _detectionResult?.type == TransformerContentType.jwt
-            ? 'JetBrainsMono'
-            : null,
-      ),
-    );
-  }
-
-  Widget _buildImagePreview() {
-    return CachedClipboardImage(
-      item: widget.item,
-      clipboardRepository: widget.clipboardRepository,
-      height: 120,
-      width: double.infinity,
-    );
-  }
-
-  Widget _buildFilePreview() {
-    final filename = widget.item.metadata?.originalFilename ?? 'Unknown File';
-    final size = widget.item.displaySize;
-    final ext = filename.split('.').last.toUpperCase();
-    final fileColor = _getFileColor(ext);
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: GhostColors.surfaceLight,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: fileColor.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: fileColor.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(_getFileIcon(ext), color: fileColor, size: 24),
+    unawaited(
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: GhostColors.surface,
+        showDragHandle: true,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(GhostSpacing.surfaceRadius),
           ),
-          const SizedBox(width: 12),
-          Expanded(
+        ),
+        builder: (sheetContext) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              GhostSpacing.gutter,
+              0,
+              GhostSpacing.gutter,
+              GhostSpacing.gutter,
+            ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  filename,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: GhostColors.textPrimary,
+                if (widget.item.isImage)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        GhostSpacing.thumbRadius,
+                      ),
+                      child: CachedClipboardImage(
+                        item: widget.item,
+                        clipboardRepository: widget.clipboardRepository,
+                      ),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: SingleChildScrollView(
+                      physics: Adaptive.scrollPhysics,
+                      child: SelectableText(
+                        widget.item.content,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: GhostColors.textPrimary,
+                        ),
+                      ),
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '$ext • $size',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: GhostColors.textMuted,
+                if (detection != null) ...[
+                  const SizedBox(height: GhostSpacing.sectionTight),
+                  SmartActionButtons(
+                    content: widget.item.content,
+                    detectionResult: detection,
+                    transformerService: widget.transformerService,
+                  ),
+                ],
+                const SizedBox(height: GhostSpacing.sectionTight),
+                SizedBox(
+                  width: double.infinity,
+                  height: GhostSpacing.sendButtonHeight,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      widget.onCopy();
+                    },
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('Copy'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: GhostColors.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          GhostSpacing.buttonRadius,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-          const Icon(
-            Icons.share_outlined,
-            color: GhostColors.textMuted,
-            size: 20,
-          ),
-        ],
-      ),
-    );
-  }
-
-  IconData _getFileIcon(String ext) {
-    switch (ext) {
-      case 'PDF':
-        return Icons.picture_as_pdf_rounded;
-      case 'ZIP':
-      case 'RAR':
-      case '7Z':
-      case 'TAR':
-      case 'GZ':
-        return Icons.folder_zip_rounded;
-      case 'DOC':
-      case 'DOCX':
-        return Icons.description_rounded;
-      case 'XLS':
-      case 'XLSX':
-      case 'CSV':
-        return Icons.table_chart_rounded;
-      case 'PPT':
-      case 'PPTX':
-        return Icons.slideshow_rounded;
-      case 'MP3':
-      case 'WAV':
-      case 'M4A':
-      case 'AAC':
-      case 'OGG':
-        return Icons.audio_file_rounded;
-      case 'MP4':
-      case 'MOV':
-      case 'MKV':
-      case 'AVI':
-      case 'WEBM':
-        return Icons.video_file_rounded;
-      case 'Js':
-      case 'TS':
-      case 'PY':
-      case 'DART':
-      case 'HTML':
-      case 'CSS':
-      case 'JSON':
-      case 'XML':
-      case 'YAML':
-      case 'YML':
-        return Icons.code_rounded;
-      case 'TXT':
-      case 'MD':
-      case 'RTF':
-        return Icons.text_snippet_rounded;
-      case 'EXE':
-      case 'DMG':
-      case 'ISO':
-      case 'MSI':
-      case 'APK':
-        return Icons.install_desktop_rounded;
-      default:
-        return Icons.insert_drive_file_rounded;
-    }
-  }
-
-  Color _getFileColor(String ext) {
-    switch (ext) {
-      case 'PDF':
-        return Colors.red.shade400;
-      case 'ZIP':
-      case 'RAR':
-      case '7Z':
-      case 'TAR':
-      case 'GZ':
-        return Colors.orange.shade400;
-      case 'XLS':
-      case 'XLSX':
-      case 'CSV':
-        return Colors.green.shade400;
-      case 'PPT':
-      case 'PPTX':
-        return Colors.orange.shade700;
-      case 'MP3':
-      case 'WAV':
-      case 'M4A':
-      case 'AAC':
-      case 'OGG':
-        return Colors.purple.shade400;
-      case 'MP4':
-      case 'MOV':
-      case 'MKV':
-      case 'AVI':
-      case 'WEBM':
-        return Colors.red.shade600;
-      case 'JS':
-      case 'TS':
-      case 'PY':
-      case 'DART':
-      case 'HTML':
-      case 'CSS':
-      case 'JSON':
-      case 'XML':
-      case 'YAML':
-      case 'YML':
-        return Colors.blue.shade400;
-      case 'EXE':
-      case 'DMG':
-      case 'ISO':
-      case 'MSI':
-      case 'APK':
-        return Colors.teal.shade400;
-      case 'DOC':
-      case 'DOCX':
-        return Colors.blue.shade600;
-      default:
-        return GhostColors.primary;
-    }
-  }
-
-  Widget _buildRichTextPreview(String content) {
-    final format = widget.item.richTextFormat;
-    final icon = format == RichTextFormat.html ? Icons.code : Icons.text_fields;
-    final label = format == RichTextFormat.html ? 'HTML' : 'Markdown';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 14, color: GhostColors.primaryAlpha80),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: GhostColors.primaryAlpha80,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          content,
-          maxLines: _isExpanded ? null : 3,
-          overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 13,
-            color: GhostColors.textSecondary,
-            fontStyle: FontStyle.italic,
-          ),
-        ),
-      ],
-    );
-  }
-
-  IconData _getDeviceIcon(String deviceType) {
-    switch (deviceType.toLowerCase()) {
-      case 'windows':
-        return Icons.laptop_windows;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'linux':
-        return Icons.laptop_chromebook;
-      case 'android':
-        return Icons.phone_android;
-      case 'ios':
-        return Icons.phone_iphone;
-      default:
-        return Icons.devices;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final displayContent = _decryptedContent ?? widget.item.content;
-    final shouldShowExpand = displayContent.length > 100;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: widget.onTap,
-        child: Container(
-          margin: const EdgeInsets.symmetric(
-            horizontal: GhostSpacing.gutter,
-            vertical: 6,
-          ),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: GhostColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: GhostColors.glassBorder),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_isPreviewMode && !_isExpanded)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _detectionResult?.type ==
-                                          TransformerContentType.json
-                                      ? Icons.code
-                                      : Icons.lock_open,
-                                  size: 12,
-                                  color: GhostColors.primary.withValues(
-                                    alpha: 0.8,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Preview Mode',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: GhostColors.primary.withValues(
-                                      alpha: 0.8,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        _buildContentPreview(displayContent),
-                      ],
-                    ),
-                  ),
-                  if (shouldShowExpand) ...[
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => setState(() => _isExpanded = !_isExpanded),
-                      child: AnimatedRotation(
-                        turns: _isExpanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: Icon(
-                          Icons.expand_more,
-                          size: 18,
-                          color: GhostColors.primaryAlpha70,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-
-              if (_detectionResult != null)
-                SmartActionButtons(
-                  content: displayContent,
-                  detectionResult: _detectionResult!,
-                  transformerService: widget.transformerService,
-                ),
-
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Icon(
-                    _getDeviceIcon(widget.item.deviceType),
-                    size: 13,
-                    color: GhostColors.textMuted,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    DeviceTypeTarget.platformLabel(widget.item.deviceType),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Icon(
-                    Icons.access_time,
-                    size: 13,
-                    color: GhostColors.textMuted,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    _formatTimeAgo(widget.item.createdAt),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  // Where this clip was SENT. Previously an arrow plus a
-                  // generic "devices" glyph, shown only when the clip was
-                  // targeted - so it was the same icon whichever platforms
-                  // were picked, and an untargeted clip showed nothing at all.
-                  // Absence meant "went everywhere", which is not something a
-                  // missing icon can communicate. Now it always says so, in
-                  // words.
-                  //
-                  // One Expanded holding an end-aligned Row, rather than a
-                  // Spacer followed by a Flexible: those are both flex 1, so
-                  // the leftover width was split between them, and a loose
-                  // Flexible only draws as wide as its text - leaving the
-                  // unused half of its slot as dead space to the right of the
-                  // label. Here the Expanded owns all the slack and the inner
-                  // Row pushes its children flush against the right edge.
-                  Expanded(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Icon(
-                          Icons.arrow_forward,
-                          size: 11,
-                          color: GhostColors.primaryAlpha70,
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            _targetLabel(widget.item.targetDeviceTypes),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: GhostColors.primary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A quiet icon button for the composer toolbar.
-///
-/// Deliberately not accent-coloured: the Send button is the only strong purple
-/// on the screen, so secondary controls use a muted tone and earn colour only
-/// on press.
-class _ComposerToolbarButton extends StatelessWidget {
-  const _ComposerToolbarButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Icon(icon, size: 20, color: GhostColors.textSecondary),
           ),
         ),
       ),
