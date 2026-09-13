@@ -380,7 +380,16 @@ Future<void> main(List<String> args) async {
         newToken,
       ) async {
         debugPrint('[App] 🔄 FCM token refreshed, updating device...');
-        await deviceService.updateFcmToken(newToken);
+        // updateFcmToken() silently returns when the device has not been
+        // registered yet, and a refresh can land before startup registration
+        // finishes - dropping the new token and leaving a dead one on the row.
+        // registerCurrentDevice() upserts, so calling it first is safe.
+        try {
+          await deviceService.registerCurrentDevice();
+          await deviceService.updateFcmToken(newToken);
+        } on Exception catch (e) {
+          debugPrint('[App] ⚠️ Could not store refreshed FCM token: $e');
+        }
       });
 
       // Handle foreground messages (when app is running) - store subscription
@@ -583,7 +592,37 @@ class _MyAppState extends State<MyApp> {
         // User is already authenticated, skip welcome screen
         _mobileAuthComplete = true;
         debugPrint('[Mobile] User already signed in, skipping welcome screen');
+
+        // Persist the FCM token on THIS path too. It was only ever written
+        // inside MobileWelcomeScreen's onAuthComplete callback, which never
+        // runs for an already-signed-in user - the welcome screen is skipped
+        // entirely. So the token was fetched on every launch and thrown away,
+        // and the devices row kept whatever token happened to be current at
+        // first sign-in. FCM rotates tokens (reinstall, cleared data, restore
+        // to a new device), and every rotation silently killed push until the
+        // user signed out and back in.
+        unawaited(_registerDeviceForPush());
       }
+    }
+  }
+
+  /// Register this device and store its current FCM token.
+  ///
+  /// Safe to run on every launch: registerCurrentDevice() upserts, and
+  /// updateFcmToken() is a no-op write when the value has not changed.
+  Future<void> _registerDeviceForPush() async {
+    final token = widget.fcmToken;
+    try {
+      await locator<IDeviceService>().registerCurrentDevice();
+      if (token != null) {
+        await locator<IDeviceService>().updateFcmToken(token);
+        debugPrint('[Mobile] ✅ FCM token stored for signed-in device');
+      } else {
+        debugPrint('[Mobile] ⚠️ No FCM token available - push will not arrive');
+      }
+    } on Exception catch (e) {
+      // Push is not worth failing startup over; sync still works without it.
+      debugPrint('[Mobile] ⚠️ Could not register device for push: $e');
     }
   }
 

@@ -14,6 +14,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/transformer_service.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
+import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
@@ -60,6 +61,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   late final IClipboardRepository _clipboardRepository =
       locator<IClipboardRepository>();
   bool _isRebuildScheduled = false;
+  final FocusNode _pasteFocusNode = FocusNode();
+  bool _composerFocused = false;
 
   // Flutter platform widgets (must stay in widget)
   final TextEditingController _pasteController = TextEditingController();
@@ -76,16 +79,29 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _viewModel =
-        MobileMainViewModel(
-            authService: locator(),
-            clipboardRepository: locator(),
-            deviceService: locator(),
-            securityService: locator(),
-            settingsService: locator(),
-          )
-          ..addListener(_onViewModelChanged)
-          ..initialize();
+    // Assign the field BEFORE starting initialize(). A cascade
+    // (`_viewModel = VM()..addListener()..initialize()`) only assigns once the
+    // whole expression finishes, and initialize() now calls notifyListeners()
+    // before its first await - so the listener fired while _viewModel was
+    // still unset and threw LateInitializationError. Splitting the statements
+    // removes the dependency on initialize()'s internal await timing.
+    _viewModel = MobileMainViewModel(
+      authService: locator(),
+      clipboardRepository: locator(),
+      deviceService: locator(),
+      securityService: locator(),
+      settingsService: locator(),
+    );
+    _viewModel.addListener(_onViewModelChanged);
+    unawaited(_viewModel.initialize());
+
+    // Focus drives the composer's border colour, so the surface itself shows
+    // focus instead of the text field drawing its own outline.
+    _pasteFocusNode.addListener(() {
+      if (_pasteFocusNode.hasFocus != _composerFocused && mounted) {
+        setState(() => _composerFocused = _pasteFocusNode.hasFocus);
+      }
+    });
 
     _initializeShareIntentListeners();
     _setupMethodChannels();
@@ -115,6 +131,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pasteFocusNode.dispose();
     _viewModel
       ..removeListener(_onViewModelChanged)
       ..dispose();
@@ -947,7 +964,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             // History section header
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                padding: const EdgeInsets.fromLTRB(
+                  GhostSpacing.gutter,
+                  GhostSpacing.section + GhostSpacing.sectionTight,
+                  GhostSpacing.gutter,
+                  GhostSpacing.sectionTight,
+                ),
                 child: Row(
                   children: [
                     Text(
@@ -984,7 +1006,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             // Search bar
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                padding: const EdgeInsets.fromLTRB(
+                  GhostSpacing.gutter,
+                  0,
+                  GhostSpacing.gutter,
+                  GhostSpacing.sectionTight,
+                ),
                 child: TextField(
                   controller: _historySearchController,
                   onChanged: _viewModel.filterHistoryDebounced,
@@ -994,9 +1021,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ),
                   decoration: InputDecoration(
                     hintText: 'Search clips...',
-                    hintStyle: TextStyle(
-                      color: GhostColors.textMutedAlpha60,
-                    ),
+                    hintStyle: TextStyle(color: GhostColors.textMutedAlpha60),
                     prefixIcon: const Icon(
                       Icons.search,
                       size: 18,
@@ -1019,19 +1044,25 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       vertical: 12,
                     ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(
+                        GhostSpacing.surfaceRadius,
+                      ),
                       borderSide: const BorderSide(
                         color: GhostColors.glassBorder,
                       ),
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(
+                        GhostSpacing.surfaceRadius,
+                      ),
                       borderSide: const BorderSide(
                         color: GhostColors.glassBorder,
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(
+                        GhostSpacing.surfaceRadius,
+                      ),
                       borderSide: const BorderSide(
                         color: GhostColors.primary,
                         width: 1.5,
@@ -1096,9 +1127,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           // Perf: Container with clipBehavior instead of ClipRRect to
           // avoid saveLayer on raster thread
           Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-            ),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(6)),
             clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 80),
@@ -1193,57 +1222,88 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  /// The composer: one surface holding the text field, any staged
+  /// attachment, and the attach control.
+  ///
+  /// Previously a card containing a separately-bordered text field, which read
+  /// as a card inside a card, under a "Paste & Send" heading that only
+  /// restated the placeholder below it. The heading is gone and the field is
+  /// borderless in every state - including focus, which inherited a 2px
+  /// primary outline from the theme and lit the whole box up bright purple.
+  /// Focus is now shown by the surface border alone.
   Widget _buildPasteArea() {
+    final hasAttachment =
+        (_viewModel.clipboardContent?.hasFile ?? false) ||
+        (_viewModel.clipboardContent?.hasImage ?? false);
+
     return RepaintBoundary(
       child: Container(
-        margin: const EdgeInsets.all(20),
+        margin: const EdgeInsets.fromLTRB(
+          GhostSpacing.gutter,
+          GhostSpacing.section,
+          GhostSpacing.gutter,
+          0,
+        ),
+        constraints: const BoxConstraints(
+          minHeight: GhostSpacing.composerMinHeight,
+        ),
         decoration: BoxDecoration(
           color: GhostColors.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: GhostColors.glassBorder),
+          borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+          border: Border.all(
+            // Quiet accent while focused rather than the full primary: the
+            // Send button is meant to be the only strong purple on screen.
+            color: _composerFocused
+                ? GhostColors.primaryAlpha50
+                : GhostColors.glassBorder,
+          ),
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (hasAttachment) ...[
+              const SizedBox(height: GhostSpacing.sectionTight),
+              if (_viewModel.clipboardContent?.hasFile ?? false)
+                _buildFilePreview(),
+              if (_viewModel.clipboardContent?.hasImage ?? false)
+                _buildImagePreview(),
+            ],
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.paste_outlined,
-                    size: 18,
-                    color: GhostColors.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Paste & Send',
-                    style: GhostTypography.body.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.fromLTRB(
+                GhostSpacing.gutter,
+                GhostSpacing.sectionTight,
+                GhostSpacing.gutter,
+                0,
               ),
-            ),
-            if (_viewModel.clipboardContent?.hasFile ?? false)
-              _buildFilePreview(),
-            if (_viewModel.clipboardContent?.hasImage ?? false)
-              _buildImagePreview(),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextField(
                 controller: _pasteController,
-                maxLines: 4,
+                focusNode: _pasteFocusNode,
+                // minLines gives the empty composer its height directly.
+                // Expanded cannot: this lives in a sliver, so the incoming
+                // height is unbounded and a flex child has nothing to expand
+                // into - which threw "RenderFlex children have non-zero flex
+                // but incoming height constraints are unbounded".
+                minLines: 4,
+                maxLines: 8,
                 style: const TextStyle(
                   fontSize: 14,
                   color: GhostColors.textPrimary,
                 ),
                 decoration: InputDecoration(
-                  hintText: 'Paste or type content here...',
-                  hintStyle: TextStyle(
-                    color: GhostColors.textMutedAlpha60,
-                  ),
+                  hintText: 'Paste or type something to send...',
+                  hintStyle: TextStyle(color: GhostColors.textMutedAlpha60),
+                  // Every state explicitly borderless and unfilled. Setting
+                  // only `border` leaves focusedBorder falling back to the
+                  // theme, which is where the bright outline came from.
                   border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                  filled: false,
                   isDense: true,
+                  contentPadding: EdgeInsets.zero,
                 ),
                 onChanged: (value) {
                   if (_sendError.value != null) {
@@ -1252,57 +1312,79 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 },
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
-              child: Row(
-                children: [
-                  // One attach control for both images and files. They used
-                  // to be separate buttons in different places that behaved
-                  // differently, which made the difference feel arbitrary.
-                  IconButton(
-                    onPressed: _showAttachSheet,
-                    icon: const Icon(Icons.attach_file),
-                    color: GhostColors.primary,
-                    iconSize: 20,
-                    tooltip: 'Attach image or file',
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ),
+            _buildComposerToolbar(),
             ValueListenableBuilder<String?>(
               valueListenable: _sendError,
               builder: (context, error, _) {
-                if (error != null) {
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.error_outline,
-                          size: 14,
-                          color: Colors.red.shade400,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            error,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.red.shade400,
-                            ),
+                if (error == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    GhostSpacing.gutter,
+                    0,
+                    GhostSpacing.gutter,
+                    GhostSpacing.sectionTight,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 14,
+                        color: Colors.red.shade400,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          error,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.red.shade400,
                           ),
                         ),
-                      ],
-                    ),
-                  );
-                }
-                return const SizedBox(height: 12);
+                      ),
+                    ],
+                  ),
+                );
               },
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Bottom toolbar of the composer.
+  ///
+  /// The attach control lives here, inside the surface it acts on, rather than
+  /// floating on its own. One control covers both images and files - they were
+  /// once separate buttons in different places that behaved differently, which
+  /// made the distinction feel arbitrary.
+  Widget _buildComposerToolbar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        GhostSpacing.sectionTight,
+        0,
+        GhostSpacing.sectionTight,
+        GhostSpacing.sectionTight,
+      ),
+      child: Row(
+        children: [
+          _ComposerToolbarButton(
+            icon: Icons.add_photo_alternate_outlined,
+            tooltip: 'Attach image or file',
+            onTap: _showAttachSheet,
+          ),
+          const Spacer(),
+          // Character count only once there is something to count, so the
+          // empty composer stays clean.
+          if (_pasteController.text.isNotEmpty)
+            Text(
+              '${_pasteController.text.characters.length}',
+              style: const TextStyle(
+                fontSize: 11,
+                color: GhostColors.textMuted,
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1312,7 +1394,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.symmetric(horizontal: GhostSpacing.gutter),
           child: Text(
             'Send to',
             style: GhostTypography.caption.copyWith(
@@ -1334,7 +1416,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ? GestureDetector(
                   onTap: () => _viewModel.loadDevices(forceRefresh: true),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: GhostSpacing.gutter,
+                    ),
                     child: Row(
                       children: [
                         Icon(
@@ -1373,7 +1457,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     return ListView.separated(
                       scrollDirection: Axis.horizontal,
                       physics: Adaptive.scrollPhysics,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: GhostSpacing.gutter,
+                      ),
                       itemCount: targets.length + 1,
                       separatorBuilder: (context, index) =>
                           const SizedBox(width: 8),
@@ -1411,17 +1497,25 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   Widget _buildSendButton() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      padding: const EdgeInsets.fromLTRB(
+        GhostSpacing.gutter,
+        GhostSpacing.section,
+        GhostSpacing.gutter,
+        0,
+      ),
       child: SizedBox(
         width: double.infinity,
-        height: 48,
+        // Taller than the 40px chips above it. The size difference is what
+        // marks this as the primary action, now that it is also the only
+        // saturated purple on the screen.
+        height: GhostSpacing.sendButtonHeight,
         child: FilledButton(
           onPressed: _viewModel.isSending ? null : _handleSend,
           style: FilledButton.styleFrom(
             backgroundColor: GhostColors.primary,
             disabledBackgroundColor: GhostColors.primaryAlpha50,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
             ),
           ),
           child: _viewModel.isSending
@@ -1432,9 +1526,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     const Icon(Icons.send_rounded, size: 18),
                     const SizedBox(width: 8),
                     Text(
-                      _viewModel.selectedDeviceTypes.isEmpty
-                          ? 'Send to All Devices'
-                          : 'Send to ${_viewModel.selectedDeviceTypes.length} Device${_viewModel.selectedDeviceTypes.length > 1 ? 's' : ''}',
+                      _sendButtonLabel(),
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
@@ -1445,6 +1537,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         ),
       ),
     );
+  }
+
+  /// Label for the send button, naming the destination the chips selected.
+  ///
+  /// Counting "Devices" was wrong for the same reason the chips were: a
+  /// selection is a platform, and one platform can cover several machines, so
+  /// "Send to 1 Device" was a miscount whenever a type had more than one.
+  String _sendButtonLabel() {
+    final selected = _viewModel.selectedDeviceTypes;
+    if (selected.isEmpty) return 'Send to all devices';
+    if (selected.length == 1) {
+      return 'Send to ${DeviceTypeTarget.platformLabel(selected.first)}';
+    }
+    return 'Send to ${selected.length} platforms';
   }
 
   /// Banner shown whenever this device holds clips it cannot decrypt.
@@ -1463,9 +1569,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
             child: Material(
               color: GhostColors.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
               child: InkWell(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
                 onTap: _navigateToSettings,
                 child: Padding(
                   padding: const EdgeInsets.all(14),
@@ -1662,41 +1768,43 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 confirmDismiss: (_) => _confirmDeleteClip(item),
                 onDismissed: (_) => _deleteClip(item),
                 child: _HistoryItemContent(
-                item: item,
-                transformerService: _transformerService,
-                clipboardRepository: _clipboardRepository,
-                encryptionService: _viewModel.encryptionService,
-                cachedDecryptedContent: cachedDecrypted,
-                cachedDetectionResult: cachedDetection,
-                onContentDecrypted: (content) {
-                  _viewModel.cacheDecryptedContent(item.id, content);
-                },
-                onContentDetected: (result) {
-                  _viewModel.cacheDetectionResult(item.id, result);
-                },
-                onTap: () => _viewModel.handleHistoryItemTap(
-                  item,
-                  sharePositionOrigin: _shareOrigin(),
-                  onSuccess: (msg) {
-                    // iOS has no system toast, so the tick IS the
-                    // confirmation there - fire it before the mounted check.
-                    Adaptive.successFeedback();
-                    if (mounted) {
-                      // Native Toast on Android: a copy confirmation should
-                      // look like the system, not like the app.
-                      unawaited(showNativeToast(context, msg, icon: Icons.copy));
-                    }
+                  item: item,
+                  transformerService: _transformerService,
+                  clipboardRepository: _clipboardRepository,
+                  encryptionService: _viewModel.encryptionService,
+                  cachedDecryptedContent: cachedDecrypted,
+                  cachedDetectionResult: cachedDetection,
+                  onContentDecrypted: (content) {
+                    _viewModel.cacheDecryptedContent(item.id, content);
                   },
-                  onError: (msg) {
-                    if (mounted) {
-                      showGhostToast(
-                        context,
-                        msg,
-                        icon: Icons.error,
-                        type: GhostToastType.error,
-                      );
-                    }
+                  onContentDetected: (result) {
+                    _viewModel.cacheDetectionResult(item.id, result);
                   },
+                  onTap: () => _viewModel.handleHistoryItemTap(
+                    item,
+                    sharePositionOrigin: _shareOrigin(),
+                    onSuccess: (msg) {
+                      // iOS has no system toast, so the tick IS the
+                      // confirmation there - fire it before the mounted check.
+                      Adaptive.successFeedback();
+                      if (mounted) {
+                        // Native Toast on Android: a copy confirmation should
+                        // look like the system, not like the app.
+                        unawaited(
+                          showNativeToast(context, msg, icon: Icons.copy),
+                        );
+                      }
+                    },
+                    onError: (msg) {
+                      if (mounted) {
+                        showGhostToast(
+                          context,
+                          msg,
+                          icon: Icons.error,
+                          type: GhostToastType.error,
+                        );
+                      }
+                    },
                   ),
                 ),
               ),
@@ -1718,7 +1826,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// Red panel revealed behind a row being swiped away.
   Widget _buildDeleteBackground() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+      margin: const EdgeInsets.symmetric(
+        horizontal: GhostSpacing.gutter,
+        vertical: 6,
+      ),
       padding: const EdgeInsets.only(right: 24),
       alignment: Alignment.centerRight,
       decoration: BoxDecoration(
@@ -1817,17 +1928,24 @@ class _DeviceChip extends StatelessWidget {
 
   Widget _buildChip() {
     return Material(
-      color: isSelected ? GhostColors.primary : GhostColors.surface,
+      // A tint, not a fill. A solid purple chip competed with the Send button
+      // for the eye, and with several selected the row became a purple block
+      // that read as the loudest thing on screen - which the destination
+      // picker is not.
+      color: isSelected ? GhostColors.primaryAlpha15 : GhostColors.surface,
       borderRadius: _borderRadius,
       child: InkWell(
         onTap: onTap,
         borderRadius: _borderRadius,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          height: GhostSpacing.chipHeight,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
             borderRadius: _borderRadius,
             border: Border.all(
-              color: isSelected ? GhostColors.primary : GhostColors.glassBorder,
+              color: isSelected
+                  ? GhostColors.primaryAlpha50
+                  : GhostColors.glassBorder,
             ),
           ),
           child: Row(
@@ -1836,7 +1954,9 @@ class _DeviceChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: isSelected ? Colors.white : GhostColors.textSecondary,
+                color: isSelected
+                    ? GhostColors.primaryAlpha90
+                    : GhostColors.textSecondary,
               ),
               const SizedBox(width: 6),
               Text(
@@ -1844,7 +1964,9 @@ class _DeviceChip extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: isSelected ? Colors.white : GhostColors.textSecondary,
+                  color: isSelected
+                      ? GhostColors.primaryAlpha90
+                      : GhostColors.textSecondary,
                 ),
               ),
             ],
@@ -1966,19 +2088,6 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     return timeago.format(timestamp, locale: 'en_short');
   }
 
-  /// Proper platform names. Capitalising the first letter produced "Macos"
-  /// and "Ios", which look like typos rather than products.
-  String _getDeviceLabel(String deviceType) => switch (deviceType) {
-    'windows' => 'Windows',
-    'macos' => 'macOS',
-    'linux' => 'Linux',
-    'android' => 'Android',
-    'ios' => 'iOS',
-    _ => deviceType.isEmpty
-        ? deviceType
-        : deviceType[0].toUpperCase() + deviceType.substring(1),
-  };
-
   /// Human-readable destination for a clip.
   ///
   /// target_device_type is a platform enum array: empty or null means the clip
@@ -1986,8 +2095,12 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   /// more than the targeted one - "no icon" is not a message anybody reads.
   String _targetLabel(List<String>? targets) {
     if (targets == null || targets.isEmpty) return 'All devices';
-    if (targets.length == 1) return _getDeviceLabel(targets.first);
-    if (targets.length == 2) return targets.map(_getDeviceLabel).join(', ');
+    if (targets.length == 1) {
+      return DeviceTypeTarget.platformLabel(targets.first);
+    }
+    if (targets.length == 2) {
+      return targets.map(DeviceTypeTarget.platformLabel).join(', ');
+    }
     return '${targets.length} devices';
   }
 
@@ -2264,7 +2377,10 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       child: InkWell(
         onTap: widget.onTap,
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+          margin: const EdgeInsets.symmetric(
+            horizontal: GhostSpacing.gutter,
+            vertical: 6,
+          ),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: GhostColors.surface,
@@ -2350,7 +2466,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    _getDeviceLabel(widget.item.deviceType),
+                    DeviceTypeTarget.platformLabel(widget.item.deviceType),
                     style: const TextStyle(
                       fontSize: 12,
                       color: GhostColors.textMuted,
@@ -2413,6 +2529,42 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A quiet icon button for the composer toolbar.
+///
+/// Deliberately not accent-coloured: the Send button is the only strong purple
+/// on the screen, so secondary controls use a muted tone and earn colour only
+/// on press.
+class _ComposerToolbarButton extends StatelessWidget {
+  const _ComposerToolbarButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Icon(icon, size: 20, color: GhostColors.textSecondary),
           ),
         ),
       ),

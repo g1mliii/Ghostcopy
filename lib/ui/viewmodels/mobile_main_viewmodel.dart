@@ -1474,25 +1474,31 @@ class DeviceTypeTarget {
   final String deviceType;
   final List<Device> devices;
 
-  /// A label that is true for every device this chip reaches.
+  /// Always the platform, never a device name.
   ///
-  /// With one device of this type its name is unambiguous, so it is used - a
-  /// clip sent to "windows" really does go to exactly that machine. With more
-  /// than one, naming any of them would be a lie, so the platform and a count
-  /// are shown instead.
-  String get label => devices.length == 1
-      ? devices.single.displayName
-      : '${_platformLabel(deviceType)} (${devices.length})';
+  /// A chip selects a device_type_enum, so "Windows" is what it actually does.
+  /// Showing the machine's name when a type happened to have only one device
+  /// was accurate but inconsistent: the same chip would read "subal" today and
+  /// "Windows (2)" after adding a second PC, and names like "Android Device"
+  /// say less than the platform does. The device names are still available on
+  /// long-press via [deviceNames], and in Settings > Devices.
+
+  String get label => platformLabel(deviceType);
 
   /// Names of every device this chip delivers to, for the tooltip.
   String get deviceNames => devices.map((d) => d.displayName).join(', ');
 
-  static String _platformLabel(String deviceType) => switch (deviceType) {
+  /// Proper platform names, shared by the chips, the send button and the clip
+  /// footer. Capitalising the first letter produced "Macos" and "Ios", which
+  /// read as typos rather than products.
+  static String platformLabel(String deviceType) => switch (deviceType) {
     'windows' => 'Windows',
     'macos' => 'macOS',
     'linux' => 'Linux',
     'android' => 'Android',
     'ios' => 'iOS',
-    _ => deviceType,
+    _ => deviceType.isEmpty
+        ? deviceType
+        : deviceType[0].toUpperCase() + deviceType.substring(1),
   };
 }

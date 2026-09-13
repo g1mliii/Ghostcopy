@@ -220,7 +220,7 @@ void main() {
       expect(targets.map((t) => t.deviceType), containsAll(['windows', 'android']));
     });
 
-    test('a type with several devices is labelled by platform and count', () async {
+    test('a chip is labelled by platform, never by device name', () async {
       when(() => deviceService.getUserDevices(forceRefresh: any(named: 'forceRefresh')))
           .thenAnswer((_) async => [
                 device('1', 'windows', 'Work PC'),
@@ -230,18 +230,30 @@ void main() {
 
       final windows = viewModel.deviceTypeTargets.single;
 
-      // Naming either machine would be a lie: the clip reaches both.
-      expect(windows.label, 'Windows (2)');
+      // A chip selects a device_type_enum, so the platform is what it does.
+      // Naming either machine would also be a lie - the clip reaches both.
+      expect(windows.label, 'Windows');
       expect(windows.deviceNames, allOf(contains('Work PC'), contains('Home PC')));
     });
 
-    test('a lone device of its type keeps its own name as the label', () async {
+    test('a lone device of its type is still labelled by platform', () async {
       when(() => deviceService.getUserDevices(forceRefresh: any(named: 'forceRefresh')))
           .thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
       await viewModel.loadDevices();
 
-      // Accurate here: targeting "windows" really does reach exactly this one.
-      expect(viewModel.deviceTypeTargets.single.label, 'Work PC');
+      // Using the device name here would be accurate but inconsistent: the
+      // same chip would read "Work PC" today and "Windows" after adding a
+      // second PC. The name stays available via deviceNames.
+      expect(viewModel.deviceTypeTargets.single.label, 'Windows');
+      expect(viewModel.deviceTypeTargets.single.deviceNames, 'Work PC');
+    });
+
+    test('platformLabel spells product names properly', () {
+      // Capitalising the first letter gave "Macos" and "Ios".
+      expect(DeviceTypeTarget.platformLabel('macos'), 'macOS');
+      expect(DeviceTypeTarget.platformLabel('ios'), 'iOS');
+      expect(DeviceTypeTarget.platformLabel('windows'), 'Windows');
+      expect(DeviceTypeTarget.platformLabel('android'), 'Android');
     });
   });
 
