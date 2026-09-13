@@ -5,18 +5,20 @@ class GhostColors {
   // Private constructor to prevent instantiation
   GhostColors._();
 
-  // Background layers, from the redesign handoff (--gcm-bg / --gcm-surface /
-  // --gcm-raised, identical in its HTML and Dart references).
+  // Background layers: the redesign handoff's LIGHTNESS, with its hue removed.
   //
-  // A flat, slightly-lifted background with cards a step above it, so surfaces
-  // read as raised rather than as outlined shapes on black. These are very
-  // marginally cooler than a pure grey ramp - the blue component runs 4-9
-  // higher than red - which is deliberate: it is what stops large dark areas
-  // looking muddy. Reverted once to neutral greys and then restored, having
-  // compared both on device.
-  static const background = Color(0xFF0E0F13);
-  static const surface = Color(0xFF18191F); // Card surfaces
-  static const surfaceLight = Color(0xFF22232B); // Elevated surfaces
+  // The handoff ramp (#0E0F13 / #18191F / #22232B) is what gives cards their
+  // lifted feel, and that part is kept. But every one of its steps puts green
+  // one above red and blue five to nine above it, and green carries ~72% of
+  // perceived luminance - so a +1 green channel reads as a visible cast at
+  // these levels, which is exactly what it looked like on a real panel.
+  //
+  // These are the neutral greys with the SAME computed luma as the handoff
+  // values (15.1 / 25.2 / 35.4), so nothing gets lighter or darker and every
+  // contrast relationship is preserved - only the tint is gone.
+  static const background = Color(0xFF0F0F0F);
+  static const surface = Color(0xFF191919); // Card surfaces
+  static const surfaceLight = Color(0xFF232323); // Elevated surfaces
 
   // Accent colors
   static const primary = Color(0xFF6670FF); // Purple-blue accent
@@ -39,8 +41,9 @@ class GhostColors {
 
   /// Hairline between grouped rows and around surfaces. An opaque grey rather
   /// than the translucent glassBorder, so stacked rows in a grouped list do
-  /// not accumulate brightness where they meet.
-  static const border = Color(0xFF30323C);
+  /// not accumulate brightness where they meet. Neutralised alongside the ramp
+  /// above, at the same luma as the handoff's #30323C.
+  static const border = Color(0xFF323232);
 
   // Text
   static const textPrimary = Color(0xFFF5F6FA);
