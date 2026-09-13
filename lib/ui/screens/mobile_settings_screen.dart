@@ -10,6 +10,7 @@ import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../widgets/passphrase_dialog.dart';
@@ -197,7 +198,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     final userBefore = widget.authService.currentUserId;
 
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      Adaptive.pageRoute<void>(
         builder: (context) => MobileWelcomeScreen(
           onAuthComplete: () {
             // Close the welcome screen; settings re-reads state below.
@@ -431,41 +432,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     required String confirmText,
     bool isDestructive = false,
   }) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: GhostColors.surface,
-        title: Text(
-          title,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: GhostColors.textPrimary,
-          ),
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(fontSize: 14, color: GhostColors.textMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: isDestructive
-                  ? Colors.red.shade400
-                  : GhostColors.primary,
-            ),
-            child: Text(confirmText),
-          ),
-        ],
-      ),
+    return Adaptive.confirm(
+      context,
+      title: title,
+      message: message,
+      confirmText: confirmText,
+      isDestructive: isDestructive,
     );
-
-    return result ?? false;
   }
 
 
@@ -488,9 +461,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
       ),
       body: ListView(
-        physics: const BouncingScrollPhysics(
-          parent: AlwaysScrollableScrollPhysics(),
-        ),
+        physics: Adaptive.scrollPhysics,
         scrollCacheExtent: const ScrollCacheExtent.pixels(300),
         children: [
           // Features section (moved to top)
@@ -845,7 +816,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       child: Column(
         children: [
           // URL shortening toggle
-          SwitchListTile(
+          SwitchListTile.adaptive(
             secondary: const Icon(
               Icons.link,
               color: GhostColors.primary,
@@ -880,7 +851,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       child: Column(
         children: [
           // Encryption toggle
-          SwitchListTile(
+          SwitchListTile.adaptive(
             secondary: const Icon(
               Icons.lock_outline,
               color: GhostColors.primary,

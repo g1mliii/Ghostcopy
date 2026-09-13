@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/transformer_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import 'ghost_toast.dart';
 
@@ -212,6 +213,7 @@ class SmartActionButtons extends StatelessWidget {
             Expanded(
               child: ListView(
                 controller: scrollController,
+                physics: Adaptive.scrollPhysics,
                 padding: const EdgeInsets.all(20),
                 children: [
                   Container(

@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -146,6 +147,7 @@ class _AuthPanelState extends State<AuthPanel> {
 
     // Anonymous user - show login/signup form
     return SingleChildScrollView(
+      physics: Adaptive.scrollPhysics,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

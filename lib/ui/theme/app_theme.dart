@@ -10,7 +10,7 @@ class AppTheme {
 
   /// Main dark theme for the application
   static ThemeData get darkTheme {
-    return ThemeData(
+    return _withPlatformFont(ThemeData(
       // Base theme
       brightness: Brightness.dark,
       useMaterial3: true,
@@ -172,7 +172,7 @@ class AppTheme {
       ),
 
       // Text Theme
-      textTheme: const TextTheme(
+      textTheme: TextTheme(
         displayLarge: TextStyle(
           fontSize: 32,
           fontWeight: FontWeight.w700,
@@ -293,6 +293,25 @@ class AppTheme {
           }
           return GhostColors.textMuted;
         }),
+      ),
+    ));
+  }
+
+  /// Stamp the platform's UI font over a built theme.
+  ///
+  /// The styles above all name GhostTypography.fontFamily so the TextTheme can
+  /// stay const; this replaces it in one pass rather than repeating a platform
+  /// check 24 times. A no-op off Apple platforms.
+  static ThemeData _withPlatformFont(ThemeData base) {
+    final family = GhostTypography.uiFontFamily;
+    if (family == GhostTypography.fontFamily) return base;
+    return base.copyWith(
+      textTheme: base.textTheme.apply(fontFamily: family),
+      primaryTextTheme: base.primaryTextTheme.apply(fontFamily: family),
+      appBarTheme: base.appBarTheme.copyWith(
+        titleTextStyle: base.appBarTheme.titleTextStyle?.copyWith(
+          fontFamily: family,
+        ),
       ),
     );
   }

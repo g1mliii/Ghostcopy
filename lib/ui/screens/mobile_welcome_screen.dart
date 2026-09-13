@@ -9,6 +9,7 @@ import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -188,6 +189,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildQRScanTab() {
     return SingleChildScrollView(
+      physics: Adaptive.scrollPhysics,
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -297,6 +299,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildAuthTab() {
     return SingleChildScrollView(
+      physics: Adaptive.scrollPhysics,
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

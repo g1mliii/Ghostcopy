@@ -12,6 +12,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/transformer_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
@@ -282,38 +283,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     await _viewModel.handleFilePick(
       onLargeFileConfirm: (sizeMB) async {
         if (!mounted) return false;
-        return await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                backgroundColor: GhostColors.surface,
-                title: const Text(
-                  'Large File',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: GhostColors.textPrimary,
-                  ),
-                ),
-                content: Text(
-                  'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: GhostColors.textMuted,
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('Attach'),
-                  ),
-                ],
-              ),
-            ) ??
-            false;
+        return Adaptive.confirm(
+          context,
+          title: 'Large File',
+          message:
+              'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+          confirmText: 'Attach',
+        );
       },
       onSuccess: (filename) {
         if (mounted) {
@@ -803,6 +779,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       await _viewModel.handleSend(
         _pasteController.text,
         onSendSuccess: () {
+          Adaptive.successFeedback();
           if (mounted) {
             _pasteController.clear();
             showGhostToast(
@@ -833,6 +810,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     await _viewModel.handleSend(
       _pasteController.text,
       onSendSuccess: () {
+        Adaptive.successFeedback();
         if (mounted) {
           _pasteController.clear();
           showGhostToast(
@@ -846,50 +824,28 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  Future<bool> _showSensitiveDataWarning() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: GhostColors.surface,
-        title: Row(
-          children: [
-            Icon(
-              Icons.warning_amber_rounded,
-              color: Colors.orange.shade400,
-              size: 24,
-            ),
-            const SizedBox(width: 12),
-            const Text(
-              'Sensitive Data Detected',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: GhostColors.textPrimary,
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
-          'This content may contain sensitive information (passwords, API keys, etc.). Are you sure you want to sync it?',
-          style: TextStyle(fontSize: 14, color: GhostColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.orange.shade400,
-            ),
-            child: const Text('Send Anyway'),
-          ),
-        ],
-      ),
-    );
+  /// Bounds to anchor the iPad share popover to.
+  ///
+  /// UIKit throws if UIActivityViewController is presented on iPad without a
+  /// source rect. The screen's own bounds are a safe anchor - the sheet is
+  /// reached from a list row, and pointing at the row would require plumbing a
+  /// RenderBox per item for no visible gain.
+  Rect? _shareOrigin() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
 
-    return result ?? false;
+  Future<bool> _showSensitiveDataWarning() async {
+    return Adaptive.confirm(
+      context,
+      title: 'Sensitive Data Detected',
+      message:
+          'This content may contain sensitive information (passwords, API keys, etc.). Are you sure you want to sync it?',
+      confirmText: 'Send Anyway',
+      icon: Icons.warning_amber_rounded,
+      confirmColor: Colors.orange.shade400,
+    );
   }
 
   Future<void> _navigateToSettings() async {
@@ -897,7 +853,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     final userBefore = authService.currentUserId;
 
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      Adaptive.pageRoute<void>(
         builder: (context) => MobileSettingsScreen(
           authService: locator(),
           deviceService: locator(),
@@ -965,9 +921,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         color: GhostColors.primary,
         backgroundColor: GhostColors.surface,
         child: CustomScrollView(
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
+          physics: Adaptive.scrollPhysics,
           slivers: [
             // Paste area section
             SliverToBoxAdapter(child: _buildPasteArea()),
@@ -1399,6 +1353,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 )
               : ListView.separated(
                   scrollDirection: Axis.horizontal,
+                  physics: Adaptive.scrollPhysics,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   itemCount: _viewModel.devices.length + 1,
                   separatorBuilder: (context, index) =>
@@ -1687,7 +1642,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 },
                 onTap: () => _viewModel.handleHistoryItemTap(
                   item,
+                  sharePositionOrigin: _shareOrigin(),
                   onSuccess: (msg) {
+                    // iOS has no system toast, so the tick IS the
+                    // confirmation there - fire it before the mounted check.
+                    Adaptive.successFeedback();
                     if (mounted) {
                       // Native Toast on Android: a copy confirmation should
                       // look like the system, not like the app.

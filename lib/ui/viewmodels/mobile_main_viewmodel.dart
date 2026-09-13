@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
+import 'dart:ui' show Rect;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
@@ -732,6 +733,7 @@ class MobileMainViewModel extends ChangeNotifier {
     ClipboardItem item, {
     void Function(String message)? onSuccess,
     void Function(String message)? onError,
+    Rect? sharePositionOrigin,
   }) async {
     try {
       final clipboardService = ClipboardService.instance;
@@ -753,10 +755,7 @@ class MobileMainViewModel extends ChangeNotifier {
           filename,
         );
 
-        // ignore: deprecated_member_use
-        await Share.shareXFiles([
-          XFile(tempFile.path),
-        ], text: 'Shared via GhostCopy');
+        await _shareFile(tempFile.path, sharePositionOrigin);
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
@@ -785,6 +784,21 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to copy: $e');
       onError?.call('Failed to copy: $e');
     }
+  }
+
+  /// Open the OS share sheet for a file on disk.
+  ///
+  /// [sharePositionOrigin] is required on iPad: UIActivityViewController is
+  /// presented as a popover there and must be anchored to the widget that
+  /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
+  Future<void> _shareFile(String path, Rect? sharePositionOrigin) async {
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(path)],
+        text: 'Shared via GhostCopy',
+        sharePositionOrigin: sharePositionOrigin,
+      ),
+    );
   }
 
   /// Handle refresh (pull-to-refresh)
@@ -986,10 +1000,9 @@ class MobileMainViewModel extends ChangeNotifier {
             filename,
           );
 
-          // ignore: deprecated_member_use
-          await Share.shareXFiles([
-            XFile(tempFile.path),
-          ], text: 'Shared via GhostCopy');
+          // No anchor: this path is driven by an external share intent, so
+          // there is no widget to point an iPad popover at.
+          await _shareFile(tempFile.path, null);
           debugPrint(
             '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
           );
