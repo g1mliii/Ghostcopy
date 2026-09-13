@@ -907,6 +907,37 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
   }
 
+  /// The switch itself, native to the platform.
+  ///
+  /// Switch.adaptive, not Switch: on iOS that is a CupertinoSwitch, which is
+  /// what the row used before these three toggles were unified and what an iOS
+  /// user expects to see. A Material switch on iOS reads as a port.
+  ///
+  /// activeTrackColor is set here rather than left to AppTheme.switchTheme
+  /// because CupertinoSwitch does not read Material's SwitchTheme - without it
+  /// iOS would fall back to the system green while Android showed the accent.
+  /// One place, both platforms, unlike the per-call-site overrides this
+  /// replaced.
+  ///
+  /// Only Android is scaled down. Material 3's switch is 52x32 and overweight
+  /// beside 14px type; CupertinoSwitch is already the size iOS users know, and
+  /// shrinking it would make it the odd one out on its own platform.
+  Widget _adaptiveSwitch({
+    required bool value,
+    required ValueChanged<bool>? onChanged,
+  }) {
+    final control = Switch.adaptive(
+      value: value,
+      onChanged: onChanged,
+      activeTrackColor: GhostColors.primary,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+
+    return Adaptive.isIOS
+        ? control
+        : Transform.scale(scale: 0.8, child: control);
+  }
+
   /// One switch row, so every toggle in Settings is the same size and colour.
   ///
   /// They had drifted: two set activeTrackColor to the success green while the
@@ -932,14 +963,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         subtitle,
         style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
       ),
-      trailing: Transform.scale(
-        scale: 0.8,
-        child: Switch(
-          value: value,
-          onChanged: onChanged,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ),
+      trailing: _adaptiveSwitch(value: value, onChanged: onChanged),
       // The whole row toggles, which SwitchListTile gave for free.
       onTap: onChanged == null ? null : () => onChanged(!value),
     );
