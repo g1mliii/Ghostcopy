@@ -1166,13 +1166,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 ? GhostColors.accentBorder
                 : GhostColors.border,
           ),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x30000000),
-              blurRadius: 28,
-              offset: Offset(0, 8),
-            ),
-          ],
+          // No drop shadow. The handoff carries one (0 8px 28px at 19% black),
+          // which reads as elevation on its light mock - but on a near-black
+          // background a black shadow can only darken, so it renders as a soft
+          // dark halo around the card that looks like a gradient or a patch of
+          // a different background colour rather than depth. The border does
+          // the separating instead.
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1289,9 +1288,18 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ),
           ),
           const Spacer(),
-          Text(
-            hasContent ? 'Ready to send' : 'Nothing to send yet',
-            style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+          // Flexible so a long status never pushes the Attach button off the
+          // toolbar on a narrow screen.
+          Flexible(
+            child: Text(
+              hasContent ? 'Ready to send' : 'Nothing to send yet',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                color: GhostColors.textMuted,
+              ),
+            ),
           ),
         ],
       ),
@@ -1505,9 +1513,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       children: [
         Row(
           children: [
-            Text(
-              'Clipboard history',
-              style: GhostTypography.headline.copyWith(fontSize: 15),
+            Flexible(
+              child: Text(
+                'Clipboard history',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GhostTypography.headline.copyWith(fontSize: 15),
+              ),
             ),
             const SizedBox(width: 7),
             Text(
