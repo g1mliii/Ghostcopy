@@ -129,10 +129,13 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: GhostColors.glassBorder),
             ),
-            child: const Icon(
-              Icons.content_copy_rounded,
-              size: 40,
-              color: GhostColors.primary,
+            // The real mark, not a generic Material copy glyph. White variant:
+            // this sits on GhostColors.surface, which is near-black.
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Image.asset(
+                'assets/icons/logo_white.png',
+              ),
             ),
           ),
           const SizedBox(height: 16),

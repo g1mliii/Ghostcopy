@@ -81,13 +81,20 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   /// Get platform-specific tray icon path
+  ///
+  /// Each platform wants a different asset, so they are no longer shared:
+  /// - Windows: .ico containing 16/32/48px frames, picked per DPI.
+  /// - macOS: a 22px black-on-transparent TEMPLATE image. The menu bar tints
+  ///   it automatically, which is what makes it invert correctly in dark mode
+  ///   and when the bar is highlighted. A full-colour icon cannot do that.
+  /// - Linux: 24px, the size most panels expect.
   String _getTrayIconPath() {
     if (Platform.isWindows) {
       return 'assets/icons/tray_icon.ico';
     } else if (Platform.isMacOS) {
-      return 'assets/icons/tray_icon.png';
+      return 'assets/icons/tray_icon_macos.png';
     } else if (Platform.isLinux) {
-      return 'assets/icons/tray_icon.png';
+      return 'assets/icons/tray_icon_linux.png';
     }
     return '';
   }

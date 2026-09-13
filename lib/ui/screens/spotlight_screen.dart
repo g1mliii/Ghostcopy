@@ -958,7 +958,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(Icons.content_copy, size: 24, color: GhostColors.primary),
+        Image.asset(
+          'assets/icons/logo_white.png',
+          width: 22,
+          height: 22,
+        ),
         const SizedBox(width: 12),
         Text(
           'GhostCopy',
