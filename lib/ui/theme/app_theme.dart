@@ -31,9 +31,21 @@ class AppTheme {
 
       // App Bar
       appBarTheme: const AppBarTheme(
-        backgroundColor: GhostColors.surface,
+        // The header shares the page background rather than sitting on its own
+        // grey bar. That leaves one meaning for the lighter surface colour -
+        // "an elevated thing you interact with", i.e. cards and clips - instead
+        // of it doing double duty as chrome, which is what made the top read as
+        // a separate strip bolted onto the app.
+        backgroundColor: GhostColors.background,
         foregroundColor: GhostColors.textPrimary,
         elevation: 0,
+        // Material 3 tints an AppBar with surfaceTint once content scrolls
+        // under it (scrolledUnderElevation defaults to 3). Left alone, the bar
+        // would quietly turn grey again on the first scroll and put the seam
+        // straight back.
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
         centerTitle: false,
         titleTextStyle: TextStyle(
           fontSize: 18,

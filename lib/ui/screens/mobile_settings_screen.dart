@@ -449,8 +449,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     return Scaffold(
       backgroundColor: GhostColors.background,
       appBar: AppBar(
-        backgroundColor: GhostColors.surface,
+        // Same colour as the body: see AppTheme.appBarTheme for why.
+        backgroundColor: GhostColors.background,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         // Match the main screen: AppBar would otherwise pick its own overlay
         // style from the background colour and re-opaque the status bar.
         systemOverlayStyle: const SystemUiOverlayStyle(

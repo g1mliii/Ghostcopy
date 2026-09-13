@@ -883,8 +883,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     return Scaffold(
       backgroundColor: GhostColors.background,
       appBar: AppBar(
-        backgroundColor: GhostColors.surface,
+        // Same colour as the body: see AppTheme.appBarTheme for why.
+        backgroundColor: GhostColors.background,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         // AppBar derives its own overlay style from the background colour,
         // which would undo the transparent status bar set in main(). Pin it so
         // the header's colour shows through the cutout strip with light
