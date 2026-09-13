@@ -1007,9 +1007,15 @@ class ClipboardRepository implements IClipboardRepository {
           .eq('id', id)
           .eq('user_id', userId); // Explicit filter for defense in depth
 
-      // Drop the downloaded bytes for this clip from RAM.
-      if (item?.storagePath != null) {
-        MediaMemoryCache.instance.remove(item!.storagePath!);
+      // Drop the downloaded bytes for this clip from RAM and from disk. The
+      // disk copy especially: it outlives the process, so without this a
+      // deleted clip's image stayed readable in the profile directory
+      // indefinitely. R2 itself is handled server-side by the
+      // cleanup_storage_on_clipboard_delete trigger.
+      final deletedPath = item?.storagePath;
+      if (deletedPath != null && deletedPath.isNotEmpty) {
+        MediaMemoryCache.instance.remove(deletedPath);
+        unawaited(MediaDiskCache.instance.remove(deletedPath));
       }
 
       // FIXED: Remove from image cache if it's an image

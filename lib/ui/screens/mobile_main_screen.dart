@@ -1310,14 +1310,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         SizedBox(
           height: 36,
           child: _viewModel.devicesLoading
-              ? const Center(
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: GhostColors.primary,
-                    ),
+              ? Center(
+                  child: Adaptive.progressIndicator(
+                    size: 16,
+                    color: GhostColors.primary,
                   ),
                 )
               : _viewModel.deviceError != null
@@ -1351,34 +1347,46 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ),
                   ),
                 )
-              : ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  physics: Adaptive.scrollPhysics,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: _viewModel.devices.length + 1,
-                  separatorBuilder: (context, index) =>
-                      const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      return _DeviceChip(
-                        label: 'All Devices',
-                        icon: Icons.devices,
-                        isSelected: _viewModel.selectedDeviceTypes.isEmpty,
-                        onTap: () => _viewModel.clearDeviceTypeSelection(),
-                      );
-                    }
+              : Builder(
+                  builder: (context) {
+                    // One chip per device TYPE, not per device: the backend
+                    // routes on target_device_type (a platform enum array) and
+                    // cannot address an individual machine. Rendering a chip
+                    // per device made two Windows PCs highlight together on a
+                    // single tap, because both resolve to the same type.
+                    final targets = _viewModel.deviceTypeTargets;
 
-                    final device = _viewModel.devices[index - 1];
-                    final isSelected = _viewModel.selectedDeviceTypes.contains(
-                      device.deviceType,
-                    );
+                    return ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      physics: Adaptive.scrollPhysics,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      itemCount: targets.length + 1,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        if (index == 0) {
+                          return _DeviceChip(
+                            label: 'All Devices',
+                            icon: Icons.devices,
+                            isSelected: _viewModel.selectedDeviceTypes.isEmpty,
+                            onTap: () => _viewModel.clearDeviceTypeSelection(),
+                          );
+                        }
 
-                    return _DeviceChip(
-                      label: device.displayName,
-                      icon: _getDeviceIcon(device.deviceType),
-                      isSelected: isSelected,
-                      onTap: () =>
-                          _viewModel.toggleDeviceType(device.deviceType),
+                        final target = targets[index - 1];
+                        return _DeviceChip(
+                          label: target.label,
+                          tooltip: target.devices.length > 1
+                              ? 'Sends to ${target.deviceNames}'
+                              : null,
+                          icon: _getDeviceIcon(target.deviceType),
+                          isSelected: _viewModel.selectedDeviceTypes.contains(
+                            target.deviceType,
+                          ),
+                          onTap: () =>
+                              _viewModel.toggleDeviceType(target.deviceType),
+                        );
+                      },
                     );
                   },
                 ),
@@ -1403,14 +1411,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ),
           ),
           child: _viewModel.isSending
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
+              ? Adaptive.progressIndicator(color: Colors.white)
               : Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1504,9 +1505,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   Widget _buildHistoryList() {
     if (_viewModel.historyLoading) {
-      return const SliverFillRemaining(
+      return SliverFillRemaining(
         child: Center(
-          child: CircularProgressIndicator(color: GhostColors.primary),
+          child: Adaptive.progressIndicator(
+            size: 32,
+            strokeWidth: 3,
+            color: GhostColors.primary,
+          ),
         ),
       );
     }
@@ -1627,7 +1632,18 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
             return RepaintBoundary(
               key: ValueKey<String>(item.id),
-              child: _HistoryItemContent(
+              child: Dismissible(
+                // Keyed on the clip id, not the index, so the correct row is
+                // removed when the list shifts under a realtime update.
+                key: ValueKey<String>('dismiss-${item.id}'),
+                // Left only. A right swipe is left free for a future action,
+                // and a single direction makes an accidental delete less
+                // likely on a list the user scrolls constantly.
+                direction: DismissDirection.endToStart,
+                background: _buildDeleteBackground(),
+                confirmDismiss: (_) => _confirmDeleteClip(item),
+                onDismissed: (_) => _deleteClip(item),
+                child: _HistoryItemContent(
                 item: item,
                 transformerService: _transformerService,
                 clipboardRepository: _clipboardRepository,
@@ -1663,6 +1679,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       );
                     }
                   },
+                  ),
                 ),
               ),
             );
@@ -1677,6 +1694,59 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           },
         ),
       ),
+    );
+  }
+
+  /// Red panel revealed behind a row being swiped away.
+  Widget _buildDeleteBackground() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+      padding: const EdgeInsets.only(right: 24),
+      alignment: Alignment.centerRight,
+      decoration: BoxDecoration(
+        color: Colors.red.shade400,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(Icons.delete_outline, color: Colors.white, size: 24),
+    );
+  }
+
+  /// Confirm before deleting.
+  ///
+  /// Deliberately not a silent swipe-to-delete: this removes the clip from the
+  /// server, so it vanishes from every signed-in device, not just this phone.
+  /// That is not something to do on an accidental gesture mid-scroll.
+  Future<bool> _confirmDeleteClip(ClipboardItem item) async {
+    Adaptive.impactFeedback();
+    if (!mounted) return false;
+    return Adaptive.confirm(
+      context,
+      title: 'Delete clip?',
+      message:
+          'This removes it from all your devices, not just this one. It cannot be undone.',
+      confirmText: 'Delete',
+      isDestructive: true,
+    );
+  }
+
+  Future<void> _deleteClip(ClipboardItem item) async {
+    await _viewModel.handleHistoryItemDelete(
+      item,
+      onSuccess: (msg) {
+        if (mounted) {
+          unawaited(showNativeToast(context, msg, icon: Icons.delete_outline));
+        }
+      },
+      onError: (msg) {
+        if (mounted) {
+          showGhostToast(
+            context,
+            msg,
+            icon: Icons.error,
+            type: GhostToastType.error,
+          );
+        }
+      },
     );
   }
 
@@ -1705,6 +1775,7 @@ class _DeviceChip extends StatelessWidget {
     required this.icon,
     required this.isSelected,
     required this.onTap,
+    this.tooltip,
   });
 
   // Perf: const BorderRadius avoids allocation per build
@@ -1715,8 +1786,18 @@ class _DeviceChip extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
 
+  /// Shown on long-press when the label covers more than one device, so the
+  /// user can still see exactly which machines a send will reach.
+  final String? tooltip;
+
   @override
   Widget build(BuildContext context) {
+    final chip = _buildChip();
+    final message = tooltip;
+    return message == null ? chip : Tooltip(message: message, child: chip);
+  }
+
+  Widget _buildChip() {
     return Material(
       color: isSelected ? GhostColors.primary : GhostColors.surface,
       borderRadius: _borderRadius,

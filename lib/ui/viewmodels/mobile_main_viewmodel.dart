@@ -81,6 +81,30 @@ class MobileMainViewModel extends ChangeNotifier {
   List<Device> _devices = [];
   List<Device> get devices => _devices;
 
+  /// The user's devices collapsed to one entry per device TYPE.
+  ///
+  /// target_device_type is a device_type_enum[] - the backend can only route by
+  /// platform, never to an individual machine. The chip row used to render one
+  /// chip per device but toggle that device's TYPE, so with two Windows
+  /// machines tapping "Work PC" lit up "Home PC" as well and delivered to both.
+  /// The label promised something the schema cannot do.
+  ///
+  /// Grouping here keeps the selector honest while preserving what was good
+  /// about it: when a type has exactly one device, that device's name IS an
+  /// accurate label for the type, so it is still shown.
+  List<DeviceTypeTarget> get deviceTypeTargets {
+    final byType = <String, List<Device>>{};
+    for (final device in _devices) {
+      byType.putIfAbsent(device.deviceType, () => <Device>[]).add(device);
+    }
+
+    final targets = byType.entries
+        .map((e) => DeviceTypeTarget(deviceType: e.key, devices: e.value))
+        .toList()
+      ..sort((a, b) => a.deviceType.compareTo(b.deviceType));
+    return targets;
+  }
+
   final Set<String> _selectedDeviceTypes = {};
   Set<String> get selectedDeviceTypes => _selectedDeviceTypes;
 
@@ -143,16 +167,30 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Initialize the ViewModel - call once after construction
   Future<void> initialize() async {
-    await _initializeEncryption();
-    await loadDevices();
     _historyLoading = true;
     notifyListeners();
     subscribeToRealtimeUpdates();
-    // Do not let first paint depend on the websocket. The stream used to be
-    // the ONLY source of the initial list, so a realtime failure left the
-    // screen on a spinner or an error with no history at all - even though a
-    // plain REST fetch would have worked fine.
-    await loadHistory();
+
+    // Run all three concurrently. They were serialized - key derivation, then
+    // the device list, then history - which put ~1s of device fetch on the
+    // critical path for a list that does not need it, and made the clipboard
+    // appear about four seconds after the screen did.
+    //
+    // Safe to overlap because EncryptionService.initialize() guards concurrent
+    // callers with _initFuture, and the decrypt step inside loadHistory()
+    // calls it again through _ensureEncryptionInitialized() - so the rows are
+    // fetched over the network WHILE the key is being derived, and decryption
+    // still waits for the same single derivation.
+    //
+    // Do not let first paint depend on the websocket either: the stream used
+    // to be the ONLY source of the initial list, so a realtime failure left
+    // the screen on a spinner even though a plain REST fetch would have
+    // worked.
+    await Future.wait([
+      _initializeEncryption(),
+      loadDevices(),
+      loadHistory(),
+    ]);
   }
 
   Future<void> _initializeEncryption() async {
@@ -870,6 +908,47 @@ class MobileMainViewModel extends ChangeNotifier {
     );
   }
 
+  /// Delete a clip everywhere.
+  ///
+  /// Mirrors the desktop path: the repository owns the cascade (row, RAM
+  /// cache, disk cache, image cache), and the R2 object is removed by the
+  /// cleanup_storage_on_clipboard_delete trigger. This is a sync-wide delete,
+  /// not a local hide - the clip disappears from every signed-in device.
+  Future<bool> handleHistoryItemDelete(
+    ClipboardItem item, {
+    void Function(String message)? onSuccess,
+    void Function(String message)? onError,
+  }) async {
+    // Drop it from the list first so the row does not spring back while the
+    // network call is in flight; realtime will confirm the same removal.
+    final index = _historyItems.indexWhere((i) => i.id == item.id);
+    if (index != -1) _historyItems.removeAt(index);
+    _filterHistory(_historySearchQuery);
+    _decryptedContentCache.remove(item.id);
+    _detectionCache.remove(item.id);
+    notifyListeners();
+
+    try {
+      await _clipboardRepo.delete(item.id);
+      debugPrint('[MobileMainVM] Deleted history item ${item.id}');
+      onSuccess?.call('Clip deleted');
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[MobileMainVM] Failed to delete history item: $e');
+      // Put it back where it was - the clip still exists on the server, so
+      // leaving the list short would misrepresent what is synced.
+      if (index != -1 && index <= _historyItems.length) {
+        _historyItems.insert(index, item);
+      } else {
+        _historyItems.add(item);
+      }
+      _filterHistory(_historySearchQuery);
+      notifyListeners();
+      onError?.call('Could not delete: $e');
+      return false;
+    }
+  }
+
   /// Handle refresh (pull-to-refresh)
   Future<void> handleRefresh() async {
     await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
@@ -1382,4 +1461,38 @@ class MobileMainViewModel extends ChangeNotifier {
     debugPrint('[MobileMainVM] Disposed');
     super.dispose();
   }
+}
+
+/// One selectable send target: a device TYPE, plus the devices it covers.
+///
+/// Exists because the clipboard table's target_device_type column is an array
+/// of platform enums. A chip maps to one of these, never to a single device.
+@immutable
+class DeviceTypeTarget {
+  const DeviceTypeTarget({required this.deviceType, required this.devices});
+
+  final String deviceType;
+  final List<Device> devices;
+
+  /// A label that is true for every device this chip reaches.
+  ///
+  /// With one device of this type its name is unambiguous, so it is used - a
+  /// clip sent to "windows" really does go to exactly that machine. With more
+  /// than one, naming any of them would be a lie, so the platform and a count
+  /// are shown instead.
+  String get label => devices.length == 1
+      ? devices.single.displayName
+      : '${_platformLabel(deviceType)} (${devices.length})';
+
+  /// Names of every device this chip delivers to, for the tooltip.
+  String get deviceNames => devices.map((d) => d.displayName).join(', ');
+
+  static String _platformLabel(String deviceType) => switch (deviceType) {
+    'windows' => 'Windows',
+    'macos' => 'macOS',
+    'linux' => 'Linux',
+    'android' => 'Android',
+    'ios' => 'iOS',
+    _ => deviceType,
+  };
 }

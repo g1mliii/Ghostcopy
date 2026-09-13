@@ -76,6 +76,34 @@ class Adaptive {
     future.catchError((Object _) {});
   }
 
+  /// The platform's own indeterminate spinner.
+  ///
+  /// Material's CircularProgressIndicator IS the native spinner on Android;
+  /// on iOS the system control is CupertinoActivityIndicator, which spins a
+  /// ring of tapered spokes rather than sweeping an arc. Nothing here shows a
+  /// percentage on purpose - uploads are capped at 10MB, so a determinate bar
+  /// would be more chrome than the wait deserves.
+  static Widget progressIndicator({
+    double size = 20,
+    double strokeWidth = 2,
+    Color? color,
+  }) {
+    if (isIOS) {
+      return CupertinoActivityIndicator(
+        radius: size / 2,
+        color: color,
+      );
+    }
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CircularProgressIndicator(
+        strokeWidth: strokeWidth,
+        color: color,
+      ),
+    );
+  }
+
   /// A yes/no dialog using each platform's own conventions.
   ///
   /// Only for simple title + message + two buttons. Dialogs with custom bodies

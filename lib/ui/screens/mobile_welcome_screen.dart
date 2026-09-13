@@ -254,8 +254,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                     if (_qrScanning)
                       Container(
                         color: Colors.black54,
-                        child: const Center(
-                          child: CircularProgressIndicator(
+                        child: Center(
+                          child: Adaptive.progressIndicator(
+                            size: 32,
+                            strokeWidth: 3,
                             color: GhostColors.primary,
                           ),
                         ),
@@ -484,14 +486,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           ),
         ),
         child: _authLoading
-            ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
+            ? Adaptive.progressIndicator(color: Colors.white)
             : Text(
                 _isLogin ? 'Login' : 'Sign Up',
                 style: GhostTypography.body.copyWith(

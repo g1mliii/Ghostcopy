@@ -605,10 +605,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         border: Border.all(color: GhostColors.glassBorder),
       ),
       child: _devicesLoading
-          ? const Padding(
-              padding: EdgeInsets.all(32),
+          ? Padding(
+              padding: const EdgeInsets.all(32),
               child: Center(
-                child: CircularProgressIndicator(color: GhostColors.primary),
+                child: Adaptive.progressIndicator(
+                  size: 32,
+                  strokeWidth: 3,
+                  color: GhostColors.primary,
+                ),
               ),
             )
           : _devices.isEmpty
@@ -913,11 +917,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
             ),
             trailing: _autoClearLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? Adaptive.progressIndicator()
                 : DropdownButton<int>(
                     value: _autoClearSeconds,
                     dropdownColor: GhostColors.surface,
