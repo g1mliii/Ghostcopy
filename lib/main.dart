@@ -46,6 +46,7 @@ import 'services/url_shortener_service.dart';
 import 'services/webhook_service.dart';
 import 'services/widget_service.dart';
 import 'services/window_service.dart';
+import 'ui/platform_adaptive.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
@@ -833,6 +834,8 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: _navigatorKey,
       title: 'GhostCopy',
       theme: AppTheme.darkTheme,
+      // No overscroll stretch or glow anywhere in the app.
+      scrollBehavior: Adaptive.scrollBehavior,
       debugShowCheckedModeBanner: false,
       home: _buildHome(),
     );

@@ -957,7 +957,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             color: GhostColors.textMuted,
             tooltip: 'Settings',
           ),
-          const SizedBox(width: 4),
+          // The logo on the left is a solid 30px tile whose edge sits exactly
+          // on the 16dp gutter. The settings glyph is centred in a 48px
+          // IconButton, so it carries 12dp of box padding plus ~3dp of glyph
+          // bearing - 1dp of trailing gap is what puts its VISIBLE edge on 16
+          // too. Anything larger pushed the header's right margin past every
+          // card below it and tipped the page's axis left.
+          const SizedBox(width: 1),
         ],
       ),
       body: RefreshIndicator(

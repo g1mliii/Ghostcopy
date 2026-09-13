@@ -76,6 +76,19 @@ class Adaptive {
     future.catchError((Object _) {});
   }
 
+  /// Scroll behaviour with the overscroll effect removed.
+  ///
+  /// Android 12+ paints a StretchingOverscrollIndicator: dragging past the end
+  /// warps the whole list, text and images included. On a dense list of
+  /// clipboard rows that reads as the UI bending rather than as a boundary
+  /// cue, and it is jarring every single time the user reaches the end.
+  ///
+  /// This is NOT scroll physics - clamping physics still stretches, because
+  /// the indicator is drawn by ScrollBehavior. It has to be suppressed here.
+  /// The glow indicator is dropped too, so the boundary is simply where
+  /// scrolling stops.
+  static const ScrollBehavior scrollBehavior = _NoOverscrollBehavior();
+
   /// The platform's own indeterminate spinner.
   ///
   /// Material's CircularProgressIndicator IS the native spinner on Android;
@@ -187,4 +200,16 @@ class Adaptive {
     );
     return result ?? false;
   }
+}
+
+/// Strips the overscroll indicator on every platform.
+class _NoOverscrollBehavior extends MaterialScrollBehavior {
+  const _NoOverscrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child;
 }

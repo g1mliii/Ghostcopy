@@ -22,6 +22,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
         home: Scaffold(
           backgroundColor: GhostColors.background,
@@ -52,9 +53,14 @@ void main() {
                 ),
               ],
             ),
-            actions: const [
-              Icon(Icons.settings_outlined, color: GhostColors.textMuted),
-              SizedBox(width: 20),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () {},
+                color: GhostColors.textMuted,
+                tooltip: 'Settings',
+              ),
+              const SizedBox(width: 1),
             ],
           ),
           body: ListView(
