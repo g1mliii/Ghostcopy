@@ -8,7 +8,33 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules">
-        
+
+        <!--
+            Without this, FCM logs "Missing Default Notification Channel metadata
+            in AndroidManifest. Default value will be used." and pushes land on a
+            fallback channel at default importance - no heads-up banner, so a clip
+            sent while the phone is in use is not visible until the shade is pulled.
+            The channel itself is created in MainActivity (see ensureNotificationChannel)
+            because a push can be displayed with the app killed, before any Dart runs.
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ghostcopy_notifications" />
+
+        <!--
+            Without this FCM falls back to the launcher icon, and because Android
+            draws status bar icons from the alpha channel alone - every opaque
+            pixel painted flat white - a full-colour launcher icon renders as a
+            solid white square. ic_stat_ghostcopy is the logo reduced to an
+            alpha-only silhouette, so the ghost cutout survives.
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_ghostcopy" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
+
 
         <activity
             android:name=".MainActivity"

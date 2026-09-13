@@ -50,8 +50,12 @@ class NotificationService implements INotificationService {
 
   Future<void> _initializeLocalNotifications() async {
     // Android initialization
+    // Not ic_launcher: Android builds status bar icons from the alpha channel
+    // only, painting every opaque pixel flat white, so the full-colour launcher
+    // icon shows up as a white square. ic_stat_ghostcopy is the alpha-only
+    // silhouette, and matches what FCM-displayed pushes use.
     const androidSettings = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
+      '@drawable/ic_stat_ghostcopy',
     );
 
     // iOS/macOS initialization

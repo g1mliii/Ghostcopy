@@ -1,5 +1,7 @@
 package com.ghostcopy.ghostcopy
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -20,6 +22,11 @@ class MainActivity : FlutterActivity() {
         private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
         private const val WIDGET_CHANNEL = "com.ghostcopy/widget"
+
+        // Must match the manifest's default_notification_channel_id, the
+        // channelId the edge function sets on the push, and the channel
+        // flutter_local_notifications uses for in-app notifications.
+        private const val NOTIFICATION_CHANNEL_ID = "ghostcopy_notifications"
     }
 
     // Method channels (stored to prevent memory leaks)
@@ -30,8 +37,17 @@ class MainActivity : FlutterActivity() {
     // while a notification-launched intent is still attached.
     private var lastHandledFcmClipboardId: String? = null
 
+    // A notification action that Dart has not collected yet. Written whenever a
+    // tap is handled, cleared when Dart drains it through
+    // "getPendingNotificationAction". This is what makes a cold-start tap work:
+    // the action waits here instead of being fired at a Dart handler that does
+    // not exist yet.
+    private var pendingNotificationAction: Map<String, String>? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        ensureNotificationChannel()
 
         // Security: Prevent screenshots and recents preview
         window.setFlags(
@@ -76,6 +92,19 @@ class MainActivity : FlutterActivity() {
                         ).show()
                         result.success(true)
                     }
+                }
+                // Drain a notification tap that arrived before Dart was ready.
+                //
+                // onResume() fires while the Dart entrypoint is still booting on
+                // a cold start, so pushing the action at Dart (invokeMethod) is
+                // a race the push loses: MobileMainScreen.initState() registers
+                // the receiving handler over a second later, and a platform ->
+                // Dart message with no handler is discarded silently. This
+                // handler is registered in configureFlutterEngine, i.e. before
+                // the entrypoint runs, so it is always ready to be asked.
+                "getPendingNotificationAction" -> {
+                    result.success(pendingNotificationAction)
+                    pendingNotificationAction = null
                 }
                 else -> result.notImplemented()
             }
@@ -393,6 +422,32 @@ class MainActivity : FlutterActivity() {
      *
      * Uses the notifications method channel for consistency with iOS.
      */
+    /**
+     * Create the channel FCM names in its manifest metadata.
+     *
+     * flutter_local_notifications creates this channel lazily, the first time
+     * the app itself shows a local notification - which may never have happened
+     * when a push arrives. A push naming a channel that does not exist is shown
+     * on a default-importance fallback instead, with no heads-up banner. Channels
+     * are persistent and re-creating one with the same id is a no-op, so this is
+     * safe to run on every launch.
+     */
+    private fun ensureNotificationChannel() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
+
+        manager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "GhostCopy Notifications",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Clips sent from your other devices"
+            }
+        )
+        Log.d(TAG, "✅ Created notification channel $NOTIFICATION_CHANNEL_ID")
+    }
+
     private fun fetchAndCopyClipboardItem(
         clipboardId: String,
         expectedContentType: String,
@@ -413,13 +468,25 @@ class MainActivity : FlutterActivity() {
                 "copy"
             }
 
+            // Park the action first. On a cold start the invokeMethod below is
+            // delivered into the void - Dart registers its handler ~1.5s later,
+            // and Flutter drops platform -> Dart messages that arrive with no
+            // handler attached, without an error or a callback. Dart therefore
+            // pulls this on startup and on resume; the push below only shortens
+            // the warm path, and MobileMainViewModel de-dupes by clipboard id so
+            // the two transports cannot copy the same clip twice.
+            pendingNotificationAction = mapOf(
+                "clipboardId" to clipboardId,
+                "action" to action
+            )
+
             // Invoke Flutter method to fetch clipboard item and perform action
             // Same method call that iOS uses via AppDelegate
             channel.invokeMethod("handleNotificationAction", mapOf(
                 "clipboardId" to clipboardId,
                 "action" to action
             ))
-            Log.d(TAG, "✅ Triggered $action action for clipboard item $clipboardId ($expectedContentType)")
+            Log.d(TAG, "✅ Queued+triggered $action action for clipboard item $clipboardId ($expectedContentType)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)
             Toast.makeText(this, "Failed to process item", Toast.LENGTH_SHORT).show()

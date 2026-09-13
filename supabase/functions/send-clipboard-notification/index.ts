@@ -258,8 +258,19 @@ Deno.serve(async (req)=>{
     // Push infrastructure and OS notification history must never receive a
     // clipboard value, preview, filename, or size. The authenticated app syncs
     // the item after the user opens GhostCopy.
-    const notificationTitle = 'New clipboard item';
-    const notificationBody = 'Open GhostCopy to view it';
+    // Say what the tap will actually do. Only text-shaped clips are staged by the
+    // background isolate for an instant clipboard write; images and files need a
+    // download and a share sheet, so tapping those opens the app. Promising "Tap
+    // to copy" for an image would be a straight lie about the next screen.
+    const isFile = contentType.startsWith('file_');
+    const notificationTitle = isImage
+      ? 'Image received'
+      : isFile
+        ? 'File received'
+        : 'New clipboard item';
+    const notificationBody = isImage || isFile
+      ? 'Tap to open in GhostCopy'
+      : 'Tap to copy';
     const targetText = target_device_types && target_device_types.length > 0 ? target_device_types.join(', ') : 'all devices';
     console.log(`[Notification] User ${userId} sending ${contentType} from ${device_type} to ${targetText}`);
     // Query devices table for FCM tokens
@@ -321,10 +332,24 @@ Deno.serve(async (req)=>{
               device_type: device_type,
               content_type: contentType
             },
-            // Android opens the app normally. CopyActivity stays non-exported and
-            // is not reachable through a public FCM click action.
+            // Tapping routes straight to CopyActivity - a translucent, no-history
+            // activity that writes the clipboard and finishes - instead of cold
+            // starting the full Flutter app (~2.5s, and visibly "opens GhostCopy").
+            //
+            // Safe despite CopyActivity being exported="false": the click_action
+            // PendingIntent is constructed by the FCM SDK inside this app's own
+            // process, and Android permits same-UID callers to start non-exported
+            // components. No other app can reach COPY_ACTION.
+            //
+            // The push still carries no clipboard value - CopyActivity reads the
+            // plaintext the background isolate cached on arrival, and falls back to
+            // opening the app when that cache misses.
             android: {
-              priority: 'high'
+              priority: 'high',
+              notification: {
+                clickAction: 'com.ghostcopy.ghostcopy.COPY_ACTION',
+                channelId: 'ghostcopy_notifications'
+              }
             },
             // APNs configuration for iOS with category for notification actions
             apns: {

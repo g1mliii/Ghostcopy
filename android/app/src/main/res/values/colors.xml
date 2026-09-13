@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Tint applied behind the (alpha-only) status bar icon and to the app name
+        in the notification shade. Matches GhostCopy's primary accent, the same
+        Color(0xFF5865F2) used by the Flutter theme.
+    -->
+    <color name="notification_accent">#FF5865F2</color>
+</resources>

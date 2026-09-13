@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
@@ -7,10 +8,12 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'locator.dart';
+import 'models/clipboard_item.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
@@ -66,8 +69,97 @@ const _supabaseAnonKey =
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   debugPrint('[FCM Background] Received message: ${message.messageId}');
 
-  // For background, we don't do anything - Firebase plugin handles notification display
-  // The notification tap will be handled when app comes to foreground
+  // Pre-stage the clip so tapping the notification is instant.
+  //
+  // This isolate runs about a second after the push lands, with the app closed,
+  // which is well before the user can reach the notification. CopyActivity is
+  // then a pure local read: no network, no Flutter engine, no visible app - it
+  // writes the clipboard and finishes. Without this it has nothing to copy, so
+  // it falls back to cold starting MainActivity (~2.5s, and the app stays open).
+  //
+  // The push itself still carries no clipboard value; the content is fetched
+  // here over an authenticated, RLS-scoped connection and decrypted in Dart.
+  await _prefetchClipForInstantCopy(message);
+}
+
+/// Fetch the clip a push refers to and stage it for CopyActivity.
+///
+/// Best effort by design: every failure path just leaves no cache file, and
+/// CopyActivity falls back to opening the app. Never throws - an exception
+/// escaping a background isolate kills delivery handling for later messages.
+Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
+  final clipboardId = message.data['clipboard_id'] as String?;
+  if (clipboardId == null || clipboardId.isEmpty) return;
+
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // A background isolate starts with none of main()'s state, so Supabase has
+    // to be stood up here. The session is restored from the same persisted
+    // store the UI isolate uses, so this runs as the signed-in user and RLS
+    // still applies.
+    await Supabase.initialize(
+      url: _supabaseUrl,
+      publishableKey: _supabaseAnonKey,
+    );
+
+    if (Supabase.instance.client.auth.currentUser == null) {
+      debugPrint('[FCM Background] No session in this isolate - skipping');
+      return;
+    }
+
+    // getHistory() applies RLS and decrypts, so `content` is plaintext here.
+    // The clip that triggered this push is newest, but fetch a few in case
+    // another landed in between.
+    final items = await ClipboardRepository().getHistory(limit: 5);
+
+    ClipboardItem? match;
+    for (final item in items) {
+      if (item.id == clipboardId) {
+        match = item;
+        break;
+      }
+    }
+
+    if (match == null) {
+      debugPrint('[FCM Background] Clip $clipboardId not in history');
+      return;
+    }
+
+    // Images and files need a download and a share sheet, neither of which
+    // CopyActivity can do. Leave no cache so it routes to the app instead.
+    if (match.isImage || match.isFile) {
+      debugPrint('[FCM Background] $clipboardId is a file - app will handle it');
+      return;
+    }
+
+    await _writePendingCopy(match);
+  } on Exception catch (e) {
+    debugPrint('[FCM Background] Prefetch failed (tap will open app): $e');
+  }
+}
+
+/// Stage one clip's plaintext where CopyActivity can read it synchronously.
+///
+/// Deliberately holds a single clip and is deleted by CopyActivity the moment
+/// it is read, so plaintext is at rest only between the push arriving and the
+/// user acting on it. Lives in the app-private files dir (filesDir), which is
+/// the same place the widget already keeps its rows.
+Future<void> _writePendingCopy(ClipboardItem item) async {
+  final dir = await getApplicationSupportDirectory();
+  final file = File('${dir.path}/pending_copy.json');
+
+  await file.writeAsString(
+    jsonEncode({
+      'id': item.id,
+      'content': item.content,
+      'contentType': item.contentType.value,
+      'richTextFormat': item.richTextFormat?.value,
+    }),
+    flush: true,
+  );
+
+  debugPrint('[FCM Background] ✅ Staged clip ${item.id} for instant copy');
 }
 
 Future<void> main(List<String> args) async {
@@ -115,11 +207,21 @@ Future<void> main(List<String> args) async {
   // Start periodic cleanup timer (every 15 minutes)
   TempFileService.instance.startPeriodicCleanup();
 
+  // Sweep last session's temp files, but do not hold startup for it.
+  //
+  // This walks the temp directory, and on a cold start that disk work measured
+  // ~340ms - longer than Supabase.initialize() beside it, so it, not Supabase,
+  // was setting the length of the await below. Nothing on the startup path
+  // depends on the sweep: it is housekeeping for files already orphaned by a
+  // previous run, and a few more seconds on disk costs nothing.
+  unawaited(
+    TempFileService.instance.cleanupTempFiles().catchError((Object e) {
+      debugPrint('[Main] ⚠️ Temp file cleanup failed: $e');
+    }),
+  );
+
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
-    // Cleanup old temp files from previous sessions
-    TempFileService.instance.cleanupTempFiles(),
-
     // Initialize Supabase with session persistence
     Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
 
@@ -301,7 +403,8 @@ Future<void> main(List<String> args) async {
   } else {
     // Mobile app - initialize Firebase and FCM (optional)
     FcmService? fcmService;
-    String? fcmToken;
+    // Deliberately a Future, not an awaited String. See where it is assigned.
+    Future<String?>? fcmTokenFuture;
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
     StreamSubscription<String>? tokenRefreshSubscription;
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
@@ -368,13 +471,31 @@ Future<void> main(List<String> args) async {
         );
       }
 
-      // Get FCM token and update device
-      fcmToken = await fcmService.getToken();
-      if (fcmToken != null) {
+      // Start fetching the FCM token, but do NOT wait for it here.
+      //
+      // getToken() is a network round trip to Google's registration servers -
+      // routinely 1-3s on a cold start, and unbounded on a bad connection. It
+      // used to be awaited before runApp(), so every launch held on a blank
+      // screen for it even though nothing in the first frame needs a push token:
+      // both consumers (device registration, and the welcome screen's
+      // post-sign-in callback) run well after the UI is on screen and simply
+      // await this future when they get there.
+      fcmTokenFuture = fcmService.getToken().then((token) {
         debugPrint(
-          '[App] Got FCM token, will update device after registration',
+          token != null
+              ? '[App] FCM token ready'
+              : '[App] ⚠️ No FCM token - push will not arrive',
         );
-      }
+        return token;
+      });
+
+      // Nothing awaits this future until after startup, so an early failure
+      // would otherwise surface as an unhandled async error and take down the
+      // zone. Push is optional; startup is not.
+      unawaited(fcmTokenFuture.catchError((Object e) {
+        debugPrint('[App] ⚠️ FCM token fetch failed: $e');
+        return null;
+      }));
 
       // Listen for token refresh and update device (store subscription for cleanup)
       tokenRefreshSubscription = fcmService.tokenRefreshStream.listen((
@@ -460,7 +581,7 @@ Future<void> main(List<String> args) async {
 
     runApp(
       MyApp(
-        fcmToken: fcmToken,
+        fcmTokenFuture: fcmTokenFuture,
         tokenRefreshSubscription: tokenRefreshSubscription,
         foregroundMessageSubscription: foregroundMessageSubscription,
         messageOpenedAppSubscription: messageOpenedAppSubscription,
@@ -479,7 +600,7 @@ final supabase = Supabase.instance.client;
 
 class MyApp extends StatefulWidget {
   const MyApp({
-    this.fcmToken,
+    this.fcmTokenFuture,
     this.tokenRefreshSubscription,
     this.foregroundMessageSubscription,
     this.messageOpenedAppSubscription,
@@ -487,7 +608,7 @@ class MyApp extends StatefulWidget {
     super.key,
   });
 
-  final String? fcmToken;
+  final Future<String?>? fcmTokenFuture;
   final StreamSubscription<String>? tokenRefreshSubscription;
   final StreamSubscription<RemoteMessage>? foregroundMessageSubscription;
   final StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
@@ -612,7 +733,10 @@ class _MyAppState extends State<MyApp> {
   /// Safe to run on every launch: registerCurrentDevice() upserts, and
   /// updateFcmToken() is a no-op write when the value has not changed.
   Future<void> _registerDeviceForPush() async {
-    final token = widget.fcmToken;
+    // Awaited here rather than at startup: by the time this runs the UI is
+    // already on screen, so waiting on Google's registration servers costs the
+    // user nothing.
+    final token = await widget.fcmTokenFuture;
     try {
       await locator<IDeviceService>().registerCurrentDevice();
       if (token != null) {
@@ -864,14 +988,17 @@ class _MyAppState extends State<MyApp> {
     // Mobile app - show welcome screen or main screen based on auth state
     if (!_mobileAuthComplete) {
       return MobileWelcomeScreen(
-        fcmToken: widget.fcmToken,
+        fcmTokenFuture: widget.fcmTokenFuture,
         onAuthComplete: () async {
           // Register device with FCM token after auth
           await locator<IDeviceService>().registerCurrentDevice();
 
-          // Update FCM token if available
-          if (widget.fcmToken != null) {
-            await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+          // Update FCM token if available. Resolved by now in practice - the
+          // fetch starts at launch and signing in takes seconds - but awaited
+          // rather than assumed.
+          final token = await widget.fcmTokenFuture;
+          if (token != null) {
+            await locator<IDeviceService>().updateFcmToken(token);
             debugPrint('[Mobile] ✅ Device registered with FCM token');
           }
 
