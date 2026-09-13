@@ -956,24 +956,20 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     ); // Close DropRegion
   }
 
-  /// Build header with icon and title (centered)
+  /// Build header: the wordmark alone, centred.
+  ///
+  /// The logo image sat beside it, which pushed the pair off-centre (the Row
+  /// centred icon+text as a unit, so the word itself never lined up with the
+  /// window). The mark is already on the tray icon and the taskbar, so it was
+  /// restating what the user can see anyway.
   Widget _buildHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Image.asset(
-          'assets/icons/logo_white.png',
-          width: 22,
-          height: 22,
+    return Center(
+      child: Text(
+        'GhostCopy',
+        style: GhostTypography.headline.copyWith(
+          color: GhostColors.textPrimary,
         ),
-        const SizedBox(width: 12),
-        Text(
-          'GhostCopy',
-          style: GhostTypography.headline.copyWith(
-            color: GhostColors.textPrimary,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
