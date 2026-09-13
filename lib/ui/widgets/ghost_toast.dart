@@ -17,6 +17,14 @@ import '../theme/colors.dart';
 /// - Properly removes overlay entries
 /// - Cancels timers on early dismissal
 /// - No leaks from animation controllers
+/// The toast currently on screen, if any.
+///
+/// Every toast renders at the same spot, so without this a second call simply
+/// stacked a new overlay on top of the first - flipping a switch on and off
+/// quickly left two or three toasts piled up, each fading on its own timer.
+/// One at a time: a new toast replaces whatever is showing.
+OverlayEntry? _activeToast;
+
 void showGhostToast(
   BuildContext context,
   String message, {
@@ -25,6 +33,11 @@ void showGhostToast(
   GhostToastType type = GhostToastType.info,
 }) {
   final overlay = Overlay.of(context);
+
+  // Drop whatever is on screen before showing this one. Safe to do early: the
+  // widget's dispose() cancels its auto-dismiss timer and animation controller.
+  _dismissActiveToast();
+
   late OverlayEntry overlayEntry;
 
   overlayEntry = OverlayEntry(
@@ -38,11 +51,25 @@ void showGhostToast(
         if (overlayEntry.mounted) {
           overlayEntry.remove();
         }
+        // Only clear the reference if this is still the toast on screen - a
+        // late dismissal from a replaced toast must not unhook its successor.
+        if (identical(_activeToast, overlayEntry)) {
+          _activeToast = null;
+        }
       },
     ),
   );
 
+  _activeToast = overlayEntry;
   overlay.insert(overlayEntry);
+}
+
+void _dismissActiveToast() {
+  final current = _activeToast;
+  _activeToast = null;
+  if (current != null && current.mounted) {
+    current.remove();
+  }
 }
 
 IconData _getDefaultIcon(GhostToastType type) {
