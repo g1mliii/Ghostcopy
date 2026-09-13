@@ -10,6 +10,7 @@ import '../../services/clipboard_cache_manager.dart';
 import '../../services/compression_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
 import '../clipboard_repository.dart';
@@ -688,7 +689,10 @@ class ClipboardRepository implements IClipboardRepository {
     }
 
     // Registered before any await so a concurrent caller sees it immediately.
-    final future = _downloadAndDecrypt(item, storagePath);
+    // The disk lookup lives inside _resolveBytes so that it, too, is covered
+    // by the in-flight join - otherwise two tiles rebuilding at once would
+    // both read and decrypt the same file.
+    final future = _resolveBytes(item, storagePath);
     _inFlightDownloads[storagePath] = future;
     try {
       return await future;
@@ -698,6 +702,23 @@ class ClipboardRepository implements IClipboardRepository {
       // ignore: unawaited_futures
       _inFlightDownloads.remove(storagePath);
     }
+  }
+
+  /// Disk cache first, network second. Returns plaintext bytes either way.
+  Future<Uint8List?> _resolveBytes(
+    ClipboardItem item,
+    String storagePath,
+  ) async {
+    final cached = await MediaDiskCache.instance.get(storagePath);
+    if (cached != null) {
+      debugPrint(
+        '[Repository] 💾 Disk cache hit: $storagePath (${cached.length} bytes)',
+      );
+      final bytes = await _decryptDownloaded(item, cached);
+      if (bytes != null) MediaMemoryCache.instance.put(storagePath, bytes);
+      return bytes;
+    }
+    return _downloadAndDecrypt(item, storagePath);
   }
 
   Future<Uint8List?> _downloadAndDecrypt(
@@ -711,27 +732,17 @@ class ClipboardRepository implements IClipboardRepository {
 
       debugPrint('[Repository] ✓ Downloaded: ${raw.length} bytes');
 
-      // Decrypt only when the row says the object is encrypted. Objects
-      // uploaded before file encryption existed are stored in the clear and
-      // carry is_encrypted = false, so they pass straight through - this must
-      // stay keyed on the flag rather than on whether a passphrase is set.
-      var bytes = raw;
-      if (item.isEncrypted) {
-        await _ensureEncryptionInitialized();
-        if (!await _encryptionService.isEnabled()) {
-          debugPrint(
-            '[Repository] 🔒 ${item.storagePath} is encrypted but no '
-            'passphrase is set on this device',
-          );
-          return null;
-        }
-        bytes = await _encryptionService.decryptBytes(raw);
-        debugPrint('[Repository] 🔓 Decrypted to ${bytes.length} bytes');
-      }
+      // Persist the bytes EXACTLY as received - still encrypted when the clip
+      // is encrypted - so a restart does not pay for this download again.
+      // Fire and forget: a cache write must never delay showing the image.
+      unawaited(MediaDiskCache.instance.put(storagePath, raw));
 
-      // Cache the PLAINTEXT: the cache is in-process and cleared on hide,
-      // sign-out and memory pressure, and caching ciphertext would mean
-      // re-running AES on every cache hit.
+      final bytes = await _decryptDownloaded(item, raw);
+      if (bytes == null) return null;
+
+      // Cache the PLAINTEXT in RAM: that cache is in-process and cleared on
+      // hide, sign-out and memory pressure, so re-running AES on every hit
+      // would be pure waste. The disk copy above stays encrypted.
       MediaMemoryCache.instance.put(storagePath, bytes);
 
       return bytes;
@@ -739,6 +750,31 @@ class ClipboardRepository implements IClipboardRepository {
       debugPrint('[Repository] ✗ Download failed: $e');
       return null;
     }
+  }
+
+  /// Turn raw stored bytes into plaintext.
+  ///
+  /// Decrypts only when the row says the object is encrypted. Objects uploaded
+  /// before file encryption existed are stored in the clear and carry
+  /// is_encrypted = false, so they pass straight through - this must stay keyed
+  /// on the flag rather than on whether a passphrase is set.
+  Future<Uint8List?> _decryptDownloaded(
+    ClipboardItem item,
+    Uint8List raw,
+  ) async {
+    if (!item.isEncrypted) return raw;
+
+    await _ensureEncryptionInitialized();
+    if (!await _encryptionService.isEnabled()) {
+      debugPrint(
+        '[Repository] 🔒 ${item.storagePath} is encrypted but no '
+        'passphrase is set on this device',
+      );
+      return null;
+    }
+    final bytes = await _encryptionService.decryptBytes(raw);
+    debugPrint('[Repository] 🔓 Decrypted to ${bytes.length} bytes');
+    return bytes;
   }
 
   @override
@@ -866,6 +902,22 @@ class ClipboardRepository implements IClipboardRepository {
 
       // FIXED: Clean up orphaned cache entries (async, don't await)
       _cleanupOrphanedCache(decryptedItems);
+
+      // Drop disk-cached media for clips that no longer exist. Only a
+      // successful fetch may prune - doing it after a failure would wipe the
+      // cache over a dropped connection and re-download everything. Note this
+      // prunes against the rows actually returned (15 by default) while the
+      // server retains 20, so a clip that falls off the client's list loses
+      // its cached bytes and would be re-fetched if it ever came back.
+      unawaited(
+        MediaDiskCache.instance.prune(
+          decryptedItems
+              .map((i) => i.storagePath)
+              .whereType<String>()
+              .where((p) => p.isNotEmpty)
+              .toSet(),
+        ),
+      );
 
       return decryptedItems;
     } on SecurityException {
@@ -1334,8 +1386,12 @@ class ClipboardRepository implements IClipboardRepository {
     // Belongs to the signed-out user's history. Leaving it set would show the
     // next user a "N encrypted clips" prompt for clips that are not theirs.
     _undecryptableItemCount.value = 0;
-    // Same reasoning for the downloaded bytes.
+    // Same reasoning for the downloaded bytes, in RAM and on disk. The disk
+    // copy especially: it outlives the process, and for an account without
+    // encryption enabled those bytes are plaintext media sitting in the
+    // profile directory. Signing out must not leave them for the next user.
     MediaMemoryCache.instance.clear();
+    unawaited(MediaDiskCache.instance.clear());
   }
 
   @override

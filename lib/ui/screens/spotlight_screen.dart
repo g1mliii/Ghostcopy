@@ -546,9 +546,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     FocusManager.instance.primaryFocus?.unfocus();
 
     // 4. Release downloaded media bytes. MediaMemoryCache holds up to 24MB of
-    // image/file data to avoid re-downloading from R2 while browsing history -
-    // valuable with the window open, pure overhead once it is hidden, which is
-    // ~99% of the app's life. Anything needed again is re-fetched on reopen.
+    // image/file data while browsing history - valuable with the window open,
+    // pure overhead once it is hidden, which is ~99% of the app's life.
+    //
+    // Only the RAM copy is dropped. MediaDiskCache keeps the bytes, so
+    // reopening re-reads them from local disk instead of paying for another
+    // R2 download - which is what made this trade-off expensive before.
     MediaMemoryCache.instance.clear();
 
     debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
