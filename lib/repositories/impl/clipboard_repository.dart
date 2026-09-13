@@ -67,6 +67,9 @@ class ClipboardRepository implements IClipboardRepository {
   final IStorageService _storageService;
   final ICompressionService _compressionService;
   bool _encryptionInitialized = false;
+  /// User the loaded encryption state belongs to, so a sign-in as someone
+  /// else re-keys instead of silently reusing the previous account's state.
+  String? _encryptionUserId;
 
   /// Items in the last history load that could not be decrypted. See
   /// IClipboardRepository.undecryptableItemCount.
@@ -99,15 +102,22 @@ class ClipboardRepository implements IClipboardRepository {
 
   /// Initialize encryption with user ID (call once per session)
   Future<void> _ensureEncryptionInitialized() async {
-    if (_encryptionInitialized) return;
-
     final userId = _client.auth.currentUser?.id;
     if (userId == null) {
       throw SecurityException('User must be authenticated for encryption');
     }
 
+    // Keyed on the user, not just a bool. reset() runs on sign-OUT, but nothing
+    // resets this on sign-IN - so after signing back in without restarting, a
+    // bare `if (_encryptionInitialized) return;` skipped the re-key and left
+    // the anonymous account's keyless state in place, showing every clip as
+    // encrypted. EncryptionService.initialize() makes the same check itself;
+    // this one keeps us from skipping the call that would perform it.
+    if (_encryptionInitialized && _encryptionUserId == userId) return;
+
     await _encryptionService.initialize(userId);
     _encryptionInitialized = true;
+    _encryptionUserId = userId;
   }
 
   @override
@@ -1389,6 +1399,7 @@ class ClipboardRepository implements IClipboardRepository {
   void reset() {
     debugPrint('[ClipboardRepository] Resetting repository state');
     _encryptionInitialized = false;
+    _encryptionUserId = null;
     // Belongs to the signed-out user's history. Leaving it set would show the
     // next user a "N encrypted clips" prompt for clips that are not theirs.
     _undecryptableItemCount.value = 0;
@@ -1404,6 +1415,7 @@ class ClipboardRepository implements IClipboardRepository {
   void dispose() {
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
     _encryptionInitialized = false;
+    _encryptionUserId = null;
     _undecryptableItemCount.value = 0;
   }
 

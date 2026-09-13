@@ -120,8 +120,25 @@ class EncryptionService implements IEncryptionService {
   Future<void> initialize(String userId) async {
     debugPrint('[EncryptionService] Starting initialization for user: $userId');
 
-    // If already initialized, nothing to do
-    if (_initialized) return;
+    // Already set up for THIS user - nothing to do.
+    if (_initialized && _userId == userId) return;
+
+    // Set up for somebody else. This must re-key, not return early.
+    //
+    // Signing out signs straight back in anonymously, so that anonymous id is
+    // what gets initialised next - with no passphrase and therefore no key.
+    // Signing back in then hit the old `if (_initialized) return;` and kept the
+    // anonymous id, which broke two things at once: every clip read as
+    // undecryptable because no key was loaded, and any passphrase entered
+    // afterwards was salted and stored under the ANONYMOUS id (see _deriveKey,
+    // which salts with _userId), so recovering encryption produced a key that
+    // could never open the user's own clips.
+    if (_initialized && _userId != userId) {
+      debugPrint(
+        '[EncryptionService] User changed ($_userId -> $userId) - re-keying',
+      );
+      reset();
+    }
 
     // If another initialization is in-flight, wait for it
     if (_initFuture != null) {
