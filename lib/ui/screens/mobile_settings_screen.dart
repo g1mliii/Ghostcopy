@@ -22,9 +22,8 @@ import 'mobile_welcome_screen.dart';
 
 /// GhostCopy's public site, shown to the user before they are sent to it.
 ///
-/// TODO(ghostcopy): point this at the real domain before shipping to either
-/// store - it is quoted verbatim in the confirmation dialog, so a wrong value
-/// is shown to the user, not just followed.
+/// Quoted verbatim in the confirmation dialog, so this is read by the user
+/// rather than only followed - keep it in step with the deployed domain.
 const _websiteUrl = 'https://ghostcopy.app';
 
 /// Mobile settings screen
