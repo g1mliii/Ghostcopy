@@ -90,7 +90,12 @@ void main() {
                     const SizedBox(height: 40),
                     const Divider(height: 1, color: GhostColors.border),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 12, 5),
+                      // 14 here plus Material's 2dp inset inside a zero-padding
+      // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
+      // the text above it and the history rows below. Measured from rendered
+      // pixels rather than derived, because the button's internal geometry is
+      // not obvious from its API.
+      padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
                       child: Row(
                         children: [
                           TextButton.icon(
@@ -101,6 +106,7 @@ void main() {
                             ),
                             label: const Text('Attach'),
                             style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
                               foregroundColor: GhostColors.textMuted,
                             ),
                           ),
@@ -219,15 +225,15 @@ void main() {
                       _row('Some copied text from the desktop app', null),
                       const Divider(
                         height: 1,
-                        indent: 14,
-                        endIndent: 14,
+                        indent: 16,
+                        endIndent: 16,
                         color: GhostColors.border,
                       ),
                       _row('report.pdf', Icons.picture_as_pdf),
                       const Divider(
                         height: 1,
-                        indent: 14,
-                        endIndent: 14,
+                        indent: 16,
+                        endIndent: 16,
                         color: GhostColors.border,
                       ),
                       _row('notes.txt', Icons.text_snippet),
@@ -301,7 +307,7 @@ Widget _row(String preview, IconData? fileIcon) {
       minHeight: GhostSpacing.historyRowMinHeight,
     ),
     child: Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      padding: const EdgeInsets.fromLTRB(16, 10, 3, 10),
       child: Row(
         children: [
           if (fileIcon != null) ...[

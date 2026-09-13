@@ -1267,7 +1267,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     final hasContent = _pasteController.text.trim().isNotEmpty || hasAttachment;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 4, 12, 5),
+      // 14 here plus Material's 2dp inset inside a zero-padding
+      // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
+      // the text above it and the history rows below. Measured from rendered
+      // pixels rather than derived, because the button's internal geometry is
+      // not obvious from its API.
+      padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
       child: Row(
         children: [
           TextButton.icon(
@@ -1276,7 +1281,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             label: const Text('Attach'),
             style: TextButton.styleFrom(
               minimumSize: const Size(GhostSpacing.minTouchTarget, 40),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+              padding: EdgeInsets.zero,
               foregroundColor: GhostColors.textMuted,
               textStyle: const TextStyle(
                 fontSize: 13,
@@ -1572,8 +1577,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     if (index > 0)
                       const Divider(
                         height: 1,
-                        indent: 14,
-                        endIndent: 14,
+                        indent: 16,
+                        endIndent: 16,
                         color: GhostColors.border,
                       ),
                     _buildHistoryRow(items[index]),
@@ -1984,7 +1989,13 @@ class _HistoryRowState extends State<_HistoryRow> {
             minHeight: GhostSpacing.historyRowMinHeight,
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+            // 16dp left, matching the composer's text inset, so every card
+            // on the page shares one left edge. It was 12, which put history
+            // rows 4dp to the left of everything above them and made the whole
+            // stack look off-centre even though the cards are exactly centred.
+            // Right is 3 so the 18px icon inside its 44px touch target lands
+            // its visual edge at 16 too.
+            padding: const EdgeInsets.fromLTRB(16, 10, 3, 10),
             child: Row(
               children: [
                 if (hasLeading) ...[_buildLeading(), const SizedBox(width: 11)],
