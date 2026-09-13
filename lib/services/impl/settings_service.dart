@@ -20,6 +20,10 @@ class SettingsService implements ISettingsService {
   static const String _keyAutoStartEnabled = 'auto_start_enabled';
   static const String _keyAutoReceiveBehavior = 'auto_receive_behavior';
   static const String _keyClipboardAutoClearSeconds = 'clipboard_auto_clear_seconds';
+  // Read natively too, straight from FlutterSharedPreferences, so the flag can
+  // be applied before Dart starts - see MainActivity.applyScreenshotProtection.
+  // The key string is therefore duplicated there; keep them in step.
+  static const String _keyScreenshotProtection = 'screenshot_protection';
   static const String _keyAutoShortenUrls = 'auto_shorten_urls';
   static const String _keyWebhookEnabled = 'webhook_enabled';
   static const String _keyWebhookUrl = 'webhook_url';
@@ -175,6 +179,21 @@ class SettingsService implements ISettingsService {
   }
 
   // ========== FEATURE TOGGLES ==========
+
+  @override
+  Future<bool> getScreenshotProtection() async {
+    _ensureInitialized();
+    // Defaults ON: a clipboard history is worth protecting from the app
+    // switcher and casual screen shares, so opting out is the deliberate act.
+    return _prefs!.getBool(_keyScreenshotProtection) ?? true;
+  }
+
+  @override
+  Future<void> setScreenshotProtection({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyScreenshotProtection, enabled);
+    debugPrint('Screenshot protection ${enabled ? "enabled" : "disabled"}');
+  }
 
   @override
   Future<bool> getAutoShortenUrls() async {

@@ -61,6 +61,14 @@ abstract class ISettingsService {
   // ========== FEATURE TOGGLES ==========
 
   /// Get auto-shorten URLs enabled setting (default: false)
+  /// Whether FLAG_SECURE is applied, blocking screenshots, screen recording,
+  /// screen sharing and the Recents preview. Android only. Defaults to on.
+  Future<bool> getScreenshotProtection();
+
+  /// Persist the screenshot-protection preference. Applying it to the window
+  /// is the platform's job - see MainActivity.
+  Future<void> setScreenshotProtection({required bool enabled});
+
   Future<bool> getAutoShortenUrls();
 
   /// Set auto-shorten URLs enabled setting

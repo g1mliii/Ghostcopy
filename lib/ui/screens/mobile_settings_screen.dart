@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -25,6 +27,10 @@ import 'mobile_welcome_screen.dart';
 /// Quoted verbatim in the confirmation dialog, so this is read by the user
 /// rather than only followed - keep it in step with the deployed domain.
 const _websiteUrl = 'https://ghostcopy.app';
+
+/// Shared with MainActivity's NOTIFICATION_CHANNEL. Used here only to toggle
+/// FLAG_SECURE live; the native side re-reads the stored preference at launch.
+const _nativeChannel = MethodChannel('com.ghostcopy.ghostcopy/notifications');
 
 /// Mobile settings screen
 ///
@@ -66,6 +72,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _encryptionLoading = false;
   bool _hasBackup = false;
 
+  // Screenshot protection state (Android only - FLAG_SECURE)
+  bool _screenshotProtection = true;
+  bool _screenshotProtectionLoading = false;
+
   // URL shortening state
   bool _autoShortenUrls = false;
   bool _urlShortenerLoading = false;
@@ -80,6 +90,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     _loadDevices();
     _loadAppInfo();
     _loadUrlShorteningStatus();
+    _loadScreenshotProtection();
   }
 
   @override
@@ -158,6 +169,48 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       }
     } on Exception catch (e) {
       debugPrint('[Settings] Failed to load app info: $e');
+    }
+  }
+
+  Future<void> _loadScreenshotProtection() async {
+    final enabled = await widget.settingsService.getScreenshotProtection();
+    if (mounted) setState(() => _screenshotProtection = enabled);
+  }
+
+  /// Persist the preference and apply it to the window immediately.
+  ///
+  /// Applied live as well as saved, so the switch means something the moment it
+  /// is flipped rather than at next launch - the native side re-reads the same
+  /// preference at startup to get the Recents preview right from the first
+  /// frame.
+  Future<void> _handleScreenshotProtectionChange(bool enabled) async {
+    setState(() => _screenshotProtectionLoading = true);
+    try {
+      await widget.settingsService.setScreenshotProtection(enabled: enabled);
+      if (Platform.isAndroid) {
+        await _nativeChannel.invokeMethod<bool>(
+          'setScreenshotProtection',
+          {'enabled': enabled},
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _screenshotProtection = enabled;
+        _screenshotProtectionLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled
+                ? 'Screenshots and screen recording blocked'
+                : 'Screenshots allowed - your clips can be captured',
+          ),
+          backgroundColor: GhostColors.success,
+        ),
+      );
+    } on Exception catch (e) {
+      debugPrint('[Settings] Failed to set screenshot protection: $e');
+      if (mounted) setState(() => _screenshotProtectionLoading = false);
     }
   }
 
@@ -898,6 +951,31 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       ),
       child: Column(
         children: [
+          // Android only: iOS has no FLAG_SECURE equivalent, so showing the
+          // switch there would promise protection the platform cannot give.
+          if (Platform.isAndroid) ...[
+            SwitchListTile.adaptive(
+              secondary: const Icon(
+                Icons.screenshot_outlined,
+                color: GhostColors.primary,
+                size: 20,
+              ),
+              title: const Text(
+                'Block Screenshots',
+                style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+              ),
+              subtitle: const Text(
+                'Also hides clips in the app switcher and screen shares',
+                style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+              ),
+              value: _screenshotProtection,
+              onChanged: _screenshotProtectionLoading
+                  ? null
+                  : _handleScreenshotProtectionChange,
+              activeThumbColor: GhostColors.primary,
+            ),
+            const Divider(height: 1, color: GhostColors.border),
+          ],
           // Encryption toggle
           SwitchListTile.adaptive(
             secondary: const Icon(

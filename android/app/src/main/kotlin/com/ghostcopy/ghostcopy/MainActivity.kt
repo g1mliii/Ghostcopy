@@ -27,6 +27,9 @@ class MainActivity : FlutterActivity() {
         // channelId the edge function sets on the push, and the channel
         // flutter_local_notifications uses for in-app notifications.
         private const val NOTIFICATION_CHANNEL_ID = "ghostcopy_notifications"
+
+        // Mirrors _keyScreenshotProtection in settings_service.dart.
+        private const val PREF_SCREENSHOT_PROTECTION = "screenshot_protection"
     }
 
     // Method channels (stored to prevent memory leaks)
@@ -49,11 +52,7 @@ class MainActivity : FlutterActivity() {
 
         ensureNotificationChannel()
 
-        // Security: Prevent screenshots and recents preview
-        window.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SECURE,
-            android.view.WindowManager.LayoutParams.FLAG_SECURE
-        )
+        applyScreenshotProtection()
 
         // Method channel for share sheet operations
         shareChannel = MethodChannel(
@@ -90,6 +89,15 @@ class MainActivity : FlutterActivity() {
                             message,
                             if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
                         ).show()
+                        result.success(true)
+                    }
+                }
+                "setScreenshotProtection" -> {
+                    val enabled = call.argument<Boolean>("enabled")
+                    if (enabled == null) {
+                        result.error("INVALID_ARGS", "enabled is required", null)
+                    } else {
+                        setSecureFlag(enabled)
                         result.success(true)
                     }
                 }
@@ -432,6 +440,38 @@ class MainActivity : FlutterActivity() {
      * are persistent and re-creating one with the same id is a no-op, so this is
      * safe to run on every launch.
      */
+    /**
+     * Apply the user's screenshot-protection preference to this window.
+     *
+     * Read natively, from the store shared_preferences writes to, rather than
+     * waiting for Dart to call back. FLAG_SECURE governs the Recents preview,
+     * and Recents renders whatever the window looked like when it went to the
+     * background - so a flag applied a second after launch, once Flutter had
+     * booted, would already be too late for the first backgrounding. The window
+     * has to be correct from the moment it exists.
+     *
+     * Defaults to true, matching ISettingsService: protection is the default and
+     * switching it off is the deliberate act.
+     */
+    private fun applyScreenshotProtection() {
+        val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        // shared_preferences namespaces every key it writes with "flutter.".
+        val enabled = prefs.getBoolean("flutter.$PREF_SCREENSHOT_PROTECTION", true)
+        setSecureFlag(enabled)
+    }
+
+    private fun setSecureFlag(enabled: Boolean) {
+        if (enabled) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        Log.d(TAG, "Screenshot protection ${if (enabled) "on" else "off"}")
+    }
+
     private fun ensureNotificationChannel() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
