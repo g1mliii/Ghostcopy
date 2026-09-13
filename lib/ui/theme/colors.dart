@@ -5,20 +5,23 @@ class GhostColors {
   // Private constructor to prevent instantiation
   GhostColors._();
 
-  // Background layers: the redesign handoff's LIGHTNESS, with its hue removed.
+  // Background layers: the redesign handoff's ramp, de-greened.
   //
-  // The handoff ramp (#0E0F13 / #18191F / #22232B) is what gives cards their
-  // lifted feel, and that part is kept. But every one of its steps puts green
-  // one above red and blue five to nine above it, and green carries ~72% of
-  // perceived luminance - so a +1 green channel reads as a visible cast at
-  // these levels, which is exactly what it looked like on a real panel.
+  // The handoff values (#0E0F13 / #18191F / #22232B) look better than flat
+  // neutral grey because the blue channel sits 4-9 above red, which keeps
+  // large dark areas from going muddy. That cool depth is worth having.
   //
-  // These are the neutral greys with the SAME computed luma as the handoff
-  // values (15.1 / 25.2 / 35.4), so nothing gets lighter or darker and every
-  // contrast relationship is preserved - only the tint is gone.
-  static const background = Color(0xFF0F0F0F);
-  static const surface = Color(0xFF191919); // Card surfaces
-  static const surfaceLight = Color(0xFF232323); // Elevated surfaces
+  // What was NOT worth having is their green channel, which sits one above red
+  // at every step. Green carries ~72% of perceived luminance against blue's
+  // ~7%, so that +1 dominated what the eye actually saw and the whole ramp
+  // read as green rather than as the blue the numbers suggest.
+  //
+  // So: green pinned to red, blue left alone. Same cool character as the
+  // handoff, no cast, and luma held within 0.4 of the original at every step
+  // (15.1->15.3, 25.2->25.4, 35.4->35.6) so nothing shifts in lightness.
+  static const background = Color(0xFF0F0F13);
+  static const surface = Color(0xFF19191F); // Card surfaces
+  static const surfaceLight = Color(0xFF23232B); // Elevated surfaces
 
   // Accent colors
   static const primary = Color(0xFF6670FF); // Purple-blue accent
@@ -41,9 +44,9 @@ class GhostColors {
 
   /// Hairline between grouped rows and around surfaces. An opaque grey rather
   /// than the translucent glassBorder, so stacked rows in a grouped list do
-  /// not accumulate brightness where they meet. Neutralised alongside the ramp
-  /// above, at the same luma as the handoff's #30323C.
-  static const border = Color(0xFF323232);
+  /// not accumulate brightness where they meet. De-greened alongside the ramp
+  /// above: the handoff's #30323C with green pinned to red.
+  static const border = Color(0xFF32323C);
 
   // Text
   static const textPrimary = Color(0xFFF5F6FA);
