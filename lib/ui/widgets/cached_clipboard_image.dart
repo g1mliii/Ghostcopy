@@ -75,6 +75,23 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     return value.toInt();
   }
 
+  /// Decode target in PHYSICAL pixels, which is what the decoder wants.
+  ///
+  /// cacheWidth/memCacheWidth are physical, not logical. Passing the logical
+  /// size decoded a 52dp thumbnail at 52px and let the framework upscale it
+  /// ~2.6x, which is why previews looked soft. Passing nothing at all is worse
+  /// in the other direction: the image is then decoded at its natural size, so
+  /// a photo off a phone camera costs tens of MB of image cache to fill a 52dp
+  /// box - several of those in a history list is real memory.
+  ///
+  /// Clamped at 2x: beyond that the extra pixels are indistinguishable at
+  /// thumbnail size and only cost memory.
+  int? _decodePx(BuildContext context, double? value) {
+    if (value == null || !value.isFinite || value <= 0) return null;
+    final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 2.0);
+    return (value * dpr).round();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -150,7 +167,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         widget.item.content.startsWith('http');
 
     if (!hasValidUrl || _useFallback) {
-      return _buildFallbackImage();
+      return _buildFallbackImage(context);
     }
 
     // Use CDN (fast path) with custom cache manager
@@ -210,13 +227,12 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
           );
         },
 
-        // Memory cache configuration
-        memCacheWidth: (widget.width?.isFinite ?? false)
-            ? (widget.width! * 2).toInt()
-            : null,
-        memCacheHeight: (widget.height?.isFinite ?? false)
-            ? (widget.height! * 2).toInt()
-            : null,
+        // Decode bound to display size. The hardcoded 2x this replaces was a
+        // stand-in for device pixel ratio; using the real one decodes less on
+        // 1x displays and is still capped at 2x, where extra detail stops being
+        // visible at thumbnail size. See _decodePx.
+        memCacheWidth: _decodePx(context, widget.width),
+        memCacheHeight: _decodePx(context, widget.height),
 
         // Disk cache configuration
         // maxWidthDiskCache: 1000, // Removed to prevent crash (ImageCacheManager required)
@@ -226,10 +242,10 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   }
 
   /// Build fallback image using direct storage download
-  Widget _buildFallbackImage() {
+  Widget _buildFallbackImage(BuildContext context) {
     // If already loaded, decode in isolate and display
     if (_fallbackImageBytes != null) {
-      final decodeFuture = _getDecodeFuture(_fallbackImageBytes!);
+      final decodeFuture = _getDecodeFuture(context, _fallbackImageBytes!);
       return FutureBuilder<ui.Image>(
         future: decodeFuture,
         builder: (context, snapshot) {
@@ -300,19 +316,21 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     );
   }
 
-  Future<ui.Image> _getDecodeFuture(Uint8List bytes) {
-    final decodeKey = Object.hash(
-      bytes,
-      _decodeDimension(widget.width),
-      _decodeDimension(widget.height),
-    );
+  Future<ui.Image> _getDecodeFuture(BuildContext context, Uint8List bytes) {
+    // Physical pixels, like the primary path. This decoded at the LOGICAL size,
+    // so a 52dp thumbnail was decoded at 52px and then upscaled by the device
+    // pixel ratio - the reason fallback previews looked softer than the ones
+    // served through CachedNetworkImage.
+    final targetW = _decodePx(context, widget.width);
+    final targetH = _decodePx(context, widget.height);
+    final decodeKey = Object.hash(bytes, targetW, targetH);
 
     if (_fallbackDecodeFuture == null || _fallbackDecodeKey != decodeKey) {
       _fallbackDecodeKey = decodeKey;
       _fallbackDecodeFuture = _decodeImageInIsolate(
         bytes,
-        targetWidth: _decodeDimension(widget.width),
-        targetHeight: _decodeDimension(widget.height),
+        targetWidth: targetW,
+        targetHeight: targetH,
       );
     }
 
