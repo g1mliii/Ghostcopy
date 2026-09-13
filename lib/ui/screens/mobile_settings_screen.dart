@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../locator.dart';
 import '../../main.dart';
@@ -11,12 +12,20 @@ import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
+import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
+
+/// GhostCopy's public site, shown to the user before they are sent to it.
+///
+/// TODO(ghostcopy): point this at the real domain before shipping to either
+/// store - it is quoted verbatim in the confirmation dialog, so a wrong value
+/// is shown to the user, not just followed.
+const _websiteUrl = 'https://ghostcopy.app';
 
 /// Mobile settings screen
 ///
@@ -58,10 +67,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _encryptionLoading = false;
   bool _hasBackup = false;
 
-  // Clipboard auto-clear state
-  int _autoClearSeconds = 30;
-  bool _autoClearLoading = false;
-
   // URL shortening state
   bool _autoShortenUrls = false;
   bool _urlShortenerLoading = false;
@@ -75,7 +80,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     _initializeEncryption();
     _loadDevices();
     _loadAppInfo();
-    _loadAutoClearSetting();
     _loadUrlShorteningStatus();
   }
 
@@ -468,53 +472,73 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           style: GhostTypography.headline.copyWith(fontSize: 18),
         ),
       ),
-      body: ListView(
-        physics: Adaptive.scrollPhysics,
-        // Edge-to-edge: keep the last row clear of the gesture bar.
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewPaddingOf(context).bottom,
+      // Same content cap as the main screen, for the same reason: settings is
+      // one column of cards, and on a tablet each row would otherwise run the
+      // full width with its control stranded far from its label.
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: GhostSpacing.maxContentWidth,
+          ),
+          child: ListView(
+            physics: Adaptive.scrollPhysics,
+            // Edge-to-edge: keep the last row clear of the gesture bar.
+            // The first header lost its top inset along with the others, so the
+            // list supplies it here - otherwise "Features" would sit flush against
+            // the app bar while every later section had a gap above it.
+            padding: EdgeInsets.only(
+              top: GhostSpacing.gutter,
+              bottom: MediaQuery.viewPaddingOf(context).bottom,
+            ),
+            scrollCacheExtent: const ScrollCacheExtent.pixels(300),
+            children: [
+              // Features section (moved to top)
+              _buildSectionHeader('Features'),
+              _buildFeaturesSection(),
+
+              const SizedBox(height: GhostSpacing.sectionLoose),
+
+              // Devices section
+              _buildSectionHeader('Devices'),
+              _buildDevicesSection(),
+
+              const SizedBox(height: GhostSpacing.sectionLoose),
+
+              // Security section
+              _buildSectionHeader('Security'),
+              _buildSecuritySection(),
+
+              const SizedBox(height: GhostSpacing.sectionLoose),
+
+              // Account section (moved to bottom)
+              _buildSectionHeader('Account'),
+              _buildAccountSection(),
+
+              const SizedBox(height: GhostSpacing.sectionLoose),
+
+              // About section
+              _buildSectionHeader('About'),
+              _buildAboutSection(),
+
+              const SizedBox(height: GhostSpacing.sectionLoose),
+            ],
+          ),
         ),
-        scrollCacheExtent: const ScrollCacheExtent.pixels(300),
-        children: [
-          // Features section (moved to top)
-          _buildSectionHeader('Features'),
-          _buildFeaturesSection(),
-
-          const SizedBox(height: GhostSpacing.sectionLoose),
-
-          // Devices section
-          _buildSectionHeader('Devices'),
-          _buildDevicesSection(),
-
-          const SizedBox(height: GhostSpacing.sectionLoose),
-
-          // Security section
-          _buildSectionHeader('Security'),
-          _buildSecuritySection(),
-
-          const SizedBox(height: GhostSpacing.sectionLoose),
-
-          // Account section (moved to bottom)
-          _buildSectionHeader('Account'),
-          _buildAccountSection(),
-
-          const SizedBox(height: GhostSpacing.sectionLoose),
-
-          // About section
-          _buildSectionHeader('About'),
-          _buildAboutSection(),
-
-          const SizedBox(height: GhostSpacing.sectionLoose),
-        ],
       ),
     );
   }
 
   Widget _buildSectionHeader(String title) {
     return Padding(
+      // No top padding: every header already sits below a sectionLoose gap, and
+      // adding a gutter on top of it made the real distance between sections
+      // 25 + 16 = 41px - wider than anything on the home screen and, because
+      // the first header has no gap above it, inconsistent with itself too.
+      // The single sectionLoose owns the spacing between sections; the 8 below
+      // is the header's own relationship to the card it labels.
       padding: const EdgeInsets.fromLTRB(
         GhostSpacing.gutter,
-        GhostSpacing.gutter,
+        0,
         GhostSpacing.gutter,
         8,
       ),
@@ -643,6 +667,16 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               ),
             )
           : ListView.separated(
+              // THIS is the dead space under the last device, not anything in
+              // the row itself.
+              //
+              // BoxScrollView.build() treats a null padding on a vertical list
+              // as "pad me with MediaQuery.padding" - which on a gesture-nav
+              // device means the bottom system inset gets injected INSIDE this
+              // card. The list is shrinkWrap'd and non-scrolling, nested in a
+              // page that already handles its own insets, so it should claim
+              // none of that.
+              padding: EdgeInsets.zero,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _devices.length,
@@ -653,88 +687,121 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 final isCurrent =
                     device.id == widget.deviceService.getCurrentDeviceId();
 
-                return ListTile(
-                  leading: Icon(
-                    _getDeviceIcon(device.deviceType),
-                    color: GhostColors.primary,
-                    size: 20,
+                // An explicit Row, not a ListTile.
+                //
+                // ListTile derives its own height from Material's two-line
+                // minimum and from whichever of content/leading/trailing is
+                // tallest, and a row carrying a delete button ended up both
+                // taller than the "This device" row and bottom-heavy, so the
+                // card looked like it had dead space under the last device.
+                // That geometry is implicit and awkward to reason about; this
+                // states the height rule outright and both rows now measure
+                // the same whether or not they have a trailing button.
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: GhostSpacing.gutter,
+                    vertical: 14,
                   ),
-                  title: Row(
+                  child: Row(
                     children: [
-                      Text(
-                        device.displayName,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: GhostColors.textPrimary,
+                      Icon(
+                        iconForDeviceType(device.deviceType),
+                        color: GhostColors.primary,
+                        size: 20,
+                      ),
+                      const SizedBox(width: GhostSpacing.gutter),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    device.displayName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: GhostColors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                                if (isCurrent) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: GhostColors.success.withValues(
+                                        alpha: 0.2,
+                                      ),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      'This device',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        color: GhostColors.success,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _capitalizeFirst(device.deviceType),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: GhostColors.textMuted,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      if (isCurrent) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: GhostColors.success.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text(
-                            'This device',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: GhostColors.success,
+                      // Sized to the text beside it rather than to a 48dp touch
+                      // box, so the delete button cannot set the row height.
+                      // Still 40dp of tappable area via the SizedBox.
+                      if (!isCurrent)
+                        SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.delete_outline,
+                              color: Colors.red.shade400,
+                              size: 20,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            // The actual culprit behind the dead space under the
+                            // last device. IconButton defaults to
+                            // MaterialTapTargetSize.padded, which reserves a
+                            // 48dp box and survives both the SizedBox above and
+                            // the cleared constraints - so only the row WITH a
+                            // delete button was inflated, and only that row sat
+                            // bottom-heavy. shrinkWrap lets the 40dp box hold.
+                            style: IconButton.styleFrom(
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: () => _handleRemoveDevice(
+                              device.id,
+                              device.displayName,
                             ),
                           ),
                         ),
-                      ],
                     ],
                   ),
-                  subtitle: Text(
-                    _capitalizeFirst(device.deviceType),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  trailing: !isCurrent
-                      ? IconButton(
-                          icon: Icon(
-                            Icons.delete_outline,
-                            color: Colors.red.shade400,
-                            size: 20,
-                          ),
-                          onPressed: () => _handleRemoveDevice(
-                            device.id,
-                            device.displayName,
-                          ),
-                        )
-                      : null,
                 );
               },
             ),
     );
-  }
-
-  Future<void> _loadAutoClearSetting() async {
-    setState(() => _autoClearLoading = true);
-    try {
-      final seconds = await widget.settingsService
-          .getClipboardAutoClearSeconds();
-      if (mounted) {
-        setState(() {
-          _autoClearSeconds = seconds;
-          _autoClearLoading = false;
-        });
-      }
-    } on Exception catch (e) {
-      debugPrint('Failed to load auto-clear setting: $e');
-      if (mounted) {
-        setState(() => _autoClearLoading = false);
-      }
-    }
   }
 
   Future<void> _loadUrlShorteningStatus() async {
@@ -778,43 +845,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       debugPrint('Failed to update URL shortening setting: $e');
       if (mounted) {
         setState(() => _urlShortenerLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Failed to update setting'),
-            backgroundColor: Colors.red.shade400,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _handleAutoClearChange(int? newValue) async {
-    if (newValue == null) return;
-
-    setState(() => _autoClearLoading = true);
-    try {
-      await widget.settingsService.setClipboardAutoClearSeconds(newValue);
-      if (mounted) {
-        setState(() {
-          _autoClearSeconds = newValue;
-          _autoClearLoading = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              newValue == 0
-                  ? 'Clipboard auto-clear disabled'
-                  : 'Clipboard will auto-clear after $newValue seconds',
-            ),
-            backgroundColor: GhostColors.success,
-          ),
-        );
-      }
-    } on Exception catch (e) {
-      debugPrint('Failed to update auto-clear setting: $e');
-      if (mounted) {
-        setState(() => _autoClearLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Failed to update setting'),
@@ -913,47 +943,67 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               onTap: _encryptionLoading ? null : _restoreFromBackup,
             ),
           ],
+        ],
+      ),
+    );
+  }
 
-          const Divider(height: 1, color: GhostColors.border),
-
-          // Clipboard auto-clear dropdown
-          ListTile(
-            leading: const Icon(
-              Icons.auto_delete,
-              color: GhostColors.primary,
-              size: 20,
+  /// Ask first, then hand off to the browser.
+  ///
+  /// Both stores treat silently throwing the user into a browser as a dark
+  /// pattern, and reviewers look for it. Naming the destination and requiring a
+  /// tap means leaving the app is always the user's decision, and the URL is
+  /// visible before they commit rather than after.
+  Future<void> _openWebsite() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: GhostColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
+        ),
+        title: const Text(
+          'Open the GhostCopy website?',
+          style: TextStyle(fontSize: 16, color: GhostColors.textPrimary),
+        ),
+        content: const Text(
+          'This opens $_websiteUrl in your browser, outside GhostCopy.',
+          style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: GhostColors.textMuted),
             ),
-            title: const Text(
-              'Auto-Clear Clipboard',
-              style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text(
+              'Open',
+              style: TextStyle(color: GhostColors.primary),
             ),
-            subtitle: const Text(
-              'Clear clipboard after sending for security',
-              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-            ),
-            trailing: _autoClearLoading
-                ? Adaptive.progressIndicator()
-                : DropdownButton<int>(
-                    value: _autoClearSeconds,
-                    dropdownColor: GhostColors.surface,
-                    style: const TextStyle(
-                      color: GhostColors.textPrimary,
-                      fontSize: 13,
-                    ),
-                    underline: Container(),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Off')),
-                      DropdownMenuItem(value: 5, child: Text('5s')),
-                      DropdownMenuItem(value: 10, child: Text('10s')),
-                      DropdownMenuItem(value: 30, child: Text('30s')),
-                      DropdownMenuItem(value: 60, child: Text('60s')),
-                    ],
-                    onChanged: _handleAutoClearChange,
-                  ),
           ),
         ],
       ),
     );
+
+    if (confirmed != true || !mounted) return;
+
+    final opened = await launchUrl(
+      Uri.parse(_websiteUrl),
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the browser'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Widget _buildAboutSection() {
@@ -990,25 +1040,16 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           _appVersion.isEmpty ? 'Loading...' : _appVersion,
           style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
+        // Signals that the row does something now. It used to be inert, which
+        // left About looking like a dead end.
+        trailing: const Icon(
+          Icons.open_in_new_rounded,
+          size: 18,
+          color: GhostColors.textMuted,
+        ),
+        onTap: _openWebsite,
       ),
     );
-  }
-
-  IconData _getDeviceIcon(String deviceType) {
-    switch (deviceType.toLowerCase()) {
-      case 'windows':
-        return Icons.laptop_windows;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'linux':
-        return Icons.laptop_chromebook;
-      case 'android':
-        return Icons.phone_android;
-      case 'ios':
-        return Icons.phone_iphone;
-      default:
-        return Icons.devices;
-    }
   }
 
   String _capitalizeFirst(String text) {

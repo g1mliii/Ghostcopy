@@ -58,7 +58,6 @@ void main() {
       clipboardRepository: clipboardRepository,
       deviceService: deviceService,
       securityService: securityService,
-      settingsService: settingsService,
     );
   });
 

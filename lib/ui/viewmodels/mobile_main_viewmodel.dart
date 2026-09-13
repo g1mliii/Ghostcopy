@@ -16,7 +16,6 @@ import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
-import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/widget_service.dart';
 
@@ -30,7 +29,7 @@ import '../../services/widget_service.dart';
 /// - Device state management (_devices, _selectedDeviceTypes)
 /// - History state management (_historyItems, _filteredHistoryItems)
 /// - Content caching (decrypted content, detection results)
-/// - Timer management (clipboard clear, search debounce)
+/// - Timer management (search debounce, realtime reconnect)
 /// - Lifecycle hooks (onAppPaused, onAppResumed, onMemoryPressure)
 ///
 /// UI responsibilities (remain in widget):
@@ -45,7 +44,6 @@ class MobileMainViewModel extends ChangeNotifier {
     required IClipboardRepository clipboardRepository,
     required this._deviceService,
     required this._securityService,
-    required this._settingsService,
   }) : _clipboardRepo = clipboardRepository;
 
   final IAuthService _authService;
@@ -58,7 +56,6 @@ class MobileMainViewModel extends ChangeNotifier {
       _clipboardRepo.undecryptableItemCount;
   final IDeviceService _deviceService;
   final ISecurityService _securityService;
-  final ISettingsService _settingsService;
 
   // ========== SEND STATE ==========
 
@@ -74,7 +71,6 @@ class MobileMainViewModel extends ChangeNotifier {
   ClipboardContent? _clipboardContent;
   ClipboardContent? get clipboardContent => _clipboardContent;
 
-  bool _lastSendWasFromPaste = false;
 
   // ========== DEVICE STATE ==========
 
@@ -123,8 +119,46 @@ class MobileMainViewModel extends ChangeNotifier {
   List<ClipboardItem> _filteredHistoryItems = [];
   List<ClipboardItem> get filteredHistoryItems => _filteredHistoryItems;
 
-  bool _historyLoading = false;
+  /// Suppresses the composer's auto-paste for exactly one resume.
+  ///
+  /// See [_shareFile]: a share sheet, file picker or image picker backgrounds
+  /// the app, and the resume on the way back would otherwise read the clipboard
+  /// and make Android report it to the user.
+  bool _skipNextClipboardRead = false;
+
+  /// True only while a pull-to-refresh is running.
+  ///
+  /// A refresh reloads devices and history together, and each section shows its
+  /// own spinner while loading - so a single pull put three indicators on screen
+  /// at once: the indicator arc the user dragged down, plus one in the chips row
+  /// and one in the history list. The sections suppress theirs while this is set
+  /// and let the indicator the user actually pulled stand for the whole refresh.
+  /// Their own spinners still appear when those sections load independently.
+  bool _isRefreshing = false;
+  bool get isRefreshing => _isRefreshing;
+
+  bool _historyLoadingBacking = false;
   bool get historyLoading => _historyLoading;
+
+  // Written from several places (first load, pull to refresh, the realtime
+  // stream, its error handler). Routing them all through one setter is what
+  // keeps _initialLoadComplete honest without having to find every assignment.
+  bool get _historyLoading => _historyLoadingBacking;
+  set _historyLoading(bool value) {
+    _historyLoadingBacking = value;
+    // Settling either way - loaded, empty, or failed - means the screen has
+    // something real to show. Failure counts deliberately: gating the splash on
+    // success alone would leave a user with no connection staring at a spinner.
+    if (!value) _initialLoadComplete = true;
+  }
+
+  /// Whether the first history load has finished, successfully or not.
+  ///
+  /// The screen shows a single centred splash until this flips, then renders
+  /// everything at once, rather than letting header, composer and list pop in
+  /// separately.
+  bool _initialLoadComplete = false;
+  bool get initialLoadComplete => _initialLoadComplete;
 
   String? _historyError;
   String? get historyError => _historyError;
@@ -156,7 +190,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
   // ========== TIMERS ==========
 
-  Timer? _clipboardClearTimer;
   Timer? _searchDebounceTimer;
   static const Duration _searchDebounceDelay = Duration(milliseconds: 200);
 
@@ -247,6 +280,16 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Returns display text and updates _clipboardContent
   Future<(String displayText, ClipboardContent? content)?>
   populateFromClipboard() async {
+    // Set when this app itself sent the user out to a system sheet, so the
+    // resume on the way back is ours and not the user returning to the app to
+    // paste something. Reading here would trip the OS clipboard-access warning
+    // for a read nobody asked for.
+    if (_skipNextClipboardRead) {
+      _skipNextClipboardRead = false;
+      debugPrint('[MobileMainVM] Skipping auto-paste (returned from share)');
+      return null;
+    }
+
     try {
       final clipboardService = ClipboardService.instance;
       final clipboardContent = await clipboardService.read();
@@ -569,9 +612,6 @@ class MobileMainViewModel extends ChangeNotifier {
         // Reload history (non-blocking)
         unawaited(loadHistory());
 
-        // Security: Schedule clipboard auto-clear
-        _lastSendWasFromPaste = true;
-        await _scheduleClipboardClear();
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to send: $e');
@@ -699,9 +739,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
         // Reload history (non-blocking)
         unawaited(loadHistory());
-
-        _lastSendWasFromPaste = true;
-        await _scheduleClipboardClear();
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to send image: $e');
@@ -727,6 +764,10 @@ class MobileMainViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Same reason as _shareFile: the picker backgrounds the app, and the
+      // resume coming back must not trip the OS clipboard-access warning.
+      _skipNextClipboardRead = true;
+
       final picker = ImagePicker();
       final image = await picker.pickImage(
         source: ImageSource.gallery,
@@ -788,6 +829,10 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onError,
   }) async {
     try {
+      // Same reason as _shareFile: the picker backgrounds the app, and the
+      // resume coming back must not trip the OS clipboard-access warning.
+      _skipNextClipboardRead = true;
+
       final result = await FilePicker.pickFiles();
       if (result == null) return;
 
@@ -897,6 +942,13 @@ class MobileMainViewModel extends ChangeNotifier {
   /// presented as a popover there and must be anchored to the widget that
   /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
   Future<void> _shareFile(String path, Rect? sharePositionOrigin) async {
+    // Dismissing the share sheet resumes the app, and the composer's auto-paste
+    // reads the clipboard on every resume - which on Android 12+ makes the OS
+    // announce "GhostCopy pasted from clipboard" seconds after the user shared
+    // an image, as if the app had grabbed something behind their back. Nothing
+    // was pasted; the read just was not wanted here.
+    _skipNextClipboardRead = true;
+
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(path)],
@@ -949,7 +1001,14 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Handle refresh (pull-to-refresh)
   Future<void> handleRefresh() async {
-    await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
+    _isRefreshing = true;
+    notifyListeners();
+    try {
+      await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
+    } finally {
+      _isRefreshing = false;
+      notifyListeners();
+    }
   }
 
   /// Handle shared files from share intent
@@ -1211,10 +1270,6 @@ class MobileMainViewModel extends ChangeNotifier {
     );
     _historySubscription?.pause();
 
-    if (_lastSendWasFromPaste) {
-      _clearClipboardNow();
-    }
-
     // Clear sensitive decrypted data from memory when backgrounded
     _decryptedContentCache.clear();
 
@@ -1409,31 +1464,6 @@ class MobileMainViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> _scheduleClipboardClear() async {
-    _clipboardClearTimer?.cancel();
-
-    final clearSeconds = await _settingsService.getClipboardAutoClearSeconds();
-
-    if (clearSeconds == 0) {
-      debugPrint('[MobileMainVM] Clipboard auto-clear disabled');
-      return;
-    }
-
-    debugPrint(
-      '[MobileMainVM] Clipboard will be cleared in $clearSeconds seconds',
-    );
-
-    _clipboardClearTimer = Timer(
-      Duration(seconds: clearSeconds),
-      _clearClipboardNow,
-    );
-  }
-
-  void _clearClipboardNow() {
-    ClipboardService.instance.clear();
-    _lastSendWasFromPaste = false;
-    debugPrint('[MobileMainVM] System clipboard cleared for security');
-  }
 
   // ========== DISPOSAL ==========
 
@@ -1446,8 +1476,6 @@ class MobileMainViewModel extends ChangeNotifier {
     _historySubscription = null;
     _realtimeReconnectTimer?.cancel();
     _realtimeReconnectTimer = null;
-    _clipboardClearTimer?.cancel();
-    _clipboardClearTimer = null;
     _searchDebounceTimer?.cancel();
     _searchDebounceTimer = null;
 

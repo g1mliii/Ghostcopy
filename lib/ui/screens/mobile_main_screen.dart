@@ -13,6 +13,7 @@ import '../../services/auth_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/transformer_service.dart';
+import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -23,6 +24,33 @@ import '../widgets/ghost_toast.dart';
 import '../widgets/native_toast.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
+
+/// Minimum width before the main screen will consider splitting into panes.
+const double _twoPaneMinWidth = 800;
+
+/// Minimum width/height ratio before it actually splits.
+///
+/// Width alone cannot make this decision. An unfolded Pixel Fold is 851dp wide
+/// and an iPad in portrait is 834dp - 17dp apart, so any width threshold
+/// separating them would be meaningless - yet they want opposite layouts. Their
+/// SHAPES are nothing alike: the Fold is 851x882, essentially square, with
+/// height to spare for two columns; the iPad is 834x1194, tall and narrow, where
+/// a second column would cramp both. So the split keys on proportion.
+///
+///   fold unfolded   851x882  -> 0.97  split
+///   iPad landscape 1194x834  -> 1.43  split
+///   tablet landscape 1280x800 -> 1.60 split
+///   iPad portrait   834x1194 -> 0.70  single
+///   tablet portrait 800x1280 -> 0.63  single
+///   fold closed     443x994  -> below the width floor, single
+const double _twoPaneMinAspect = 0.85;
+
+/// Width of the compose pane in the two-pane layout.
+///
+/// Fixed rather than a fraction: the composer, chips and send button have a
+/// natural size that does not benefit from growing with the screen, whereas the
+/// history list does. So the compose side is pinned and history takes the rest.
+const double _composePaneWidth = 400;
 
 const _shareChannel = MethodChannel('com.ghostcopy.ghostcopy/share');
 const _notificationChannel = MethodChannel(
@@ -91,7 +119,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       clipboardRepository: locator(),
       deviceService: locator(),
       securityService: locator(),
-      settingsService: locator(),
     );
     _viewModel.addListener(_onViewModelChanged);
     unawaited(_viewModel.initialize());
@@ -107,6 +134,80 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _initializeShareIntentListeners();
     _setupMethodChannels();
     _initDeepLinks();
+
+    _splashTimeout = Timer(const Duration(seconds: 6), () {
+      if (!mounted || _viewModel.initialLoadComplete) return;
+      setState(() => _splashTimedOut = true);
+    });
+  }
+
+  /// The splash waits on the first load, so anything that stops that load from
+  /// ever settling would strand the user on a spinner with no way out. This is
+  /// the escape hatch: show the UI regardless after a few seconds, where the
+  /// normal empty and error states can explain themselves and offer a refresh.
+  bool _splashTimedOut = false;
+  Timer? _splashTimeout;
+
+  Widget _buildSplash() {
+    return Scaffold(
+      backgroundColor: GhostColors.background,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Same mark and accent tile as the header, so the splash resolves
+            // into the real UI instead of cutting to something unrelated.
+            Container(
+              width: 64,
+              height: 64,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: GhostColors.primary,
+                borderRadius: BorderRadius.circular(19),
+              ),
+              child: Image.asset(
+                'assets/icons/logo_white.png',
+                color: Colors.white,
+                errorBuilder: (context, error, stack) => const Icon(
+                  Icons.content_copy_rounded,
+                  size: 36,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: Adaptive.progressIndicator(
+                size: 22,
+                color: GhostColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Whether the scroll now in progress came from a finger rather than a wheel.
+  bool _scrollIsDrag = false;
+
+  /// Keeps a mouse wheel from arming pull-to-refresh.
+  ///
+  /// RefreshIndicator accumulates whatever overscroll it is told about, and a
+  /// wheel notch at the top of the list delivers a whole notch of it at once -
+  /// so on a desktop or an emulator the list refreshes almost every time the
+  /// user scrolls up, without being asked. A finger drag carries dragDetails; a
+  /// pointer-signal scroll does not, and that is what separates them. Scroll
+  /// notifications with no drag behind them are swallowed here so the indicator
+  /// never sees them. Touch is unaffected, so mobile keeps pull-to-refresh.
+  bool _isPullFromDrag(ScrollNotification notification) {
+    if (notification is ScrollStartNotification) {
+      _scrollIsDrag = notification.dragDetails != null;
+    }
+    // true stops the notification here, before RefreshIndicator can act on it.
+    return !_scrollIsDrag;
   }
 
   void _onViewModelChanged() {
@@ -131,6 +232,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   @override
   void dispose() {
+    _splashTimeout?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pasteFocusNode.dispose();
     _viewModel
@@ -898,6 +1000,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   @override
   Widget build(BuildContext context) {
+    // One splash, then the whole screen at once. Previously the scaffold, the
+    // composer and the history list each appeared as their own data arrived, so
+    // a cold start was a sequence of things popping in. Hold a single centred
+    // mark until the first load settles, the way most apps do.
+    if (!_viewModel.initialLoadComplete && !_splashTimedOut) {
+      return _buildSplash();
+    }
+
     return Scaffold(
       backgroundColor: GhostColors.background,
       appBar: AppBar(
@@ -952,7 +1062,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined),
+            // Three dots rather than a cog: the outlined settings glyph is
+            // thin and busy at 24dp, and its teeth compete with the ghost mark
+            // on the other side of the bar. Vertical is also the Android
+            // convention for a top-bar overflow, so it reads as "more" on sight.
+            icon: const Icon(Icons.more_vert),
             onPressed: _navigateToSettings,
             color: GhostColors.textMuted,
             tooltip: 'Settings',
@@ -966,43 +1080,149 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           const SizedBox(width: 1),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _viewModel.handleRefresh,
-        color: GhostColors.primary,
-        backgroundColor: GhostColors.surface,
-        // Sit the spinner above the composer instead of on top of it. At the
-        // default displacement its circular backdrop overlaps the composer's
-        // top edge, which reads as a stray disc behind the card.
-        displacement: 16,
-        child: CustomScrollView(
-          physics: Adaptive.scrollPhysics,
-          slivers: [
-            SliverPadding(
-              // One padded column for the whole page, so the composer, chips,
-              // button and history share a single left edge. Bottom clears the
-              // gesture bar, since the app draws edge-to-edge.
-              padding: EdgeInsets.fromLTRB(
-                GhostSpacing.gutter,
-                8,
-                GhostSpacing.gutter,
-                24 + MediaQuery.viewPaddingOf(context).bottom,
-              ),
-              sliver: SliverList.list(
-                children: [
-                  _buildPasteArea(),
-                  const SizedBox(height: 15),
-                  _buildDeviceSelector(),
-                  const SizedBox(height: 13),
-                  _buildSendButton(),
-                  const SizedBox(height: GhostSpacing.sectionLoose),
-                  _buildLockedClipsBanner(),
-                  _buildHistorySection(),
+      // Two panes side by side when the screen is both wide enough and shaped
+      // for it; one capped, centred column otherwise.
+      //
+      // Sending and browsing history are separate tasks, so where there is room
+      // they belong next to each other rather than stacked with hundreds of dp
+      // of dead margin down each side. See _twoPaneMinAspect for why width
+      // alone cannot make this call.
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final h = constraints.maxHeight;
+          final splits =
+              w >= _twoPaneMinWidth && h > 0 && (w / h) >= _twoPaneMinAspect;
+          return splits
+              ? _buildTwoPaneBody(context)
+              : _buildSingleColumnBody(context);
+        },
+      ),
+    );
+  }
+
+  /// Phones and portrait tablets: one column, capped so it stays readable.
+  Widget _buildSingleColumnBody(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: GhostSpacing.maxContentWidth,
+        ),
+        child: RefreshIndicator(
+          onRefresh: _viewModel.handleRefresh,
+          color: GhostColors.primary,
+          backgroundColor: GhostColors.surface,
+          // Sit the spinner above the composer instead of on top of it. At the
+          // default displacement its circular backdrop overlaps the composer's
+          // top edge, which reads as a stray disc behind the card.
+          displacement: 16,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _isPullFromDrag,
+            child: CustomScrollView(
+              physics: Adaptive.scrollPhysics,
+              slivers: [
+                SliverPadding(
+                  // One padded column for the whole page, so the composer, chips,
+                  // button and history share a single left edge. Bottom clears the
+                  // gesture bar, since the app draws edge-to-edge.
+                  padding: EdgeInsets.fromLTRB(
+                    GhostSpacing.gutter,
+                    8,
+                    GhostSpacing.gutter,
+                    24 + MediaQuery.viewPaddingOf(context).bottom,
+                  ),
+                  sliver: SliverList.list(
+                    children: [
+                      _buildPasteArea(),
+                      const SizedBox(height: 15),
+                      _buildDeviceSelector(),
+                      const SizedBox(height: 13),
+                      _buildSendButton(),
+                      const SizedBox(height: GhostSpacing.sectionLoose),
+                      _buildLockedClipsBanner(),
+                      _buildHistorySection(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Landscape tablets: compose on the left, history on the right.
+  ///
+  /// The panes scroll independently - a long history should not push the
+  /// composer off screen when the whole point of the split is keeping both in
+  /// view. Pull-to-refresh lives on the history pane, since that is the side it
+  /// refreshes.
+  Widget _buildTwoPaneBody(BuildContext context) {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    const half = GhostSpacing.gutter / 2;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: _composePaneWidth,
+          child: SingleChildScrollView(
+            physics: Adaptive.scrollPhysics,
+            padding: EdgeInsets.fromLTRB(
+              GhostSpacing.gutter,
+              8,
+              half,
+              24 + bottomInset,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildPasteArea(),
+                const SizedBox(height: 15),
+                _buildDeviceSelector(),
+                const SizedBox(height: 13),
+                _buildSendButton(),
+              ],
+            ),
+          ),
+        ),
+        const VerticalDivider(
+          width: 1,
+          thickness: 1,
+          color: GhostColors.border,
+        ),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _viewModel.handleRefresh,
+            color: GhostColors.primary,
+            backgroundColor: GhostColors.surface,
+            displacement: 16,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _isPullFromDrag,
+              child: CustomScrollView(
+                physics: Adaptive.scrollPhysics,
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      half,
+                      8,
+                      GhostSpacing.gutter,
+                      24 + bottomInset,
+                    ),
+                    sliver: SliverList.list(
+                      children: [
+                        _buildLockedClipsBanner(),
+                        _buildHistorySection(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1278,7 +1498,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // the text above it and the history rows below. Measured from rendered
       // pixels rather than derived, because the button's internal geometry is
       // not obvious from its API.
-      padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
+      // Right is the full gutter: unlike the Attach button on the left, the
+      // status text has no internal Material inset to compensate for, so 12
+      // left it sitting 4px past the edge every other element lines up on.
+      padding: const EdgeInsets.fromLTRB(14, 4, GhostSpacing.gutter, 5),
       child: Row(
         children: [
           TextButton.icon(
@@ -1298,12 +1521,18 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               ),
             ),
           ),
-          const Spacer(),
-          // Flexible so a long status never pushes the Attach button off the
-          // toolbar on a narrow screen.
-          Flexible(
+          // One flex child, right-aligned - not Spacer() + Flexible().
+          //
+          // Those are both flex:1, so they split the free space evenly and the
+          // status sat at the START of its half, leaving a gap between the text
+          // and the card's right edge that looked like a layout mistake. Giving
+          // the text all the remaining width and aligning it to the end puts it
+          // flush right, and it still ellipsizes rather than pushing the Attach
+          // button off a narrow screen.
+          Expanded(
             child: Text(
               hasContent ? 'Ready to send' : 'Nothing to send yet',
+              textAlign: TextAlign.end,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -1328,7 +1557,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       children: [
         SizedBox(
           height: GhostSpacing.chipHeight,
-          child: _viewModel.devicesLoading
+          child:
+              // Suppressed during pull-to-refresh: the indicator the user
+              // dragged already reports that reload. See isRefreshing.
+              _viewModel.devicesLoading && !_viewModel.isRefreshing
               ? Center(
                   child: Adaptive.progressIndicator(
                     size: 18,
@@ -1361,7 +1593,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     return _DeviceChip(
                       label: target.label,
                       tooltip: 'Sends to ${target.deviceNames}',
-                      icon: _getDeviceIcon(target.deviceType),
+                      icon: iconForDeviceType(target.deviceType),
                       isSelected: _viewModel.selectedDeviceTypes.contains(
                         target.deviceType,
                       ),
@@ -1544,7 +1776,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         const SizedBox(height: 6),
         _buildHistorySearch(),
         const SizedBox(height: GhostSpacing.sectionTight),
-        if (_viewModel.historyLoading)
+        // Suppressed during pull-to-refresh: the indicator the user dragged
+        // already reports that reload. See isRefreshing.
+        if (_viewModel.historyLoading && !_viewModel.isRefreshing)
           SizedBox(
             height: 120,
             child: Center(
@@ -1787,23 +2021,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       },
     );
   }
-
-  IconData _getDeviceIcon(String deviceType) {
-    switch (deviceType.toLowerCase()) {
-      case 'windows':
-        return Icons.laptop_windows;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'linux':
-        return Icons.laptop_chromebook;
-      case 'android':
-        return Icons.phone_android;
-      case 'ios':
-        return Icons.phone_iphone;
-      default:
-        return Icons.devices;
-    }
-  }
 }
 
 /// Device selection chip widget
@@ -2001,7 +2218,7 @@ class _HistoryRowState extends State<_HistoryRow> {
             // stack look off-centre even though the cards are exactly centred.
             // Right is 3 so the 18px icon inside its 44px touch target lands
             // its visual edge at 16 too.
-            padding: const EdgeInsets.fromLTRB(16, 10, 3, 10),
+            padding: const EdgeInsets.fromLTRB(16, 13, 3, 13),
             child: Row(
               children: [
                 if (hasLeading) ...[_buildLeading(), const SizedBox(width: 11)],
@@ -2014,12 +2231,18 @@ class _HistoryRowState extends State<_HistoryRow> {
                         _previewText,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
+                        // The clip itself is what the row is for, so it gets
+                        // the largest type on the row. 14 with default leading
+                        // read cramped on a tablet, where the row is wide and
+                        // the text has room it was not using; the line height
+                        // matters as much as the size for the two-line case.
                         style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: 15,
+                          height: 1.35,
                           color: GhostColors.textPrimary,
                         ),
                       ),
-                      const SizedBox(height: 7),
+                      const SizedBox(height: 8),
                       _buildMetaLine(),
                     ],
                   ),
@@ -2097,46 +2320,57 @@ class _HistoryRowState extends State<_HistoryRow> {
       runSpacing: 3,
       children: [
         Icon(
-          _iconForDeviceType(item.deviceType),
+          iconForDeviceType(item.deviceType),
           size: 12,
           color: GhostColors.textMuted,
         ),
         Text(
           DeviceTypeTarget.platformLabel(item.deviceType),
-          style: const TextStyle(fontSize: 11, color: GhostColors.textMuted),
+          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         const Text(
           '•',
-          style: TextStyle(fontSize: 11, color: GhostColors.textMuted),
+          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         Text(
           timeago.format(item.createdAt, locale: 'en_short'),
-          style: const TextStyle(fontSize: 11, color: GhostColors.textMuted),
+          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         const Text(
           '→',
-          style: TextStyle(fontSize: 11, color: GhostColors.textMuted),
+          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+        ),
+        // Destination is drawn the same way as the source - icon then label -
+        // so both ends of the arrow read as the same kind of thing. It was
+        // previously a bare word, which made "Windows → All devices" look like
+        // two unrelated pieces of information rather than a route.
+        Icon(
+          _iconForTargets(item.targetDeviceTypes),
+          size: 12,
+          color: GhostColors.accentText,
         ),
         Text(
           // Always stated, including "All devices". The old UI showed a
           // generic icon only when a clip WAS targeted, so absence had to mean
           // "went everywhere" - which no missing icon can communicate.
           _targetLabel(item.targetDeviceTypes),
-          style: const TextStyle(fontSize: 11, color: GhostColors.accentText),
+          style: const TextStyle(fontSize: 12, color: GhostColors.accentText),
         ),
       ],
     );
   }
 
-  static IconData _iconForDeviceType(String deviceType) =>
-      switch (deviceType.toLowerCase()) {
-        'windows' => Icons.laptop_windows,
-        'macos' => Icons.laptop_mac,
-        'linux' => Icons.laptop_chromebook,
-        'android' => Icons.phone_android,
-        'ios' => Icons.phone_iphone,
-        _ => Icons.devices,
-      };
+  /// Icon for the destination half of the meta line.
+  ///
+  /// A single target gets that platform's own icon, so it matches the chip the
+  /// user picked when sending. Anything broader - everywhere, or a mix of
+  /// platforms - gets the generic multi-device mark, since no one platform
+  /// icon would be honest about where the clip actually went.
+  static IconData _iconForTargets(List<String>? targets) {
+    if (targets == null || targets.isEmpty) return Icons.devices;
+    if (targets.length == 1) return iconForDeviceType(targets.first);
+    return Icons.devices;
+  }
 
   static String _targetLabel(List<String>? targets) {
     if (targets == null || targets.isEmpty) return 'All devices';

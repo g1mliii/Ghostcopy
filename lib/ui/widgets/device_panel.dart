@@ -188,6 +188,11 @@ class _DevicePanelState extends State<DevicePanel> {
           else
             // Device list
             ListView.builder(
+              // A null padding on a vertical list makes BoxScrollView inject
+              // MediaQuery.padding, so this nested, non-scrolling list would
+              // claim the window's system insets as its own bottom padding.
+              // Same bug that put dead space under the last device on mobile.
+              padding: EdgeInsets.zero,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _cachedDevices!.length,

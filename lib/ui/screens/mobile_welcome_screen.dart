@@ -11,6 +11,7 @@ import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
+import '../theme/spacing.dart';
 import '../theme/typography.dart';
 
 /// Mobile welcome/auth screen with QR code scanning and email/Google auth
@@ -20,12 +21,12 @@ import '../theme/typography.dart';
 class MobileWelcomeScreen extends StatefulWidget {
   const MobileWelcomeScreen({
     required this.onAuthComplete,
-    this.fcmToken,
+    this.fcmTokenFuture,
     super.key,
   });
 
   final VoidCallback onAuthComplete;
-  final String? fcmToken;
+  final Future<String?>? fcmTokenFuture;
 
   @override
   State<MobileWelcomeScreen> createState() => _MobileWelcomeScreenState();
@@ -97,20 +98,32 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     return Scaffold(
       backgroundColor: GhostColors.background,
       body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(),
-            // Tab bar
-            _buildTabBar(),
-            // Tab views
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [_buildQRScanTab(), _buildAuthTab()],
-              ),
+        // Capped and centred, like the main and settings screens. This screen
+        // is a stack of full-width controls, so on a tablet the Scan QR / Sign
+        // In pair, the Login / Sign Up tabs and the email and password fields
+        // all stretched the full 1300dp - a sign-in form running the width of an
+        // iPad, with each label stranded far from its field.
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: GhostSpacing.maxContentWidth,
             ),
-          ],
+            child: Column(
+              children: [
+                // Header
+                _buildHeader(),
+                // Tab bar
+                _buildTabBar(),
+                // Tab views
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [_buildQRScanTab(), _buildAuthTab()],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -220,8 +233,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             ),
           ),
           const SizedBox(height: 24),
-          // QR Scanner
-          _buildQRScanner(),
+          // QR Scanner - centred, since it no longer fills the column width.
+          Center(child: _buildQRScanner()),
           if (_qrError != null) ...[
             const SizedBox(height: 16),
             _buildQRError(),
@@ -233,7 +246,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildQRScanner() {
     return Container(
-      height: 300,
+      // Square, and no wider than it is tall. A camera viewfinder stretched to
+      // the full width of a tablet shows a letterboxed preview of a square
+      // subject, and the framing guides stop matching what the camera sees.
+      // 320 is roughly the width this had on a phone, so nothing changes there.
+      height: 320,
+      width: 320,
       decoration: BoxDecoration(
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -724,8 +742,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       if (mounted) {
         await locator<IDeviceService>().registerCurrentDevice();
 
-        if (widget.fcmToken != null) {
-          await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+        final fcmToken = await widget.fcmTokenFuture;
+        if (fcmToken != null) {
+          await locator<IDeviceService>().updateFcmToken(fcmToken);
           debugPrint('[QR] ✅ Device registered with FCM token');
         }
 
@@ -805,8 +824,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         await locator<IDeviceService>().registerCurrentDevice();
 
         // Update FCM token if available
-        if (widget.fcmToken != null) {
-          await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+        final fcmToken = await widget.fcmTokenFuture;
+        if (fcmToken != null) {
+          await locator<IDeviceService>().updateFcmToken(fcmToken);
           debugPrint(
             '[Mobile] ✅ Device registered with FCM token after email auth',
           );
@@ -879,8 +899,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           await locator<IDeviceService>().registerCurrentDevice();
 
           // Update FCM token if available
-          if (widget.fcmToken != null) {
-            await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+          final fcmToken = await widget.fcmTokenFuture;
+          if (fcmToken != null) {
+            await locator<IDeviceService>().updateFcmToken(fcmToken);
             debugPrint(
               '[Mobile] ✅ Device registered with FCM token after Google auth',
             );

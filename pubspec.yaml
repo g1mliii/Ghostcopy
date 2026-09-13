@@ -63,6 +63,7 @@ dependencies:
 
   timeago: ^3.7.0
   tray_manager: ^0.5.3
+  url_launcher: ^6.3.0
   window_manager: ^0.5.1
 
 dev_dependencies:
