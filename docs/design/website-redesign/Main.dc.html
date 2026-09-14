@@ -1,0 +1,290 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0F0F13;
+      color: #F5F6FA;
+      font-family: Inter, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #AEB4FF; text-decoration: none; }
+    a:hover { color: #F5F6FA; }
+    .m { font-family: "JetBrains Mono", Menlo, Consolas, monospace; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; background: #0F0F13; overflow: hidden;">
+
+  <!-- ===== HEADER ===== -->
+  <div style="display: flex; align-items: center; justify-content: space-between; height: 100px; padding: 0 88px;">
+    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="9" fill="#6670FF"></rect>
+      <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF"></path>
+      <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+      <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+    </svg>
+    <div style="display: flex; align-items: center; gap: 34px;">
+      <a href="#download" class="m" style="font-size: 11px; letter-spacing: 0.18em; color: #55565F;">DOWNLOAD</a>
+      <a href="#faq" class="m" style="font-size: 11px; letter-spacing: 0.18em; color: #55565F;">FAQ</a>
+      <a href="#waitlist" class="m" style="font-size: 11px; letter-spacing: 0.18em; color: #989CA9;">JOIN THE BETA</a>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div style="position: relative; height: 780px;">
+
+    <!-- the only lit object, cropped by the edge -->
+    <div style="position: absolute; right: -150px; top: 118px; width: 500px; background: #19191F; border: 1px solid rgba(255,255,255,0.07); border-radius: 16px; box-shadow: 0 40px 120px rgba(0,0,0,0.8);">
+      <div style="padding: 16px 18px 14px; display: flex; align-items: center; gap: 9px;">
+        <svg width="17" height="17" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="9" fill="#6670FF"></rect>
+          <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF"></path>
+          <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+          <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+        </svg>
+        <span class="m" style="font-size: 11px; letter-spacing: 0.1em; color: #989CA9;">GHOSTCOPY</span>
+      </div>
+      <div style="padding: 0 18px 18px;">
+        <div style="background: #0F0F13; border: 2px solid #6670FF; border-radius: 8px; padding: 13px 15px; min-height: 92px;">
+          <div class="m" style="font-size: 13px; line-height: 1.6; color: #F5F6FA;">
+            <span style="color: #989CA9;">{</span><br>
+            <span style="color: #AEB4FF;">&nbsp;&nbsp;"sha"</span><span style="color: #989CA9;">:</span> <span style="color: #3BA55C;">"39fbb1d"</span><br>
+            <span style="color: #989CA9;">}</span><span style="display: inline-block; width: 1.5px; height: 15px; background: #6670FF; vertical-align: -3px; margin-left: 2px;"></span>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 48px; margin-top: 14px; background: #6670FF; border-radius: 8px;">
+          <span style="font-size: 15px; font-weight: 600; color: #FFFFFF;">Send</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- headline : presence increases line by line -->
+    <div style="position: absolute; left: 88px; top: 156px; width: 780px;">
+      <h1 style="margin: 0; font-size: 92px; line-height: 1.0; font-weight: 700; letter-spacing: -0.05em;">
+        <span style="display: block; color: #2A2A33;">Nothing to open.</span>
+        <span style="display: block; color: #55565F;">Nothing to find.</span>
+        <span style="display: block; color: #8E9099;">It is just</span>
+        <span style="display: block; color: #F5F6FA;">already there.</span>
+      </h1>
+    </div>
+
+    <div style="position: absolute; left: 88px; top: 610px; width: 470px;">
+      <div style="display: flex; align-items: flex-end; border-bottom: 1px solid #32323C; padding-bottom: 12px;">
+        <input type="email" placeholder="you@example.com" style="flex-grow: 1; background: transparent; border: none; color: #F5F6FA; font-family: Inter, sans-serif; font-size: 19px; outline: none; padding: 0;">
+        <button style="background: transparent; border: none; color: #AEB4FF; font-family: Inter, sans-serif; font-size: 17px; font-weight: 500; cursor: pointer; white-space: nowrap; padding: 0;">Get early access &rarr;</button>
+      </div>
+      <p class="m" style="margin: 16px 0 0; font-size: 11px; letter-spacing: 0.1em; color: #55565F;">PRIVATE BETA &#183; WINDOWS AND ANDROID FIRST</p>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       THE SPINE : one line from desktop to phone, numerals sit on it
+       =================================================================== -->
+  <div style="position: relative; padding-bottom: 40px;">
+
+    <!-- the line -->
+    <div style="position: absolute; left: 143px; top: 40px; bottom: 116px; width: 1px; background: linear-gradient(180deg, #23232B 0%, #32323C 12%, #32323C 88%, #23232B 100%);"></div>
+
+    <!-- ORIGIN glyph -->
+    <div style="position: absolute; left: 143px; top: 24px; transform: translateX(-50%); background: #0F0F13; padding: 8px 0;">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#55565F" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="4" width="20" height="13" rx="1.5"></rect>
+        <path d="M8 21h8"></path><path d="M12 17v4"></path>
+      </svg>
+    </div>
+    <div style="position: absolute; left: 198px; top: 30px;">
+      <span class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F;">YOUR DESK</span>
+    </div>
+
+    <!-- ---------- 01 ---------- -->
+    <div style="position: relative; padding: 170px 88px 0;">
+      <div style="position: absolute; left: 143px; top: 158px; transform: translateX(-50%); background: #0F0F13; padding: 10px 0;">
+        <span class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F;">01</span>
+      </div>
+      <div style="padding-left: 230px; max-width: 900px;">
+        <h2 style="margin: 0 0 28px; font-size: 52px; line-height: 1.05; font-weight: 700; letter-spacing: -0.04em; color: #F5F6FA;">
+          One keystroke is the whole interface.
+        </h2>
+        <p style="margin: 0; font-size: 19px; line-height: 1.7; color: #8E9099; max-width: 640px;">
+          <span class="m" style="font-size: 17px; color: #AEB4FF;">Ctrl&#8202;+&#8202;Shift&#8202;+&#8202;S</span> opens a 500&#8239;pixel window over whatever you were doing. Type or paste, press Enter, it is gone again. There is no main window to go back to, because there isn&rsquo;t one.
+        </p>
+      </div>
+    </div>
+
+    <!-- ---------- 02 : encrypted, with the clip ---------- -->
+    <div style="position: relative; padding: 170px 88px 0;">
+      <div style="position: absolute; left: 143px; top: 158px; transform: translate(-50%, 0); background: #0F0F13; padding: 10px 0;">
+        <span class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #AEB4FF;">02</span>
+      </div>
+      <div style="position: absolute; left: 144px; top: 176px; width: 86px; height: 1px; background: #23232B;"></div>
+
+      <div style="padding-left: 230px; display: flex; gap: 72px; align-items: flex-start;">
+        <div style="max-width: 560px;">
+          <h2 style="margin: 0 0 28px; font-size: 52px; line-height: 1.05; font-weight: 700; letter-spacing: -0.04em; color: #F5F6FA;">
+            Sealed before it leaves the room.
+          </h2>
+          <p style="margin: 0 0 24px; font-size: 19px; line-height: 1.7; color: #8E9099;">
+            Set a passphrase and the key is derived on your device and never leaves it. There is no cloud backup of it, no recovery link, nothing we could be compelled to produce.
+          </p>
+          <p style="margin: 0; font-size: 19px; line-height: 1.7; color: #55565F;">
+            A second device gets the key by scanning a QR code off the first one. That is the only way, on purpose.
+          </p>
+        </div>
+
+        <div style="width: 400px; flex-shrink: 0; padding-top: 8px;">
+          <div class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F; margin-bottom: 16px;">THE ROW AS STORED</div>
+          <div class="m" style="font-size: 12px; line-height: 2.1; color: #55565F;">
+            <div>id&#8195;&#8195;&#8195;<span style="color: #8E9099;">40217</span></div>
+            <div>user&#8195;&#8195;<span style="color: #8E9099;">9c1e&hellip;7b4a</span></div>
+            <div>device&#8195;<span style="color: #8E9099;">"windows"</span></div>
+            <div style="margin-top: 8px;">content</div>
+            <div style="color: #EF5350; word-break: break-all; line-height: 1.75; font-size: 11.5px;">gAAAAABm7T1xQv9k2Lr8dX3oZs1PmWq4xYb6tC0eKjU8aH2fRnVdS5gMwXpL</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- 03 : in transit ---------- -->
+    <div style="position: relative; padding: 170px 88px 0;">
+      <div style="position: absolute; left: 143px; top: 158px; transform: translateX(-50%); background: #0F0F13; padding: 10px 0;">
+        <span class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F;">03</span>
+      </div>
+      <div style="padding-left: 230px; max-width: 900px;">
+        <h2 style="margin: 0 0 28px; font-size: 52px; line-height: 1.05; font-weight: 700; letter-spacing: -0.04em; color: #F5F6FA;">
+          Asleep until you need it.
+        </h2>
+        <p style="margin: 0; font-size: 19px; line-height: 1.7; color: #8E9099; max-width: 640px;">
+          While the window is hidden every animation and stream is paused &mdash; not throttled, paused. The only thing still listening is the hotkey. Idle cost is <span style="color: #F5F6FA;">0.0&#8201;% CPU</span>, which is the entire reason it can sit in your tray forever.
+        </p>
+      </div>
+    </div>
+
+    <!-- ---------- 04 : arrival ---------- -->
+    <div style="position: relative; padding: 170px 88px 0;">
+      <div style="position: absolute; left: 143px; top: 158px; transform: translateX(-50%); background: #0F0F13; padding: 10px 0;">
+        <span class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F;">04</span>
+      </div>
+      <div style="padding-left: 230px; display: flex; gap: 72px; align-items: flex-start;">
+        <div style="max-width: 560px;">
+          <h2 style="margin: 0 0 28px; font-size: 52px; line-height: 1.05; font-weight: 700; letter-spacing: -0.04em; color: #F5F6FA;">
+            And it is in your pocket.
+          </h2>
+          <p style="margin: 0 0 24px; font-size: 19px; line-height: 1.7; color: #8E9099;">
+            Tap the notification and the text is on the phone&rsquo;s clipboard. Ignore it and the clip is waiting in the home screen widget anyway.
+          </p>
+          <p style="margin: 0; font-size: 19px; line-height: 1.7; color: #55565F;">
+            Going the other way is paste&#8209;then&#8209;send, because both mobile systems block background clipboard reads &mdash; and they should.
+          </p>
+        </div>
+
+        <div style="width: 400px; flex-shrink: 0; padding-top: 12px;">
+          <div style="background: #19191F; border: 1px solid #32323C; border-radius: 14px; padding: 15px 16px; display: flex; gap: 13px; align-items: flex-start;">
+            <svg width="30" height="30" viewBox="0 0 32 32" style="flex-shrink: 0;" aria-hidden="true">
+              <rect width="32" height="32" rx="9" fill="#6670FF"></rect>
+              <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF"></path>
+              <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+              <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+            </svg>
+            <div style="flex-grow: 1;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="font-size: 13.5px; font-weight: 600; color: #F5F6FA;">GhostCopy</span>
+                <span style="font-size: 12px; color: #55565F;">now</span>
+              </div>
+              <div class="m" style="font-size: 12.5px; color: #B9BBBE;">{ "sha": "39fbb1d" }</div>
+              <div style="font-size: 12.5px; color: #55565F; margin-top: 5px;">Tap to copy</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DESTINATION glyph -->
+    <div style="position: relative; height: 116px;">
+      <div style="position: absolute; left: 143px; bottom: 0; transform: translateX(-50%); background: #0F0F13; padding: 8px 0;">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#55565F" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="6" y="2" width="12" height="20" rx="2.5"></rect>
+          <path d="M10.5 18.5h3"></path>
+        </svg>
+      </div>
+      <div style="position: absolute; left: 198px; bottom: 14px;">
+        <span class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F;">YOUR POCKET</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== THE SMALL PRINT THAT IS ACTUALLY THE POINT ===== -->
+  <div style="padding: 120px 88px 0;">
+    <div style="height: 1px; background: rgba(255,255,255,0.05); margin-bottom: 72px;"></div>
+    <div style="display: flex; gap: 96px;">
+      <div style="flex-grow: 1;">
+        <div class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F; margin-bottom: 18px;">IT READS WHAT YOU COPIED</div>
+        <p style="margin: 0; font-size: 17px; line-height: 1.7; color: #8E9099;">
+          JSON gets a prettify button. A JWT gets decoded to its payload and expiry. A hex colour gets a swatch. Offered, never applied behind your back &mdash; everything else passes through byte for byte.
+        </p>
+      </div>
+      <div style="flex-grow: 1;">
+        <div class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F; margin-bottom: 18px;">IT KNOWS WHEN TO SHUT UP</div>
+        <p style="margin: 0; font-size: 17px; line-height: 1.7; color: #8E9099;">
+          Game mode spots a full&#8209;screen app and holds every notification until you are back on the desktop. No toast over your raid, no popup in the middle of a presentation.
+        </p>
+      </div>
+      <div style="flex-grow: 1;">
+        <div class="m" style="font-size: 11px; letter-spacing: 0.16em; color: #55565F; margin-bottom: 18px;">IT IS SCOPED AT THE DATABASE</div>
+        <p style="margin: 0; font-size: 17px; line-height: 1.7; color: #8E9099;">
+          Row&#8209;level security means your rows are unreachable from another account even if the application layer got something wrong. The database enforces it, not the app.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CLOSING ===== -->
+  <div style="padding: 200px 88px 0;">
+    <h2 style="margin: 0 0 44px; font-size: 68px; line-height: 1.02; font-weight: 700; letter-spacing: -0.045em; max-width: 900px;">
+      <span style="color: #55565F;">It ships when it is good.</span><br>
+      <span style="color: #F5F6FA;">Be there when it does.</span>
+    </h2>
+    <div style="width: 470px;">
+      <div style="display: flex; align-items: flex-end; border-bottom: 1px solid #32323C; padding-bottom: 12px;">
+        <input type="email" placeholder="you@example.com" style="flex-grow: 1; background: transparent; border: none; color: #F5F6FA; font-family: Inter, sans-serif; font-size: 19px; outline: none; padding: 0;">
+        <button style="background: transparent; border: none; color: #AEB4FF; font-family: Inter, sans-serif; font-size: 17px; font-weight: 500; cursor: pointer; white-space: nowrap; padding: 0;">Join the beta &rarr;</button>
+      </div>
+      <p style="margin: 16px 0 0; font-size: 14px; color: #55565F;">One email when builds are ready. Nothing else, ever.</p>
+    </div>
+  </div>
+
+  <!-- ===== FOOTER ===== -->
+  <div style="padding: 180px 88px 64px;">
+    <div style="height: 1px; background: rgba(255,255,255,0.05); margin-bottom: 36px;"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="9" fill="#6670FF"></rect>
+          <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF"></path>
+          <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+          <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+        </svg>
+        <span class="m" style="font-size: 11px; letter-spacing: 0.12em; color: #55565F;">&copy; 2026 GHOSTCOPY</span>
+      </div>
+      <div style="display: flex; gap: 32px;">
+        <a href="#download" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">DOWNLOAD</a>
+        <a href="#faq" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">FAQ</a>
+        <a href="#privacy" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">PRIVACY</a>
+        <a href="#terms" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">TERMS</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

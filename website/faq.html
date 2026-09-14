@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-bg">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FAQ &amp; contact — GhostCopy</title>
+    <meta name="description"
+        content="Answers about setup, sync, encryption and your data — plus how to reach a person who reads the inbox." />
+    <meta name="theme-color" content="#0F0F13" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="FAQ &amp; contact — GhostCopy" />
+    <meta property="og:description"
+        content="Answers about setup, sync, encryption and your data — plus how to reach a person who reads the inbox." />
+    <meta property="og:image" content="/icons/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="./output.css" />
+
+    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+</head>
+
+<body>
+
+    <header class="shell flex items-center justify-between h-20 sm:h-24">
+        <a href="/" aria-label="GhostCopy home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+        </a>
+        <nav class="flex items-center gap-5 sm:gap-8">
+            <a href="/download.html" class="label hover:text-ink-4 transition-colors hidden sm:inline">Download</a>
+            <a href="/faq.html" class="label !text-ink-2" aria-current="page">FAQ</a>
+            <a href="#contact" class="label hover:text-ink-4 transition-colors">Contact</a>
+        </nav>
+    </header>
+
+    <main>
+
+        <section class="shell pt-16 sm:pt-24 lg:pt-28">
+            <h1 class="font-bold leading-[1.02] tracking-display text-[38px] sm:text-6xl lg:text-7xl xl:text-[76px]">
+                <span class="block text-ink-1">Everything worth</span>
+                <span class="block text-ink-4">asking.</span>
+            </h1>
+            <p class="mt-8 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-[600px]">
+                If it is not here, <a href="#contact" class="text-accent-text hover:text-ink-4 transition-colors">email
+                    us</a> &mdash; a person reads that inbox.
+            </p>
+        </section>
+
+        <!-- ===================== GETTING STARTED ===================== -->
+        <section class="shell pt-20 sm:pt-28 lg:pt-32">
+            <div class="flex flex-col lg:flex-row gap-6 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-2">Getting started</h2>
+                <div class="grow max-w-prose-wide">
+                    <div class="h-px bg-line"></div>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">I installed it and
+                            nothing happened.</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            That is the intended behaviour. GhostCopy starts hidden, adds a tray icon and waits for its
+                            hotkey. Look for the ghost in your system tray to confirm it is running, then press
+                            <span class="font-mono text-[15px] text-accent-text">Ctrl&#8202;+&#8202;Shift&#8202;+&#8202;S</span>.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">Do I need an
+                            account?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Not to start. The first launch signs you in anonymously with a random ID and no email
+                            address, so you can send a clip before deciding anything. Adding an email or a Google
+                            sign&#8209;in later keeps the same account and the same history.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">How do I add a
+                            second device?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Sign it into the same account and it joins immediately. If encryption is on there is one
+                            extra step &mdash; the new device needs your passphrase, and the only way to get it there is
+                            from a device that already has it.
+                        </p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================== WHEN IT MISBEHAVES ===================== -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-6 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-2">When it misbehaves</h2>
+                <div class="grow max-w-prose-wide">
+                    <div class="h-px bg-line"></div>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">The hotkey does
+                            nothing.</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Something else has claimed the same combination &mdash; that is the usual cause on Windows,
+                            and you can rebind GhostCopy in Settings. On macOS the other cause is Accessibility
+                            permission: global hotkeys cannot be registered without it, and macOS only asks once.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">My phone is not
+                            receiving anything.</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Check that notification permission was granted, because delivery rides on it. Aggressive
+                            battery optimisation on some Android builds will also hold notifications back &mdash;
+                            excluding GhostCopy from it fixes that.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">Why can the phone
+                            not detect what I copy?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Both iOS and Android block background clipboard reads, and they are right to. Sending from
+                            the phone is deliberately a paste&#8209;then&#8209;send action instead. Receiving is
+                            automatic in both directions.
+                        </p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================== ENCRYPTION ===================== -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-6 lg:gap-24">
+                <h2 class="label !text-accent-text shrink-0 lg:w-[180px] lg:pt-2">Encryption</h2>
+                <div class="grow max-w-prose-wide">
+                    <div class="h-px bg-line"></div>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">Is my clipboard
+                            encrypted?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Once you set a passphrase, yes &mdash; content is encrypted on your device before the
+                            network call, and what we store is ciphertext. Until you set one, encryption is off and clip
+                            content sits in plain text on our infrastructure, restricted to your account but readable by
+                            us in principle. Set a passphrase if that matters to you.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">Everything shows
+                            as locked on my new device.</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            That device does not have your passphrase yet. Open Settings on one that does, show the
+                            transfer QR code, and scan it. Nothing is lost &mdash; the whole history decrypts the moment
+                            the key lands.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">I lost my
+                            passphrase. Can you reset it?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            No, and it is not a policy we can make an exception to &mdash; we never had a copy. Clips
+                            encrypted with a lost passphrase cannot be recovered by anyone, including us. You can clear
+                            the passphrase and start fresh, which leaves the old clips permanently unreadable.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">Why is there no
+                            cloud backup of the passphrase?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            There was one, and it was removed. It derived its key from your email and user ID with a
+                            salt compiled into the app &mdash; every input was known to the server, so anyone with
+                            database access could have recovered the passphrase and decrypted everything. That is not a
+                            backup, it is a spare key under the mat.
+                        </p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================== YOUR DATA ===================== -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-6 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-2">Your data</h2>
+                <div class="grow max-w-prose-wide">
+                    <div class="h-px bg-line"></div>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">Does it watch my
+                            clipboard in the background?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            No. Nothing is captured until you open the window and send it. Anything you copied and did
+                            not send never existed as far as GhostCopy is concerned.
+                        </p>
+                    </article>
+
+                    <article class="py-8 border-b border-line">
+                        <h3 class="text-xl sm:text-[22px] font-semibold tracking-[-0.02em] text-ink-4">How do I delete my
+                            account and everything in it?</h3>
+                        <p class="mt-3.5 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                            Email us from the address on the account. Deletion removes the clip rows along with the
+                            account &mdash; there is no soft&#8209;delete holding period. See the
+                            <a href="/privacy.html" class="text-accent-text hover:text-ink-4 transition-colors">privacy
+                                policy</a> for what is stored in the first place.
+                        </p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================== CONTACT ===================== -->
+        <section id="contact" class="shell pt-28 sm:pt-40 lg:pt-48">
+            <div class="rule mb-14 sm:mb-20"></div>
+
+            <h2 class="font-bold leading-[1.04] tracking-display text-[34px] sm:text-5xl lg:text-6xl xl:text-[68px] max-w-[900px]">
+                <span class="block text-ink-1">Not answered here?</span>
+                <span class="block text-ink-4">Just ask.</span>
+            </h2>
+
+            <div class="mt-10 sm:mt-12 flex flex-col lg:flex-row gap-12 lg:gap-28 items-start">
+                <div>
+                    <a href="mailto:support@ghostcopy.app"
+                        class="font-mono text-lg sm:text-2xl lg:text-[26px] text-ink-4 border-b border-accent-border hover:border-ink-4 pb-1.5 break-all transition-colors">support@ghostcopy.app</a>
+                    <p class="mt-8 text-base sm:text-[17px] leading-[1.7] text-ink-2 max-w-[460px]">
+                        Include your platform and roughly when the problem happened and you will save a round trip.
+                        Expect a reply within a few days, from a person.
+                    </p>
+                </div>
+                <div class="lg:pt-1.5">
+                    <p class="label !text-warning mb-4">Security reports</p>
+                    <p class="text-base sm:text-[17px] leading-[1.7] text-ink-2 max-w-[380px]">
+                        Same address, with &ldquo;security&rdquo; in the subject line. Those get answered first. Please
+                        give us a chance to fix it before publishing.
+                    </p>
+                </div>
+            </div>
+
+            <p class="mt-14 text-base sm:text-[17px] leading-[1.7] text-ink-1 max-w-[640px]">
+                One thing we will never ask you for: your clipboard contents, or your passphrase. We cannot read the
+                first and do not have the second, and no support request will ever need you to work around that.
+            </p>
+        </section>
+    </main>
+
+    <footer class="shell pt-28 sm:pt-40 pb-14">
+        <div class="rule mb-9"></div>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div class="flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+                    <rect width="32" height="32" rx="9" fill="#6670FF" />
+                    <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                    <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                    <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                </svg>
+                <span class="font-mono text-[11px] tracking-[0.12em] text-ink-1">© 2026 GHOSTCOPY</span>
+            </div>
+            <nav class="flex flex-wrap gap-x-8 gap-y-3">
+                <a href="/download.html" class="label hover:text-ink-4 transition-colors">Download</a>
+                <a href="/faq.html" class="label !text-ink-2">FAQ</a>
+                <a href="/privacy.html" class="label hover:text-ink-4 transition-colors">Privacy</a>
+                <a href="/terms.html" class="label hover:text-ink-4 transition-colors">Terms</a>
+            </nav>
+        </div>
+    </footer>
+
+</body>
+
+</html>

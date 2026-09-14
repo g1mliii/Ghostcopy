@@ -107,3 +107,7 @@ flutterfixes.md
 dart_devtools_2026-02-08_23_43_21.825.json
 website/dist/
 supabase/.temp/
+
+# Seeded Claude Design canvas - a ~2.5MB build artifact of the .dc.html sources
+# beside it, and published as an Artifact. Re-seed it, do not commit it.
+docs/design/website-redesign/ghostcopy-website.html

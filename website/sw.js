@@ -1,85 +1,85 @@
-const CACHE_NAME = 'ghostcopy-v1';
-const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  './download.html',
-  './docs.html',
-  './privacy.html',
-  './support.html',
-  './terms.html',
-  './output.css',
-  'https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,100..900;1,100..900&family=Noto+Sans:ital,wght@0,100..900;1,100..900&family=Cinzel:wght@400..900&display=swap',
-  'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap',
+// Offline fallback for the marketing site.
+//
+// Navigations are network-first: the old worker was cache-first for everything,
+// which meant a deployed change stayed invisible until the cache name changed.
+// Static assets stay cache-first because they are content-addressed by the
+// build and cheap to re-fetch when they are not.
+//
+// reset-password.html is deliberately never cached. It is a one-shot flow that
+// reads a token out of the URL, and a stale copy of it helps nobody.
+
+const CACHE = 'ghostcopy-v2';
+
+const PRECACHE = [
+    '/',
+    '/index.html',
+    '/download.html',
+    '/faq.html',
+    '/privacy.html',
+    '/terms.html',
+    '/output.css',
+    '/waitlist.js',
+    '/icons/ghost.svg',
 ];
 
-// Install event - cache assets
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
-        // Some assets might fail (e.g., external fonts), that's ok
-        console.log('Some assets failed to cache:', err);
-      });
-    })
-  );
-  self.skipWaiting();
+    event.waitUntil(
+        caches.open(CACHE)
+            .then((cache) => cache.addAll(PRECACHE))
+            .catch(() => { /* a miss here must not block activation */ })
+    );
+    self.skipWaiting();
 });
 
-// Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
-  self.clients.claim();
+    event.waitUntil(
+        caches.keys()
+            .then((names) => Promise.all(
+                names.filter((n) => n !== CACHE).map((n) => caches.delete(n))
+            ))
+            .then(() => self.clients.claim())
+    );
 });
 
-// Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests
-  if (event.request.method !== 'GET') {
-    return;
-  }
+    const request = event.request;
 
-  // Skip external API requests (only cache same-origin)
-  if (!event.request.url.startsWith(self.location.origin)) {
-    // Try to fetch external resources, but don't require them
-    return;
-  }
+    if (request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(event.request).then((response) => {
-      // Return cached response if available
-      if (response) {
-        return response;
-      }
+    const url = new URL(request.url);
 
-      // Otherwise fetch from network
-      return fetch(event.request).then((response) => {
-        // Don't cache non-successful responses
-        if (!response || response.status !== 200 || response.type === 'error') {
-          return response;
-        }
+    // Same-origin only. Fonts and the Supabase API go straight to the network.
+    if (url.origin !== self.location.origin) return;
 
-        // Clone the response before caching
-        const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
+    // Never involve the cache in the password reset flow.
+    if (url.pathname.startsWith('/reset-password')) return;
 
-        return response;
-      }).catch(() => {
-        // Network request failed, try to return a cached response
-        // or a fallback if offline
-        return caches.match(event.request);
-      });
-    })
-  );
+    // Pages: network first, falling back to whatever we last saw.
+    if (request.mode === 'navigate') {
+        event.respondWith(
+            fetch(request)
+                .then((response) => {
+                    const copy = response.clone();
+                    caches.open(CACHE).then((cache) => cache.put(request, copy));
+                    return response;
+                })
+                .catch(() => caches.match(request).then((hit) => hit || caches.match('/index.html')))
+        );
+        return;
+    }
+
+    // Everything else: cache first, populate on miss.
+    event.respondWith(
+        caches.match(request).then((hit) => {
+            if (hit) return hit;
+            return fetch(request).then((response) => {
+                if (!response || response.status !== 200 || response.type !== 'basic') {
+                    return response;
+                }
+                const copy = response.clone();
+                caches.open(CACHE).then((cache) => cache.put(request, copy));
+                return response;
+            });
+        })
+    );
 });

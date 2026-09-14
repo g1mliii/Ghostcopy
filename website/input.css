@@ -2,73 +2,91 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar styles */
-::-webkit-scrollbar {
-  width: 8px;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-bg text-ink-4 font-sans antialiased;
+  }
+
+  /* Never let a long hash, token or email break the layout on a phone. */
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+
+  /* reset-password.html drives its four states with el.hidden, so this has to
+     beat any display utility that lands on the same element. */
+  [hidden] {
+    display: none !important;
+  }
+
+  ::selection {
+    background: #292D55;
+    color: #F5F6FA;
+  }
+
+  :focus-visible {
+    outline: 2px solid #6670FF;
+    outline-offset: 3px;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0F0F13; }
+  ::-webkit-scrollbar-thumb { background: #23232B; }
+  ::-webkit-scrollbar-thumb:hover { background: #32323C; }
 }
 
-::-webkit-scrollbar-track {
-  background: #1a120f;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #462c25;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #e6c288;
-}
-
-/* Text shadow utilities */
 @layer components {
-  .text-shadow-cinematic {
-    text-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 80px rgba(230, 194, 136, 0.2);
+  /* The outer column every page shares. Gutters scale from 20px on a phone up
+     to the design's 88px; the cap keeps line lengths sane on a wide monitor. */
+  .shell {
+    @apply mx-auto w-full max-w-page px-5 sm:px-8 md:px-12 lg:px-16 xl:px-gutter;
   }
 
-  .text-split-lighting {
-    background: linear-gradient(115deg, #ffdfba 30%, #5e4b35 70%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+  /* Mono eyebrow label - the site's only recurring "chrome" element. */
+  .label {
+    @apply font-mono text-label uppercase text-ink-1;
   }
 
-  .chiseled-code {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(230, 194, 136, 0.2);
-    border-radius: 0.25rem;
-    padding: 1rem;
+  /* Quiet full-width divider. */
+  .rule {
+    @apply h-px bg-white/5;
   }
-}
 
-/* Animation keyframes */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
+  /* A bare underlined field. There are no boxed inputs on this site.
+     min-w-0 matters: an <input> carries an intrinsic min-width of about twenty
+     characters, and as a flex item that floor would shove the submit button off
+     a 400px screen. Zeroing it lets the field shrink instead. */
+  .field {
+    @apply w-full min-w-0 bg-transparent border-0 border-b border-line-strong text-ink-4
+           text-lg sm:text-xl outline-none pb-3 placeholder:text-ink-1
+           focus:border-accent transition-colors;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%) skewX(12deg);
-  }
-  100% {
-    transform: translateX(200%) skewX(12deg);
+  /* Text-link call to action, used everywhere a button would normally go. */
+  .cta {
+    @apply inline-flex items-center gap-2 text-accent-text hover:text-ink-4
+           border-b border-accent-border hover:border-ink-4 pb-1
+           text-base sm:text-[17px] font-medium transition-colors;
   }
 }
 
 @layer utilities {
-  .animate-fadeIn {
-    animation: fadeIn 1s ease-out forwards;
+  /* Respect the reader's setting; the only motion here is a fade-up. */
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { animation: none !important; opacity: 1 !important; transform: none !important; }
+    html { scroll-behavior: auto; }
   }
+}
 
-  .animate-shimmer {
-    animation: shimmer 1s infinite;
-  }
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reveal {
+  animation: reveal 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

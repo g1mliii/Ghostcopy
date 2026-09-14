@@ -8,8 +8,8 @@ import path from 'node:path';
 const root = import.meta.dirname;
 const dist = path.join(root, 'dist');
 
-const FILES = ['output.css', 'sw.js', '_headers', 'site.webmanifest'];
-const DIRS = ['images', 'icons'];
+const FILES = ['output.css', 'sw.js', '_headers', 'site.webmanifest', 'waitlist.js', 'reset-password.js'];
+const DIRS = ['icons'];
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });

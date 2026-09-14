@@ -1,0 +1,27 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Landing", "x": 0, "y": 0, "w": 1440, "h": 3950 },
+    { "file": "Download.dc.html", "title": "Download", "x": 1560, "y": 0, "w": 1440, "h": 2350 },
+    { "file": "Faq.dc.html", "title": "FAQ + contact", "x": 3120, "y": 0, "w": 1440, "h": 4300 },
+    { "file": "Privacy.dc.html", "title": "Privacy", "x": 0, "y": 4460, "w": 1440, "h": 3000 },
+    { "file": "Terms.dc.html", "title": "Terms", "x": 1560, "y": 4460, "w": 1440, "h": 3150 },
+    { "file": "ResetPassword.dc.html", "title": "Password reset", "x": 3120, "y": 4460, "w": 1440, "h": 1500 }
+  ],
+  "annotations": [
+    {
+      "id": "system",
+      "x": 4680,
+      "y": 0,
+      "w": 400,
+      "text": "THE SYSTEM\n\nGreys carry meaning, not just contrast. #2A2A33 → #55565F → #8E9099 → #F5F6FA is a presence ramp: headlines materialise along it, and on the download page it encodes availability — macOS and iOS are literally dimmer because they are not ready.\n\nOne hairline runs the landing page from a desktop glyph to a phone glyph. The 01–04 numerals sit on it. Inner pages drop the line and keep the mono gutter labels.\n\n#6670FF appears about four times per page and nowhere else."
+    },
+    {
+      "id": "placeholders",
+      "x": 4680,
+      "y": 560,
+      "w": 400,
+      "text": "FOR YOU TO FILL IN\n\n- [DATE YOU PUBLISH THIS] on Privacy and Terms\n- [YOUR JURISDICTION] in Terms → Governing law (marked amber)\n\nAlso missing on purpose: there is no pricing answer anywhere, because I do not know what the answer is. If GhostCopy will be free, paid, or freemium, the FAQ needs that question and the landing page probably wants it too."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}
