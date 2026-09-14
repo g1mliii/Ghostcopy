@@ -17,9 +17,7 @@ void main() {
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('ghostcopy_cache_test');
-    TestDefaultBinaryMessengerBinding
-        .instance
-        .defaultBinaryMessenger
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
           (call) async => root.path,
@@ -48,24 +46,26 @@ void main() {
     expect(await MediaDiskCache.instance.get('clips/never-written'), isNull);
   });
 
-  test('a storage path with traversal segments stays inside the cache dir',
-      () async {
-    // storage_path comes from the database. If it were used to build a
-    // filename directly, this would escape the cache directory and overwrite
-    // something else - hence the SHA-256 key.
-    const hostile = '../../../../evil.bin';
-    await MediaDiskCache.instance.put(hostile, bytes(64));
+  test(
+    'a storage path with traversal segments stays inside the cache dir',
+    () async {
+      // storage_path comes from the database. If it were used to build a
+      // filename directly, this would escape the cache directory and overwrite
+      // something else - hence the SHA-256 key.
+      const hostile = '../../../../evil.bin';
+      await MediaDiskCache.instance.put(hostile, bytes(64));
 
-    // Everything written lives in the cache dir under a 64-char hex name.
-    final written = cacheDir.listSync().whereType<File>().toList();
-    expect(written, hasLength(1));
-    expect(
-      written.single.uri.pathSegments.last,
-      matches(RegExp(r'^[0-9a-f]{64}\.bin$')),
-    );
-    // It still round-trips; it is simply stored under a hashed name.
-    expect(await MediaDiskCache.instance.get(hostile), hasLength(64));
-  });
+      // Everything written lives in the cache dir under a 64-char hex name.
+      final written = cacheDir.listSync().whereType<File>().toList();
+      expect(written, hasLength(1));
+      expect(
+        written.single.uri.pathSegments.last,
+        matches(RegExp(r'^[0-9a-f]{64}\.bin$')),
+      );
+      // It still round-trips; it is simply stored under a hashed name.
+      expect(await MediaDiskCache.instance.get(hostile), hasLength(64));
+    },
+  );
 
   test('refuses entries above the per-entry ceiling', () async {
     await MediaDiskCache.instance.put(

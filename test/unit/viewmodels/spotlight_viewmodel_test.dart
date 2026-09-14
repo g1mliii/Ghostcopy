@@ -210,7 +210,9 @@ void main() {
         format: any(named: 'format'),
         targetDeviceTypes: any(named: 'targetDeviceTypes'),
       ),
-    ).thenAnswer((_) async => _clipboardItem(id: 'html-1', content: '<p>x</p>'));
+    ).thenAnswer(
+      (_) async => _clipboardItem(id: 'html-1', content: '<p>x</p>'),
+    );
 
     viewModel
       ..updateContent('')
@@ -242,7 +244,9 @@ void main() {
         format: any(named: 'format'),
         targetDeviceTypes: any(named: 'targetDeviceTypes'),
       ),
-    ).thenAnswer((_) async => _clipboardItem(id: 'html-2', content: '<p>y</p>'));
+    ).thenAnswer(
+      (_) async => _clipboardItem(id: 'html-2', content: '<p>y</p>'),
+    );
 
     viewModel
       ..updateContent('')

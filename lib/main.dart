@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -14,6 +15,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'locator.dart';
 import 'models/clipboard_item.dart';
+import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
@@ -56,6 +58,7 @@ import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
+import 'utils/auth_callback.dart';
 
 // Configuration - These values are safe to be public
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
@@ -94,6 +97,14 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
+    // Before anything that can fail: note that a push really did name this
+    // clip. MainActivity is exported, so a notification tap and a third-party
+    // app inventing an id look identical in the extras - this record is what
+    // tells them apart. Deliberately ahead of the Supabase work below, which
+    // has several early returns that would otherwise leave a genuine tap
+    // unverifiable.
+    await _recordIncomingPush(clipboardId);
+
     // A background isolate starts with none of main()'s state, so Supabase has
     // to be stood up here. The session is restored from the same persisted
     // store the UI isolate uses, so this runs as the signed-in user and RLS
@@ -101,6 +112,11 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     await Supabase.initialize(
       url: _supabaseUrl,
       publishableKey: _supabaseAnonKey,
+      // Same guard as the UI isolate: this one also starts a deep-link
+      // observer, and it must not accept a session from a URL either.
+      authOptions: const FlutterAuthClientOptions(
+        detectSessionInUriPredicate: isTrustedAuthCallback,
+      ),
     );
 
     if (Supabase.instance.client.auth.currentUser == null) {
@@ -108,18 +124,8 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
       return;
     }
 
-    // getHistory() applies RLS and decrypts, so `content` is plaintext here.
-    // The clip that triggered this push is newest, but fetch a few in case
-    // another landed in between.
-    final items = await ClipboardRepository().getHistory(limit: 5);
-
-    ClipboardItem? match;
-    for (final item in items) {
-      if (item.id == clipboardId) {
-        match = item;
-        break;
-      }
-    }
+    // getById() applies RLS and decrypts, so `content` is plaintext here.
+    final match = await ClipboardRepository().getById(clipboardId);
 
     if (match == null) {
       debugPrint('[FCM Background] Clip $clipboardId not in history');
@@ -129,7 +135,9 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     // Images and files need a download and a share sheet, neither of which
     // CopyActivity can do. Leave no cache so it routes to the app instead.
     if (match.isImage || match.isFile) {
-      debugPrint('[FCM Background] $clipboardId is a file - app will handle it');
+      debugPrint(
+        '[FCM Background] $clipboardId is a file - app will handle it',
+      );
       return;
     }
 
@@ -140,6 +148,54 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     // lets escape, and an exception escaping a background isolate stops later
     // messages from being handled at all.
     debugPrint('[FCM Background] Prefetch failed (tap will open app): $e');
+  }
+}
+
+/// Note that a push arrived naming [clipboardId], for PushRegistry to check.
+///
+/// The Kotlin side (PushRegistry.kt) records the same file for foreground
+/// deliveries; this covers background and terminated ones. Which of the two
+/// runs depends on app state, so both write it and the store is keyed by id.
+///
+/// Best effort: a failure here costs one silent notification tap, which beats
+/// copying a clip whose id nothing vouched for.
+Future<void> _recordIncomingPush(String clipboardId) async {
+  // Keep in step with PushRegistry.kt.
+  const ttl = Duration(hours: 24);
+  const maxEntries = 50;
+
+  try {
+    final dir = await getApplicationSupportDirectory();
+    final file = File('${dir.path}/pending_push.json');
+
+    final entries = <String, int>{};
+    if (file.existsSync()) {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is Map) {
+        decoded.forEach((key, value) {
+          if (key is String && value is int) entries[key] = value;
+        });
+      }
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    entries[clipboardId] = now;
+
+    final cutoff = now - ttl.inMilliseconds;
+    entries.removeWhere((_, at) => at < cutoff);
+
+    if (entries.length > maxEntries) {
+      final newest = entries.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      entries
+        ..clear()
+        ..addEntries(newest.take(maxEntries));
+    }
+
+    await file.writeAsString(jsonEncode(entries), flush: true);
+    debugPrint('[FCM Background] Recorded push for $clipboardId');
+  } on Object catch (e) {
+    debugPrint('[FCM Background] Could not record push: $e');
   }
 }
 
@@ -168,6 +224,15 @@ Future<void> _writePendingCopy(ClipboardItem item) async {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // debugPrint is NOT stripped from release builds - it formats its argument
+  // and pushes it through a throttling queue. This app is always resident and
+  // logs on the 5-second clipboard tick and once per history item, so in
+  // release that is a steady drip of string building and timer work for output
+  // nobody can read. Silence it there; debug and profile builds are untouched.
+  if (kReleaseMode) {
+    debugPrint = (message, {wrapWidth}) {};
+  }
 
   // Suppress RawKeyboard assertion errors on Windows (known Flutter issue)
   // This occurs when Windows sends key events with invalid modifier flags
@@ -227,18 +292,21 @@ Future<void> main(List<String> args) async {
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
     // Initialize Supabase with session persistence
-    Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
+    Supabase.initialize(
+      url: _supabaseUrl,
+      publishableKey: _supabaseAnonKey,
+      // supabase_flutter starts its own AppLinks deep-link observer that calls
+      // getSessionFromUrl directly, bypassing _handleDeepLinkArgs. Its default
+      // predicate accepts any URI carrying access_token, so without this the
+      // session-injection hole stays open on that route.
+      authOptions: const FlutterAuthClientOptions(
+        detectSessionInUriPredicate: isTrustedAuthCallback,
+      ),
+    ),
 
     // Register custom URL scheme for OAuth callbacks (Windows only)
-    if (Platform.isWindows)
-      _registerWindowsUrlScheme()
-    else
-      Future<void>.value(),
-
-    if (Platform.isWindows)
-      _registerWindowsContextMenu()
-    else
-      Future<void>.value(),
+    if (Platform.isWindows) _registerWindowsUrlScheme(),
+    if (Platform.isWindows) _registerWindowsContextMenu(),
   ]);
 
   // Initialize services that depend on Supabase
@@ -501,10 +569,12 @@ Future<void> main(List<String> args) async {
       // Nothing awaits this future until after startup, so an early failure
       // would otherwise surface as an unhandled async error and take down the
       // zone. Push is optional; startup is not.
-      unawaited(fcmTokenFuture.catchError((Object e) {
-        debugPrint('[App] ⚠️ FCM token fetch failed: $e');
-        return null;
-      }));
+      unawaited(
+        fcmTokenFuture.catchError((Object e) {
+          debugPrint('[App] ⚠️ FCM token fetch failed: $e');
+          return null;
+        }),
+      );
 
       // Listen for token refresh and update device (store subscription for cleanup)
       tokenRefreshSubscription = fcmService.tokenRefreshStream.listen((
@@ -514,10 +584,10 @@ Future<void> main(List<String> args) async {
         // updateFcmToken() silently returns when the device has not been
         // registered yet, and a refresh can land before startup registration
         // finishes - dropping the new token and leaving a dead one on the row.
-        // registerCurrentDevice() upserts, so calling it first is safe.
+        // registerCurrentDevice() upserts and now carries the token, so this
+        // is safe in one write.
         try {
-          await deviceService.registerCurrentDevice();
-          await deviceService.updateFcmToken(newToken);
+          await deviceService.registerCurrentDevice(fcmToken: newToken);
         } on Exception catch (e) {
           debugPrint('[App] ⚠️ Could not store refreshed FCM token: $e');
         }
@@ -1024,12 +1094,6 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
-
-
-/// Feed a ghostcopy:// callback URL to Supabase so the session is established.
-///
-/// Handles both `ghostcopy://auth-callback` (Google OAuth) and
-/// `ghostcopy://reset-password`.
 /// The shortcut used when the user has never chosen one.
 const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
 
@@ -1101,12 +1165,24 @@ Future<void> _registerSavedHotkey() async {
   try {
     await hotkeyService.registerHotkey(defaultHotkey, _invokeHotkeyCallback);
     _activeHotkey = defaultHotkey;
-    debugPrint('[Hotkey] Registered default ${defaultHotkey.toStorageString()}');
+    debugPrint(
+      '[Hotkey] Registered default ${defaultHotkey.toStorageString()}',
+    );
   } on Object catch (e) {
     debugPrint('[Hotkey] Failed to register default hotkey: $e');
   }
 }
 
+/// Feed a ghostcopy:// callback URL to Supabase so the session is established.
+///
+/// Handles both `ghostcopy://auth-callback` (Google OAuth) and
+/// `ghostcopy://reset-password`.
+///
+/// The URL is untrusted: Windows registers `ghostcopy://` as `"<exe>" "%1"`
+/// (see [_registerWindowsUrlScheme]), so any web page or local process can put
+/// one in front of this function, and a second launch forwards it here through
+/// SingleInstance. It is therefore validated rather than handed straight to
+/// `getSessionFromUrl`, which would persist whatever session the URL described.
 Future<void> _handleDeepLinkArgs(List<String> args) async {
   final link = args.firstWhere(
     (a) => a.startsWith('ghostcopy://'),
@@ -1114,12 +1190,22 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
   );
   if (link.isEmpty) return;
 
-  debugPrint('[Main] 🔗 Handling deep link: $link');
+  debugPrint('[Main] 🔗 Handling deep link');
+
+  final decision = AuthCallbackDecision.evaluate(link);
+  if (!decision.isAccepted) {
+    debugPrint(
+      '[Main] ⛔ Refused deep link (${decision.rejection!.name}): '
+      '${decision.detail ?? "no detail"}',
+    );
+    return;
+  }
+
   try {
-    final uri = Uri.parse(link);
-    // Supabase returns the tokens in the fragment or query depending on flow;
-    // getSessionFromUrl handles both and persists the session.
-    await Supabase.instance.client.auth.getSessionFromUrl(uri);
+    // exchangeCodeForSession, not getSessionFromUrl: it requires the PKCE code
+    // verifier this process stored when it started the flow, so a code the app
+    // did not ask for cannot be redeemed.
+    await Supabase.instance.client.auth.exchangeCodeForSession(decision.code!);
     debugPrint('[Main] ✅ Session established from deep link');
 
     // Bring the app forward so the user sees that sign-in worked - they are
@@ -1150,7 +1236,7 @@ Future<void> _sendFileFromCommandLine(
     final bytes = await file.readAsBytes();
 
     // Matches the 10MB ceiling enforced by the DB CHECK and storage-presign.
-    const maxBytes = 10485760;
+    const maxBytes = ClipboardLimits.maxFileBytes;
     if (bytes.length > maxBytes) {
       debugPrint(
         '[SendFile] ✗ ${file.path} is ${bytes.length} bytes, over the 10MB limit',
@@ -1197,10 +1283,21 @@ Future<void> _registerWindowsContextMenu() async {
     const key = r'HKCU\Software\Classes\*\shell\GhostCopySend';
 
     await Process.run('reg', [
-      'add', key, '/ve', '/d', 'Send with GhostCopy', '/f',
+      'add',
+      key,
+      '/ve',
+      '/d',
+      'Send with GhostCopy',
+      '/f',
     ]);
     await Process.run('reg', [
-      'add', key, '/v', 'Icon', '/d', '"$exePath",0', '/f',
+      'add',
+      key,
+      '/v',
+      'Icon',
+      '/d',
+      '"$exePath",0',
+      '/f',
     ]);
     // Interpolated, NOT a raw string: r'$key' is the literal text "$key",
     // so the adjacent literals used to concatenate to `$key\command` and
@@ -1208,8 +1305,12 @@ Future<void> _registerWindowsContextMenu() async {
     // created with its label and icon but no command subkey, so clicking
     // "Send with GhostCopy" did nothing.
     await Process.run('reg', [
-      'add', '$key\\command', '/ve', '/d',
-      '"$exePath" --send-file "%1"', '/f',
+      'add',
+      '$key\\command',
+      '/ve',
+      '/d',
+      '"$exePath" --send-file "%1"',
+      '/f',
     ]);
 
     debugPrint('[Main] ✅ Registered "Send with GhostCopy" context menu');

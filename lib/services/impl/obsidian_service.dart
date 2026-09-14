@@ -37,9 +37,9 @@ class ObsidianService implements IObsidianService {
       // SECURITY: Sanitize fileName to prevent path traversal attacks
       // OPTIMIZED: Use pre-compiled regex patterns
       final sanitizedFileName = fileName
-          .replaceAll(_pathSeparatorRegex, '_')  // Replace forward/back slashes
-          .replaceAll('..', '_')                  // Remove parent directory refs
-          .replaceAll(_leadingDotRegex, '_');     // Remove leading dots
+          .replaceAll(_pathSeparatorRegex, '_') // Replace forward/back slashes
+          .replaceAll('..', '_') // Remove parent directory refs
+          .replaceAll(_leadingDotRegex, '_'); // Remove leading dots
 
       // Use path package for safe path joining
       final filePath = path.join(vaultPath, sanitizedFileName);
@@ -69,7 +69,9 @@ class ObsidianService implements IObsidianService {
       }
 
       // Append with timestamp
-      final timestamp = DateTime.now().toString().split('.')[0]; // Remove microseconds
+      final timestamp = DateTime.now().toString().split(
+        '.',
+      )[0]; // Remove microseconds
       final entry = '\n## $timestamp\n$content\n\n';
 
       await file.writeAsString(entry, mode: FileMode.append);

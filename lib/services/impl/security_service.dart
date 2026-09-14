@@ -26,6 +26,16 @@ class SecurityService implements ISecurityService {
   static final _jwtPattern = ContentPatterns.jwt;
   static final _creditCardPattern = ContentPatterns.creditCard;
 
+  // Compiled once rather than per call. The entropy and structure checks run on
+  // every clipboard change, and `_nonDigits` used to be compiled inside the
+  // credit-card match loop - once per candidate, so digit-heavy text (a CSV, a
+  // log) paid for hundreds of compiles.
+  static final _nonDigits = RegExp('[^0-9]');
+  static final _whitespace = RegExp(r'\s');
+  static final _urlScheme = RegExp('^[a-zA-Z][a-zA-Z0-9+.-]*://');
+  static final _windowsPath = RegExp(r'^[a-zA-Z]:[/\\]');
+  static final _dottedIdentifier = RegExp(r'^[\w.-]+\.[a-zA-Z]{2,}$');
+
   @override
   DetectionResult detectSensitiveData(String content) {
     return _detectSensitiveDataSync(content);
@@ -85,7 +95,7 @@ class SecurityService implements ISecurityService {
     // earlier in the text used to consume the single check and hide a real card
     // further down.
     for (final match in _creditCardPattern.allMatches(content)) {
-      final digits = match.group(0)!.replaceAll(RegExp('[^0-9]'), '');
+      final digits = match.group(0)!.replaceAll(_nonDigits, '');
 
       if (digits.length >= 13 && digits.length <= 19 && _isValidLuhn(digits)) {
         return const DetectionResult(
@@ -150,7 +160,7 @@ class SecurityService implements ISecurityService {
   /// The class check is kept only as a cheap precondition.
   static bool _hasHighEntropy(String content) {
     // Whitespace means prose or structured text, not a key.
-    if (content.contains(RegExp(r'\s'))) return false;
+    if (content.contains(_whitespace)) return false;
 
     // Something recognisably structured rather than random. Checked before the
     // entropy maths because a long URL can genuinely score above the threshold.
@@ -197,15 +207,15 @@ class SecurityService implements ISecurityService {
   /// Recognisable structure that rules out "random secret".
   static bool _looksStructured(String content) {
     // URLs, including scheme-relative ones.
-    if (RegExp('^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(content)) return true;
+    if (_urlScheme.hasMatch(content)) return true;
     if (content.startsWith('//')) return true;
 
     // Filesystem paths, POSIX and Windows.
     if (content.startsWith('/') || content.startsWith(r'\\')) return true;
-    if (RegExp(r'^[a-zA-Z]:[/\\]').hasMatch(content)) return true;
+    if (_windowsPath.hasMatch(content)) return true;
 
     // Dotted or slashed identifiers: package names, domains, import paths.
-    if (RegExp(r'^[\w.-]+\.[a-zA-Z]{2,}$').hasMatch(content)) return true;
+    if (_dottedIdentifier.hasMatch(content)) return true;
 
     return false;
   }

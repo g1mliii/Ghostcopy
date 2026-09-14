@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
+import 'package:timeago/timeago.dart' as timeago;
 import 'package:window_manager/window_manager.dart';
 
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
@@ -26,6 +28,11 @@ import '../../services/notification_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
+import '../../utils/platform_label.dart';
+import '../coalesced_rebuild.dart';
+import '../device_type_icon.dart';
+import '../platform_adaptive.dart';
+import '../theme/animations.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../viewmodels/spotlight_viewmodel.dart';
@@ -92,7 +99,7 @@ class SpotlightScreen extends StatefulWidget {
 }
 
 class _SpotlightScreenState extends State<SpotlightScreen>
-    with TickerProviderStateMixin, WindowListener {
+    with TickerProviderStateMixin, WindowListener, CoalescedRebuild {
   // Animation controllers
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -154,7 +161,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // Track focus time to prevent immediate blur (debounce)
   DateTime? _lastFocusTime;
-  bool _isRebuildScheduled = false;
 
   // Cached preview data to avoid recomputation on every build
   ClipboardItem? _cachedFilePreviewItem;
@@ -184,7 +190,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             TextPosition(offset: _textController.text.length),
           );
         }
-        _scheduleRebuild();
+        scheduleRebuild();
       }
     };
     _viewModel
@@ -208,53 +214,20 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
 
-    // Set up history slide animation (120ms for snappy feel)
-    _historySlideController = AnimationController(
-      duration: const Duration(milliseconds: 120),
-      vsync: this,
-    );
+    // The three panels slide in identically - 120ms, ease-out - and differ only
+    // in which edge they come from. History enters from the right, Settings and
+    // Auth from the left.
+    final (historyController, historyAnimation) = _buildSlide(fromX: 1);
+    _historySlideController = historyController;
+    _historySlideAnimation = historyAnimation;
 
-    _historySlideAnimation =
-        Tween<Offset>(
-          begin: const Offset(1, 0), // Start off-screen to the right
-          end: Offset.zero, // End at normal position
-        ).animate(
-          CurvedAnimation(
-            parent: _historySlideController,
-            curve: Curves.easeOut,
-          ),
-        );
+    final (settingsController, settingsAnimation) = _buildSlide(fromX: -1);
+    _settingsSlideController = settingsController;
+    _settingsSlideAnimation = settingsAnimation;
 
-    // Set up settings slide animation (120ms for snappy feel)
-    _settingsSlideController = AnimationController(
-      duration: const Duration(milliseconds: 120),
-      vsync: this,
-    );
-
-    _settingsSlideAnimation =
-        Tween<Offset>(
-          begin: const Offset(-1, 0), // Start off-screen to the left
-          end: Offset.zero, // End at normal position
-        ).animate(
-          CurvedAnimation(
-            parent: _settingsSlideController,
-            curve: Curves.easeOut,
-          ),
-        );
-
-    // Set up auth slide animation (120ms for snappy feel)
-    _authSlideController = AnimationController(
-      duration: const Duration(milliseconds: 120),
-      vsync: this,
-    );
-
-    _authSlideAnimation =
-        Tween<Offset>(
-          begin: const Offset(-1, 0), // Start off-screen to the left
-          end: Offset.zero, // End at normal position
-        ).animate(
-          CurvedAnimation(parent: _authSlideController, curve: Curves.easeOut),
-        );
+    final (authController, authAnimation) = _buildSlide(fromX: -1);
+    _authSlideController = authController;
+    _authSlideAnimation = authAnimation;
 
     // Wrap AnimationControllers in Pausable wrappers and register with LifecycleController
     // for Tray Mode. These will be paused when window is hidden, resumed when shown.
@@ -273,13 +246,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     final lifecycle = _lifecycleController;
     final pausables = [
-      (_pausableAnimationController, _animationController),
-      (_pausableHistorySlideController, _historySlideController),
-      (_pausableSettingsSlideController, _settingsSlideController),
-      (_pausableAuthSlideController, _authSlideController),
+      _pausableAnimationController,
+      _pausableHistorySlideController,
+      _pausableSettingsSlideController,
+      _pausableAuthSlideController,
     ];
 
-    for (final (pausable, _) in pausables) {
+    for (final pausable in pausables) {
       if (!lifecycle.addPausable(pausable)) {
         // Run unmanaged rather than disposing. Disposing here left a `late`
         // field holding a dead controller that the rest of this State still
@@ -358,6 +331,24 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Close any active panel with animation, then update state after completion.
   /// Awaits the reverse animation to prevent the panel from being removed
   /// from the widget tree before the slide-out animation finishes.
+  /// A panel slide-in from the given edge: -1 is off-screen left, 1 is right.
+  (AnimationController, Animation<Offset>) _buildSlide({
+    required double fromX,
+  }) {
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 120),
+      vsync: this,
+    );
+    final animation = Tween<Offset>(begin: Offset(fromX, 0), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: controller,
+            curve: GhostAnimations.entranceCurve,
+          ),
+        );
+    return (controller, animation);
+  }
+
   Future<void> _closeActivePanel() async {
     final panel = _activePanel;
     if (panel == SpotlightPanel.none) return;
@@ -398,17 +389,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     } on Exception catch (e) {
       debugPrint('Failed to load settings: $e');
     }
-  }
-
-  void _scheduleRebuild() {
-    if (!mounted || _isRebuildScheduled) return;
-
-    _isRebuildScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _isRebuildScheduled = false;
-      if (!mounted) return;
-      setState(() {});
-    });
   }
 
   @override
@@ -610,6 +590,70 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
+  /// Load a file into the composer preview, ready for the user to press Send.
+  ///
+  /// Shared by the upload button and by drag-and-drop. They had grown two
+  /// copies of this tail - size check, read, type detection, the display
+  /// string, the toast - and the copies had already diverged: only the picker
+  /// asked for confirmation above the warning threshold, so dragging in an 8MB
+  /// file skipped the prompt that picking the same file showed.
+  Future<bool> _stageFile(
+    File fileObj,
+    String filename, {
+    required String successMessage,
+  }) async {
+    // Checked before reading, so a huge file is rejected without ever being
+    // pulled into memory.
+    final fileSizeBytes = await fileObj.length();
+    if (fileSizeBytes > ClipboardLimits.maxFileBytes) {
+      if (mounted) {
+        _notificationService.showToast(
+          message:
+              'File too large: $filename (max ${ClipboardLimits.maxFileLabel})',
+          type: NotificationType.error,
+        );
+      }
+      return false;
+    }
+
+    if (fileSizeBytes > ClipboardLimits.largeFileWarningBytes) {
+      if (!mounted) return false;
+      final sizeMB = (fileSizeBytes / 1048576).toStringAsFixed(1);
+      final shouldContinue = await Adaptive.confirm(
+        context,
+        title: 'Large File Warning',
+        message:
+            'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+        confirmText: 'Upload',
+      );
+      if (!shouldContinue) return false;
+    }
+
+    final bytes = await fileObj.readAsBytes();
+    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+      bytes,
+      filename,
+    );
+
+    if (!mounted) return false;
+
+    final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
+    final displayText = 'File ready to send: $filename ($sizeKB KB)';
+    _viewModel.setFileContent(
+      ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
+      displayText,
+    );
+    _textController.text = displayText;
+
+    _notificationService.showToast(
+      message: successMessage,
+      type: NotificationType.success,
+    );
+
+    debugPrint('[Spotlight] File staged: $filename (${bytes.length} bytes)');
+    return true;
+  }
+
   Future<void> _handleFileUpload() async {
     try {
       // Set flag to prevent window blur from closing window
@@ -636,95 +680,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         throw Exception('File path is null');
       }
 
-      final fileObj = File(path);
-      final filename = file.name;
-
-      // Validate file size (10MB limit) - Check BEFORE reading bytes to save memory
-      final fileSizeBytes = await fileObj.length();
-      if (fileSizeBytes > 10485760) {
-        if (mounted) {
-          _notificationService.showToast(
-            message: 'File too large: $filename (max 10MB)',
-            type: NotificationType.error,
-          );
-        }
-        return;
-      }
-
-      // Warn for large files (>5MB)
-      if (fileSizeBytes > 5242880) {
-        if (mounted) {
-          final sizeMB = (fileSizeBytes / 1048576).toStringAsFixed(1);
-          final shouldContinue =
-              await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  backgroundColor: GhostColors.surface,
-                  title: const Text(
-                    'Large File Warning',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: GhostColors.textPrimary,
-                    ),
-                  ),
-                  content: Text(
-                    'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Upload'),
-                    ),
-                  ],
-                ),
-              ) ??
-              false;
-
-          if (!shouldContinue) {
-            return;
-          }
-        }
-      }
-
-      // Read file bytes
-      final bytes = await fileObj.readAsBytes();
-
-      // Detect file type
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        bytes,
-        filename,
+      await _stageFile(
+        File(path),
+        file.name,
+        successMessage: 'File ready: ${file.name}',
       );
-
-      // FIXED: Store file in _viewModel.clipboardContent for preview (don't send yet)
-      // User will click Send button to actually share it
-      if (mounted) {
-        // Update ViewModel with file content
-        final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
-        final displayText = 'File ready to send: $filename ($sizeKB KB)';
-        _viewModel.setFileContent(
-          ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
-          displayText,
-        );
-        _textController.text = displayText;
-
-        _notificationService.showToast(
-          message: 'File ready: $filename',
-          type: NotificationType.success,
-        );
-
-        debugPrint(
-          '[Spotlight] File loaded: $filename (${bytes.length} bytes)',
-        );
-      }
     } on Exception catch (e) {
       debugPrint('[SpotlightScreen] Failed to load file: $e');
       if (mounted) {
@@ -752,40 +712,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       if (!fileObj.existsSync()) return;
 
       final filename = path.split(Platform.pathSeparator).last;
-
-      // Check length before reading, so a huge file is rejected without ever
-      // being pulled into memory.
-      final fileSizeBytes = await fileObj.length();
-      if (fileSizeBytes > 10485760) {
-        if (mounted) {
-          _notificationService.showToast(
-            message: 'File too large: $filename (max 10MB)',
-            type: NotificationType.error,
-          );
-        }
-        return;
-      }
-
-      final bytes = await fileObj.readAsBytes();
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        bytes,
-        filename,
-      );
-
-      if (!mounted) return;
-
-      final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
-      final displayText = 'File ready to send: $filename ($sizeKB KB)';
-      _viewModel.setFileContent(
-        ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
-        displayText,
-      );
-      _textController.text = displayText;
-
-      _notificationService.showToast(
-        message: 'Dropped: $filename',
-        type: NotificationType.success,
-      );
+      await _stageFile(fileObj, filename, successMessage: 'Dropped: $filename');
     } on Object catch (e) {
       debugPrint('[Spotlight] Failed to stage dropped file: $e');
       if (mounted) {
@@ -1393,9 +1320,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 else if (result?.preview != null)
                   Text(
                     result!.preview!,
-                    style: const TextStyle(
+                    style: GhostTypography.mono.copyWith(
                       fontSize: 10,
-                      fontFamily: 'monospace',
                       color: Colors.white70,
                     ),
                     maxLines: 6,
@@ -1448,10 +1374,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   ),
                   Text(
                     colorValue.toUpperCase(),
-                    style: const TextStyle(
+                    style: GhostTypography.mono.copyWith(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      fontFamily: 'monospace',
                     ),
                   ),
                 ],
@@ -1959,44 +1884,10 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
       _filteredItems = widget.historyItems;
     } else {
       final lowerQuery = _searchQuery.toLowerCase();
-      _filteredItems = widget.historyItems.where((item) {
-        if (item.content.toLowerCase().contains(lowerQuery)) return true;
-        if (item.deviceName != null &&
-            item.deviceName!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        if (item.mimeType != null &&
-            item.mimeType!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        return false;
-      }).toList();
+      _filteredItems = widget.historyItems
+          .where((item) => item.matchesQuery(lowerQuery))
+          .toList();
     }
-  }
-
-  String _formatTimeAgo(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-    if (difference.inSeconds < 60) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      final minutes = difference.inMinutes;
-      return '$minutes${minutes == 1 ? " min" : " mins"} ago';
-    } else if (difference.inHours < 24) {
-      final hours = difference.inHours;
-      return '$hours${hours == 1 ? " hour" : " hours"} ago';
-    } else if (difference.inDays < 7) {
-      final days = difference.inDays;
-      return '$days${days == 1 ? " day" : " days"} ago';
-    } else {
-      final weeks = (difference.inDays / 7).floor();
-      return '$weeks${weeks == 1 ? " week" : " weeks"} ago';
-    }
-  }
-
-  String _capitalizeFirst(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
   }
 
   int? _findFilteredIndexByKey(Key key) {
@@ -2167,8 +2058,11 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                           item: item,
                           clipboardRepository: widget.clipboardRepository,
                           notificationService: widget.notificationService,
-                          timeAgo: _formatTimeAgo(item.createdAt),
-                          device: _capitalizeFirst(item.deviceType),
+                          timeAgo: timeago.format(
+                            item.createdAt,
+                            locale: 'en_short',
+                          ),
+                          device: platformLabel(item.deviceType),
                           onDelete: () => widget.onItemDelete(item),
                           onTap: () => widget.onItemTap(item),
                         ),
@@ -2381,7 +2275,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       // to a real extension.
       final filename =
           widget.item.metadata?.originalFilename ??
-          'file.${_extensionForItem(widget.item)}';
+          'file.${widget.item.contentType.fileExtension}';
 
       final savePath = await FilePicker.saveFile(
         dialogTitle: 'Save File',
@@ -2415,26 +2309,6 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   }
 
   /// Best-effort file extension for a clip with no original filename.
-  String _extensionForItem(ClipboardItem item) {
-    const byMime = {
-      'image/png': 'png',
-      'image/jpeg': 'jpg',
-      'image/gif': 'gif',
-      'application/pdf': 'pdf',
-      'application/msword': 'doc',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-          'docx',
-      'text/plain': 'txt',
-      'application/zip': 'zip',
-      'application/x-tar': 'tar',
-      'application/gzip': 'gz',
-      'video/mp4': 'mp4',
-      'audio/mpeg': 'mp3',
-      'audio/wav': 'wav',
-    };
-    return byMime[item.mimeType] ?? 'bin';
-  }
-
   Future<void> _handleDelete() async {
     try {
       await widget.clipboardRepository.delete(widget.item.id);
@@ -2505,23 +2379,6 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
         _handleDelete();
       }
     });
-  }
-
-  IconData _getDeviceIconByType(String deviceType) {
-    switch (deviceType.toLowerCase()) {
-      case 'windows':
-        return Icons.desktop_windows;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'android':
-        return Icons.phone_android;
-      case 'ios':
-        return Icons.phone_iphone;
-      case 'linux':
-        return Icons.computer;
-      default:
-        return Icons.devices;
-    }
   }
 
   /// Build the payload for dragging this clip out of the app.
@@ -2598,7 +2455,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                               setState(() => _isExpanded = !_isExpanded),
                           child: AnimatedRotation(
                             turns: _isExpanded ? 0.5 : 0,
-                            duration: const Duration(milliseconds: 200),
+                            duration: GhostAnimations.normal,
                             child: ValueListenableBuilder<bool>(
                               valueListenable: _isHovered,
                               builder: (context, hovered, _) => Icon(
@@ -2618,7 +2475,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   Row(
                     children: [
                       Icon(
-                        _getDeviceIconByType(_deviceLower),
+                        iconForDeviceType(_deviceLower),
                         size: 12,
                         color: GhostColors.textMuted,
                       ),
@@ -2649,7 +2506,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                         )
                       else if (widget.item.targetDeviceTypes!.length == 1)
                         Icon(
-                          _getDeviceIconByType(
+                          iconForDeviceType(
                             widget.item.targetDeviceTypes!.first,
                           ),
                           size: 12,

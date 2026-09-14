@@ -389,7 +389,6 @@ class AuthService implements IAuthService {
     }
   }
 
-
   @override
   Future<bool> sendPasswordResetEmail(String email) async {
     try {

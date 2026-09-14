@@ -97,8 +97,15 @@ class TransformerService implements ITransformerService {
     String content,
     TransformerContentType type,
   ) async {
-    // Always use isolate for transformations (JSON parsing, JWT decoding can be heavy)
-    return compute(_transformInIsolate, _TransformParams(content, type));
+    // Below the threshold the isolate spawn and the message copy in both
+    // directions cost more than the work itself - decoding a JWT is a split,
+    // a base64 decode and a small parse. Same cutoff detectContentType uses.
+    final params = _TransformParams(content, type);
+    if (content.length < _isolateThreshold) {
+      return _transformInIsolate(params);
+    }
+
+    return compute(_transformInIsolate, params);
   }
 
   /// Validate if content is valid JSON

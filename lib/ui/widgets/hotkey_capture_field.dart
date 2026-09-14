@@ -36,7 +36,7 @@ class _HotkeyCapture extends State<HotkeyCapture> {
   @override
   Widget build(BuildContext context) {
     final displayHotkey = _capturedHotkey ?? widget.currentHotkey;
-    final hotkeyText = _formatHotkey(displayHotkey);
+    final hotkeyText = formatHotkey(displayHotkey);
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -235,14 +235,18 @@ class _HotkeyCapture extends State<HotkeyCapture> {
     _altPressed = false;
     _metaPressed = false;
   }
+}
 
-  String _formatHotkey(HotKey hotkey) {
-    final parts = <String>[];
-    if (hotkey.ctrl) parts.add('Ctrl');
-    if (hotkey.shift) parts.add('Shift');
-    if (hotkey.alt) parts.add('Alt');
-    if (hotkey.meta) parts.add('Meta');
-    parts.add(hotkey.key.toUpperCase());
-    return parts.join(' + ');
-  }
+/// Render a hotkey the way both the capture field and Settings show it.
+///
+/// Shared rather than private so the two cannot drift into showing the same
+/// binding differently.
+String formatHotkey(HotKey hotkey) {
+  final parts = <String>[];
+  if (hotkey.ctrl) parts.add('Ctrl');
+  if (hotkey.shift) parts.add('Shift');
+  if (hotkey.alt) parts.add('Alt');
+  if (hotkey.meta) parts.add('Meta');
+  parts.add(hotkey.key.toUpperCase());
+  return parts.join(' + ');
 }

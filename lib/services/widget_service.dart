@@ -39,6 +39,10 @@ class WidgetService implements IWidgetService {
   // Singleton instance
   static final WidgetService _instance = WidgetService._internal();
 
+  // Compiled once: the widget refresh strips every rich-text clip it ships.
+  static final _htmlTag = RegExp('<[^>]*>');
+  static final _markdownMarks = RegExp(r'[*_~`#\[\]()]+');
+
   // Method channel for native widget communication
   static const _channel = MethodChannel('com.ghostcopy/widget');
 
@@ -210,22 +214,29 @@ class WidgetService implements IWidgetService {
   Future<List<Map<String, dynamic>>> _prepareWidgetData(
     List<ClipboardItem> items,
   ) async {
-    final widgetItems = <Map<String, dynamic>>[];
-
-    for (final item in items) {
-      String? thumbnailPath;
-
-      // Generate and cache thumbnail for image items
-      if (item.isImage) {
+    // Thumbnails are fetched together rather than one after another: each miss
+    // is an R2 download plus a compression pass, and awaiting them in sequence
+    // made a five-image widget refresh five serial round-trips on a mobile
+    // connection. Order is preserved because Future.wait preserves it.
+    final thumbnailPaths = await Future.wait(
+      items.map((item) async {
+        if (!item.isImage) return null;
         try {
-          thumbnailPath = await _cacheThumbnailForWidget(item);
+          return await _cacheThumbnailForWidget(item);
         } on Exception catch (e) {
           debugPrint(
             '[WidgetService] Failed to cache thumbnail for ${item.id}: $e',
           );
           // Continue without thumbnail - widget will show placeholder
+          return null;
         }
-      }
+      }),
+    );
+
+    final widgetItems = <Map<String, dynamic>>[];
+
+    for (final (index, item) in items.indexed) {
+      final thumbnailPath = thumbnailPaths[index];
 
       widgetItems.add({
         'id': item.id,
@@ -267,7 +278,14 @@ class WidgetService implements IWidgetService {
       return '🔒 Encrypted content (tap to view)';
     } else if (item.isRichText) {
       // Strip HTML/Markdown tags and truncate
-      final stripped = _stripHtmlMarkdownTags(item.content);
+      // Strip only the head of the clip. Content runs to 100KB and only
+      // maxRichTextLength characters survive, so a 4x margin over that is more
+      // than enough slack for the tags the strip removes.
+      final stripped = _stripHtmlMarkdownTags(
+        item.content.length > maxRichTextLength * 4
+            ? item.content.substring(0, maxRichTextLength * 4)
+            : item.content,
+      );
       return stripped.length > maxRichTextLength
           ? '${stripped.substring(0, maxRichTextLength)}...'
           : stripped;
@@ -285,10 +303,10 @@ class WidgetService implements IWidgetService {
   /// Also removes markdown syntax: ##, **, etc.
   String _stripHtmlMarkdownTags(String content) {
     // Remove HTML tags
-    var stripped = content.replaceAll(RegExp('<[^>]*>'), '');
+    var stripped = content.replaceAll(_htmlTag, '');
 
     // Remove markdown syntax
-    stripped = stripped.replaceAll(RegExp(r'[*_~`#\[\]()]+'), '');
+    stripped = stripped.replaceAll(_markdownMarks, '');
 
     return stripped.trim();
   }

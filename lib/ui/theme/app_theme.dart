@@ -335,44 +335,4 @@ class AppTheme {
       ),
     );
   }
-
-  /// Glassmorphism container decoration
-  static BoxDecoration get glassDecoration {
-    return BoxDecoration(
-      color: GhostColors.glassBackground,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: GhostColors.glassBorder),
-    );
-  }
-
-  /// Glassmorphism container decoration with custom radius
-  static BoxDecoration glassDecorationWithRadius(double radius) {
-    return BoxDecoration(
-      color: GhostColors.glassBackground,
-      borderRadius: BorderRadius.circular(radius),
-      border: Border.all(color: GhostColors.glassBorder),
-    );
-  }
-
-  /// Card shadow for elevated surfaces
-  static List<BoxShadow> get cardShadow {
-    return [
-      BoxShadow(
-        color: Colors.black.withValues(alpha: 0.2),
-        blurRadius: 8,
-        offset: const Offset(0, 2),
-      ),
-    ];
-  }
-
-  /// Spotlight window shadow
-  static List<BoxShadow> get spotlightShadow {
-    return [
-      BoxShadow(
-        color: Colors.black.withValues(alpha: 0.3),
-        blurRadius: 24,
-        offset: const Offset(0, 8),
-      ),
-    ];
-  }
 }

@@ -11,11 +11,7 @@ enum SensitiveDataType {
 
 /// Result of sensitive data detection
 class DetectionResult {
-  const DetectionResult({
-    required this.isSensitive,
-    this.type,
-    this.reason,
-  });
+  const DetectionResult({required this.isSensitive, this.type, this.reason});
 
   final bool isSensitive;
   final SensitiveDataType? type;

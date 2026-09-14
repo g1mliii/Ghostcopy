@@ -21,11 +21,9 @@ class TrayService with TrayListener implements ITrayService {
     // Add listener for tray events
     trayManager.addListener(this);
 
-    await trayManager.setIcon(
-      _getTrayIconPath(),
-    );
-    
-    // On macOS, the title is usually not shown in tray for icon-only apps, 
+    await trayManager.setIcon(_getTrayIconPath());
+
+    // On macOS, the title is usually not shown in tray for icon-only apps,
     // but we can set it if needed. Leaving empty for now for icon-only feel.
   }
 
@@ -46,10 +44,10 @@ class TrayService with TrayListener implements ITrayService {
 
     // Clean up callback to prevent memory leak
     onRightClick = null;
-    
+
     // Remove listener
     trayManager.removeListener(this);
-    
+
     // There isn't a strict 'destroy' method for trayManager exposed usually,
     // but removing the listener helps.
   }
@@ -65,8 +63,8 @@ class TrayService with TrayListener implements ITrayService {
   void onTrayIconRightMouseDown() {
     // Right click - trigger custom menu
     onRightClick?.call();
-    
-    // Also support native menu popping up if we set one, 
+
+    // Also support native menu popping up if we set one,
     // but here we are using custom window callback.
   }
 

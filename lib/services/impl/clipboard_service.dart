@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
+import '../../models/clipboard_limits.dart';
 import '../clipboard_service.dart';
 
 /// Implementation of clipboard operations using super_clipboard
@@ -15,8 +16,13 @@ class ClipboardService implements IClipboardService {
   /// Singleton instance
   static final ClipboardService instance = ClipboardService._();
 
-  /// Largest file accepted off the clipboard (10 MB).
-  static const int _maxFileBytes = 10485760;
+  // Compiled once: these run on every clipboard read, which polls every 5s.
+  static final _htmlTag = RegExp('<[^>]*>');
+  static final _pathSeparator = RegExp(r'[/\\]');
+  static final _unsafeFilenameChars = RegExp('[<>:"|?*]');
+
+  /// Largest file accepted off the clipboard.
+  static const int _maxFileBytes = ClipboardLimits.maxFileBytes;
 
   @override
   Future<ClipboardContent> read() async {
@@ -156,7 +162,7 @@ class ClipboardService implements IClipboardService {
   Future<void> writeHtml(String html) async {
     try {
       // Strip HTML tags for plain text fallback
-      final plainText = html.replaceAll(RegExp('<[^>]*>'), '');
+      final plainText = html.replaceAll(_htmlTag, '');
 
       final item = DataWriterItem()
         ..add(Formats.htmlText(html))
@@ -227,14 +233,14 @@ class ClipboardService implements IClipboardService {
   static String _safeFilename(String filename) {
     // Take the last segment regardless of separator style: a Windows-style name
     // arriving on POSIX (or the reverse) must not keep its directories.
-    final lastSegment = filename.split(RegExp(r'[/\\]')).last;
+    final lastSegment = filename.split(_pathSeparator).last;
     var safe = path.basename(lastSegment).trim();
 
     // '.' and '..' survive basename() and neither is a usable filename.
     if (safe.isEmpty || safe == '.' || safe == '..') return 'file';
 
     // Reserved on Windows, harmless to strip elsewhere.
-    safe = safe.replaceAll(RegExp('[<>:"|?*]'), '_');
+    safe = safe.replaceAll(_unsafeFilenameChars, '_');
 
     // Control characters, which no filesystem wants and some treat specially.
     safe = String.fromCharCodes(safe.codeUnits.where((c) => c >= 0x20));

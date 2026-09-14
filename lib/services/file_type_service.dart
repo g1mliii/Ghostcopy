@@ -19,20 +19,8 @@ class FileTypeInfo {
       'FileTypeInfo(contentType: ${contentType.value}, mimeType: $mimeType, extension: $extension)';
 }
 
-/// Abstract service for detecting file types
-abstract class IFileTypeService {
-  /// Detect file type from bytes (using magic bytes) with optional filename hint
-  FileTypeInfo detectFromBytes(Uint8List bytes, String? filename);
-
-  /// Detect file type from extension only
-  FileTypeInfo detectFromExtension(String filename);
-
-  /// Get icon for a content type
-  IconData getFileIcon(ContentType type);
-}
-
 /// Implementation of file type detection service
-class FileTypeService implements IFileTypeService {
+class FileTypeService {
   FileTypeService._();
 
   /// Singleton instance
@@ -42,7 +30,6 @@ class FileTypeService implements IFileTypeService {
   final Map<String, FileTypeInfo> _detectionCache = {};
   static const int _maxCacheSize = 100;
 
-  @override
   FileTypeInfo detectFromBytes(Uint8List bytes, String? filename) {
     final cacheKey = _cacheKey(bytes, filename);
 
@@ -124,7 +111,6 @@ class FileTypeService implements IFileTypeService {
     _detectionCache[key] = result;
   }
 
-  @override
   FileTypeInfo detectFromExtension(String filename) {
     final extension = filename.split('.').last.toLowerCase();
 
@@ -236,7 +222,6 @@ class FileTypeService implements IFileTypeService {
     );
   }
 
-  @override
   IconData getFileIcon(ContentType type) {
     switch (type) {
       // Images

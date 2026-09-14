@@ -20,13 +20,12 @@ class StorageService implements IStorageService {
   }
 
   StorageService._internal({SupabaseClient? client})
-      : _client = client ?? Supabase.instance.client;
+    : _client = client ?? Supabase.instance.client;
 
   static final StorageService instance = StorageService._internal();
 
   final SupabaseClient _client;
   static const String _edgeFunctionName = 'storage-presign';
-
 
   @override
   Future<void> initialize() async {
@@ -131,10 +130,7 @@ class StorageService implements IStorageService {
     try {
       debugPrint('[StorageService] ✗ Deleting from R2: $storagePath');
 
-      await _callEdgeFunctionJson({
-        'action': 'delete',
-        'path': storagePath,
-      });
+      await _callEdgeFunctionJson({'action': 'delete', 'path': storagePath});
 
       debugPrint('[StorageService] ✓ Deleted from R2 successfully');
     } catch (e) {

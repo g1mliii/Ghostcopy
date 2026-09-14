@@ -14,6 +14,7 @@ import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/platform_label.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -841,7 +842,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              _capitalizeFirst(device.deviceType),
+                              platformLabel(device.deviceType),
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: GhostColors.textMuted,
@@ -1085,41 +1086,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// tap means leaving the app is always the user's decision, and the URL is
   /// visible before they commit rather than after.
   Future<void> _openWebsite() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: GhostColors.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
-        ),
-        title: const Text(
-          'Open the GhostCopy website?',
-          style: TextStyle(fontSize: 16, color: GhostColors.textPrimary),
-        ),
-        content: const Text(
-          'This opens $_websiteUrl in your browser, outside GhostCopy.',
-          style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: GhostColors.textMuted),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(
-              'Open',
-              style: TextStyle(color: GhostColors.primary),
-            ),
-          ),
-        ],
-      ),
+    final confirmed = await Adaptive.confirm(
+      context,
+      title: 'Open the GhostCopy website?',
+      message: 'This opens $_websiteUrl in your browser, outside GhostCopy.',
+      confirmText: 'Open',
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     final opened = await launchUrl(
       Uri.parse(_websiteUrl),
@@ -1179,10 +1153,5 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         onTap: _openWebsite,
       ),
     );
-  }
-
-  String _capitalizeFirst(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
   }
 }

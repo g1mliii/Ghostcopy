@@ -4,10 +4,7 @@ export 'impl/storage_service.dart';
 
 /// Result of file upload operation
 class UploadResult {
-  const UploadResult({
-    required this.storagePath,
-    required this.fileSizeBytes,
-  });
+  const UploadResult({required this.storagePath, required this.fileSizeBytes});
 
   final String storagePath; // Path in storage bucket
   final int fileSizeBytes; // Size of uploaded file
@@ -23,7 +20,7 @@ abstract class IStorageService {
   ///
   /// Creates path: user_id/clipboard_id/filename
   /// Returns UploadResult with the storage path (the bucket is private; read
-/// back through a signed URL from storage-presign)
+  /// back through a signed URL from storage-presign)
   Future<UploadResult> uploadFile({
     required String userId,
     required String clipboardId,

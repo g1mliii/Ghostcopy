@@ -12,6 +12,10 @@ import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/hotkey_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/platform_label.dart';
+import '../coalesced_rebuild.dart';
+import '../device_type_icon.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'device_panel.dart';
@@ -64,7 +68,7 @@ class SettingsPanel extends StatefulWidget {
   State<SettingsPanel> createState() => _SettingsPanelState();
 }
 
-class _SettingsPanelState extends State<SettingsPanel> {
+class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Set<String> _autoSendTargetDevices = {};
   bool _autoStartEnabled = false;
   bool _encryptionEnabled = false;
@@ -170,12 +174,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   Future<void> _loadTargetDevices() async {
     final devices = await widget.settingsService.getAutoSendTargetDevices();
-    if (mounted) {
-      setState(() {
-        _autoSendTargetDevices = devices;
-        _cachedDeviceText = null; // Reset cache
-      });
-    }
+    if (!mounted) return;
+    _autoSendTargetDevices = devices;
+    _cachedDeviceText = null; // Reset cache
+    scheduleRebuild();
   }
 
   /// Show the shortcut that is actually registered, not the compile-time
@@ -185,18 +187,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (widget.hotkeyService == null) return;
 
     final saved = await widget.settingsService.getHotkey();
-    if (saved != null && mounted) {
-      setState(() => _currentHotkey = saved);
-    }
+    if (saved == null || !mounted) return;
+    _currentHotkey = saved;
+    scheduleRebuild();
   }
 
   Future<void> _loadAutoStartSetting() async {
     if (widget.autoStartService == null) return;
 
     final enabled = await widget.settingsService.getAutoStartEnabled();
-    if (mounted) {
-      setState(() => _autoStartEnabled = enabled);
-    }
+    if (!mounted) return;
+    _autoStartEnabled = enabled;
+    scheduleRebuild();
   }
 
   Future<void> _loadEncryptionStatus() async {
@@ -236,46 +238,44 @@ class _SettingsPanelState extends State<SettingsPanel> {
       }
     }
 
-    if (mounted) {
-      setState(() {
-        _encryptionEnabled = enabled;
-        _hasBackup = hasBackup;
-      });
-    }
+    if (!mounted) return;
+    _encryptionEnabled = enabled;
+    _hasBackup = hasBackup;
+    scheduleRebuild();
   }
 
   Future<void> _loadUrlShorteningStatus() async {
     final enabled = await widget.settingsService.getAutoShortenUrls();
-    if (mounted) {
-      setState(() => _autoShortenUrls = enabled);
-    }
+    if (!mounted) return;
+    _autoShortenUrls = enabled;
+    scheduleRebuild();
   }
 
   Future<void> _loadWebhookStatus() async {
-    final enabled = await widget.settingsService.getWebhookEnabled();
-    final url = await widget.settingsService.getWebhookUrl();
-    if (mounted) {
-      setState(() {
-        _webhookEnabled = enabled;
-        _webhookUrl = url ?? '';
-        _webhookUrlController.text = _webhookUrl;
-      });
-    }
+    final (enabled, url) = await (
+      widget.settingsService.getWebhookEnabled(),
+      widget.settingsService.getWebhookUrl(),
+    ).wait;
+    if (!mounted) return;
+    _webhookEnabled = enabled;
+    _webhookUrl = url ?? '';
+    _webhookUrlController.text = _webhookUrl;
+    scheduleRebuild();
   }
 
   Future<void> _loadObsidianStatus() async {
-    final enabled = await widget.settingsService.getObsidianEnabled();
-    final vaultPath = await widget.settingsService.getObsidianVaultPath();
-    final fileName = await widget.settingsService.getObsidianFileName();
-    if (mounted) {
-      setState(() {
-        _obsidianEnabled = enabled;
-        _obsidianVaultPath = vaultPath ?? '';
-        _obsidianFileName = fileName;
-        _obsidianVaultPathController.text = _obsidianVaultPath;
-        _obsidianFileNameController.text = _obsidianFileName;
-      });
-    }
+    final (enabled, vaultPath, fileName) = await (
+      widget.settingsService.getObsidianEnabled(),
+      widget.settingsService.getObsidianVaultPath(),
+      widget.settingsService.getObsidianFileName(),
+    ).wait;
+    if (!mounted) return;
+    _obsidianEnabled = enabled;
+    _obsidianVaultPath = vaultPath ?? '';
+    _obsidianFileName = fileName;
+    _obsidianVaultPathController.text = _obsidianVaultPath;
+    _obsidianFileNameController.text = _obsidianFileName;
+    scheduleRebuild();
   }
 
   Future<void> _toggleEncryption() async {
@@ -283,28 +283,17 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
     if (_encryptionEnabled) {
       // Disable encryption - show confirmation dialog
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Disable Encryption?'),
-          content: const Text(
+      final confirmed = await Adaptive.confirm(
+        context,
+        title: 'Disable Encryption?',
+        message:
             'This will disable encryption for new clipboard items. '
             'Existing encrypted items will remain encrypted.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Disable'),
-            ),
-          ],
-        ),
+        confirmText: 'Disable',
+        isDestructive: true,
       );
 
-      if (confirmed ?? false) {
+      if (confirmed) {
         try {
           await widget.encryptionService!.clearPassphrase();
         } on Object catch (err) {
@@ -520,17 +509,12 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   /// Cache expensive string operation
-  String _getDeviceText(List<(String, IconData, String)> devices) {
+  String _getDeviceText() {
     if (_cachedDeviceText != null) return _cachedDeviceText!;
 
     _cachedDeviceText = _autoSendTargetDevices.isEmpty
         ? 'All devices'
-        : _autoSendTargetDevices
-              .map((d) {
-                final device = devices.firstWhere((item) => item.$1 == d);
-                return device.$3;
-              })
-              .join(', ');
+        : _autoSendTargetDevices.map(platformLabel).join(', ');
 
     return _cachedDeviceText!;
   }
@@ -1113,12 +1097,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   Widget _buildDeviceSelector() {
-    const devices = [
-      ('windows', Icons.desktop_windows, 'Windows'),
-      ('macos', Icons.laptop_mac, 'macOS'),
-      ('android', Icons.phone_android, 'Android'),
-      ('ios', Icons.phone_iphone, 'iOS'),
-    ];
+    // Icon and label come from the shared helpers, so a platform cannot show
+    // one icon here and a different one on the clip it produced.
+    const devices = ['windows', 'macos', 'android', 'ios'];
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -1144,7 +1125,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           ),
           const SizedBox(height: 8),
           Text(
-            _getDeviceText(devices),
+            _getDeviceText(),
             style: GhostTypography.caption.copyWith(
               color: GhostColors.textMuted,
             ),
@@ -1154,8 +1135,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: devices.map((device) {
-              final (type, icon, label) = device;
+            children: devices.map((type) {
               final isSelected =
                   _autoSendTargetDevices.isEmpty ||
                   _autoSendTargetDevices.contains(type);
@@ -1183,7 +1163,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        icon,
+                        iconForDeviceType(type),
                         size: 14,
                         color: isSelected
                             ? GhostColors.primary
@@ -1191,7 +1171,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        label,
+                        platformLabel(type),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w500,
@@ -1349,7 +1329,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${_formatHotkey(newHotkey)} cannot be used as a shortcut. '
+            '${formatHotkey(newHotkey)} cannot be used as a shortcut. '
             'Your previous shortcut is still active.',
           ),
           backgroundColor: Colors.red,
@@ -1372,17 +1352,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
     if (!mounted) return;
     setState(() => _currentHotkey = newHotkey);
-    debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
-  }
-
-  String _formatHotkey(HotKey hotkey) {
-    final parts = <String>[];
-    if (hotkey.ctrl) parts.add('Ctrl');
-    if (hotkey.shift) parts.add('Shift');
-    if (hotkey.alt) parts.add('Alt');
-    if (hotkey.meta) parts.add('Meta');
-    parts.add(hotkey.key.toUpperCase());
-    return parts.join(' + ');
+    debugPrint('Hotkey changed to: ${formatHotkey(newHotkey)}');
   }
 }
 

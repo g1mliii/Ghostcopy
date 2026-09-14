@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
 import '../../services/clipboard_cache_manager.dart';
 import '../../services/compression_service.dart';
@@ -37,7 +38,10 @@ class ClipboardRepository implements IClipboardRepository {
     ICompressionService? compressionService,
   }) {
     // For testing with custom dependencies, create a new instance
-    if (client != null || encryptionService != null || storageService != null || compressionService != null) {
+    if (client != null ||
+        encryptionService != null ||
+        storageService != null ||
+        compressionService != null) {
       return ClipboardRepository._internal(
         client: client,
         encryptionService: encryptionService,
@@ -67,6 +71,7 @@ class ClipboardRepository implements IClipboardRepository {
   final IStorageService _storageService;
   final ICompressionService _compressionService;
   bool _encryptionInitialized = false;
+
   /// User the loaded encryption state belongs to, so a sign-in as someone
   /// else re-keys instead of silently reusing the previous account's state.
   String? _encryptionUserId;
@@ -126,20 +131,7 @@ class ClipboardRepository implements IClipboardRepository {
     _validateClipboardItem(item);
 
     try {
-      // Get current authenticated user
-      final userId = _client.auth.currentUser?.id;
-      if (userId == null) {
-        throw SecurityException(
-          'User must be authenticated to insert clipboard items',
-        );
-      }
-
-      // Ensure the item's userId matches the authenticated user (defense in depth)
-      if (item.userId != userId) {
-        throw SecurityException(
-          'Cannot insert clipboard item for another user',
-        );
-      }
+      final userId = _requireOwner(item.userId, 'clipboard items');
 
       // Initialize encryption if not already done
       await _ensureEncryptionInitialized();
@@ -187,29 +179,8 @@ class ClipboardRepository implements IClipboardRepository {
         isEncrypted: isEncryptionEnabled,
         createdAt: DateTime.parse(response['created_at'] as String),
       );
-    } on SecurityException {
-      // Rethrow security exceptions
-      rethrow;
-    } on ValidationException {
-      // Rethrow validation exceptions
-      rethrow;
-    } on EncryptionException {
-      // Rethrow encryption exceptions
-      rethrow;
-    } on PostgrestException catch (e) {
-      // Handle specific Postgres errors
-      if (e.code == '23514') {
-        // CHECK constraint violation
-        throw ValidationException('Content validation failed: ${e.message}');
-      }
-      if (e.code == '23503') {
-        // Foreign key violation
-        throw SecurityException('Invalid user ID');
-      }
-      rethrow;
     } catch (e) {
-      // Wrap unexpected errors in RepositoryException
-      throw RepositoryException('Failed to insert clipboard item: $e');
+      _fail(e, 'insert clipboard item');
     }
   }
 
@@ -227,24 +198,12 @@ class ClipboardRepository implements IClipboardRepository {
     List<String>? targetDeviceTypes,
   }) async {
     try {
-      // Validate user authentication
-      final currentUserId = _client.auth.currentUser?.id;
-      if (currentUserId == null) {
-        throw SecurityException(
-          'User must be authenticated to insert file items',
-        );
-      }
+      _requireOwner(userId, 'file items');
 
-      // Defense in depth: ensure userId matches authenticated user
-      if (userId != currentUserId) {
-        throw SecurityException('Cannot insert file for another user');
-      }
-
-      // Validate file size (10MB limit)
-      const maxFileSize = 10485760; // 10MB
-      if (fileBytes.length > maxFileSize) {
+      if (fileBytes.length > ClipboardLimits.maxFileBytes) {
         throw ValidationException(
-          'File exceeds 10MB limit: ${fileBytes.length} bytes',
+          'File exceeds ${ClipboardLimits.maxFileLabel} limit: '
+          '${fileBytes.length} bytes',
         );
       }
 
@@ -265,7 +224,9 @@ class ClipboardRepository implements IClipboardRepository {
       // FIXED: Upload file FIRST to avoid race condition with realtime INSERT event
       // Use timestamp for storage path (doesn't need to match database ID)
       final storageId = DateTime.now().millisecondsSinceEpoch.toString();
-      final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
+      final filename =
+          originalFilename ??
+          'file.${ContentType.fromMimeType(mimeType)?.fileExtension ?? 'bin'}';
 
       // Compress images before upload (skip GIFs to preserve animation)
       var uploadBytes = fileBytes;
@@ -285,7 +246,9 @@ class ClipboardRepository implements IClipboardRepository {
             uploadMimeType = result.mimeType;
           }
         } on Exception catch (e) {
-          debugPrint('[Repository] ⚠ Compression failed, uploading original: $e');
+          debugPrint(
+            '[Repository] ⚠ Compression failed, uploading original: $e',
+          );
           // Graceful fallback: upload original bytes
         }
       }
@@ -311,7 +274,9 @@ class ClipboardRepository implements IClipboardRepository {
       final filesEncrypted = await _encryptionService.isEnabled();
       if (filesEncrypted) {
         uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
-        debugPrint('[Repository] 🔒 Encrypted ${uploadBytes.length} bytes for upload');
+        debugPrint(
+          '[Repository] 🔒 Encrypted ${uploadBytes.length} bytes for upload',
+        );
       }
 
       debugPrint(
@@ -399,171 +364,8 @@ class ClipboardRepository implements IClipboardRepository {
         }
         rethrow;
       }
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
-    } on PostgrestException catch (e) {
-      debugPrint('[Repository] ✗ Database error: ${e.message}');
-      throw RepositoryException('Database error: ${e.message}');
     } catch (e) {
-      debugPrint('[Repository] ✗ Failed to insert file: $e');
-      throw RepositoryException('Failed to insert file: $e');
-    }
-  }
-
-  @override
-  Stream<double> uploadFileWithProgress({
-    required String userId,
-    required String deviceType,
-    required String? deviceName,
-    required Uint8List fileBytes,
-    required String mimeType,
-    required ContentType contentType,
-    String? originalFilename,
-    int? width,
-    int? height,
-    List<String>? targetDeviceTypes,
-  }) async* {
-    try {
-      // Validate user authentication
-      final currentUserId = _client.auth.currentUser?.id;
-      if (currentUserId == null) {
-        throw SecurityException(
-          'User must be authenticated to insert file items',
-        );
-      }
-
-      if (userId != currentUserId) {
-        throw SecurityException('Cannot insert file for another user');
-      }
-
-      // Validate file size (10MB limit)
-      const maxFileSize = 10485760; // 10MB
-      if (fileBytes.length > maxFileSize) {
-        throw ValidationException(
-          'File exceeds 10MB limit: ${fileBytes.length} bytes',
-        );
-      }
-
-      if (!contentType.requiresStorage) {
-        throw ValidationException(
-          'Content type must require storage, got: ${contentType.value}',
-        );
-      }
-
-      // Progress: 0.1 - Starting
-      yield 0.1;
-
-      debugPrint(
-        '[Repository] ↑ Inserting file with progress (${fileBytes.length} bytes)',
-      );
-
-      final metadata = <String, dynamic>{
-        'width': ?width,
-        'height': ?height,
-        'original_filename': ?originalFilename,
-      };
-
-      // FIXED: Upload file FIRST to avoid race condition with realtime INSERT event
-      // Use timestamp for storage path (doesn't need to match database ID)
-      final storageId = DateTime.now().millisecondsSinceEpoch.toString();
-      final filename = originalFilename ?? 'file.${_getExtension(mimeType)}';
-
-      // Compress images before upload (skip GIFs to preserve animation)
-      var uploadBytes = fileBytes;
-      var uploadMimeType = mimeType;
-      if (contentType.isImage && mimeType != 'image/gif') {
-        try {
-          final result = await _compressionService.compressImage(
-            fileBytes,
-            mimeType,
-          );
-          if (result.wasCompressed) {
-            debugPrint(
-              '[Repository] Compressed: ${fileBytes.length} → ${result.compressedSize} bytes',
-            );
-            uploadBytes = result.bytes;
-            uploadMimeType = result.mimeType;
-          }
-        } on Exception catch (e) {
-          debugPrint('[Repository] ⚠ Compression failed, uploading original: $e');
-        }
-      }
-
-      // Encrypt the bytes before they leave the device - see the note in
-      // insertFile, including why initialize() has to come first.
-      await _ensureEncryptionInitialized();
-      final filesEncrypted = await _encryptionService.isEnabled();
-      if (filesEncrypted) {
-        uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
-        debugPrint('[Repository] 🔒 Encrypted ${uploadBytes.length} bytes for upload');
-      }
-
-      debugPrint('[Repository] ↑ Uploading to storage: $filename');
-
-      yield 0.3; // Starting upload
-
-      final uploadResult = await _storageService.uploadFile(
-        userId: userId,
-        clipboardId: storageId,
-        bytes: uploadBytes,
-        filename: filename,
-        mimeType: uploadMimeType,
-      );
-
-      yield 0.7; // Upload complete
-
-      // Insert to database with correct storage path (no placeholder, no UPDATE!)
-      debugPrint('[Repository] ↑ Inserting database record');
-
-      try {
-        await _client.from('clipboard').insert({
-          'user_id': userId,
-          'device_name': _sanitizeDeviceName(deviceName),
-          'device_type': _validateDeviceType(deviceType),
-          'target_device_type': targetDeviceTypes
-              ?.map(_validateDeviceType)
-              .toList(),
-          // See note above: filename, not a now-dead public URL.
-          'content': originalFilename ?? filename,
-          'content_type': contentType.value,
-          'mime_type': uploadMimeType,
-          'file_size_bytes': uploadBytes.length,
-          'storage_path': uploadResult.storagePath,
-          if (metadata.isNotEmpty) 'metadata': metadata,
-          'is_encrypted': filesEncrypted,
-        });
-
-        yield 0.9; // Database record created
-
-        debugPrint('[Repository] ✓ File uploaded successfully');
-        yield 1.0; // Done
-      } on Exception catch (e) {
-        // Clean up orphaned storage file if database insert fails
-        debugPrint(
-          '[Repository] ✗ Database insert failed, cleaning up storage: $e',
-        );
-        try {
-          await _storageService.deleteFile(uploadResult.storagePath);
-          debugPrint('[Repository] ✓ Cleaned up orphaned storage file');
-        } on Exception catch (deleteError) {
-          debugPrint('[Repository] ⚠ Failed to clean up storage: $deleteError');
-        }
-        rethrow;
-      }
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
-    } on SocketException {
-      throw NetworkException('Network error: Check your connection');
-    } on PostgrestException catch (e) {
-      debugPrint('[Repository] ✗ Database error: ${e.message}');
-      throw RepositoryException('Database error: ${e.message}');
-    } catch (e) {
-      debugPrint('[Repository] ✗ Failed to upload file: $e');
-      throw RepositoryException('Failed to upload file: $e');
+      _fail(e, 'insert file');
     }
   }
 
@@ -610,18 +412,7 @@ class ClipboardRepository implements IClipboardRepository {
     List<String>? targetDeviceTypes,
   }) async {
     try {
-      // Validate user authentication
-      final currentUserId = _client.auth.currentUser?.id;
-      if (currentUserId == null) {
-        throw SecurityException(
-          'User must be authenticated to insert rich text items',
-        );
-      }
-
-      // Defense in depth: ensure userId matches authenticated user
-      if (userId != currentUserId) {
-        throw SecurityException('Cannot insert rich text for another user');
-      }
+      _requireOwner(userId, 'rich text items');
 
       // Validate content
       final sanitizedContent = _sanitizeContent(content);
@@ -682,18 +473,8 @@ class ClipboardRepository implements IClipboardRepository {
         isEncrypted: isEncryptionEnabled,
         createdAt: DateTime.parse(response['created_at'] as String),
       );
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
-    } on EncryptionException {
-      rethrow;
-    } on PostgrestException catch (e) {
-      debugPrint('[Repository] ✗ Database error: ${e.message}');
-      throw RepositoryException('Database error: ${e.message}');
     } catch (e) {
-      debugPrint('[Repository] ✗ Failed to insert rich text: $e');
-      throw RepositoryException('Failed to insert rich text: $e');
+      _fail(e, 'insert rich text');
     }
   }
 
@@ -712,7 +493,9 @@ class ClipboardRepository implements IClipboardRepository {
     // same image from R2 on every rebuild and bills egress for it.
     final cached = MediaMemoryCache.instance.get(storagePath);
     if (cached != null) {
-      debugPrint('[Repository] ⚡ Cache hit: $storagePath (${cached.length} bytes)');
+      debugPrint(
+        '[Repository] ⚡ Cache hit: $storagePath (${cached.length} bytes)',
+      );
       return cached;
     }
 
@@ -836,39 +619,15 @@ class ClipboardRepository implements IClipboardRepository {
       // Lightweight local search - case-insensitive substring match
       final lowerQuery = query.toLowerCase();
       final results = allItems
-          .where((item) {
-            // Search in content
-            if (item.content.toLowerCase().contains(lowerQuery)) {
-              return true;
-            }
-
-            // Search in device name if present
-            if (item.deviceName != null &&
-                item.deviceName!.toLowerCase().contains(lowerQuery)) {
-              return true;
-            }
-
-            // Search in mime type if present (e.g., "image/png")
-            if (item.mimeType != null &&
-                item.mimeType!.toLowerCase().contains(lowerQuery)) {
-              return true;
-            }
-
-            return false;
-          })
+          .where((item) => item.matchesQuery(lowerQuery))
           .take(safeLimit)
           .toList();
 
       debugPrint('[Repository] ✓ Found ${results.length} results locally');
 
       return results;
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
     } catch (e) {
-      debugPrint('[Repository] ✗ Failed to search history: $e');
-      throw RepositoryException('Failed to search history: $e');
+      _fail(e, 'search history');
     }
   }
 
@@ -896,12 +655,44 @@ class ClipboardRepository implements IClipboardRepository {
           .limit(safeLimit)
           .map(_parseClipboardItems)
           .asyncMap(_decryptItems); // Decrypt items asynchronously
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
     } catch (e) {
-      throw RepositoryException('Failed to watch clipboard history: $e');
+      _fail(e, 'watch clipboard history');
+    }
+  }
+
+  @override
+  @override
+  Future<ClipboardItem?> getById(String id) async {
+    _validateId(id);
+
+    try {
+      final userId = _client.auth.currentUser?.id;
+      if (userId == null) {
+        throw SecurityException(
+          'User must be authenticated to get a clipboard item',
+        );
+      }
+
+      // One row, one decrypt. The callers that want a specific clip - a
+      // notification tap, a deep link - used to fetch a page of history and
+      // scan it, which meant up to 100 rows off the network and 100 AES
+      // decrypts to serve a single clip on a latency-critical path.
+      final response = await _client
+          .from('clipboard')
+          .select()
+          .eq('id', id)
+          .eq('user_id', userId) // Explicit filter for defense in depth
+          .maybeSingle();
+
+      if (response == null) return null;
+
+      final items = await _parseClipboardItemsAsync([response]);
+      if (items.isEmpty) return null;
+
+      final decrypted = await _decryptItems(items);
+      return decrypted.isEmpty ? null : decrypted.first;
+    } catch (e) {
+      _fail(e, 'get clipboard item');
     }
   }
 
@@ -962,14 +753,8 @@ class ClipboardRepository implements IClipboardRepository {
       }
 
       return decryptedItems;
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
-    } on PostgrestException catch (e) {
-      throw RepositoryException('Database error: ${e.message}');
     } catch (e) {
-      throw RepositoryException('Failed to get clipboard history: $e');
+      _fail(e, 'get clipboard history');
     }
   }
 
@@ -1070,14 +855,8 @@ class ClipboardRepository implements IClipboardRepository {
           // Don't throw - cache cleanup is best effort
         }
       }
-    } on SecurityException {
-      rethrow;
-    } on ValidationException {
-      rethrow;
-    } on PostgrestException catch (e) {
-      throw RepositoryException('Database error: ${e.message}');
     } catch (e) {
-      throw RepositoryException('Failed to delete clipboard item: $e');
+      _fail(e, 'delete clipboard item');
     }
   }
 
@@ -1118,13 +897,64 @@ class ClipboardRepository implements IClipboardRepository {
           'Cleaned up ${itemsToDelete.length} old clipboard items in one batch',
         );
       }
-    } on SecurityException {
-      rethrow;
-    } on PostgrestException catch (e) {
-      throw RepositoryException('Database error during cleanup: ${e.message}');
     } catch (e) {
-      throw RepositoryException('Failed to cleanup old items: $e');
+      _fail(e, 'cleanup old items');
     }
+  }
+
+  /// The authenticated user, verified to be [claimedUserId].
+  ///
+  /// Every insert path opened with its own copy of these two checks. Shared so
+  /// the defense-in-depth ownership test cannot be forgotten on a new one.
+  String _requireOwner(String claimedUserId, String noun) {
+    final currentUserId = _client.auth.currentUser?.id;
+    if (currentUserId == null) {
+      throw SecurityException('User must be authenticated to insert $noun');
+    }
+    if (claimedUserId != currentUserId) {
+      throw SecurityException('Cannot insert $noun for another user');
+    }
+    return currentUserId;
+  }
+
+  /// The single error boundary for every public repository method.
+  ///
+  /// Each method used to end with its own copy of this ladder, and the copies
+  /// had already drifted: only the upload path mapped [SocketException], so an
+  /// identical network failure surfaced as a [NetworkException] on one route
+  /// and a stringified [RepositoryException] on another, and only `insert`
+  /// decoded the Postgres constraint codes. One place to add a new error class.
+  Never _fail(Object error, String operation) {
+    // Domain exceptions already say exactly what went wrong.
+    if (error is Exception &&
+        (error is SecurityException ||
+            error is ValidationException ||
+            error is EncryptionException ||
+            error is NetworkException)) {
+      throw error;
+    }
+
+    if (error is PostgrestException) {
+      // CHECK constraint violation - the content failed a database rule.
+      if (error.code == '23514') {
+        throw ValidationException(
+          'Content validation failed: ${error.message}',
+        );
+      }
+      // Foreign key violation - the user_id does not exist.
+      if (error.code == '23503') {
+        throw SecurityException('Invalid user ID');
+      }
+      debugPrint('[Repository] Database error: ${error.message}');
+      throw RepositoryException('Database error: ${error.message}');
+    }
+
+    if (error is SocketException) {
+      throw NetworkException('Network error: Check your connection');
+    }
+
+    debugPrint('[Repository] Failed to $operation: $error');
+    throw RepositoryException('Failed to $operation: $error');
   }
 
   // ========== Private validation and sanitization methods ==========
@@ -1315,9 +1145,7 @@ class ClipboardRepository implements IClipboardRepository {
         // Object, not Exception: a bad cast throws TypeError, which is an
         // Error - and that is the most likely way a row fails to parse.
         skipped++;
-        debugPrint(
-          '[Repository] ⚠ Skipping unparseable row ${json['id']}: $e',
-        );
+        debugPrint('[Repository] ⚠ Skipping unparseable row ${json['id']}: $e');
       }
     }
 
@@ -1486,44 +1314,27 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Gets current device name
+  /// Resolved once. The hostname does not change while the app runs, and this
+  /// is read on every send and on every realtime callback.
+  static String? _cachedDeviceName;
+  static bool _deviceNameResolved = false;
+
   static String? getCurrentDeviceName() {
+    if (_deviceNameResolved) return _cachedDeviceName;
+
+    _deviceNameResolved = true;
     try {
       // Try to get hostname (available on desktop platforms)
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
         final hostname = Platform.localHostname;
-        return hostname.isNotEmpty ? hostname : null;
+        _cachedDeviceName = hostname.isNotEmpty ? hostname : null;
       }
-      // For mobile, return null - can be set by user in settings
-      return null;
+      // For mobile, stays null - can be set by user in settings
     } on Exception {
       // Handle any exceptions when accessing hostname
-      return null;
+      _cachedDeviceName = null;
     }
-  }
-
-  /// Get file extension from MIME type
-  String _getExtension(String mimeType) {
-    const mimeToExt = {
-      // Images
-      'image/png': 'png',
-      'image/jpeg': 'jpg',
-      'image/gif': 'gif',
-      // Documents
-      'application/pdf': 'pdf',
-      'application/msword': 'doc',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-          'docx',
-      'text/plain': 'txt',
-      // Archives
-      'application/zip': 'zip',
-      'application/x-tar': 'tar',
-      'application/gzip': 'gz',
-      // Media
-      'video/mp4': 'mp4',
-      'audio/mpeg': 'mp3',
-      'audio/wav': 'wav',
-    };
-    return mimeToExt[mimeType] ?? 'bin';
+    return _cachedDeviceName;
   }
 }
 

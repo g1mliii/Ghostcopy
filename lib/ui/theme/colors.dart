@@ -60,7 +60,6 @@ class GhostColors {
   static const errorLight = Color(0xFFFF8A80); // Lighter error text
 
   // Glassmorphism
-  static const glassBackground = Color(0x1AFFFFFF); // 10% white
   static const glassBorder = Color(0x33FFFFFF); // 20% white
 
   // Cached primary alpha variants (avoid creating new Color objects per build)

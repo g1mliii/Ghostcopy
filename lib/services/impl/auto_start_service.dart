@@ -50,7 +50,9 @@ class AutoStartService implements IAutoStartService {
 
   void _ensureInitialized() {
     if (!_initialized) {
-      throw StateError('AutoStartService not initialized. Call initialize() first.');
+      throw StateError(
+        'AutoStartService not initialized. Call initialize() first.',
+      );
     }
   }
 

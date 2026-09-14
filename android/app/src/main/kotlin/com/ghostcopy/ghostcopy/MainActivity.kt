@@ -21,6 +21,14 @@ class MainActivity : FlutterActivity() {
     private companion object {
         private const val TAG = "MainActivity"
         private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
+
+        /**
+         * Largest shared payload accepted, in bytes.
+         *
+         * Mirrors ClipboardLimits.maxFileBytes on the Dart side and the CHECK
+         * constraint in supabase/schema.sql. Change all three together.
+         */
+        private const val MAX_SHARE_BYTES = 10 * 1024 * 1024
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
         private const val WIDGET_CHANNEL = "com.ghostcopy/widget"
 
@@ -155,26 +163,43 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
-        // A tapped push notification launches this activity normally - the
-        // backend no longer sets an FCM clickAction, so nothing routes to
-        // COPY_ACTION and tapping used to just open the app and stop there.
+        // A tapped push notification can land here rather than on CopyActivity:
+        // the backend does set an FCM clickAction of COPY_ACTION
+        // (supabase/functions/send-clipboard-notification/index.ts), but that
+        // routing does not always apply - image and file clips are never staged
+        // for CopyActivity, and other platforms carry no clickAction at all.
         // FCM delivers the message's `data` entries as intent extras, so the
         // clip id arrives here; fetch and copy it through the existing
-        // RLS-scoped path.
+        // RLS-scoped path, once handleFcmLaunchIntent has established that a
+        // push really named it.
         handleFcmLaunchIntent(intent)
     }
 
     /**
      * Copy the clip a push notification refers to, if this launch came from one.
      *
-     * Only `clipboard_id` is trusted: it is resolved against Supabase under RLS
-     * and can therefore only ever return a row belonging to the signed-in user.
      * Any content in the extras is ignored - the push deliberately carries none.
+     *
+     * `clipboard_id` is resolved against Supabase under RLS, so it can only ever
+     * name a row belonging to the signed-in user. That is not by itself enough:
+     * this activity is exported (it is the LAUNCHER), so any installed app can
+     * send an explicit intent with an id of its choosing and thereby pick WHICH
+     * of the user's clips is decrypted onto the clipboard and WHEN - enough to
+     * plant a stale wallet address before a paste, or to stage a clip and read
+     * it back once the user's Back press hands focus to the caller. So the id is
+     * accepted only when a push actually named it; see [PushRegistry].
      */
     private fun handleFcmLaunchIntent(launchIntent: Intent?) {
         val extras = launchIntent?.extras ?: return
         val clipboardId = extras.getString("clipboard_id") ?: return
         if (clipboardId.isEmpty() || clipboardId == lastHandledFcmClipboardId) return
+
+        if (!PushRegistry.consume(this, clipboardId)) {
+            Log.w(TAG, "⛔ Ignoring clipboard_id with no matching push")
+            // Drop it so a resume loop does not retry the same rejected id.
+            launchIntent.removeExtra("clipboard_id")
+            return
+        }
 
         lastHandledFcmClipboardId = clipboardId
         val contentType = extras.getString("content_type") ?: "text"
@@ -306,46 +331,64 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * Read a shared URI, enforcing the size ceiling and reporting failures.
+     *
+     * Both share paths need exactly this: a declared-size pre-check, a bounded
+     * read, an empty check, and a toast plus finish() on each failure. They
+     * carried their own copies, differing only in the noun in the messages.
+     *
+     * Returns null when the share cannot proceed, having already told the user
+     * and closed the activity.
+     */
+    private fun readSharedBytes(uri: Uri, noun: String): ByteArray? {
+        // Size first, then a bounded read - never readBytes() on untrusted
+        // content of unknown length.
+        val declaredSize = contentSize(uri)
+        if (declaredSize != null && declaredSize > MAX_SHARE_BYTES) {
+            Log.e(TAG, "❌ $noun too large: $declaredSize bytes (max: $MAX_SHARE_BYTES)")
+            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
+            return null
+        }
+
+        val bytes = readBounded(uri, MAX_SHARE_BYTES)
+        if (bytes == null) {
+            Log.e(TAG, "❌ $noun exceeded $MAX_SHARE_BYTES bytes while reading")
+            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
+            return null
+        }
+
+        if (bytes.isEmpty()) {
+            Log.e(TAG, "❌ Failed to read $noun from URI: $uri")
+            failShare("Failed to read ${noun.lowercase()}")
+            return null
+        }
+
+        return bytes
+    }
+
+    /** Tell the user the share failed, then close. */
+    private fun failShare(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        finish()
+    }
+
+    /** The channel Flutter listens on for shared payloads. */
+    private fun shareChannel() = MethodChannel(
+        flutterEngine!!.dartExecutor.binaryMessenger,
+        SHARE_CHANNEL
+    )
+
     private fun saveSharedImageFast(imageUri: Uri) {
         try {
-            val maxSize = 10 * 1024 * 1024 // 10MB
+            val bytes = readSharedBytes(imageUri, "Image") ?: return
 
-            // Size first, then a bounded read - never readBytes() on untrusted
-            // content of unknown length.
-            val declaredSize = contentSize(imageUri)
-            if (declaredSize != null && declaredSize > maxSize) {
-                Log.e(TAG, "❌ Image too large: $declaredSize bytes (max: $maxSize)")
-                Toast.makeText(this, "Image too large (max 10MB)", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            val bytes = readBounded(imageUri, maxSize)
-            if (bytes == null) {
-                Log.e(TAG, "❌ Image exceeded $maxSize bytes while reading")
-                Toast.makeText(this, "Image too large (max 10MB)", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            if (bytes.isEmpty()) {
-                Log.e(TAG, "❌ Failed to read image from URI: $imageUri")
-                Toast.makeText(this, "Failed to read image", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            // Get MIME type
             val mimeType = contentResolver.getType(imageUri) ?: "image/*"
 
-            val channel = MethodChannel(
-                flutterEngine!!.dartExecutor.binaryMessenger,
-                SHARE_CHANNEL
-            )
-
-            // Pass raw bytes directly to Flutter (MethodChannel supports ByteArray → Uint8List)
-            // No base64 encoding needed - saves 33% memory overhead!
-            channel.invokeMethod("handleShareImage", mapOf(
+            // Pass raw bytes directly to Flutter (MethodChannel supports
+            // ByteArray -> Uint8List). No base64 encoding needed - saves 33%
+            // memory overhead.
+            shareChannel().invokeMethod("handleShareImage", mapOf(
                 "imageBytes" to bytes,
                 "mimeType" to mimeType
             ))
@@ -355,42 +398,17 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "✅ Shared image: $mimeType, ${bytes.size / 1024}KB")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error reading shared image: ${e.message}", e)
-            Toast.makeText(this, "Failed to share image", Toast.LENGTH_SHORT).show()
-            finish()
+            failShare("Failed to share image")
         }
     }
 
     private fun saveSharedFileFast(fileUri: Uri) {
         try {
-            val maxSize = 10 * 1024 * 1024 // 10MB
+            val bytes = readSharedBytes(fileUri, "File") ?: return
 
-            val declaredSize = contentSize(fileUri)
-            if (declaredSize != null && declaredSize > maxSize) {
-                Log.e(TAG, "❌ File too large: $declaredSize bytes (max: $maxSize)")
-                Toast.makeText(this, "File too large (max 10MB)", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            val bytes = readBounded(fileUri, maxSize)
-            if (bytes == null) {
-                Log.e(TAG, "❌ File exceeded $maxSize bytes while reading")
-                Toast.makeText(this, "File too large (max 10MB)", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            if (bytes.isEmpty()) {
-                Log.e(TAG, "❌ Failed to read file from URI: $fileUri")
-                Toast.makeText(this, "Failed to read file", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            // Get MIME type
             val mimeType = contentResolver.getType(fileUri) ?: "application/octet-stream"
 
-            // Get original filename from URI
+            // Get original filename from URI.
             // getColumnIndex returns -1 for a provider that does not expose
             // DISPLAY_NAME, and moveToFirst is false for an empty cursor -
             // getString() then threw and the whole share failed with "Failed to
@@ -404,13 +422,7 @@ class MainActivity : FlutterActivity() {
                 }
             } ?: "file"
 
-            val channel = MethodChannel(
-                flutterEngine!!.dartExecutor.binaryMessenger,
-                SHARE_CHANNEL
-            )
-
-            // Pass raw bytes directly to Flutter
-            channel.invokeMethod("handleShareFile", mapOf(
+            shareChannel().invokeMethod("handleShareFile", mapOf(
                 "fileBytes" to bytes,
                 "mimeType" to mimeType,
                 "filename" to filename
@@ -421,8 +433,7 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "✅ Shared file: $filename ($mimeType), ${bytes.size / 1024}KB")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error reading shared file: ${e.message}", e)
-            Toast.makeText(this, "Failed to share file", Toast.LENGTH_SHORT).show()
-            finish()
+            failShare("Failed to share file")
         }
     }
 
@@ -439,22 +450,33 @@ class MainActivity : FlutterActivity() {
      * in-app caller, CopyActivity, forwards *just* clipboard_id for the
      * fetch-from-database path, so nothing legitimate needs the content extra.
      *
-     * clipboard_id is safe to accept: it is resolved through the Flutter method
-     * channel against Supabase under RLS, so it can only ever return a row
-     * belonging to the signed-in user. The worst an attacker achieves is making
-     * the user re-copy one of their own clips.
+     * clipboard_id is resolved through the Flutter method channel against
+     * Supabase under RLS, so it can only ever return a row belonging to the
+     * signed-in user. That bounds the damage but does not remove it: choosing
+     * WHICH of the user's own clips is copied, and WHEN, is itself the attack -
+     * re-copying a stale wallet address just before the user pastes, or staging
+     * a clip to read back once focus returns to the caller. Hence the token
+     * check below rather than the `from_notification` boolean it replaced,
+     * which any caller could set.
      */
     private fun handleCopyAction(intent: Intent) {
+        // from_notification used to be the only gate, and it is an ordinary
+        // boolean extra - any app could set it to true. CopyActivity runs in
+        // this same process, so it can attach the real token instead.
+        if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
+            Log.w(TAG, "⛔ Ignoring COPY_ACTION from an untrusted caller")
+            return
+        }
+
         val clipboardId = intent.getStringExtra("clipboard_id") ?: ""
         val contentType = intent.getStringExtra("content_type") ?: "text"
         val deviceType = intent.getStringExtra("device_type") ?: "Another device"
-        val fromNotification = intent.getBooleanExtra("from_notification", false)
 
         if (intent.hasExtra("clipboard_content")) {
             Log.w(TAG, "⚠️ Ignoring clipboard_content on COPY_ACTION - untrusted source")
         }
 
-        if (clipboardId.isNotEmpty() && fromNotification) {
+        if (clipboardId.isNotEmpty()) {
             // Fetch content from the database using clipboard_id (RLS-scoped).
             Log.d(TAG, "📥 Fetching clipboard item $clipboardId from database")
             fetchAndCopyClipboardItem(clipboardId, contentType, deviceType)

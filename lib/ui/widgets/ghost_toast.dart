@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../theme/animations.dart';
 
 import '../theme/colors.dart';
 
@@ -117,19 +118,27 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
     super.initState();
 
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: GhostAnimations.slow,
       vsync: this,
     );
 
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: GhostAnimations.entranceCurve,
+      ),
+    );
 
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1), // Slide up from bottom
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _slideAnimation =
+        Tween<Offset>(
+          begin: const Offset(0, 1), // Slide up from bottom
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: GhostAnimations.defaultCurve,
+          ),
+        );
 
     // Start entrance animation
     _controller.forward();

@@ -22,7 +22,9 @@ class SystemPowerService implements ISystemPowerService {
   @override
   Future<void> initialize() async {
     if (!_isDesktop()) {
-      debugPrint('[SystemPower] Skipping initialization (not desktop platform)');
+      debugPrint(
+        '[SystemPower] Skipping initialization (not desktop platform)',
+      );
       return;
     }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../services/game_mode_service.dart';
 import '../../services/window_service.dart';
+import '../theme/colors.dart';
 
 /// Custom styled tray menu window matching app design
 class TrayMenuWindow extends StatelessWidget {
@@ -58,7 +59,7 @@ class TrayMenuWindow extends StatelessWidget {
     return Container(
       width: 200,
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1D), // Dark surface from theme
+        color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
@@ -97,7 +98,7 @@ class TrayMenuWindow extends StatelessWidget {
                     label: 'Game Mode',
                     isChecked: isActive,
                     isToggle: true,
-                    color: isActive ? const Color(0xFF5865F2) : null,
+                    color: isActive ? GhostColors.primary : null,
                     onTap: gameModeService
                         .toggle, // Tearoff - keeps menu open so user sees toggle
                   );
@@ -141,7 +142,7 @@ class TrayMenuWindow extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        hoverColor: const Color(0xFF5865F2).withValues(alpha: 0.1),
+        hoverColor: GhostColors.primaryAlpha10,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -167,7 +168,7 @@ class TrayMenuWindow extends StatelessWidget {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
                     color: isChecked
-                        ? const Color(0xFF5865F2)
+                        ? GhostColors.primary
                         : Colors.white.withValues(alpha: 0.2),
                   ),
                   child: Align(
@@ -186,11 +187,7 @@ class TrayMenuWindow extends StatelessWidget {
                   ),
                 )
               else if (isChecked)
-                const Icon(
-                  Icons.check,
-                  size: 14,
-                  color: Color(0xFF5865F2), // Primary accent
-                ),
+                const Icon(Icons.check, size: 14, color: GhostColors.primary),
             ],
           ),
         ),

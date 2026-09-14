@@ -108,7 +108,9 @@ class MediaDiskCache {
   Future<File?> _fileFor(String storagePath) async {
     final dir = await _directory();
     if (dir == null) return null;
-    return File('${dir.path}${Platform.pathSeparator}${_fileName(storagePath)}');
+    return File(
+      '${dir.path}${Platform.pathSeparator}${_fileName(storagePath)}',
+    );
   }
 
   /// Raw (still-encrypted) bytes for [storagePath], or null on a miss.
@@ -140,6 +142,10 @@ class MediaDiskCache {
     }
   }
 
+  /// Running total of bytes on disk, or null when it has not been measured
+  /// yet. Kept so [put] does not have to scan the directory each time.
+  int? _trackedBytes;
+
   /// Store the raw bytes exactly as downloaded.
   Future<void> put(String storagePath, Uint8List bytes) async {
     if (bytes.isEmpty || bytes.length > maxEntryBytes) return;
@@ -148,13 +154,23 @@ class MediaDiskCache {
       final file = await _fileFor(storagePath);
       if (file == null) return;
 
+      // Replacing an existing entry, so its old size stops counting.
+      final previousSize = file.existsSync() ? file.lengthSync() : 0;
+
       // Write to a temporary name and rename into place, so a crash or a
       // concurrent reader never observes a half-written file.
       final tmp = File('${file.path}.tmp');
       await tmp.writeAsBytes(bytes, flush: true);
       await tmp.rename(file.path);
 
-      await _evictToFit();
+      // Eviction used to run on every single write, and each run listed the
+      // whole directory and stat'd every file in it - twice. Tracking the
+      // total means the scan happens only when the cache is actually full.
+      final total =
+          (_trackedBytes ?? await currentBytes()) - previousSize + bytes.length;
+      _trackedBytes = total;
+
+      if (total > maxBytes) await _evictToFit();
     } on Exception catch (e) {
       debugPrint('[MediaDiskCache] Write failed for $storagePath: $e');
     }
@@ -201,6 +217,7 @@ class MediaDiskCache {
       }
 
       if (removed > 0) {
+        _trackedBytes = null; // Re-measure on the next write.
         debugPrint('[MediaDiskCache] Pruned $removed expired object(s)');
       }
     } on Exception catch (e) {
@@ -211,7 +228,8 @@ class MediaDiskCache {
   /// Remove one object, e.g. when its clip is deleted.
   Future<void> remove(String storagePath) async {
     final file = await _fileFor(storagePath);
-    if (file != null) await _quietDelete(file);
+    if (file == null) return;
+    if (await _quietDelete(file)) _trackedBytes = null;
   }
 
   /// Wipe everything. Used on sign-out: the cache holds another account's
@@ -223,6 +241,7 @@ class MediaDiskCache {
       await for (final entity in dir.list()) {
         if (entity is File) await _quietDelete(entity);
       }
+      _trackedBytes = 0;
       debugPrint('[MediaDiskCache] Cleared');
     } on Exception catch (e) {
       debugPrint('[MediaDiskCache] Clear failed: $e');
@@ -246,15 +265,21 @@ class MediaDiskCache {
     if (dir == null || !dir.existsSync()) return;
 
     final files = <File>[];
+    final sizes = <File, int>{};
     var total = 0;
     await for (final entity in dir.list()) {
       if (entity is! File) continue;
       if (entity.path.endsWith('.tmp')) continue;
       files.add(entity);
-      total += entity.lengthSync();
+      final size = entity.lengthSync();
+      sizes[entity] = size;
+      total += size;
     }
 
-    if (total <= maxBytes) return;
+    if (total <= maxBytes) {
+      _trackedBytes = total;
+      return;
+    }
 
     final stats = <File, DateTime>{};
     for (final f in files) {
@@ -269,9 +294,9 @@ class MediaDiskCache {
 
     for (final f in files) {
       if (total <= maxBytes) break;
-      final size = f.lengthSync();
-      if (await _quietDelete(f)) total -= size;
+      if (await _quietDelete(f)) total -= sizes[f]!;
     }
+    _trackedBytes = total;
     debugPrint('[MediaDiskCache] Evicted down to $total bytes');
   }
 

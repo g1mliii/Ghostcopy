@@ -8,11 +8,13 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/transformer_service.dart';
+import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -83,13 +85,12 @@ class MobileMainScreen extends StatefulWidget {
 }
 
 class _MobileMainScreenState extends State<MobileMainScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, CoalescedRebuild {
   late final MobileMainViewModel _viewModel;
   late final ITransformerService _transformerService =
       locator<ITransformerService>();
   late final IClipboardRepository _clipboardRepository =
       locator<IClipboardRepository>();
-  bool _isRebuildScheduled = false;
   final FocusNode _pasteFocusNode = FocusNode();
   bool _composerFocused = false;
 
@@ -97,13 +98,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   final TextEditingController _pasteController = TextEditingController();
   final TextEditingController _historySearchController =
       TextEditingController();
-  final ValueNotifier<String?> _sendError = ValueNotifier(null);
 
   /// Whether the composer has text, for the toolbar's status line alone.
   ///
-  /// Same reason as [_sendError]: a keystroke should repaint one label, not the
-  /// whole screen. Kept in sync from the field's onChanged and from anything
-  /// that sets the text programmatically (auto-paste, send, clear).
+  /// A keystroke should repaint one label, not the whole screen. Kept in sync
+  /// from the field's onChanged and from anything that sets the text
+  /// programmatically (auto-paste, send, clear).
   final ValueNotifier<bool> _composerHasText = ValueNotifier(false);
 
   // Share intent subscription
@@ -232,25 +232,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
-  void _onViewModelChanged() {
-    // Sync send error from ViewModel to ValueNotifier for fine-grained rebuilds
-    if (_sendError.value != _viewModel.sendErrorMessage) {
-      _sendError.value = _viewModel.sendErrorMessage;
-    }
-
-    _scheduleRebuild();
-  }
-
-  void _scheduleRebuild() {
-    if (!mounted || _isRebuildScheduled) return;
-
-    _isRebuildScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _isRebuildScheduled = false;
-      if (!mounted) return;
-      setState(() {});
-    });
-  }
+  void _onViewModelChanged() => scheduleRebuild();
 
   @override
   void dispose() {
@@ -265,7 +247,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       ..removeListener(_syncComposerHasText)
       ..dispose();
     _historySearchController.dispose();
-    _sendError.dispose();
     _composerHasText.dispose();
     _intentDataStreamSubscription?.cancel();
     _linkSubscription?.cancel();
@@ -551,6 +532,21 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
+  /// Outcome of a share handed to us by the OS.
+  ///
+  /// These were three identical pairs of inline closures, one per share type,
+  /// each rebuilding the same SnackBar - and they used SnackBar while the rest
+  /// of this screen uses the app's own toast.
+  void _shareSucceeded(String message) {
+    if (!mounted) return;
+    showGhostToast(context, message, type: GhostToastType.success);
+  }
+
+  void _shareFailed(String message) {
+    if (!mounted) return;
+    showGhostToast(context, message, type: GhostToastType.error);
+  }
+
   void _setupMethodChannels() {
     _shareChannel.setMethodCallHandler((call) async {
       switch (call.method) {
@@ -567,28 +563,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 _viewModel.saveSharedContent(
                   content,
                   selectedDeviceTypes,
-                  onSuccess: (msg) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(msg),
-                          backgroundColor: GhostColors.success,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  onError: (msg) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(msg),
-                          backgroundColor: Colors.red.shade400,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
+                  onSuccess: _shareSucceeded,
+                  onError: _shareFailed,
                 ),
               );
             }
@@ -603,7 +579,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           final mimeType = call.arguments['mimeType'] as String?;
 
           if (imageBytes != null && imageBytes.isNotEmpty) {
-            if (imageBytes.length > 10 * 1024 * 1024) {
+            if (imageBytes.length > ClipboardLimits.maxFileBytes) {
               debugPrint(
                 '[MobileMain] Image too large: ${imageBytes.length} bytes',
               );
@@ -628,28 +604,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   imageBytes,
                   mimeType!,
                   selectedDeviceTypes,
-                  onSuccess: (msg) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(msg),
-                          backgroundColor: GhostColors.success,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  onError: (msg) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(msg),
-                          backgroundColor: Colors.red.shade400,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
+                  onSuccess: _shareSucceeded,
+                  onError: _shareFailed,
                 ),
               );
             }
@@ -666,7 +622,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           final filename = call.arguments['filename'] as String?;
 
           if (fileBytes != null && fileBytes.isNotEmpty && filename != null) {
-            if (fileBytes.length > 10 * 1024 * 1024) {
+            if (fileBytes.length > ClipboardLimits.maxFileBytes) {
               debugPrint(
                 '[MobileMain] File too large: ${fileBytes.length} bytes',
               );
@@ -692,28 +648,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   mimeType!,
                   filename,
                   selectedDeviceTypes,
-                  onSuccess: (msg) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(msg),
-                          backgroundColor: GhostColors.success,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  onError: (msg) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(msg),
-                          backgroundColor: Colors.red.shade400,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
+                  onSuccess: _shareSucceeded,
+                  onError: _shareFailed,
                 ),
               );
             }
@@ -1443,6 +1379,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// only `border` left focusedBorder falling back to the theme's 2px primary
   /// outline, which lit the whole box up on focus.
   Widget _buildPasteArea() {
+    final sendError = _viewModel.sendErrorMessage;
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
         (_viewModel.clipboardContent?.hasImage ?? false);
@@ -1500,7 +1437,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 focusedErrorBorder: InputBorder.none,
               ),
               onChanged: (value) {
-                if (_sendError.value != null) {
+                if (_viewModel.sendErrorMessage != null) {
                   _viewModel.clearSendError();
                 }
                 // Nothing else needed here: _syncComposerHasText is driven by
@@ -1515,39 +1452,34 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ),
             const Divider(height: 1, color: GhostColors.border),
             _buildComposerToolbar(hasAttachment: hasAttachment),
-            ValueListenableBuilder<String?>(
-              valueListenable: _sendError,
-              builder: (context, error, _) {
-                if (error == null) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    GhostSpacing.gutter,
-                    0,
-                    GhostSpacing.gutter,
-                    GhostSpacing.sectionTight,
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.error_outline_rounded,
-                        size: 15,
-                        color: GhostColors.errorLight,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          error,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: GhostColors.errorLight,
-                          ),
+            if (sendError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  GhostSpacing.gutter,
+                  0,
+                  GhostSpacing.gutter,
+                  GhostSpacing.sectionTight,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      size: 15,
+                      color: GhostColors.errorLight,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        sendError,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: GhostColors.errorLight,
                         ),
                       ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -2220,6 +2152,9 @@ class _HistoryRow extends StatefulWidget {
 }
 
 class _HistoryRowState extends State<_HistoryRow> {
+  // Compiled once, not per row per rebuild.
+  static final _whitespaceRun = RegExp(r'\s+');
+
   ContentDetectionResult? _detectionResult;
 
   @override
@@ -2264,7 +2199,12 @@ class _HistoryRowState extends State<_HistoryRow> {
     }
     // Collapse whitespace so a multi-line clip does not waste both lines on
     // indentation.
-    return item.content.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // Only two lines are ever shown, so collapse the head rather than
+    // rewriting up to 100KB of content on every build.
+    final head = item.content.length > 300
+        ? item.content.substring(0, 300)
+        : item.content;
+    return head.replaceAll(_whitespaceRun, ' ').trim();
   }
 
   @override

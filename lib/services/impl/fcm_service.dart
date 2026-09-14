@@ -31,12 +31,16 @@ class FcmService implements IFcmService {
       debugPrint('[FcmService] Starting initialization...');
 
       // Listen for token refresh events (store subscription for cleanup)
-      _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+      _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((
+        newToken,
+      ) {
         // Length only. An FCM token is a credential for pushing to this
         // device, so it does not belong in logs - and substring(0, 20) threw
         // RangeError (an Error, which `on Exception` below would not catch) on
         // anything shorter.
-        debugPrint('[FcmService] 🔄 Token refreshed (${newToken.length} chars)');
+        debugPrint(
+          '[FcmService] 🔄 Token refreshed (${newToken.length} chars)',
+        );
         _tokenRefreshController.add(newToken);
       });
 
@@ -83,7 +87,8 @@ class FcmService implements IFcmService {
     try {
       final settings = await _messaging.requestPermission();
 
-      final granted = settings.authorizationStatus == AuthorizationStatus.authorized ||
+      final granted =
+          settings.authorizationStatus == AuthorizationStatus.authorized ||
           settings.authorizationStatus == AuthorizationStatus.provisional;
 
       if (granted) {

@@ -12,35 +12,26 @@ import '../encryption_service.dart';
 import '../passphrase_sync_service.dart';
 import 'passphrase_sync_service.dart';
 
-/// Parameters for background encryption
-class _EncryptParams {
-  const _EncryptParams({required this.plaintext, required this.keyBytes});
+/// Payload for a crypto operation running on a background isolate.
+///
+/// `compute` takes a single argument, which is the only reason these exist.
+/// There were four of them - encrypt, decrypt, encrypt-bytes, decrypt-bytes -
+/// structurally identical in pairs and differing only in what the field
+/// happened to be called.
+class _StringCryptoParams {
+  const _StringCryptoParams({required this.data, required this.keyBytes});
 
-  final String plaintext;
+  /// Plaintext when encrypting, `iv:ciphertext` when decrypting.
+  final String data;
   final Uint8List keyBytes;
 }
 
-/// Parameters for background byte encryption (files and images)
-class _EncryptBytesParams {
-  const _EncryptBytesParams({required this.plain, required this.keyBytes});
+/// The byte-payload counterpart of [_StringCryptoParams], for files and images.
+class _BytesCryptoParams {
+  const _BytesCryptoParams({required this.data, required this.keyBytes});
 
-  final Uint8List plain;
-  final Uint8List keyBytes;
-}
-
-/// Parameters for background byte decryption (files and images)
-class _DecryptBytesParams {
-  const _DecryptBytesParams({required this.cipher, required this.keyBytes});
-
-  final Uint8List cipher;
-  final Uint8List keyBytes;
-}
-
-/// Parameters for background decryption
-class _DecryptParams {
-  const _DecryptParams({required this.ciphertext, required this.keyBytes});
-
-  final String ciphertext;
+  /// Plain bytes when encrypting, `iv + ciphertext` when decrypting.
+  final Uint8List data;
   final Uint8List keyBytes;
 }
 
@@ -456,14 +447,14 @@ class EncryptionService implements IEncryptionService {
       // For small content (<5KB), encrypt directly to avoid isolate overhead
       if (plaintext.length < 5000) {
         return _encryptSync(
-          _EncryptParams(plaintext: plaintext, keyBytes: _keyBytes!),
+          _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
         );
       }
 
       // For larger content, run in background isolate to prevent UI blocking
       return await compute(
         _encryptSync,
-        _EncryptParams(plaintext: plaintext, keyBytes: _keyBytes!),
+        _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
       );
     } on Exception catch (e) {
       debugPrint('Encryption failed: $e');
@@ -485,7 +476,7 @@ class EncryptionService implements IEncryptionService {
     // the tray-mode event loop responsive.
     return compute(
       _encryptBytesSync,
-      _EncryptBytesParams(plain: plain, keyBytes: key),
+      _BytesCryptoParams(data: plain, keyBytes: key),
     );
   }
 
@@ -499,7 +490,7 @@ class EncryptionService implements IEncryptionService {
 
     return compute(
       _decryptBytesSync,
-      _DecryptBytesParams(cipher: cipher, keyBytes: key),
+      _BytesCryptoParams(data: cipher, keyBytes: key),
     );
   }
 
@@ -511,34 +502,37 @@ class EncryptionService implements IEncryptionService {
   /// a 16-byte GCM tag - a flat 32 bytes - so a 10MB file stays a 10MB file.
   ///
   /// Layout: [16-byte IV][ciphertext+tag]
-  static Uint8List _encryptBytesSync(_EncryptBytesParams params) {
+  static Uint8List _encryptBytesSync(_BytesCryptoParams params) {
     try {
       final key = enc.Key(params.keyBytes);
       final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
       final iv = enc.IV.fromSecureRandom(16);
 
-      final encrypted = encrypter.encryptBytes(params.plain, iv: iv);
+      final encrypted = encrypter.encryptBytes(params.data, iv: iv);
 
       final out = Uint8List(iv.bytes.length + encrypted.bytes.length)
         ..setRange(0, iv.bytes.length, iv.bytes)
-        ..setRange(iv.bytes.length, iv.bytes.length + encrypted.bytes.length,
-            encrypted.bytes);
+        ..setRange(
+          iv.bytes.length,
+          iv.bytes.length + encrypted.bytes.length,
+          encrypted.bytes,
+        );
       return out;
     } on Exception catch (e) {
       throw EncryptionException('Byte encryption failed: $e');
     }
   }
 
-  static Uint8List _decryptBytesSync(_DecryptBytesParams params) {
+  static Uint8List _decryptBytesSync(_BytesCryptoParams params) {
     try {
-      if (params.cipher.length <= 16) {
+      if (params.data.length <= 16) {
         throw EncryptionException('Ciphertext too short to contain an IV');
       }
       final key = enc.Key(params.keyBytes);
       final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
 
-      final iv = enc.IV(Uint8List.sublistView(params.cipher, 0, 16));
-      final body = Uint8List.sublistView(params.cipher, 16);
+      final iv = enc.IV(Uint8List.sublistView(params.data, 0, 16));
+      final body = Uint8List.sublistView(params.data, 16);
 
       return Uint8List.fromList(
         encrypter.decryptBytes(enc.Encrypted(body), iv: iv),
@@ -550,7 +544,7 @@ class EncryptionService implements IEncryptionService {
     }
   }
 
-  static String _encryptSync(_EncryptParams params) {
+  static String _encryptSync(_StringCryptoParams params) {
     try {
       // Create encrypter with AES GCM mode
       final key = enc.Key(params.keyBytes);
@@ -560,7 +554,7 @@ class EncryptionService implements IEncryptionService {
       final iv = enc.IV.fromSecureRandom(16);
 
       // Encrypt the plaintext
-      final encrypted = encrypter.encrypt(params.plaintext, iv: iv);
+      final encrypted = encrypter.encrypt(params.data, iv: iv);
 
       // Combine IV + encrypted data for storage
       // Format: base64(IV) + ":" + base64(ciphertext)
@@ -586,14 +580,14 @@ class EncryptionService implements IEncryptionService {
       if (ciphertext.length < 7000) {
         // ~5KB plaintext = ~7KB base64
         return _decryptSync(
-          _DecryptParams(ciphertext: ciphertext, keyBytes: _keyBytes!),
+          _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
         );
       }
 
       // For larger content, run in background isolate to prevent UI blocking
       return await compute(
         _decryptSync,
-        _DecryptParams(ciphertext: ciphertext, keyBytes: _keyBytes!),
+        _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
       );
     } on Exception catch (e) {
       debugPrint('Decryption failed: $e');
@@ -602,14 +596,14 @@ class EncryptionService implements IEncryptionService {
   }
 
   /// Static decryption helper that can run in isolate
-  static String _decryptSync(_DecryptParams params) {
+  static String _decryptSync(_StringCryptoParams params) {
     try {
       // Create encrypter with AES GCM mode
       final key = enc.Key(params.keyBytes);
       final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
 
       // Split IV and ciphertext
-      final parts = params.ciphertext.split(':');
+      final parts = params.data.split(':');
       if (parts.length != 2) {
         throw const FormatException('Invalid encrypted data format');
       }

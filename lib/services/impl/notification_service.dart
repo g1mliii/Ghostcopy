@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../../ui/theme/animations.dart';
+
 import '../../ui/theme/colors.dart';
 import '../../ui/theme/typography.dart';
 import '../game_mode_service.dart';
@@ -17,10 +19,7 @@ import '../window_service.dart';
 ///
 /// This ensures toasts are always visible, even when app is in tray.
 class NotificationService implements INotificationService {
-  NotificationService({
-    this._windowService,
-    this._gameModeService,
-  });
+  NotificationService({this._windowService, this._gameModeService});
 
   final IWindowService? _windowService;
   final IGameModeService? _gameModeService;
@@ -452,20 +451,28 @@ class _ToastWidgetState extends State<_ToastWidget>
     super.initState();
 
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: GhostAnimations.slow,
       vsync: this,
     );
 
     // Slide down from top (instead of up from bottom)
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, -1), // Start above (hidden)
-      end: Offset.zero, // End at position
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _slideAnimation =
+        Tween<Offset>(
+          begin: const Offset(0, -1), // Start above (hidden)
+          end: Offset.zero, // End at position
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: GhostAnimations.entranceCurve,
+          ),
+        );
 
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: GhostAnimations.entranceCurve,
+      ),
+    );
 
     _controller.forward();
   }
@@ -561,19 +568,27 @@ class _ClickableToastWidgetState extends State<_ClickableToastWidget>
     super.initState();
 
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: GhostAnimations.slow,
       vsync: this,
     );
 
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1), // Start below
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _slideAnimation =
+        Tween<Offset>(
+          begin: const Offset(0, 1), // Start below
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: GhostAnimations.entranceCurve,
+          ),
+        );
 
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: GhostAnimations.entranceCurve,
+      ),
+    );
 
     _controller.forward();
   }

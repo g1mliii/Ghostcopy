@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 
 import '../models/clipboard_item.dart';
@@ -40,23 +39,11 @@ abstract class IClipboardRepository {
     List<String>? targetDeviceTypes,
   });
 
-  /// Insert a file with progress reporting (for UI feedback)
+  /// Fetch a single clipboard item by id, decrypted, or null if it is gone.
   ///
-  /// Yields progress values from 0.0 to 1.0 during upload
-  /// Returns the created ClipboardItem when complete
-  /// Throws exceptions for network/storage errors
-  Stream<double> uploadFileWithProgress({
-    required String userId,
-    required String deviceType,
-    required String? deviceName,
-    required Uint8List fileBytes,
-    required String mimeType,
-    required ContentType contentType,
-    String? originalFilename,
-    int? width,
-    int? height,
-    List<String>? targetDeviceTypes,
-  });
+  /// For the notification-tap and deep-link paths, which know exactly which
+  /// clip they want. They used to pull a page of history and scan it.
+  Future<ClipboardItem?> getById(String id);
 
   /// Insert an image clipboard item
   ///

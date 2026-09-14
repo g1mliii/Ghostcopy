@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
@@ -685,20 +686,12 @@ class MobileMainViewModel extends ChangeNotifier {
       final imageBytes = _clipboardContent!.imageBytes!;
       final mimeType = _clipboardContent!.mimeType!;
 
-      ContentType contentType;
-      switch (mimeType) {
-        case 'image/png':
-          contentType = ContentType.imagePng;
-        case 'image/jpeg':
-        case 'image/jpg':
-          contentType = ContentType.imageJpeg;
-        case 'image/gif':
-          contentType = ContentType.imageGif;
-        default:
-          _isSending = false;
-          _sendErrorMessage = 'Unsupported image type: $mimeType';
-          notifyListeners();
-          return;
+      final contentType = ContentType.fromMimeType(mimeType);
+      if (contentType == null || !contentType.isImage) {
+        _isSending = false;
+        _sendErrorMessage = 'Unsupported image type: $mimeType';
+        notifyListeners();
+        return;
       }
 
       List<String>? targetTypes;
@@ -823,14 +816,13 @@ class MobileMainViewModel extends ChangeNotifier {
       final file = result.files.single;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
 
-      // Validate file size (10MB limit)
-      if (bytes.length > 10485760) {
+      if (bytes.length > ClipboardLimits.maxFileBytes) {
         onError?.call('File too large: ${file.name} (max 10MB)');
         return;
       }
 
       // Warn for large files (>5MB)
-      if (bytes.length > 5242880) {
+      if (bytes.length > ClipboardLimits.largeFileWarningBytes) {
         final sizeMB = (bytes.length / 1048576).toStringAsFixed(1);
         final shouldContinue = await onLargeFileConfirm?.call(sizeMB) ?? true;
         if (!shouldContinue) return;
@@ -1068,18 +1060,10 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onError,
   }) async {
     try {
-      ContentType contentType;
-      switch (mimeType) {
-        case 'image/png':
-          contentType = ContentType.imagePng;
-        case 'image/jpeg':
-        case 'image/jpg':
-          contentType = ContentType.imageJpeg;
-        case 'image/gif':
-          contentType = ContentType.imageGif;
-        default:
-          onError?.call('Unsupported image type: $mimeType');
-          return;
+      final contentType = ContentType.fromMimeType(mimeType);
+      if (contentType == null || !contentType.isImage) {
+        onError?.call('Unsupported image type: $mimeType');
+        return;
       }
 
       final deviceType = ClipboardRepository.getCurrentDeviceType();
@@ -1153,15 +1137,7 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Process share action from notification or deep link
   Future<bool> processShareAction(String clipboardId, {String? action}) async {
     try {
-      final items = await _clipboardRepo.getHistory(limit: 100);
-
-      ClipboardItem? item;
-      for (final i in items) {
-        if (i.id == clipboardId) {
-          item = i;
-          break;
-        }
-      }
+      final item = await _clipboardRepo.getById(clipboardId);
 
       if (item == null) {
         debugPrint('[MobileMainVM] Clipboard item $clipboardId not found');
@@ -1357,20 +1333,9 @@ class MobileMainViewModel extends ChangeNotifier {
       _filteredHistoryItems = _historyItems;
     } else {
       final lowerQuery = query.toLowerCase();
-      _filteredHistoryItems = _historyItems.where((item) {
-        if (item.content.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        if (item.deviceName != null &&
-            item.deviceName!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        if (item.mimeType != null &&
-            item.mimeType!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        return false;
-      }).toList();
+      _filteredHistoryItems = _historyItems
+          .where((item) => item.matchesQuery(lowerQuery))
+          .toList();
     }
   }
 

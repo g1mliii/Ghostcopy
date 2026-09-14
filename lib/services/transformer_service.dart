@@ -1,17 +1,9 @@
 /// Types of content that can be transformed
-enum TransformerContentType {
-  json,
-  jwt,
-  hexColor,
-  plainText;
-}
+enum TransformerContentType { json, jwt, hexColor, plainText }
 
 /// Result of content type detection
 class ContentDetectionResult {
-  const ContentDetectionResult({
-    required this.type,
-    this.metadata,
-  });
+  const ContentDetectionResult({required this.type, this.metadata});
 
   final TransformerContentType type;
   final Map<String, dynamic>? metadata; // e.g., {"valid": true, "length": 123}
@@ -75,5 +67,8 @@ abstract class ITransformerService {
   /// For Hex Color: Returns color value and RGB breakdown
   ///
   /// Runs in background isolate to prevent UI blocking during heavy transformations
-  Future<TransformationResult> transform(String content, TransformerContentType type);
+  Future<TransformationResult> transform(
+    String content,
+    TransformerContentType type,
+  );
 }

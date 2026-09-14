@@ -322,11 +322,14 @@ class SpotlightViewModel extends ChangeNotifier {
         // Image content - upload to storage
         final bytes = _clipboardContent!.imageBytes!;
         final mimeType = _clipboardContent!.mimeType ?? 'image/png';
-        final contentType = mimeType.startsWith('image/png')
-            ? ContentType.imagePng
-            : mimeType.startsWith('image/jpeg')
-            ? ContentType.imageJpeg
-            : ContentType.imageGif;
+        // Unknown image MIMEs used to fall through to GIF here, which sent a
+        // PNG labelled as a GIF rather than failing.
+        final contentType = ContentType.fromMimeType(mimeType);
+        if (contentType == null || !contentType.isImage) {
+          _isSending = false;
+          _setError('Unsupported image type: $mimeType');
+          return;
+        }
 
         await _clipboardRepo.insertImage(
           userId: userId,

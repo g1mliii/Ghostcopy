@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/device.dart';
+import '../device_type_icon.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 
 /// A single device item in the device list
@@ -67,23 +69,6 @@ class _DeviceListItemState extends State<DeviceListItem> {
     super.dispose();
   }
 
-  IconData _getDeviceIcon() {
-    switch (widget.device.deviceType) {
-      case 'windows':
-        return Icons.desktop_windows;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'android':
-        return Icons.phone_android;
-      case 'ios':
-        return Icons.phone_iphone;
-      case 'linux':
-        return Icons.computer;
-      default:
-        return Icons.devices;
-    }
-  }
-
   String _getRelativeTime() {
     final now = DateTime.now();
     final diff = now.difference(widget.device.lastActive);
@@ -114,35 +99,15 @@ class _DeviceListItemState extends State<DeviceListItem> {
   }
 
   Future<void> _confirmRemove() async {
-    final shouldRemove = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: GhostColors.surface,
-        title: Text(
-          'Remove Device?',
-          style: const TextStyle(color: GhostColors.textPrimary),
-        ),
-        content: Text(
-          'Remove "${widget.device.displayName}" from your devices?',
-          style: const TextStyle(color: GhostColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(
-              'Cancel',
-              style: const TextStyle(color: GhostColors.textMuted),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final shouldRemove = await Adaptive.confirm(
+      context,
+      title: 'Remove Device?',
+      message: 'Remove "${widget.device.displayName}" from your devices?',
+      confirmText: 'Remove',
+      isDestructive: true,
     );
 
-    if (shouldRemove ?? false) {
+    if (shouldRemove) {
       setState(() => _isRemoving = true);
       final success = await widget.onRemove(widget.device.id);
       if (mounted && !success) {
@@ -172,7 +137,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
           children: [
             // Device icon
             Icon(
-              _getDeviceIcon(),
+              iconForDeviceType(widget.device.deviceType),
               size: 24,
               color: widget.isCurrentDevice
                   ? GhostColors.primary

@@ -23,7 +23,10 @@ void main() {
     });
 
     test('case does not change identity', () {
-      expect(const HotKey(key: 'S', ctrl: true), const HotKey(key: 's', ctrl: true));
+      expect(
+        const HotKey(key: 'S', ctrl: true),
+        const HotKey(key: 's', ctrl: true),
+      );
     });
 
     test('different modifiers are different hotkeys', () {

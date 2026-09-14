@@ -768,11 +768,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       // Register device and update FCM token
       if (mounted) {
-        await locator<IDeviceService>().registerCurrentDevice();
-
         final fcmToken = await widget.fcmTokenFuture;
+        await locator<IDeviceService>().registerCurrentDevice(
+          fcmToken: fcmToken,
+        );
         if (fcmToken != null) {
-          await locator<IDeviceService>().updateFcmToken(fcmToken);
           debugPrint('[QR] ✅ Device registered with FCM token');
         }
 

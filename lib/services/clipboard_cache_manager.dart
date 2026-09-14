@@ -56,7 +56,9 @@ class ClipboardCacheManager {
         );
       }
 
-      debugPrint('[ClipboardCache] ✓ Singleton verified: All instances identical');
+      debugPrint(
+        '[ClipboardCache] ✓ Singleton verified: All instances identical',
+      );
       return true;
     }());
   }

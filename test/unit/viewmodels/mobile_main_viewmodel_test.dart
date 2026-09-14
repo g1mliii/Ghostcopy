@@ -202,12 +202,17 @@ void main() {
     );
 
     test('two devices of one type collapse to a single chip', () async {
-      when(() => deviceService.getUserDevices(forceRefresh: any(named: 'forceRefresh')))
-          .thenAnswer((_) async => [
-                device('1', 'windows', 'Work PC'),
-                device('2', 'windows', 'Home PC'),
-                device('3', 'android', 'Pixel'),
-              ]);
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          device('1', 'windows', 'Work PC'),
+          device('2', 'windows', 'Home PC'),
+          device('3', 'android', 'Pixel'),
+        ],
+      );
       await viewModel.loadDevices();
 
       final targets = viewModel.deviceTypeTargets;
@@ -216,15 +221,23 @@ void main() {
       // individual machine, so one chip per device was a promise it could not
       // keep. Three devices, two types, two chips.
       expect(targets, hasLength(2));
-      expect(targets.map((t) => t.deviceType), containsAll(['windows', 'android']));
+      expect(
+        targets.map((t) => t.deviceType),
+        containsAll(['windows', 'android']),
+      );
     });
 
     test('a chip is labelled by platform, never by device name', () async {
-      when(() => deviceService.getUserDevices(forceRefresh: any(named: 'forceRefresh')))
-          .thenAnswer((_) async => [
-                device('1', 'windows', 'Work PC'),
-                device('2', 'windows', 'Home PC'),
-              ]);
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          device('1', 'windows', 'Work PC'),
+          device('2', 'windows', 'Home PC'),
+        ],
+      );
       await viewModel.loadDevices();
 
       final windows = viewModel.deviceTypeTargets.single;
@@ -232,12 +245,18 @@ void main() {
       // A chip selects a device_type_enum, so the platform is what it does.
       // Naming either machine would also be a lie - the clip reaches both.
       expect(windows.label, 'Windows');
-      expect(windows.deviceNames, allOf(contains('Work PC'), contains('Home PC')));
+      expect(
+        windows.deviceNames,
+        allOf(contains('Work PC'), contains('Home PC')),
+      );
     });
 
     test('a lone device of its type is still labelled by platform', () async {
-      when(() => deviceService.getUserDevices(forceRefresh: any(named: 'forceRefresh')))
-          .thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
       await viewModel.loadDevices();
 
       // Using the device name here would be accurate but inconsistent: the
@@ -266,8 +285,9 @@ void main() {
     );
 
     test('removes the clip from the list on success', () async {
-      when(() => clipboardRepository.getHistory())
-          .thenAnswer((_) async => [item('1'), item('2')]);
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
       await viewModel.loadHistory();
       when(() => clipboardRepository.delete('1')).thenAnswer((_) async {});
 
@@ -277,19 +297,29 @@ void main() {
       expect(viewModel.filteredHistoryItems.map((i) => i.id), ['2']);
     });
 
-    test('restores the clip at its original index when the delete fails', () async {
-      when(() => clipboardRepository.getHistory())
-          .thenAnswer((_) async => [item('1'), item('2'), item('3')]);
-      await viewModel.loadHistory();
-      when(() => clipboardRepository.delete('2')).thenThrow(Exception('offline'));
+    test(
+      'restores the clip at its original index when the delete fails',
+      () async {
+        when(
+          () => clipboardRepository.getHistory(),
+        ).thenAnswer((_) async => [item('1'), item('2'), item('3')]);
+        await viewModel.loadHistory();
+        when(
+          () => clipboardRepository.delete('2'),
+        ).thenThrow(Exception('offline'));
 
-      final ok = await viewModel.handleHistoryItemDelete(item('2'));
+        final ok = await viewModel.handleHistoryItemDelete(item('2'));
 
-      // The row is removed optimistically so it does not spring back mid-swipe.
-      // If the server never deleted it, leaving the list short would claim a
-      // deletion that did not happen - and the clip is still on every device.
-      expect(ok, isFalse);
-      expect(viewModel.filteredHistoryItems.map((i) => i.id), ['1', '2', '3']);
-    });
+        // The row is removed optimistically so it does not spring back mid-swipe.
+        // If the server never deleted it, leaving the list short would claim a
+        // deletion that did not happen - and the clip is still on every device.
+        expect(ok, isFalse);
+        expect(viewModel.filteredHistoryItems.map((i) => i.id), [
+          '1',
+          '2',
+          '3',
+        ]);
+      },
+    );
   });
 }

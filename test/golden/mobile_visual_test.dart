@@ -97,11 +97,11 @@ void main() {
                     const Divider(height: 1, color: GhostColors.border),
                     Padding(
                       // 14 here plus Material's 2dp inset inside a zero-padding
-      // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
-      // the text above it and the history rows below. Measured from rendered
-      // pixels rather than derived, because the button's internal geometry is
-      // not obvious from its API.
-      padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
+                      // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
+                      // the text above it and the history rows below. Measured from rendered
+                      // pixels rather than derived, because the button's internal geometry is
+                      // not obvious from its API.
+                      padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
                       child: Row(
                         children: [
                           TextButton.icon(

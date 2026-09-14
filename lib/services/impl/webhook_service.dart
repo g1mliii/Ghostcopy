@@ -48,7 +48,9 @@ class WebhookService implements IWebhookService {
 
     // Only allow HTTPS protocol (HTTP is insecure for webhook payloads)
     if (uri.scheme != 'https') {
-      debugPrint('[WebhookService] ❌ Invalid URL scheme: ${uri.scheme} (HTTPS required)');
+      debugPrint(
+        '[WebhookService] ❌ Invalid URL scheme: ${uri.scheme} (HTTPS required)',
+      );
       throw Exception('Webhook URL must use https protocol');
     }
 
@@ -60,7 +62,9 @@ class WebhookService implements IWebhookService {
 
     while (retries < maxRetries) {
       try {
-        debugPrint('[WebhookService] Sending webhook (attempt ${retries + 1}/$maxRetries)');
+        debugPrint(
+          '[WebhookService] Sending webhook (attempt ${retries + 1}/$maxRetries)',
+        );
 
         // SECURITY: Disable automatic redirect following to prevent SSRF bypass
         // Redirects could bypass our private IP validation
@@ -76,7 +80,9 @@ class WebhookService implements IWebhookService {
 
         // Success: 2xx status codes
         if (response.statusCode >= 200 && response.statusCode < 300) {
-          debugPrint('[WebhookService] ✅ Webhook sent successfully (${response.statusCode})');
+          debugPrint(
+            '[WebhookService] ✅ Webhook sent successfully (${response.statusCode})',
+          );
           return;
         }
 
@@ -86,7 +92,9 @@ class WebhookService implements IWebhookService {
           debugPrint(
             '[WebhookService] ❌ Webhook returned redirect (${response.statusCode}) - redirects not allowed for security',
           );
-          throw Exception('Webhook redirects are not allowed for security reasons');
+          throw Exception(
+            'Webhook redirects are not allowed for security reasons',
+          );
         }
 
         // A 4xx other than "slow down" or "timed out" means the request itself
@@ -153,8 +161,9 @@ class WebhookService implements IWebhookService {
   Future<void> _validateHost(String host) async {
     final List<InternetAddress> addresses;
     try {
-      addresses = await InternetAddress.lookup(host)
-          .timeout(const Duration(seconds: 5));
+      addresses = await InternetAddress.lookup(
+        host,
+      ).timeout(const Duration(seconds: 5));
     } on Object catch (e) {
       // Fail closed: an unresolvable host is not a host we should post to.
       debugPrint('[WebhookService] ❌ Could not resolve $host: $e');

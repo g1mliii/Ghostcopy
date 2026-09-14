@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Import Firebase Admin SDK via NPM compatibility
 import admin from 'npm:firebase-admin@12.0.0';
+import { corsPreflight, json } from '../_shared/http.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -20,10 +21,6 @@ if (serviceAccountJson) {
   console.warn('[Notification] FIREBASE_SERVICE_ACCOUNT secret is missing.');
 }
 // CORS headers for client-side requests
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
-};
 // Service role client for operations that bypass RLS:
 // rate limit reads and stale FCM token cleanup.
 const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
@@ -77,9 +74,7 @@ async function checkRateLimit(userId) {
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response('ok', {
-      headers: corsHeaders
-    });
+    return corsPreflight();
   }
   try {
     // Create Supabase client
@@ -108,28 +103,12 @@ Deno.serve(async (req)=>{
     if (isServiceRole) {
       userId = typeof body?.record?.user_id === 'string' ? body.record.user_id : null;
       if (!userId) {
-        return new Response(JSON.stringify({
-          error: 'record.user_id is required for service-role calls'
-        }), {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
+        return json({ error: 'record.user_id is required for service-role calls' }, 400);
       }
     } else {
       const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
       if (userError || !user) {
-        return new Response(JSON.stringify({
-          error: 'Unauthorized'
-        }), {
-          status: 401,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
+        return json({ error: 'Unauthorized' }, 401);
       }
       // A normal caller may only ever act on its own rows. Without this an
       // authenticated user could POST an arbitrary `record` naming someone
@@ -142,15 +121,7 @@ Deno.serve(async (req)=>{
       // 5-minute recency replay guard. Omitting user_id now fails here.
       if (body?.record && body.record.user_id !== user.id) {
         console.warn('[Notification] record.user_id does not match caller - refusing');
-        return new Response(JSON.stringify({
-          error: 'Forbidden'
-        }), {
-          status: 403,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
+        return json({ error: 'Forbidden' }, 403);
       }
       userId = user.id;
     }
@@ -158,20 +129,11 @@ Deno.serve(async (req)=>{
     const rateLimit = await checkRateLimit(userId);
     if (!rateLimit.allowed) {
       console.warn(`[Notification] Rate limit exceeded for user ${userId}`);
-      return new Response(JSON.stringify({
+      return json({
         error: 'Rate limit exceeded',
         message: 'Too many requests. Please wait before sending more notifications.',
         retry_after: 60
-      }), {
-        status: 429,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'Retry-After': '60',
-          'X-RateLimit-Limit': RATE_LIMIT_MAX_CALLS.toString(),
-          'X-RateLimit-Remaining': rateLimit.remaining.toString()
-        }
-      });
+      }, 429);
     }
     // (body parsed above, before auth, for the service-role path)
     // Handle webhook payload vs client invocation
@@ -206,15 +168,7 @@ Deno.serve(async (req)=>{
     }
     // Validate required fields
     if (!device_type || clipboard_id == null) {
-      return new Response(JSON.stringify({
-        error: 'Missing required fields: device_type, clipboard_id'
-      }), {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        }
-      });
+      return json({ error: 'Missing required fields: device_type, clipboard_id' }, 400);
     }
     if (![
       'windows',
@@ -223,15 +177,7 @@ Deno.serve(async (req)=>{
       'ios',
       'linux'
     ].includes(device_type)) {
-      return new Response(JSON.stringify({
-        error: 'Invalid device_type'
-      }), {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        }
-      });
+      return json({ error: 'Invalid device_type' }, 400);
     }
     // Note: Desktop-only filtering is now handled by database trigger.
     // This edge function is only called if mobile devices are targeted.
@@ -249,15 +195,7 @@ Deno.serve(async (req)=>{
       .gte('created_at', fiveMinutesAgo).single();
       if (clipboardError || !dbItem) {
         console.error('[Notification] Failed to fetch clipboard item:', clipboardError);
-        return new Response(JSON.stringify({
-          error: 'Clipboard item not found'
-        }), {
-          status: 404,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
+        return json({ error: 'Clipboard item not found' }, 404);
       }
       clipboardItem = dbItem;
     }
@@ -290,34 +228,25 @@ Deno.serve(async (req)=>{
     const { data: rawDevices, error: devicesError } = await query;
     if (devicesError) {
       console.error('[Notification] Error querying devices:', devicesError);
-      return new Response(JSON.stringify({
-        error: 'Failed to query devices'
-      }), {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        }
-      });
+      return json({ error: 'Failed to query devices' }, 500);
     }
     const devices = rawDevices ?? [];
     if (devices.length === 0) {
       console.log('[Notification] No devices found with FCM tokens');
-      return new Response(JSON.stringify({
+      return json({
         success: true,
         message: 'No devices registered for push notifications',
         devices_notified: 0
-      }), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-RateLimit-Limit': RATE_LIMIT_MAX_CALLS.toString(),
-          'X-RateLimit-Remaining': rateLimit.remaining.toString()
-        }
       });
     }
     console.log(`[Notification] Found ${devices.length} device(s) to notify`);
+    // Started here rather than after the send: it does not depend on the FCM
+    // result, and awaiting it afterwards added a full Postgres round-trip to
+    // the push path before this function could respond.
+    const deviceIds = devices.map((d)=>d.id);
+    const lastActiveUpdate = deviceIds.length > 0 ? supabaseClient.from('devices').update({
+      last_active: new Date().toISOString()
+    }).in('id', deviceIds) : null;
     // ------------------------------------------------------------------
     // SEND FCM NOTIFICATIONS (MODERN HTTP V1 API)
     // ------------------------------------------------------------------
@@ -407,13 +336,9 @@ Deno.serve(async (req)=>{
     } else {
       console.error('[Notification] Firebase Admin not initialized (Check secrets)');
     }
-    // Update last_active timestamp for all queried devices
-    const deviceIds = devices.map((d)=>d.id);
     const warnings = [];
-    if (deviceIds.length > 0) {
-      const { error: lastActiveError } = await supabaseClient.from('devices').update({
-        last_active: new Date().toISOString()
-      }).in('id', deviceIds);
+    if (lastActiveUpdate != null) {
+      const { error: lastActiveError } = await lastActiveUpdate;
       if (lastActiveError) {
         const warning = `Failed to update last_active for ${deviceIds.length} device(s): ${lastActiveError.message}`;
         warnings.push(warning);
@@ -421,7 +346,7 @@ Deno.serve(async (req)=>{
       }
     }
     console.log(`[Notification] Process complete. Success: ${successCount}, Fail: ${failureCount}`);
-    return new Response(JSON.stringify({
+    return json({
       success: true,
       message: 'Notifications processed',
       content_type: contentType,
@@ -433,25 +358,9 @@ Deno.serve(async (req)=>{
           device_type: d.device_type,
           device_name: d.device_name
         }))
-    }), {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'application/json',
-        'X-RateLimit-Limit': RATE_LIMIT_MAX_CALLS.toString(),
-        'X-RateLimit-Remaining': rateLimit.remaining.toString()
-      }
     });
   } catch (error) {
     console.error('[Notification] Unexpected error:', error);
-    return new Response(JSON.stringify({
-      error: 'Internal server error'
-    }), {
-      status: 500,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'application/json'
-      }
-    });
+    return json({ error: 'Internal server error' }, 500);
   }
 });
