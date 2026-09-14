@@ -73,11 +73,17 @@
             headers: {
                 'Content-Type': 'application/json',
                 'apikey': SUPABASE_ANON_KEY,
-                // ignore-duplicates makes a repeat signup a silent no-op rather
-                // than a 409. Without it the status code tells anyone holding
-                // the public key whether a given address is on the list, which
-                // is an email enumeration oracle we do not need to offer.
-                'Prefer': 'return=minimal, resolution=ignore-duplicates'
+                // return=minimal is required, not cosmetic: the default asks
+                // PostgREST to return the inserted row, which needs a SELECT
+                // privilege anon does not have and must never have.
+                //
+                // Deduplication is NOT done with resolution=ignore-duplicates.
+                // That compiles to ON CONFLICT, which needs SELECT on the
+                // arbiter index to evaluate - so it failed every insert with a
+                // 401. A BEFORE INSERT trigger drops repeats instead, and
+                // answers 201 either way, so no status code reveals whether an
+                // address was already on the list.
+                'Prefer': 'return=minimal'
             },
             body: JSON.stringify({
                 email: email,
@@ -85,9 +91,11 @@
                 source: form.getAttribute('data-source') || null
             })
         }).then(function (res) {
-            // A duplicate resolves to 201 because of the Prefer header above,
+            // A repeat signup is dropped by the trigger and still answers 201,
             // so both outcomes look identical from here - which is the point.
-            // 409 is still handled in case the header is ever dropped.
+            // 409 stays handled because the unique index is still there as a
+            // backstop, and two simultaneous signups for one address could
+            // race past the trigger's existence check.
             if (res.ok || res.status === 409) {
                 form.reset();
                 setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
