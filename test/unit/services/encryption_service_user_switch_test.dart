@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/impl/encryption_service.dart';
@@ -60,6 +62,44 @@ void main() {
           'user B has no passphrase, so no key should be loaded - holding on '
           'to user A key here is what made every clip read as undecryptable, '
           'and left one account key material belonging to another',
+    );
+    verify(() => storage.read(key: 'encryption_passphrase_$userB')).called(1);
+  });
+
+  test('re-keys when a different user signs in mid-initialisation', () async {
+    // The in-flight variant of the test above, and the one the original fix
+    // missed: both re-key guards test `_initialized`, which is still false
+    // while an initialize() is running. A concurrent initialize(userB) used to
+    // skip the re-key entirely, fall into the "another init is in flight"
+    // branch, and return successfully still holding user A's key and _userId -
+    // so a passphrase typed afterwards was salted under the wrong id. Auth
+    // changes are exactly where two initialize() calls overlap.
+    final service = EncryptionService(secureStorage: storage);
+
+    // Hold user A's storage read open so its initialize() is still in flight
+    // when user B's begins.
+    final gate = Completer<String?>();
+    when(
+      () => storage.read(key: 'encryption_passphrase_$userA'),
+    ).thenAnswer((_) => gate.future);
+
+    final initA = service.initialize(userA);
+    await Future<void>.delayed(Duration.zero);
+
+    final initB = service.initialize(userB);
+    await Future<void>.delayed(Duration.zero);
+
+    gate.complete('correct horse battery staple');
+    await initA;
+    await initB;
+
+    expect(
+      await service.isEnabled(),
+      isFalse,
+      reason:
+          'user B has no passphrase, so the service must end up keyless - '
+          'ending on user A key here is the cross-user corruption the re-key '
+          'exists to prevent',
     );
     verify(() => storage.read(key: 'encryption_passphrase_$userB')).called(1);
   });
