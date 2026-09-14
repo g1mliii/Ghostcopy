@@ -83,8 +83,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
 
-  // Temp file cleanup timer (cancellable - Fix #9)
-  Timer? _tempFileCleanupTimer;
+  // Pending temp-file cleanups, one per copied file (cancellable on dispose).
+  final Set<Timer> _tempFileCleanupTimers = <Timer>{};
 
   // Pending background operations for clean shutdown (Fix #10)
   final Set<Future<void>> _pendingFutures = {};
@@ -144,14 +144,25 @@ class ClipboardSyncService implements IClipboardSyncService {
               '[ClipboardSyncService] Realtime update received: ${payload.eventType}',
             );
 
-            // Check if from another device
+            // Check if from another device.
+            //
+            // A plain inequality, deliberately: the null guards that used to be
+            // here made this false whenever either side had no name, and mobile
+            // sends device_name: null on every path. That meant a clip sent
+            // from the phone never triggered auto-receive on the desktop -
+            // the Mobile -> Desktop half of sync - and it only appeared to work
+            // because the polling fallback (_pollForNewClipboards) compares the
+            // same two values WITHOUT the guards and takes over after 15
+            // minutes idle. Matching that comparison here keeps the two paths
+            // in agreement.
+            //
+            // Known limit: this identifies devices by name, so two machines
+            // sharing a hostname will not receive from each other. Fixing that
+            // needs a device id on the clipboard row.
             final deviceName = payload.newRecord['device_name'] as String?;
             final currentDeviceName =
                 ClipboardRepository.getCurrentDeviceName();
-            final isFromDifferentDevice =
-                deviceName != null &&
-                currentDeviceName != null &&
-                deviceName != currentDeviceName;
+            final isFromDifferentDevice = deviceName != currentDeviceName;
 
             // Check if targeted to this device
             final targetDeviceTypeJson =
@@ -418,14 +429,18 @@ class ClipboardSyncService implements IClipboardSyncService {
             '[ClipboardSyncService] Copied file ($filename, ${item.displaySize}) to clipboard',
           );
 
-          // Schedule temp file cleanup after clipboard operation completes
-          // Use cancellable timer instead of fire-and-forget Future.delayed (Fix #9)
-          _tempFileCleanupTimer?.cancel();
-          _tempFileCleanupTimer = Timer(const Duration(seconds: 5), () {
+          // One timer per file. A single shared timer meant copying a second
+          // file within 5s cancelled the first file's cleanup and never
+          // rescheduled it, leaking that temp file until the hourly sweep.
+          // Timers are tracked so dispose() can still cancel them all.
+          late final Timer timer;
+          timer = Timer(const Duration(seconds: 5), () {
+            _tempFileCleanupTimers.remove(timer);
             if (!_isDisposed) {
               _tempFileService.deleteTempFile(tempFile.path);
             }
           });
+          _tempFileCleanupTimers.add(timer);
         }
     }
   }
@@ -584,19 +599,33 @@ class ClipboardSyncService implements IClipboardSyncService {
     return '';
   }
 
-  /// Calculate partial hash for large content (first 4KB + last 4KB + size)
-  /// This is much faster than hashing multi-MB content (Fix #13)
+  /// Calculate partial hash for large content, much faster than hashing
+  /// multi-MB payloads in full.
+  ///
+  /// Samples the head, the MIDDLE and the tail, plus the length. Head + tail
+  /// alone collide on exactly the payloads this app sees most: two screenshots
+  /// of the same window differ only in the middle, so the second was treated as
+  /// a duplicate and never sent. The middle sample is what makes that case
+  /// distinguishable; this is still a heuristic, not a full digest.
   String _partialHash(Uint8List bytes) {
     const chunkSize = 4096;
-    final firstChunk = bytes.sublist(0, chunkSize.clamp(0, bytes.length));
-    final lastChunk = bytes.length > chunkSize
-        ? bytes.sublist(bytes.length - chunkSize)
-        : firstChunk;
-    final sizeBytes = utf8.encode(bytes.length.toString());
+    final length = bytes.length;
+
+    final head = bytes.sublist(0, chunkSize.clamp(0, length));
+    final tail = length > chunkSize
+        ? bytes.sublist(length - chunkSize)
+        : head;
+
+    final midStart = ((length - chunkSize) ~/ 2).clamp(0, length);
+    final middle = length > chunkSize * 2
+        ? bytes.sublist(midStart, (midStart + chunkSize).clamp(0, length))
+        : head;
+
     final builder = BytesBuilder(copy: false)
-      ..add(firstChunk)
-      ..add(lastChunk)
-      ..add(sizeBytes);
+      ..add(head)
+      ..add(middle)
+      ..add(tail)
+      ..add(utf8.encode(length.toString()));
     return md5.convert(builder.takeBytes()).toString();
   }
 
@@ -1092,8 +1121,10 @@ class ClipboardSyncService implements IClipboardSyncService {
     _pollingTimer = null;
 
     // Cancel temp file cleanup timer (Fix #9)
-    _tempFileCleanupTimer?.cancel();
-    _tempFileCleanupTimer = null;
+    for (final timer in _tempFileCleanupTimers) {
+      timer.cancel();
+    }
+    _tempFileCleanupTimers.clear();
 
     // Note: _pendingFutures are tracked but not awaited in dispose()
     // since dispose() is sync. The _isDisposed flag prevents new work.

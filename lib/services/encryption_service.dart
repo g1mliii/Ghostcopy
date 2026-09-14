@@ -1,9 +1,18 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 /// Abstract interface for encryption operations
 abstract class IEncryptionService {
   /// Check if encryption is enabled (passphrase set)
   Future<bool> isEnabled();
+
+  /// Notifies whenever the loaded key changes - a key derived, cleared, or
+  /// re-keyed for another user.
+  ///
+  /// [isEnabled] is a point-in-time answer, so anything that caches it needs
+  /// to know when that answer goes stale. Widgets built during startup ask
+  /// before [initialize] has derived the key and would otherwise cache "no
+  /// key" for the life of the screen, locking every encrypted item.
+  ValueListenable<int> get keyRevision;
 
   /// Set encryption passphrase (enables encryption)
   /// Returns true if passphrase meets security requirements

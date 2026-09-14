@@ -5,10 +5,10 @@ import 'package:path/path.dart' as path;
 /// Custom cache manager for clipboard images with aggressive cleanup
 ///
 /// Features:
-/// - Max 10 cached images (lightweight for background app)
+/// - Max [_maxCacheObjects] cached images (lightweight for background app)
 /// - 1-day expiry (vs default 7 days)
 /// - Synced with clipboard history (auto-cleanup on delete)
-/// - Automatic cleanup on history refresh
+/// - Orphan removal on history refresh, via [cleanupOrphaned]
 ///
 /// Usage:
 /// ```dart
@@ -31,6 +31,12 @@ class ClipboardCacheManager {
 
   static ClipboardCacheManager? _instance;
   late final CacheManager _cacheManager;
+  late final JsonCacheInfoRepository _infoRepository;
+
+  /// Upper bound the library enforces on its own. Named so the log lines and
+  /// the stats below cannot drift from the configured value the way the old
+  /// hardcoded "20" in those messages had.
+  static const int _maxCacheObjects = 10;
 
   /// Static accessor for convenience
   // ignore: prefer_constructors_over_static_methods
@@ -57,15 +63,32 @@ class ClipboardCacheManager {
 
   /// Initialize cache manager (called once in constructor)
   void _initCacheManager() {
+    // Held as a field, not constructed inline: CacheStore keeps its repository
+    // private, so this is the only handle on what the cache is actually
+    // tracking - which orphan cleanup needs in order to delete anything.
+    _infoRepository = JsonCacheInfoRepository(
+      databaseName: 'ghostcopy_image_cache',
+    );
+
     _cacheManager = CacheManager(
       Config(
         'ghostcopy_clipboard_images',
         stalePeriod: const Duration(days: 1), // 1 day instead of 7
-        maxNrOfCacheObjects: 10, // Max 10 images (lightweight for background app)
-        repo: JsonCacheInfoRepository(databaseName: 'ghostcopy_image_cache'),
+        maxNrOfCacheObjects: _maxCacheObjects,
+        repo: _infoRepository,
         fileService: HttpFileService(),
       ),
     );
+  }
+
+  /// Every URL the cache is currently tracking.
+  ///
+  /// open() is reference-counted by the repository, so calling it here shares
+  /// the connection CacheStore already holds rather than opening a second one.
+  Future<List<String>> _trackedUrls() async {
+    await _infoRepository.open();
+    final objects = await _infoRepository.getAllObjects();
+    return objects.map((object) => object.url).toList();
   }
 
   /// Custom cache manager with lightweight configuration
@@ -101,54 +124,65 @@ class ClipboardCacheManager {
     debugPrint('[ClipboardCache] ✓ Batch removal complete');
   }
 
-  /// Clean up orphaned cache entries not in current history
+  /// Remove cached images whose clipboard item is gone from history.
   ///
-  /// Call this:
-  /// - On app startup
-  /// - When history is refreshed
-  /// - Periodically (e.g., every hour)
+  /// [validUrls] is the set of URLs that should survive; everything the cache
+  /// is tracking that is not in it gets dropped.
   ///
-  /// [validUrls] - Set of URLs that should be kept in cache
-  ///
-  /// Note: Due to flutter_cache_manager API limitations, we rely on:
-  /// 1. Automatic 1-day expiry (configured in cacheManager)
-  /// 2. Max 20 objects limit (configured in cacheManager)
-  /// 3. Manual removal on delete (via removeFile)
-  ///
-  /// This simple approach is performant and sufficient for our use case.
+  /// This used to log three lines and delete nothing, on the reasoning that the
+  /// library's size cap and expiry would get there eventually. They do not do
+  /// the same job: a deleted clip's image stayed readable on disk for up to a
+  /// day, and the cap only evicts once the cache is already full.
   Future<void> cleanupOrphaned(Set<String> validUrls) async {
     try {
-      debugPrint(
-        '[ClipboardCache] 🧹 Cache bounded by: 10 objects max, 1 day expiry',
-      );
-      debugPrint(
-        '[ClipboardCache] 📊 Current history has ${validUrls.length} images',
-      );
+      final orphans = (await _trackedUrls())
+          .where((url) => url.isNotEmpty && !validUrls.contains(url))
+          .toSet();
 
-      // The cache manager automatically enforces:
-      // - Max 20 objects (oldest removed when limit reached)
-      // - 1 day expiry (stale items auto-deleted)
-      //
-      // No manual cleanup needed - the library handles it!
+      if (orphans.isEmpty) {
+        debugPrint('[ClipboardCache] ✓ No orphaned cache entries');
+        return;
+      }
 
-      debugPrint('[ClipboardCache] ✓ Cache auto-managed (20 max, 1d expiry)');
+      for (final url in orphans) {
+        await cacheManager.removeFile(url);
+      }
+
+      debugPrint(
+        '[ClipboardCache] 🧹 Removed ${orphans.length} orphaned entr'
+        '${orphans.length == 1 ? 'y' : 'ies'}',
+      );
     } on Exception catch (e) {
-      debugPrint('[ClipboardCache] ⚠ Orphan cleanup check failed: $e');
+      debugPrint('[ClipboardCache] ⚠ Orphan cleanup failed: $e');
       // Don't throw - cleanup is best effort
     }
   }
 
   /// Get cache statistics for monitoring
   ///
-  /// Returns estimated stats based on configuration limits
+  /// Returns -1 counts only if the cache store cannot be read.
   Future<CacheStats> getStats() async {
     // Since flutter_cache_manager doesn't expose internal stats easily,
     // we return configuration-based estimates
-    return const CacheStats(
-      itemCount: -1, // Unknown without deep inspection
-      totalSizeBytes: -1, // Unknown without deep inspection
-      maxItems: 10,
-    );
+    try {
+      await _infoRepository.open();
+      final objects = await _infoRepository.getAllObjects();
+      return CacheStats(
+        itemCount: objects.length,
+        totalSizeBytes: objects.fold<int>(
+          0,
+          (sum, object) => sum + (object.length ?? 0),
+        ),
+        maxItems: _maxCacheObjects,
+      );
+    } on Exception catch (e) {
+      debugPrint('[ClipboardCache] ⚠ Could not read cache stats: $e');
+      return const CacheStats(
+        itemCount: -1,
+        totalSizeBytes: -1,
+        maxItems: _maxCacheObjects,
+      );
+    }
   }
 
   /// Clear all cache (nuclear option)

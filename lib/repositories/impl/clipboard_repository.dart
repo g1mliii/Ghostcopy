@@ -177,7 +177,10 @@ class ClipboardRepository implements IClipboardRepository {
       return ClipboardItem(
         id: response['id'].toString(),
         userId: userId,
-        content: item.content, // Return original unencrypted content
+        // The sanitized text, which is what was stored. Returning the raw
+        // input meant the caller's echo differed from the row by whatever
+        // _sanitizeContent trimmed.
+        content: sanitizedContent,
         deviceName: item.deviceName,
         deviceType: item.deviceType,
         targetDeviceTypes: item.targetDeviceTypes,
@@ -295,6 +298,16 @@ class ClipboardRepository implements IClipboardRepository {
       // bytes costs a flat 32 bytes (IV + GCM tag), so the limit is unaffected.
       // Without this, turning on end-to-end encryption protected your text and
       // left your screenshots and documents readable to anyone with R2 access.
+      //
+      // Initialize FIRST. isEnabled() only reports whether a key is loaded, and
+      // the key is loaded by initialize(). Asking cold answers "no encryption"
+      // and uploads the bytes in the clear with is_encrypted = false -
+      // permanently, and with no error. insert() and insertRichText() have
+      // always initialized here; these two file paths did not, so the headless
+      // `--send-file` launch (Explorer's "Send with GhostCopy", which loads no
+      // history and shows no UI) uploaded every file unencrypted regardless of
+      // the passphrase.
+      await _ensureEncryptionInitialized();
       final filesEncrypted = await _encryptionService.isEnabled();
       if (filesEncrypted) {
         uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
@@ -358,8 +371,12 @@ class ClipboardRepository implements IClipboardRepository {
           targetDeviceTypes: targetDeviceTypes,
           contentType: contentType,
           storagePath: uploadResult.storagePath,
-          fileSizeBytes: fileBytes.length,
-          mimeType: mimeType,
+          // The stored size, not the pre-compression one. The row records
+          // uploadBytes.length, so returning the original made the sending
+          // device display a different size for the same clip than every other
+          // device that reads it back.
+          fileSizeBytes: uploadBytes.length,
+          mimeType: uploadMimeType,
           metadata: metadata.isNotEmpty
               ? ClipboardMetadata(
                   width: width,
@@ -475,7 +492,8 @@ class ClipboardRepository implements IClipboardRepository {
       }
 
       // Encrypt the bytes before they leave the device - see the note in
-      // insertFile. Costs a flat 32 bytes, so the 10MB limit is unaffected.
+      // insertFile, including why initialize() has to come first.
+      await _ensureEncryptionInitialized();
       final filesEncrypted = await _encryptionService.isEnabled();
       if (filesEncrypted) {
         uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
@@ -589,6 +607,7 @@ class ClipboardRepository implements IClipboardRepository {
     required String? deviceName,
     required String content,
     required RichTextFormat format,
+    List<String>? targetDeviceTypes,
   }) async {
     try {
       // Validate user authentication
@@ -634,6 +653,11 @@ class ClipboardRepository implements IClipboardRepository {
             'user_id': userId,
             'device_name': _sanitizeDeviceName(deviceName),
             'device_type': _validateDeviceType(deviceType),
+            // Rich text used to ignore this entirely, so choosing "send to
+            // Android only" and then pasting HTML broadcast to every device.
+            'target_device_type': targetDeviceTypes
+                ?.map(_validateDeviceType)
+                .toList(),
             'content': contentToStore,
             'content_type': contentType.value,
             'mime_type': mimeType,
@@ -651,6 +675,7 @@ class ClipboardRepository implements IClipboardRepository {
         content: sanitizedContent, // Return original unencrypted content
         deviceName: deviceName,
         deviceType: deviceType,
+        targetDeviceTypes: targetDeviceTypes,
         contentType: contentType,
         mimeType: mimeType,
         richTextFormat: format,
@@ -910,24 +935,31 @@ class ClipboardRepository implements IClipboardRepository {
 
       final decryptedItems = await _decryptItems(items);
 
-      // FIXED: Clean up orphaned cache entries (async, don't await)
-      _cleanupOrphanedCache(decryptedItems);
+      // Both cache sweeps below delete everything outside the rows just
+      // returned, so they are only meaningful for a full-history fetch. Sync
+      // and widget paths poll with limit: 1 and limit: 5 on every realtime
+      // event; pruning against those would empty the cache continuously and
+      // re-download (and re-bill) every image. Only a successful full fetch
+      // may prune - doing it after a failure would wipe the cache over a
+      // dropped connection. Note this still prunes against the rows actually
+      // returned (15 by default) while the server retains 20, so a clip that
+      // falls off the client's list loses its cached bytes and would be
+      // re-fetched if it ever came back.
+      if (safeLimit >= _defaultHistoryLimit) {
+        // Clean up orphaned cache entries (async, don't await)
+        _cleanupOrphanedCache(decryptedItems);
 
-      // Drop disk-cached media for clips that no longer exist. Only a
-      // successful fetch may prune - doing it after a failure would wipe the
-      // cache over a dropped connection and re-download everything. Note this
-      // prunes against the rows actually returned (15 by default) while the
-      // server retains 20, so a clip that falls off the client's list loses
-      // its cached bytes and would be re-fetched if it ever came back.
-      unawaited(
-        MediaDiskCache.instance.prune(
-          decryptedItems
-              .map((i) => i.storagePath)
-              .whereType<String>()
-              .where((p) => p.isNotEmpty)
-              .toSet(),
-        ),
-      );
+        // Drop disk-cached media for clips that no longer exist.
+        unawaited(
+          MediaDiskCache.instance.prune(
+            decryptedItems
+                .map((i) => i.storagePath)
+                .whereType<String>()
+                .where((p) => p.isNotEmpty)
+                .toSet(),
+          ),
+        );
+      }
 
       return decryptedItems;
     } on SecurityException {
@@ -1179,6 +1211,12 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Validates limit parameter for queries
+  /// Default history page size, matching [IClipboardRepository.getHistory].
+  ///
+  /// A fetch of at least this many rows is treated as a full-history fetch and
+  /// is the only kind allowed to prune the media caches.
+  static const int _defaultHistoryLimit = 15;
+
   int _validateLimit(int limit) {
     if (limit < 1) {
       throw ValidationException('Limit must be at least 1');
@@ -1205,7 +1243,15 @@ class ClipboardRepository implements IClipboardRepository {
   static List<ClipboardItem> _parseClipboardItems(
     List<Map<String, dynamic>> data,
   ) {
-    return data.map((json) {
+    // Skip rows that will not parse instead of failing the batch. The catch
+    // below used to throw, which the comment said was "continue with other
+    // items" but was not: one malformed row aborted the whole history load,
+    // and because watchHistory() runs this inside .asyncMap, that throw became
+    // a stream error that permanently killed realtime sync for the session.
+    final items = <ClipboardItem>[];
+    var skipped = 0;
+
+    for (final json in data) {
       try {
         // Extract encrypted content directly from clipboard table
         final encryptedContent = json['content'] as String?;
@@ -1264,12 +1310,22 @@ class ClipboardRepository implements IClipboardRepository {
           createdAt: DateTime.parse(json['created_at'] as String),
         );
 
-        return item;
-      } catch (e) {
-        // Log parsing error but continue with other items
-        throw RepositoryException('Failed to parse clipboard item: $e');
+        items.add(item);
+      } on Object catch (e) {
+        // Object, not Exception: a bad cast throws TypeError, which is an
+        // Error - and that is the most likely way a row fails to parse.
+        skipped++;
+        debugPrint(
+          '[Repository] ⚠ Skipping unparseable row ${json['id']}: $e',
+        );
       }
-    }).toList();
+    }
+
+    if (skipped > 0) {
+      debugPrint('[Repository] ⚠ Skipped $skipped unparseable row(s)');
+    }
+
+    return items;
   }
 
   /// Decrypt clipboard items content (only if encrypted)

@@ -84,8 +84,11 @@ class DeviceService implements IDeviceService {
             'user_id': userId,
             'device_type': deviceType,
             'device_name': deviceName,
-            'fcm_token':
-                null, // Desktop doesn't use FCM, mobile will update later
+            // Upsert writes every column, so this CLEARS any stored token.
+            // Safe only because every mobile caller follows this immediately
+            // with updateFcmToken(); desktop has no token to lose. Calling this
+            // alone on mobile silently stops push notifications for the device.
+            'fcm_token': null,
             'last_active': DateTime.now().toUtc().toIso8601String(),
           }, onConflict: 'user_id,device_type,device_name')
           .select('id')

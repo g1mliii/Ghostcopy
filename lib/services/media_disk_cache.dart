@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -46,6 +47,11 @@ class MediaDiskCache {
   /// the 10MB upload ceiling enforced by storage-presign, so in practice this
   /// only guards against legacy oversized objects.
   static const int maxEntryBytes = 16 * 1024 * 1024;
+
+  /// How long a `.tmp` file may exist before prune treats it as abandoned.
+  /// Comfortably longer than any single write, short enough that a crashed one
+  /// does not linger.
+  static const Duration _tmpGracePeriod = Duration(minutes: 10);
 
   Directory? _dir;
   Future<Directory?>? _initializing;
@@ -167,11 +173,28 @@ class MediaDiskCache {
       final keep = liveStoragePaths.map(_fileName).toSet();
       var removed = 0;
 
+      final staleBefore = clock.now().subtract(_tmpGracePeriod);
+
       await for (final entity in dir.list()) {
         if (entity is! File) continue;
         final name = entity.uri.pathSegments.last;
-        // Leave in-progress writes alone; they belong to a live download.
-        if (name.endsWith('.tmp')) continue;
+
+        if (name.endsWith('.tmp')) {
+          // In-progress writes belong to a live download and must be left
+          // alone - but a .tmp abandoned by a crash was skipped here AND by
+          // _evictToFit, so it survived forever. Anything older than the grace
+          // period cannot still be being written.
+          try {
+            if (entity.lastModifiedSync().isBefore(staleBefore)) {
+              await _quietDelete(entity);
+              removed++;
+            }
+          } on FileSystemException {
+            // Vanished under us, or unreadable; nothing to do.
+          }
+          continue;
+        }
+
         if (keep.contains(name)) continue;
         await _quietDelete(entity);
         removed++;

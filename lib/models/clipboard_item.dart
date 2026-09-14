@@ -234,7 +234,9 @@ class ClipboardItem {
       'target_device_type': targetDeviceTypes,
       'is_public': isPublic,
       'is_encrypted': isEncrypted,
-      'created_at': createdAt.toIso8601String(),
+      // toUtc(): a local DateTime serialises without a timezone suffix and
+      // Postgres reads that as UTC, shifting the value by the device's offset.
+      'created_at': createdAt.toUtc().toIso8601String(),
       'content_type': contentType.value,
       'storage_path': storagePath,
       'file_size_bytes': fileSizeBytes,
@@ -299,6 +301,14 @@ class ClipboardItem {
 
   @override
   String toString() {
-    return 'ClipboardItem(id: $id, userId: $userId, content: ${content.substring(0, content.length > 20 ? 20 : content.length)}..., deviceName: $deviceName, deviceType: $deviceType, targetDeviceTypes: $targetDeviceTypes, contentType: ${contentType.value}, isPublic: $isPublic, isEncrypted: $isEncrypted, createdAt: $createdAt)';
+    // Length, never the content. This used to print the first 20 characters,
+    // which put decrypted clipboard text - passwords included - into any log
+    // line or error message that interpolated an item. Device.toString() masks
+    // its fcmToken the same way.
+    return 'ClipboardItem(id: $id, userId: $userId, content: '
+        '${content.length} chars, deviceName: $deviceName, '
+        'deviceType: $deviceType, targetDeviceTypes: $targetDeviceTypes, '
+        'contentType: ${contentType.value}, isPublic: $isPublic, '
+        'isEncrypted: $isEncrypted, createdAt: $createdAt)';
   }
 }

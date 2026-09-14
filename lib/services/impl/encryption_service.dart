@@ -107,6 +107,17 @@ class EncryptionService implements IEncryptionService {
   // Guard to prevent concurrent initializations across callers
   Future<void>? _initFuture;
 
+  final ValueNotifier<int> _keyRevision = ValueNotifier<int>(0);
+
+  @override
+  ValueListenable<int> get keyRevision => _keyRevision;
+
+  /// Replace the loaded key and tell anything caching [isEnabled] about it.
+  void _setKeyBytes(Uint8List? bytes) {
+    _keyBytes = bytes;
+    _keyRevision.value++;
+  }
+
   // Storage keys - user-specific to prevent cross-user passphrase leakage
   String get _passphraseKey => 'encryption_passphrase_$_userId';
   String get _verificationHashKey => 'encryption_verification_hash_$_userId';
@@ -123,6 +134,24 @@ class EncryptionService implements IEncryptionService {
     // Already set up for THIS user - nothing to do.
     if (_initialized && _userId == userId) return;
 
+    // Let any in-flight initialization finish BEFORE deciding whether to
+    // re-key. The guard below tests _initialized, which is still false while
+    // an initialize() is running, so testing it first let a concurrent
+    // initialize(userB) skip the re-key, fall into the in-flight branch, and
+    // return "successfully" still holding userA's key and _userId - exactly
+    // the cross-user corruption the re-key exists to prevent. Loops because
+    // another caller can start a fresh init while we are awaiting this one.
+    while (_initFuture != null) {
+      try {
+        await _initFuture;
+      } on Object {
+        // The caller that started that init handles its own failure; we care
+        // only about the resulting state, checked below.
+      }
+      // That init may have been for our user, in which case we are done.
+      if (_initialized && _userId == userId) return;
+    }
+
     // Set up for somebody else. This must re-key, not return early.
     //
     // Signing out signs straight back in anonymously, so that anonymous id is
@@ -138,12 +167,6 @@ class EncryptionService implements IEncryptionService {
         '[EncryptionService] User changed ($_userId -> $userId) - re-keying',
       );
       reset();
-    }
-
-    // If another initialization is in-flight, wait for it
-    if (_initFuture != null) {
-      await _initFuture;
-      return;
     }
 
     _userId = userId;
@@ -256,7 +279,7 @@ class EncryptionService implements IEncryptionService {
       await _secureStorage.delete(key: _verificationHashKey);
 
       // Clear from memory
-      _keyBytes = null;
+      _setKeyBytes(null);
 
       debugPrint('Encryption disabled - passphrase cleared');
     } on Exception catch (e) {
@@ -272,7 +295,7 @@ class EncryptionService implements IEncryptionService {
     debugPrint('[EncryptionService] Resetting encryption state');
     _initialized = false;
     _userId = null;
-    _keyBytes = null;
+    _setKeyBytes(null);
     _initFuture = null;
     // Note: _passphraseSync is final and cannot be reset
   }
@@ -410,7 +433,7 @@ class EncryptionService implements IEncryptionService {
         'iterations': 100000,
       });
 
-      _keyBytes = Uint8List.fromList(List<int>.from(result));
+      _setKeyBytes(Uint8List.fromList(List<int>.from(result)));
       debugPrint('Encryption key derived via PBKDF2 (100k iterations)');
     } on Exception catch (e) {
       debugPrint('Failed to derive key: $e');

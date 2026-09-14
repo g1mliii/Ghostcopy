@@ -340,13 +340,13 @@ class SpotlightViewModel extends ChangeNotifier {
         debugPrint('[SpotlightVM] ↑ Sent image: ${bytes.length} bytes');
       } else if (_clipboardContent?.hasHtml ?? false) {
         // HTML content
-        // Note: insertRichText doesn't support targetDeviceTypes yet
         await _clipboardRepo.insertRichText(
           userId: userId,
           deviceType: currentDeviceType,
           deviceName: currentDeviceName,
           content: _clipboardContent!.html!,
           format: RichTextFormat.html,
+          targetDeviceTypes: targetDevicesList,
         );
         debugPrint('[SpotlightVM] ↑ Sent HTML: ${_content.length} chars');
       } else {

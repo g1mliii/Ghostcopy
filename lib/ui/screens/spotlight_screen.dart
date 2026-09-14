@@ -279,21 +279,18 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       (_pausableAuthSlideController, _authSlideController),
     ];
 
-    for (final (pausable, controller) in pausables) {
+    for (final (pausable, _) in pausables) {
       if (!lifecycle.addPausable(pausable)) {
+        // Run unmanaged rather than disposing. Disposing here left a `late`
+        // field holding a dead controller that the rest of this State still
+        // drives - the very next `_animationController.forward()` would throw,
+        // and dispose() would then dispose it a second time. Losing tray-mode
+        // pausing for this screen is a far smaller problem than a crash, and
+        // reaching the limit at all means something else is leaking.
         debugPrint(
-          '[Spotlight] ⚠️ Failed to register pausable - lifecycle limit reached. '
-          'Disposing controller to prevent unmanaged animations.',
+          '[Spotlight] ⚠️ Could not register pausable - lifecycle limit '
+          'reached. Animations will run unmanaged in tray mode.',
         );
-        // Dispose controller immediately if lifecycle can't manage it
-        // This prevents unmanaged animations from running and wasting CPU
-        try {
-          controller.dispose();
-        } on Exception catch (e) {
-          debugPrint(
-            '[Spotlight] Failed to dispose unregistered controller: $e',
-          );
-        }
       }
     }
 
@@ -2379,9 +2376,12 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     try {
       if (!widget.item.requiresDownload) return;
 
+      // contentType.value is an enum name like `file_pdf`, so using it as an
+      // extension suggested "file.file_pdf" in the save dialog. mimeType maps
+      // to a real extension.
       final filename =
           widget.item.metadata?.originalFilename ??
-          'file.${widget.item.contentType.value}';
+          'file.${_extensionForItem(widget.item)}';
 
       final savePath = await FilePicker.saveFile(
         dialogTitle: 'Save File',
@@ -2412,6 +2412,27 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
         type: NotificationType.error,
       );
     }
+  }
+
+  /// Best-effort file extension for a clip with no original filename.
+  String _extensionForItem(ClipboardItem item) {
+    const byMime = {
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/gif': 'gif',
+      'application/pdf': 'pdf',
+      'application/msword': 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+          'docx',
+      'text/plain': 'txt',
+      'application/zip': 'zip',
+      'application/x-tar': 'tar',
+      'application/gzip': 'gz',
+      'video/mp4': 'mp4',
+      'audio/mpeg': 'mp3',
+      'audio/wav': 'wav',
+    };
+    return byMime[item.mimeType] ?? 'bin';
   }
 
   Future<void> _handleDelete() async {

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
@@ -74,7 +75,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
   String _obsidianFileName = 'clipboard.md';
-  HotKey _currentHotkey = const HotKey(key: 's', ctrl: true, shift: true);
+  HotKey _currentHotkey = defaultHotkey;
 
   // Text controllers
   final _webhookUrlController = TextEditingController();
@@ -100,6 +101,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     // Load async data immediately without waiting
     _loadTargetDevices();
     _loadAutoStartSetting();
+    _loadHotkey();
     _loadEncryptionStatus();
     _loadUrlShorteningStatus();
     _loadWebhookStatus();
@@ -173,6 +175,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
         _autoSendTargetDevices = devices;
         _cachedDeviceText = null; // Reset cache
       });
+    }
+  }
+
+  /// Show the shortcut that is actually registered, not the compile-time
+  /// default - otherwise the panel reports Ctrl+Shift+S to a user who set
+  /// something else.
+  Future<void> _loadHotkey() async {
+    if (widget.hotkeyService == null) return;
+
+    final saved = await widget.settingsService.getHotkey();
+    if (saved != null && mounted) {
+      setState(() => _currentHotkey = saved);
     }
   }
 
@@ -291,7 +305,19 @@ class _SettingsPanelState extends State<SettingsPanel> {
       );
 
       if (confirmed ?? false) {
-        await widget.encryptionService!.clearPassphrase();
+        try {
+          await widget.encryptionService!.clearPassphrase();
+        } on Object catch (err) {
+          debugPrint('[SettingsPanel] Failed to disable encryption: $err');
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not turn encryption off - try again'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
         if (mounted) {
           setState(() => _encryptionEnabled = false);
           widget.onEncryptionChanged?.call();
@@ -334,7 +360,23 @@ class _SettingsPanelState extends State<SettingsPanel> {
       // DROP in the locked count, not reaching zero - history can hold clips
       // under several passphrases and those stay locked by design.
       if (hasExistingEncrypted) {
-        await repo.getHistory();
+        try {
+          await repo.getHistory();
+        } on Object catch (e) {
+          // getHistory throws RepositoryException on any network or Postgrest
+          // error; unguarded it escaped this handler as an unhandled async
+          // error and the user heard nothing about the passphrase they just
+          // entered.
+          debugPrint('[SettingsPanel] Passphrase check failed: $e');
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not check your passphrase - try again'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
         if (!mounted) return;
 
         final lockedAfter = repo.undecryptableItemCount.value;
@@ -343,7 +385,22 @@ class _SettingsPanelState extends State<SettingsPanel> {
         );
 
         if (lockedAfter >= lockedBefore) {
-          await widget.encryptionService!.clearPassphrase();
+          try {
+            await widget.encryptionService!.clearPassphrase();
+          } on Object catch (err) {
+            debugPrint('[SettingsPanel] Failed to clear passphrase: $err');
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'That passphrase did not unlock any clips, and it could not '
+                  'be cleared - try again',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
           if (!mounted) return;
           setState(() => _encryptionEnabled = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -701,13 +758,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           if (widget.hotkeyService != null) ...[
             HotkeyCapture(
               currentHotkey: _currentHotkey,
-              onHotkeyChanged: (newHotkey) async {
-                await widget.hotkeyService!.unregisterHotkey(_currentHotkey);
-                if (mounted) {
-                  setState(() => _currentHotkey = newHotkey);
-                }
-                debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
-              },
+              onHotkeyChanged: _handleHotkeyChanged,
             ),
             const SizedBox(height: 20),
           ],
@@ -1280,6 +1331,48 @@ class _SettingsPanelState extends State<SettingsPanel> {
         ],
       ),
     );
+  }
+
+  /// Apply a newly captured hotkey: register it, persist it, and only then
+  /// show it as current.
+  ///
+  /// This handler used to unregister the old hotkey and never register the new
+  /// one, so changing the shortcut silently left the app with no global hotkey
+  /// at all until the next restart.
+  Future<void> _handleHotkeyChanged(HotKey newHotkey) async {
+    if (newHotkey == _currentHotkey) return;
+
+    try {
+      await applyHotkey(newHotkey);
+    } on UnsupportedHotkeyException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${_formatHotkey(newHotkey)} cannot be used as a shortcut. '
+            'Your previous shortcut is still active.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    } on Object catch (e) {
+      debugPrint('Failed to apply hotkey: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not change the shortcut. Your previous one is still active.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _currentHotkey = newHotkey);
+    debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
   }
 
   String _formatHotkey(HotKey hotkey) {

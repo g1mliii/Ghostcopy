@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -158,15 +156,9 @@ class StorageService implements IStorageService {
         body: body,
       );
 
-      if (response.status != 200) {
-        final errorBody = response.data is String
-            ? response.data as String
-            : json.encode(response.data);
-        throw StorageException(
-          'Edge function returned status ${response.status}: $errorBody',
-        );
-      }
-
+      // functions_client throws FunctionsHttpException for any non-2xx, so a
+      // status check here only ever sees success codes. The real error path is
+      // the catch below, which unpacks the exception's details.
       final data = response.data as Map<String, dynamic>;
       if (data.containsKey('error')) {
         throw StorageException('Edge function error: ${data['error']}');
@@ -175,6 +167,14 @@ class StorageService implements IStorageService {
       return data;
     } on StorageException {
       rethrow;
+    } on FunctionException catch (e) {
+      // Surface what the function actually said rather than the exception's
+      // toString, which reads as a stack of client internals.
+      final details = e.details;
+      final message = details is Map && details['error'] != null
+          ? details['error'].toString()
+          : e.reasonPhrase ?? 'request failed';
+      throw StorageException('Storage request failed: $message');
     } catch (e) {
       throw StorageException('Edge function call failed: $e');
     }

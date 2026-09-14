@@ -43,8 +43,20 @@ class UrlShortenerService implements IUrlShortenerService {
 
       if (response.statusCode == 200 && response.body.isNotEmpty) {
         final shortened = response.body.trim();
-        debugPrint('[UrlShortenerService] ✅ Shortened to: $shortened');
-        return shortened;
+
+        // TinyURL answers 200 with a plain-text body like "Error" when it
+        // rejects the input, so a non-empty 200 is not proof of a URL. Without
+        // this the word "Error" was handed back as the short link and copied
+        // to the user's clipboard.
+        if (isUrl(shortened)) {
+          debugPrint('[UrlShortenerService] ✅ Shortened to: $shortened');
+          return shortened;
+        }
+
+        debugPrint(
+          '[UrlShortenerService] ⚠️  API returned a non-URL body: $shortened',
+        );
+        return url;
       }
 
       debugPrint('[UrlShortenerService] ⚠️  API returned status ${response.statusCode}');

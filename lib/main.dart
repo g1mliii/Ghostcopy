@@ -134,7 +134,11 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     }
 
     await _writePendingCopy(match);
-  } on Exception catch (e) {
+  } on Object catch (e) {
+    // Object, not Exception. The doc above promises this never throws, but a
+    // bad cast raises TypeError - an Error - which an Exception-only handler
+    // lets escape, and an exception escaping a background isolate stops later
+    // messages from being handled at all.
     debugPrint('[FCM Background] Prefetch failed (tap will open app): $e');
   }
 }
@@ -390,7 +394,12 @@ Future<void> main(List<String> args) async {
     // nothing ever consumed the callback, so signing in with Google appeared
     // to do nothing and left the browser tab open.
     unawaited(_handleDeepLinkArgs(args));
-    SingleInstance.instance.incomingArguments.listen((forwarded) {
+    // SingleInstance.listen, not .incomingArguments.listen: the server starts
+    // accepting connections inside acquire() near the top of main, but this
+    // runs only after Supabase and the rest of desktop setup. A broadcast
+    // stream has no replay, so a callback forwarded in that window would be
+    // dropped. listen() flushes that backlog.
+    SingleInstance.instance.listen((forwarded) {
       unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
       // A second launch without a URL is the user asking for the app, so show
       // the window rather than silently doing nothing.
@@ -701,12 +710,11 @@ class _MyAppState extends State<MyApp> {
       // Set up tray right-click to show custom menu
       (locator<ITrayService>() as TrayService).onRightClick = _showTrayMenu;
 
-      // Register global hotkey with state-aware callback
-      const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
-      locator<IHotkeyService>().registerHotkey(
-        defaultHotkey,
-        _handleHotkeySpotlight,
-      );
+      // Register the global hotkey the user chose, falling back to the default
+      // only when nothing has been saved. This used to always register the
+      // hardcoded default, so a customised shortcut was discarded on restart.
+      _onHotkeyPressed = _handleHotkeySpotlight;
+      unawaited(_registerSavedHotkey());
     } else {
       // Mobile: Check if user is already signed in
       final currentUser = locator<IAuthService>().currentUser;
@@ -1022,6 +1030,83 @@ class _MyAppState extends State<MyApp> {
 ///
 /// Handles both `ghostcopy://auth-callback` (Google OAuth) and
 /// `ghostcopy://reset-password`.
+/// The shortcut used when the user has never chosen one.
+const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
+
+/// Invoked when the global hotkey fires.
+///
+/// Set by [_MyAppState], which owns the tray/window state the handler needs.
+/// Held at top level so [applyHotkey] can re-register from anywhere (the
+/// settings panel) without threading the callback through the widget tree.
+Future<void> Function()? _onHotkeyPressed;
+
+void _invokeHotkeyCallback() {
+  unawaited(_onHotkeyPressed?.call());
+}
+
+/// Register [hotkey] as the global shortcut and persist it.
+///
+/// Single entry point so the Spotlight callback is wired in exactly one place.
+/// Throws [UnsupportedHotkeyException] if the key cannot be registered; the
+/// previous registration is left in place in that case, and nothing is saved.
+Future<void> applyHotkey(HotKey hotkey) async {
+  final hotkeyService = locator<IHotkeyService>();
+
+  // Register first: if the new combo is rejected, the old one must survive and
+  // nothing should be written to settings.
+  await hotkeyService.registerHotkey(hotkey, _invokeHotkeyCallback);
+
+  if (hotkey != _activeHotkey) {
+    await hotkeyService.unregisterHotkey(_activeHotkey);
+  }
+  _activeHotkey = hotkey;
+
+  await locator<ISettingsService>().setHotkey(hotkey);
+  debugPrint('[Hotkey] Applied ${hotkey.toStorageString()}');
+}
+
+/// The shortcut currently registered with the OS.
+HotKey _activeHotkey = defaultHotkey;
+
+/// Register the saved global hotkey, falling back to [defaultHotkey].
+///
+/// A saved hotkey naming a key this platform cannot register (written by an
+/// older build, which allowed keys the service could not map) falls back rather
+/// than leaving the app with no shortcut at all.
+Future<void> _registerSavedHotkey() async {
+  final hotkeyService = locator<IHotkeyService>();
+  HotKey? saved;
+
+  try {
+    saved = await locator<ISettingsService>().getHotkey();
+  } on Object catch (e) {
+    debugPrint('[Hotkey] Could not read saved hotkey: $e');
+  }
+
+  final wanted = saved ?? defaultHotkey;
+
+  try {
+    await hotkeyService.registerHotkey(wanted, _invokeHotkeyCallback);
+    _activeHotkey = wanted;
+    debugPrint('[Hotkey] Registered ${wanted.toStorageString()}');
+    return;
+  } on UnsupportedHotkeyException catch (e) {
+    debugPrint('[Hotkey] $e - falling back to default');
+  } on Object catch (e) {
+    debugPrint('[Hotkey] Failed to register ${wanted.toStorageString()}: $e');
+  }
+
+  if (wanted == defaultHotkey) return;
+
+  try {
+    await hotkeyService.registerHotkey(defaultHotkey, _invokeHotkeyCallback);
+    _activeHotkey = defaultHotkey;
+    debugPrint('[Hotkey] Registered default ${defaultHotkey.toStorageString()}');
+  } on Object catch (e) {
+    debugPrint('[Hotkey] Failed to register default hotkey: $e');
+  }
+}
+
 Future<void> _handleDeepLinkArgs(List<String> args) async {
   final link = args.firstWhere(
     (a) => a.startsWith('ghostcopy://'),
@@ -1117,8 +1202,13 @@ Future<void> _registerWindowsContextMenu() async {
     await Process.run('reg', [
       'add', key, '/v', 'Icon', '/d', '"$exePath",0', '/f',
     ]);
+    // Interpolated, NOT a raw string: r'$key' is the literal text "$key",
+    // so the adjacent literals used to concatenate to `$key\command` and
+    // reg rejected it as a key name with no hive. The menu entry was
+    // created with its label and icon but no command subkey, so clicking
+    // "Send with GhostCopy" did nothing.
     await Process.run('reg', [
-      'add', r'$key' r'\command', '/ve', '/d',
+      'add', '$key\\command', '/ve', '/d',
       '"$exePath" --send-file "%1"', '/f',
     ]);
 

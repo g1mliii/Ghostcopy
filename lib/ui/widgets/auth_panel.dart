@@ -592,6 +592,10 @@ class _AuthPanelState extends State<AuthPanel> {
           // Run shared post-login logic (passphrase restore + realtime reinit)
           await _handlePostLogin();
 
+          // Re-check: the guard above was evaluated BEFORE that await, so the
+          // panel may have been disposed while post-login work was running.
+          if (!mounted) return;
+
           // Success - close auth panel
           widget.onClose();
           setState(() => _authLoading = false);

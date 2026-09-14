@@ -309,7 +309,24 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       if (hasExistingEncrypted) {
         final lockedBefore = repo.undecryptableItemCount.value;
         setState(() => _encryptionLoading = true);
-        await repo.getHistory();
+        try {
+          await repo.getHistory();
+        } on Object catch (e) {
+          // getHistory throws RepositoryException on any network or Postgrest
+          // error. Unguarded, that escaped this onChanged handler as an
+          // unhandled async error and left _encryptionLoading true, disabling
+          // the switch for the life of the screen with nothing said about the
+          // passphrase just entered.
+          debugPrint('[MobileSettings] Passphrase check failed: $e');
+          if (!mounted) return;
+          setState(() => _encryptionLoading = false);
+          showGhostToast(
+            context,
+            'Could not check your passphrase - try again',
+            type: GhostToastType.error,
+          );
+          return;
+        }
         if (!mounted) return;
 
         final lockedAfter = repo.undecryptableItemCount.value;
@@ -319,7 +336,20 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         );
 
         if (lockedAfter >= lockedBefore) {
-          await _encryptionService!.clearPassphrase();
+          try {
+            await _encryptionService!.clearPassphrase();
+          } on Object catch (e) {
+            debugPrint('[MobileSettings] Failed to clear passphrase: $e');
+            if (!mounted) return;
+            setState(() => _encryptionLoading = false);
+            showGhostToast(
+              context,
+              'That passphrase did not unlock any clips, and it could not be '
+              'cleared - try again',
+              type: GhostToastType.error,
+            );
+            return;
+          }
           if (!mounted) return;
           setState(() {
             _encryptionEnabled = false;
@@ -372,7 +402,23 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
       if (confirmed) {
         setState(() => _encryptionLoading = true);
-        await _encryptionService!.clearPassphrase();
+        try {
+          await _encryptionService!.clearPassphrase();
+        } on Object catch (e) {
+          // Same stuck-switch failure as the enable path: clearPassphrase()
+          // rethrows on a secure-storage error, and unguarded that left
+          // _encryptionLoading true, disabling the switch for the life of the
+          // screen with nothing said.
+          debugPrint('[MobileSettings] Failed to disable encryption: $e');
+          if (!mounted) return;
+          setState(() => _encryptionLoading = false);
+          showGhostToast(
+            context,
+            'Could not turn encryption off - try again',
+            type: GhostToastType.error,
+          );
+          return;
+        }
         if (mounted) {
           setState(() {
             _encryptionEnabled = false;

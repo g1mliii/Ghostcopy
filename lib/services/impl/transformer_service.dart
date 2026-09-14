@@ -272,17 +272,26 @@ String _formatJwtExpirationSync(Map<String, dynamic> payload) {
       return ' Invalid expiration timestamp';
     }
 
+    // `exp` is seconds since the epoch UTC, so decode it as UTC. This used to
+    // call fromMillisecondsSinceEpoch without isUtc, producing a LOCAL time
+    // that was then printed with a "UTC" label - wrong by the viewer's offset.
     final expirationDate = DateTime.fromMillisecondsSinceEpoch(
       expirationSeconds * 1000,
+      isUtc: true,
     );
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     final isExpired = expirationDate.isBefore(now);
     final status = isExpired ? '❌ EXPIRED' : '✅ VALID';
     final timeDiff = isExpired
         ? now.difference(expirationDate)
         : expirationDate.difference(now);
 
-    return ' Expires: $expirationDate UTC $status (${_formatDurationSync(timeDiff)} ago/from now)';
+    // Say which it is rather than printing the literal "ago/from now".
+    final relative = isExpired
+        ? '${_formatDurationSync(timeDiff)} ago'
+        : 'in ${_formatDurationSync(timeDiff)}';
+
+    return ' Expires: $expirationDate $status ($relative)';
   } on Exception {
     return ' Invalid expiration format';
   }

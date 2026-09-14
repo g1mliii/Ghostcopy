@@ -40,6 +40,28 @@ class _DeviceListItemState extends State<DeviceListItem> {
   }
 
   @override
+  void didUpdateWidget(covariant DeviceListItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Re-seed when the row is recycled for a different device, or the name
+    // changed elsewhere. The controller was only ever filled in initState, so
+    // a reused State showed the previous device's name in the edit field.
+    // Skipped mid-edit so it cannot overwrite what the user is typing.
+    final isDifferentDevice = oldWidget.device.id != widget.device.id;
+    final didNameChange =
+        oldWidget.device.displayName != widget.device.displayName;
+
+    if (isDifferentDevice) {
+      _isEditing = false;
+      _isRemoving = false;
+    }
+
+    if (isDifferentDevice || (didNameChange && !_isEditing)) {
+      _nameController.text = widget.device.displayName;
+    }
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
     super.dispose();

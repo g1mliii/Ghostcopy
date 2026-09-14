@@ -407,8 +407,14 @@ class NotificationService implements INotificationService {
     _dismissTimer?.cancel();
     _dismissTimer = null;
 
-    _currentOverlay?.remove();
+    // mounted, because remove() asserts on an entry that was never inserted -
+    // which is the state left behind if overlay.insert() threw after the field
+    // was assigned.
+    final entry = _currentOverlay;
     _currentOverlay = null;
+    if (entry != null && entry.mounted) {
+      entry.remove();
+    }
   }
 
   @override

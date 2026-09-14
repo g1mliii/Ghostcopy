@@ -23,7 +23,9 @@ abstract class IClipboardRepository {
   /// Insert a file clipboard item (supports all file types under 10MB)
   ///
   /// Uploads file to Supabase Storage and creates DB record with storage_path
-  /// Files are NOT encrypted (too large, would exceed 10MB limit after base64)
+  /// Bytes are encrypted before upload when a passphrase is set - encrypting
+  /// raw bytes costs a flat 32 bytes, so the 10MB limit is unaffected (the old
+  /// "too large after base64" reasoning applied only to the base64 path)
   /// Preserves original filename in metadata
   Future<ClipboardItem> insertFile({
     required String userId,
@@ -60,7 +62,7 @@ abstract class IClipboardRepository {
   ///
   /// Convenience wrapper around insertFile for images
   /// Uploads image to Supabase Storage and creates DB record with storage_path
-  /// Images are NOT encrypted (too large, would exceed 10MB limit after base64)
+  /// Bytes are encrypted before upload when a passphrase is set - see insertFile
   Future<ClipboardItem> insertImage({
     required String userId,
     required String deviceType,
@@ -82,6 +84,7 @@ abstract class IClipboardRepository {
     required String? deviceName,
     required String content,
     required RichTextFormat format,
+    List<String>? targetDeviceTypes,
   });
 
   /// Download file bytes from Supabase Storage

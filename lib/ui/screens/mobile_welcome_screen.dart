@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../locator.dart';
 import '../../main.dart';
@@ -549,6 +550,32 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     );
   }
 
+  /// Turn a link-token exchange failure into something worth reading.
+  ///
+  /// functions_client throws [FunctionsHttpException] for any non-2xx rather
+  /// than returning it, so the server's `code` lives in `details` - not in a
+  /// response the caller can inspect. Without unpacking it the user saw raw
+  /// exception text and the whole point of the server distinguishing a wrong
+  /// PIN from an expired code was lost.
+  String _describeExchangeError(Object error) {
+    if (error is FunctionsHttpException) {
+      final details = error.details;
+      final code = details is Map ? details['code'] as String? : null;
+      switch (code) {
+        case 'invalid_pin':
+          return 'Incorrect PIN. Check the code on your other device and '
+              'try again.';
+        case 'expired':
+          return 'This code has expired or was already used. Generate a new '
+              'QR code on your other device.';
+      }
+      final message = details is Map ? details['error'] as String? : null;
+      if (message != null && message.isNotEmpty) return message;
+      return 'Could not link this device. Please try again.';
+    }
+    return error.toString().replaceAll('Exception: ', '');
+  }
+
   /// Ask for the 6-digit PIN shown on the sending device.
   ///
   /// Returns null if the user cancels. A wrong PIN does not consume the link
@@ -690,11 +717,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         body: {'token': linkToken, 'pin': pin},
       );
 
-      if (response.status != 200 || response.data == null) {
-        final errorData = response.data as Map<String, dynamic>?;
-        final errorMsg =
-            errorData?['error'] as String? ?? 'Failed to authenticate';
-        throw Exception(errorMsg);
+      // Note: functions_client throws FunctionsHttpException for any non-2xx,
+      // so this only catches a 2xx with an empty body. The error codes the
+      // server sends (invalid_pin / expired) arrive as that exception instead
+      // and are unpacked in the catch below.
+      if (response.data == null) {
+        throw Exception('Failed to authenticate');
       }
 
       final data = response.data as Map<String, dynamic>;
@@ -757,7 +785,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // exactly the failure that happened most often.
       if (mounted) {
         setState(() {
-          _qrError = e.toString().replaceAll('Exception: ', '');
+          _qrError = _describeExchangeError(e);
           _qrScanning = false;
         });
       }

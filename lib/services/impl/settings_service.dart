@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../hotkey_service.dart';
 import '../settings_service.dart';
 
 /// Concrete implementation of ISettingsService using shared_preferences
@@ -25,6 +26,7 @@ class SettingsService implements ISettingsService {
   // The key string is therefore duplicated there; keep them in step.
   static const String _keyScreenshotProtection = 'screenshot_protection';
   static const String _keyAutoShortenUrls = 'auto_shorten_urls';
+  static const String _keyHotkey = 'global_hotkey';
   static const String _keyWebhookEnabled = 'webhook_enabled';
   static const String _keyWebhookUrl = 'webhook_url';
   static const String _keyObsidianEnabled = 'obsidian_enabled';
@@ -193,6 +195,19 @@ class SettingsService implements ISettingsService {
     _ensureInitialized();
     await _prefs!.setBool(_keyScreenshotProtection, enabled);
     debugPrint('Screenshot protection ${enabled ? "enabled" : "disabled"}');
+  }
+
+  @override
+  Future<HotKey?> getHotkey() async {
+    _ensureInitialized();
+    return HotKey.fromStorageString(_prefs!.getString(_keyHotkey));
+  }
+
+  @override
+  Future<void> setHotkey(HotKey hotkey) async {
+    _ensureInitialized();
+    await _prefs!.setString(_keyHotkey, hotkey.toStorageString());
+    debugPrint('Global hotkey saved: ${hotkey.toStorageString()}');
   }
 
   @override

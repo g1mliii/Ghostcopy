@@ -44,8 +44,10 @@ class Device {
       'device_type': deviceType,
       'device_name': deviceName,
       'fcm_token': fcmToken,
-      'last_active': lastActive.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
+      // toUtc(): these land in timestamptz columns, and a local DateTime
+      // serialises without an offset - which Postgres then reads as UTC.
+      'last_active': lastActive.toUtc().toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
     };
   }
 

@@ -55,7 +55,8 @@ class ContentPatterns {
   /// Used by:
   /// - SecurityService: Block auto-send of credit card numbers
   ///
-  /// Matches: 4532148803436467, 4532-1488-0343-6467, 4532 1488 0343 6467
+  /// Matches: 4111111111111111, 4111-1111-1111-1111, 4111 1111 1111 1111
+  /// (examples must be Luhn-valid to be detected; 4532148803436467 was not)
   static final creditCard = RegExp(
     r'\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}',
   );

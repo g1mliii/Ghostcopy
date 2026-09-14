@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
+import '../../utils/content_patterns.dart';
 import '../security_service.dart';
 
 /// Lightweight implementation of ISecurityService
@@ -15,33 +18,16 @@ class SecurityService implements ISecurityService {
   // Security: Maximum content length (1MB) to prevent DoS attacks
   static const int _maxContentLength = 1048576;
 
-  // Compiled regex patterns (initialized once, reused for all checks)
-  // API key prefixes from common providers
-  static final _apiKeyPattern = RegExp(
-    r'(sk_live_|pk_live_|sk_test_|pk_test_|ghp_|gho_|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35})\w*',
-  );
-
-  // JWT token pattern: header.payload.signature (base64 with dots)
-  static final _jwtPattern = RegExp(
-    r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
-  );
-
-  // Credit card pattern: 13-19 digits with optional spaces/dashes
-  // Matches: 4532148803436467 or 4532-1488-0343-6467 or 4532 1488 0343 6467
-  static final _creditCardPattern = RegExp(
-    r'\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}',
-  );
+  // Detection patterns live in ContentPatterns, which documents them as
+  // "Used by: SecurityService" - but this class used to keep its own private
+  // copies of all three, so the shared ones were dead and the two definitions
+  // could drift apart unnoticed. There is now one definition of each.
+  static final _apiKeyPattern = ContentPatterns.apiKey;
+  static final _jwtPattern = ContentPatterns.jwt;
+  static final _creditCardPattern = ContentPatterns.creditCard;
 
   @override
   DetectionResult detectSensitiveData(String content) {
-    // Run detection in background isolate to prevent UI blocking
-    // For very short content (<1000 chars), run synchronously to avoid overhead
-    if (content.length < 1000) {
-      return _detectSensitiveDataSync(content);
-    }
-
-    // For larger content, this will be called asynchronously
-    // The caller should use detectSensitiveDataAsync() for non-blocking operation
     return _detectSensitiveDataSync(content);
   }
 
@@ -94,13 +80,13 @@ class SecurityService implements ISecurityService {
     }
 
     // Check 3: Credit Cards (regex + Luhn validation)
-    final creditCardMatch = _creditCardPattern.firstMatch(content);
-    if (creditCardMatch != null) {
-      // Extract only digits from the matched string
-      final matchedText = creditCardMatch.group(0)!;
-      final digits = matchedText.replaceAll(RegExp('[^0-9]'), '');
+    //
+    // Every candidate, not just the first: an order number or phone number
+    // earlier in the text used to consume the single check and hide a real card
+    // further down.
+    for (final match in _creditCardPattern.allMatches(content)) {
+      final digits = match.group(0)!.replaceAll(RegExp('[^0-9]'), '');
 
-      // Validate with Luhn algorithm
       if (digits.length >= 13 && digits.length <= 19 && _isValidLuhn(digits)) {
         return const DetectionResult(
           isSensitive: true,
@@ -150,52 +136,77 @@ class SecurityService implements ISecurityService {
     return sum % 10 == 0;
   }
 
-  /// Lightweight entropy check for detecting random-looking strings
+  /// Whether [content] looks like a random secret rather than ordinary text.
   ///
-  /// Detects high-entropy content by checking:
-  /// - Character diversity (uppercase, lowercase, digits, special chars)
-  /// - Minimal spaces (keys/passwords rarely have spaces)
-  /// - Sufficient length without being too long
+  /// The previous version counted character CLASSES: anything with upper,
+  /// lower, digit and one "special" was called a secret, where "special" was
+  /// any printable non-alphanumeric - which includes `.`, `/`, `:`, `-` and
+  /// `_`. Every URL, file path and dotted identifier therefore matched, so
+  /// ordinary links were withheld from auto-send. Class diversity simply does
+  /// not distinguish `https://example.com/Path123` from a real key.
   ///
-  /// Performance: O(n) single pass, early return
+  /// Shannon entropy over the actual character distribution does, because a
+  /// random secret spreads its characters out and human-readable text does not.
+  /// The class check is kept only as a cheap precondition.
   static bool _hasHighEntropy(String content) {
-    // Skip if content has spaces (likely natural text, not a key/password)
-    if (content.contains(' ')) return false;
+    // Whitespace means prose or structured text, not a key.
+    if (content.contains(RegExp(r'\s'))) return false;
+
+    // Something recognisably structured rather than random. Checked before the
+    // entropy maths because a long URL can genuinely score above the threshold.
+    if (_looksStructured(content)) return false;
 
     var hasUpper = false;
     var hasLower = false;
     var hasDigit = false;
-    var hasSpecial = false;
-    var charCount = 0;
 
-    // Single pass through string
-    for (var i = 0; i < content.length && charCount < 100; i++) {
+    final counts = <int, int>{};
+    for (var i = 0; i < content.length; i++) {
       final char = content.codeUnitAt(i);
+      counts[char] = (counts[char] ?? 0) + 1;
 
       if (char >= 65 && char <= 90) {
-        hasUpper = true; // A-Z
+        hasUpper = true;
       } else if (char >= 97 && char <= 122) {
-        hasLower = true; // a-z
+        hasLower = true;
       } else if (char >= 48 && char <= 57) {
-        hasDigit = true; // 0-9
-      } else if (char > 32 && char < 127) {
-        hasSpecial = true; // Special chars
-      }
-
-      charCount++;
-
-      // Early return if we've found high diversity
-      if (hasUpper && hasLower && hasDigit && hasSpecial) {
-        return true; // High entropy detected
+        hasDigit = true;
       }
     }
 
-    // Require at least 3 of 4 character types for high entropy
-    final diversity = (hasUpper ? 1 : 0) +
-        (hasLower ? 1 : 0) +
-        (hasDigit ? 1 : 0) +
-        (hasSpecial ? 1 : 0);
+    // A secret worth blocking mixes at least letters and digits.
+    if (!(hasDigit && (hasUpper || hasLower))) return false;
 
-    return diversity >= 3;
+    // Shannon entropy in bits per character.
+    final length = content.length;
+    var entropy = 0.0;
+    for (final count in counts.values) {
+      final p = count / length;
+      entropy -= p * (math.log(p) / math.ln2);
+    }
+
+    return entropy >= _entropyBitsPerCharThreshold;
+  }
+
+  /// Bits per character above which a string is treated as random.
+  ///
+  /// Base64/hex secrets land around 4.5-6.0; English words and identifiers sit
+  /// well below 4.0. 4.2 leaves room on both sides.
+  static const double _entropyBitsPerCharThreshold = 4.2;
+
+  /// Recognisable structure that rules out "random secret".
+  static bool _looksStructured(String content) {
+    // URLs, including scheme-relative ones.
+    if (RegExp('^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(content)) return true;
+    if (content.startsWith('//')) return true;
+
+    // Filesystem paths, POSIX and Windows.
+    if (content.startsWith('/') || content.startsWith(r'\\')) return true;
+    if (RegExp(r'^[a-zA-Z]:[/\\]').hasMatch(content)) return true;
+
+    // Dotted or slashed identifiers: package names, domains, import paths.
+    if (RegExp(r'^[\w.-]+\.[a-zA-Z]{2,}$').hasMatch(content)) return true;
+
+    return false;
   }
 }

@@ -5,10 +5,12 @@ import 'dart:math' show Random;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
+import '../widget_service.dart';
 import 'encryption_service.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
@@ -37,8 +39,7 @@ class AuthService implements IAuthService {
     debugPrint('[AuthService] 🚀 Starting initialization...');
 
     // Sign in anonymously if no user exists
-    final currentUser = _client.auth.currentUser;
-    if (currentUser == null) {
+    if (_client.auth.currentUser == null) {
       debugPrint('[AuthService] No current user, signing in anonymously...');
       try {
         await _client.auth.signInAnonymously();
@@ -52,6 +53,12 @@ class AuthService implements IAuthService {
     } else {
       debugPrint('[AuthService] Already signed in');
     }
+
+    // Re-read AFTER the sign-in above. This used to reuse a `currentUser`
+    // captured before it, which is null in exactly the case that branch exists
+    // for - a fresh install - so the `!= null` guard below was false and
+    // EncryptionService was never initialized at all for that whole session.
+    final currentUser = _client.auth.currentUser;
 
     // Initialize EncryptionService with current user
     if (currentUser != null) {
@@ -349,8 +356,16 @@ class AuthService implements IAuthService {
     final pin = (_secureRandom.nextInt(900000) + 100000).toString();
     final pinHash = sha256.convert(utf8.encode(pin)).toString();
 
-    // Token expires in 5 minutes
+    // Token expires in 5 minutes. UTC, not local.
+    //
+    // toIso8601String() on a LOCAL DateTime emits no timezone suffix, and
+    // Postgres reads a naive timestamp as UTC - so the stored expiry was off by
+    // the device's offset. East of UTC that pushed expires_at past
+    // created_at + 10 minutes and the mobile_link_tokens_max_ttl CHECK rejected
+    // the insert outright; west of UTC the token was already expired when
+    // written. QR linking only worked within a few minutes of UTC.
     final expiresAt = DateTime.now()
+        .toUtc()
         .add(const Duration(minutes: 5))
         .toIso8601String();
 
@@ -412,6 +427,17 @@ class AuthService implements IAuthService {
       // Reset encryption and repository state before signing out
       EncryptionService.instance.reset();
       ClipboardRepository.instance.reset();
+
+      // Widget thumbnails are decrypted renderings written to disk. Leaving
+      // them would show the previous account's clips to whoever signs in next.
+      await WidgetService().clearThumbnailCache();
+
+      // Same for the clip staged for instant-copy by the FCM background
+      // isolate: it holds ONE clip's decrypted plaintext, and CopyActivity only
+      // deletes it when the notification is actually tapped. An untapped
+      // notification leaves it on disk indefinitely - across a sign-out too.
+      await _clearPendingCopy();
+
       debugPrint('[AuthService] Reset encryption and repository state');
 
       await _client.auth.signOut();
@@ -423,6 +449,21 @@ class AuthService implements IAuthService {
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign out failed: ${e.message}');
       rethrow;
+    }
+  }
+
+  /// Delete the instant-copy staging file written by the FCM background
+  /// isolate (see main.dart `_writePendingCopy`).
+  Future<void> _clearPendingCopy() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File('${dir.path}/pending_copy.json');
+      if (file.existsSync()) {
+        await file.delete();
+        debugPrint('[AuthService] Cleared staged clip');
+      }
+    } on Object catch (e) {
+      debugPrint('[AuthService] Could not clear staged clip: $e');
     }
   }
 

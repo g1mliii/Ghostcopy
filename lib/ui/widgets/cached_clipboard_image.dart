@@ -52,13 +52,24 @@ class CachedClipboardImage extends StatefulWidget {
 
 class _CachedClipboardImageState extends State<CachedClipboardImage> {
   /// Whether this device holds a passphrase, so an encrypted image can be
-  /// shown rather than reported as a load failure. Resolved once in initState
-  /// because build() cannot await.
+  /// shown rather than reported as a load failure. Resolved asynchronously
+  /// because build() cannot await, and re-resolved whenever the source or the
+  /// service's loaded key changes.
   bool _canDecrypt = false;
 
   bool _useFallback = false;
   Uint8List? _fallbackImageBytes;
   bool _isLoadingFallback = false;
+
+  /// Set once a storage load has failed for the current source.
+  ///
+  /// Without it the build path re-schedules [_loadFallbackImage] on every
+  /// frame: clearing [_isLoadingFallback] on failure re-satisfies the same
+  /// condition that started the load, so an undecryptable image or one
+  /// transient 5xx spins forever, re-hitting storage-presign (rate-limited at
+  /// 120/min) and starving every other image on screen. Cleared whenever the
+  /// source changes so a genuinely new item still gets its own attempt.
+  bool _fallbackFailed = false;
   ui.Image? _decodedImage; // Track decoded image for disposal
   Future<ui.Image>? _fallbackDecodeFuture;
   int? _fallbackDecodeKey;
@@ -95,6 +106,17 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   @override
   void initState() {
     super.initState();
+    // Re-resolve whenever the key changes. On a cold start this widget builds
+    // before EncryptionService.initialize() has derived the key, so isEnabled()
+    // answers false and, cached, would lock every encrypted image for the life
+    // of the screen.
+    EncryptionService.instance.keyRevision.addListener(_onKeyRevisionChanged);
+    if (widget.item.isEncrypted) {
+      unawaited(_resolveCanDecrypt());
+    }
+  }
+
+  void _onKeyRevisionChanged() {
     if (widget.item.isEncrypted) {
       unawaited(_resolveCanDecrypt());
     }
@@ -123,6 +145,15 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       _useFallback = false;
       _fallbackImageBytes = null;
       _isLoadingFallback = false;
+      _fallbackFailed = false;
+    }
+
+    // Re-resolve on every encrypted source. A recycled State whose first item
+    // was unencrypted never ran this in initState, so it kept _canDecrypt
+    // false and showed the locked placeholder for an item it can in fact
+    // decrypt.
+    if (didSourceChange && widget.item.isEncrypted) {
+      unawaited(_resolveCanDecrypt());
     }
 
     if (didSourceChange || didTargetSizeChange) {
@@ -132,6 +163,9 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   @override
   void dispose() {
+    EncryptionService.instance.keyRevision.removeListener(
+      _onKeyRevisionChanged,
+    );
     _resetDecodedImageState();
 
     // Clear fallback image bytes
@@ -288,6 +322,12 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       return _buildLoadingIndicator();
     }
 
+    // A previous attempt for this source failed. Stop here rather than
+    // scheduling another download; retrying is what looped.
+    if (_fallbackFailed) {
+      return _buildErrorWidget('Failed to load image');
+    }
+
     // Start loading after this frame. Calling it directly from build() reached
     // a synchronous setState() inside _loadFallbackImage (it runs before the
     // first await), triggering "setState() called during build".
@@ -412,6 +452,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         } else {
           setState(() {
             _isLoadingFallback = false;
+            _fallbackFailed = true;
           });
           debugPrint('[CachedClipboardImage] ✗ Failed to load from storage');
         }
@@ -421,6 +462,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       if (mounted) {
         setState(() {
           _isLoadingFallback = false;
+          _fallbackFailed = true;
         });
       }
     }

@@ -15,6 +15,9 @@ class ClipboardService implements IClipboardService {
   /// Singleton instance
   static final ClipboardService instance = ClipboardService._();
 
+  /// Largest file accepted off the clipboard (10 MB).
+  static const int _maxFileBytes = 10485760;
+
   @override
   Future<ClipboardContent> read() async {
     try {
@@ -29,19 +32,29 @@ class ClipboardService implements IClipboardService {
           if (fileUri != null) {
             final file = File(fileUri.toFilePath());
             if (file.existsSync()) {
-              // ignore: avoid_slow_async_io - Large files need async to prevent UI freeze
-              final bytes = await file.readAsBytes();
-              final filename = path.basename(file.path);
-
-              // Validate file size (10MB limit)
-              if (bytes.length <= 10485760) {
+              // Check the size BEFORE reading. Reading first and then testing
+              // bytes.length meant copying a multi-gigabyte file allocated the
+              // whole thing just to reject it.
+              final sizeOnDisk = file.statSync().size;
+              if (sizeOnDisk > _maxFileBytes) {
                 debugPrint(
-                  '[ClipboardService] ✓ Read file: $filename (${bytes.length} bytes)',
+                  '[ClipboardService] ⚠ File too large: $sizeOnDisk bytes',
                 );
-                return ClipboardContent.file(bytes, filename);
               } else {
+                // ignore: avoid_slow_async_io - Large files need async to prevent UI freeze
+                final bytes = await file.readAsBytes();
+                final filename = path.basename(file.path);
+
+                // Re-check: the file can grow between stat and read.
+                if (bytes.length <= _maxFileBytes) {
+                  debugPrint(
+                    '[ClipboardService] ✓ Read file: $filename (${bytes.length} bytes)',
+                  );
+                  return ClipboardContent.file(bytes, filename);
+                }
+
                 debugPrint(
-                  '[ClipboardService] ⚠ File too large: ${bytes.length} bytes',
+                  '[ClipboardService] ⚠ File grew past the limit while reading',
                 );
               }
             }
@@ -193,7 +206,7 @@ class ClipboardService implements IClipboardService {
   Future<File> writeTempFile(Uint8List bytes, String filename) async {
     try {
       final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/$filename');
+      final file = File(path.join(tempDir.path, _safeFilename(filename)));
       await file.writeAsBytes(bytes);
       debugPrint('[ClipboardService] ✓ Wrote temp file: ${file.path}');
       return file;
@@ -201,6 +214,32 @@ class ClipboardService implements IClipboardService {
       debugPrint('[ClipboardService] ✗ Write temp file failed: $e');
       throw ClipboardException('Failed to write temp file: $e');
     }
+  }
+
+  /// Reduce [filename] to a bare name that cannot escape its directory.
+  ///
+  /// Callers pass `item.metadata?.originalFilename`, which comes off the
+  /// clipboard row and is therefore chosen by whichever device sent the clip -
+  /// it is never this device's own input. Interpolating it straight into a path
+  /// let a name like `../../../databases/x.db` write anywhere the process could
+  /// reach. TempFileService.saveTempFile already sanitises; this is the same
+  /// guarantee for the share-sheet path.
+  static String _safeFilename(String filename) {
+    // Take the last segment regardless of separator style: a Windows-style name
+    // arriving on POSIX (or the reverse) must not keep its directories.
+    final lastSegment = filename.split(RegExp(r'[/\\]')).last;
+    var safe = path.basename(lastSegment).trim();
+
+    // '.' and '..' survive basename() and neither is a usable filename.
+    if (safe.isEmpty || safe == '.' || safe == '..') return 'file';
+
+    // Reserved on Windows, harmless to strip elsewhere.
+    safe = safe.replaceAll(RegExp('[<>:"|?*]'), '_');
+
+    // Control characters, which no filesystem wants and some treat specially.
+    safe = String.fromCharCodes(safe.codeUnits.where((c) => c >= 0x20));
+
+    return safe.isEmpty ? 'file' : safe;
   }
 
   @override

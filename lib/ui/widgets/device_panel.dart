@@ -63,7 +63,9 @@ class _DevicePanelState extends State<DevicePanel> {
       deviceId,
       newName,
     );
-    if (success) {
+    // mounted, not just success: the panel can be closed while the rename is
+    // in flight, and setState after dispose throws.
+    if (success && mounted) {
       // Update local cache to reflect name change
       setState(() {
         _cachedDevices = _cachedDevices?.map((device) {
@@ -79,7 +81,7 @@ class _DevicePanelState extends State<DevicePanel> {
 
   Future<bool> _handleRemove(String deviceId) async {
     final success = await widget.deviceService.removeDevice(deviceId);
-    if (success) {
+    if (success && mounted) {
       // Remove from local cache
       setState(() {
         _cachedDevices = _cachedDevices
