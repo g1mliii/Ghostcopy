@@ -17,7 +17,7 @@ const root = import.meta.dirname;
 const dist = path.join(root, 'dist');
 
 // Copied verbatim, cached normally.
-const FILES = ['_headers', 'site.webmanifest'];
+const FILES = ['_headers', '_redirects', 'site.webmanifest', 'robots.txt', 'sitemap.xml'];
 
 // Content-hashed into /assets, cached forever.
 const HASHED = ['output.css', 'waitlist.js', 'reset-password.js'];

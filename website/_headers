@@ -21,6 +21,13 @@
 /site.webmanifest
   Cache-Control: public, max-age=604800
 
+# Crawler files. Short TTL so a sitemap change is picked up quickly.
+/robots.txt
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Cache-Control: public, max-age=3600
+
 # Pages must revalidate or a deploy stays invisible. They are small and gzip
 # well, and Cloudflare still serves the 304s from the edge.
 /*.html

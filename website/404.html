@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-bg">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Not found — GhostCopy</title>
+    <meta name="robots" content="noindex, follow" />
+    <meta name="theme-color" content="#0F0F13" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="./output.css" />
+
+    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+</head>
+
+<body class="min-h-screen flex flex-col">
+
+    <header class="shell flex items-center h-20 sm:h-24">
+        <a href="/" aria-label="GhostCopy home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+        </a>
+    </header>
+
+    <main class="shell grow flex items-center py-20 sm:py-28">
+        <div class="w-full max-w-[720px]">
+            <p class="label mb-8">Error 404</p>
+
+            <h1 class="font-bold leading-[1.02] tracking-display text-[40px] sm:text-6xl lg:text-7xl">
+                <span class="block text-ink-1">This one really is</span>
+                <span class="block text-ink-4">not there.</span>
+            </h1>
+
+            <p class="mt-8 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-prose">
+                The page you asked for does not exist. If you followed a link from somewhere, it was probably pointing at
+                the old site &mdash; the documentation and support pages were folded into the FAQ.
+            </p>
+
+            <nav class="mt-12 flex flex-col sm:flex-row gap-6 sm:gap-10">
+                <a href="/" class="cta">Home <span aria-hidden="true">&rarr;</span></a>
+                <a href="/faq" class="cta">FAQ <span aria-hidden="true">&rarr;</span></a>
+                <a href="/download" class="cta">Download <span aria-hidden="true">&rarr;</span></a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="shell pb-12">
+        <div class="rule mb-8"></div>
+        <div class="flex items-center gap-3">
+            <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+            <span class="font-mono text-[11px] tracking-[0.12em] text-ink-1">© 2026 GHOSTCOPY</span>
+        </div>
+    </footer>
+
+</body>
+
+</html>

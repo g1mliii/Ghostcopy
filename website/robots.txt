@@ -1,0 +1,10 @@
+# https://ghostcopy.app
+User-agent: *
+Allow: /
+
+# Password reset is a single-use utility page that carries a token in its URL.
+# Nothing there is useful in an index, and it should never be crawled.
+Disallow: /reset-password
+Disallow: /reset-password.html
+
+Sitemap: https://ghostcopy.app/sitemap.xml
