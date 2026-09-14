@@ -9,8 +9,22 @@
 /// the victim's app silently ends up signed into the sender's account and
 /// every clip they copy afterwards is written to the sender's rows.
 ///
+/// What is and is not safe to accept, since the three look similar in a URL:
+///
+///  * `access_token`/`refresh_token` - a session chosen by whoever sent the
+///    URL. Accepting one signs the victim into the SENDER's account. Refused.
+///  * `code` - a PKCE authorization code, redeemable only with the verifier
+///    this process stored when it began the flow. Safe.
+///  * `token_hash` - a single-use token mailed to the account's own address and
+///    checked server-side by gotrue. Whoever holds it already controls that
+///    mailbox, so it grants nothing an attacker could not get directly. Safe,
+///    and unlike `code` it survives being opened on another device - which is
+///    why email confirmation links use it.
+///
 /// Kept apart from main.dart so the rules are testable on their own.
 library;
+
+import 'package:supabase_flutter/supabase_flutter.dart' show OtpType;
 
 /// Whether [uri] is a callback this app asked for.
 ///
@@ -37,18 +51,23 @@ enum AuthCallbackRejection {
   /// The provider reported a failure (user declined, expired link).
   providerError,
 
-  /// Well-formed, but carried no authorization code to redeem.
-  noCode,
+  /// Well-formed, but carried nothing redeemable - no code and no token hash.
+  noCredential,
+
+  /// Carried a token hash for a flow this app does not run.
+  unsupportedOtpType,
 }
 
 /// The only `ghostcopy://` targets the app ever asks Supabase to redirect to.
 ///
-/// `auth-callback` covers Google sign-in and anonymous-to-Google linking;
-/// `reset-password` covers the emailed recovery link.
+/// `auth-callback` covers Google sign-in, anonymous-to-Google linking, signup
+/// confirmation and email change; `reset-password` is retained for recovery
+/// links issued before recovery moved to the website (see
+/// supabase/email-templates/reset-password.html).
 const _allowedCallbackHosts = {'auth-callback', 'reset-password'};
 
-/// Parameters that must never appear: their presence means the URL was not
-/// produced by a PKCE flow this app started.
+/// Parameters that must never appear: each names a session chosen by the sender
+/// rather than proven by the recipient.
 const _implicitTokenKeys = [
   'access_token',
   'refresh_token',
@@ -56,19 +75,40 @@ const _implicitTokenKeys = [
   'provider_refresh_token',
 ];
 
+/// Email-link types this app actually issues, mapped from the wire value.
+///
+/// An allowlist rather than a blanket parse: `OtpType` also covers sms and
+/// phone change, which this app never sends, so a callback naming one did not
+/// come from us.
+const _supportedOtpTypes = <String, OtpType>{
+  'signup': OtpType.signup,
+  'email_change': OtpType.emailChange,
+  'email': OtpType.email,
+  'recovery': OtpType.recovery,
+};
+
 /// What to do with one inbound callback URL.
 ///
-/// Either [code] is non-null and should be redeemed with
-/// `exchangeCodeForSession`, or [rejection] explains why nothing should happen.
+/// Exactly one of these holds:
+///  * [code] is set - redeem it with `exchangeCodeForSession`;
+///  * [tokenHash] and [otpType] are set - redeem them with `verifyOTP`;
+///  * [rejection] explains why nothing should happen.
 class AuthCallbackDecision {
-  const AuthCallbackDecision._({this.code, this.rejection, this.detail});
+  const AuthCallbackDecision._({
+    this.code,
+    this.tokenHash,
+    this.otpType,
+    this.rejection,
+    this.detail,
+  });
 
   /// Decide what [link] deserves.
   ///
-  /// Accepts only a `ghostcopy://` URL aimed at a known callback host and
-  /// carrying a PKCE `code`. The code alone is not enough to take over the
-  /// session: redeeming it requires the code verifier the app stored when it
-  /// started the flow, which a caller that did not start one cannot produce.
+  /// Accepts a `ghostcopy://` URL aimed at a known callback host that carries
+  /// either a PKCE `code` or a `token_hash` of a type this app issues. Neither
+  /// is enough to take over the session on its own: a code needs the verifier
+  /// this process stored when it began the flow, and a token hash needs control
+  /// of the account's mailbox. A URL naming a session directly is refused.
   factory AuthCallbackDecision.evaluate(String link) {
     final Uri parsed;
     try {
@@ -113,17 +153,37 @@ class AuthCallbackDecision {
     }
 
     final code = params['code'];
-    if (code == null || code.isEmpty) {
-      return const AuthCallbackDecision._(
-        rejection: AuthCallbackRejection.noCode,
-      );
+    if (code != null && code.isNotEmpty) {
+      return AuthCallbackDecision._(code: code);
     }
 
-    return AuthCallbackDecision._(code: code);
+    final tokenHash = params['token_hash'];
+    if (tokenHash != null && tokenHash.isNotEmpty) {
+      final rawType = params['type'];
+      final otpType = _supportedOtpTypes[rawType];
+      if (otpType == null) {
+        return AuthCallbackDecision._(
+          rejection: AuthCallbackRejection.unsupportedOtpType,
+          detail: rawType ?? 'absent',
+        );
+      }
+      return AuthCallbackDecision._(tokenHash: tokenHash, otpType: otpType);
+    }
+
+    return const AuthCallbackDecision._(
+      rejection: AuthCallbackRejection.noCredential,
+    );
   }
 
   /// The PKCE authorization code to redeem. Null when the URL was refused.
   final String? code;
+
+  /// The emailed one-time token to redeem. Null when the URL was refused or
+  /// carried a [code] instead.
+  final String? tokenHash;
+
+  /// Which email flow [tokenHash] belongs to. Set whenever [tokenHash] is.
+  final OtpType? otpType;
 
   /// Why the URL was refused. Null when it was accepted.
   final AuthCallbackRejection? rejection;
@@ -132,7 +192,7 @@ class AuthCallbackDecision {
   /// provider's error text. Never the code itself.
   final String? detail;
 
-  bool get isAccepted => code != null;
+  bool get isAccepted => code != null || tokenHash != null;
 
   /// Fold the fragment into the query.
   ///

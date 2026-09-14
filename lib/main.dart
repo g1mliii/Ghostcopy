@@ -1202,10 +1202,23 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
   }
 
   try {
-    // exchangeCodeForSession, not getSessionFromUrl: it requires the PKCE code
-    // verifier this process stored when it started the flow, so a code the app
-    // did not ask for cannot be redeemed.
-    await Supabase.instance.client.auth.exchangeCodeForSession(decision.code!);
+    final auth = Supabase.instance.client.auth;
+
+    if (decision.code != null) {
+      // exchangeCodeForSession, not getSessionFromUrl: it requires the PKCE
+      // code verifier this process stored when it started the flow, so a code
+      // the app did not ask for cannot be redeemed.
+      await auth.exchangeCodeForSession(decision.code!);
+    } else {
+      // Email confirmation links carry a one-time token instead of a code,
+      // because a code can only be redeemed on the device that began the flow -
+      // and mail is routinely opened somewhere else. gotrue checks the token
+      // server-side, so possession of the account's mailbox is what is proved.
+      await auth.verifyOTP(
+        tokenHash: decision.tokenHash,
+        type: decision.otpType!,
+      );
+    }
     debugPrint('[Main] ✅ Session established from deep link');
 
     // Bring the app forward so the user sees that sign-in worked - they are

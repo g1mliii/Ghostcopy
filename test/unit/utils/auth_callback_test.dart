@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/utils/auth_callback.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show OtpType;
 
 /// Each of these fails against the pre-fix code, which handed every
 /// `ghostcopy://` argument straight to `getSessionFromUrl`.
@@ -40,6 +41,85 @@ void main() {
       );
 
       expect(decision.code, 'abc123');
+    });
+  });
+
+  group('AuthCallbackDecision - emailed one-time tokens', () {
+    // Confirmation links carry token_hash rather than a PKCE code, because a
+    // code is only redeemable on the device that began the flow and mail is
+    // routinely opened somewhere else. Safe to accept: gotrue checks the token
+    // server-side, and holding it already means holding the account's mailbox.
+    test('accepts a signup confirmation', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?token_hash=abc123&type=signup',
+      );
+
+      expect(decision.isAccepted, isTrue);
+      expect(decision.tokenHash, 'abc123');
+      expect(decision.otpType, OtpType.signup);
+      expect(decision.code, isNull);
+    });
+
+    test('accepts an email change', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?token_hash=abc123&type=email_change',
+      );
+
+      expect(decision.otpType, OtpType.emailChange);
+    });
+
+    test('accepts a recovery token', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://reset-password?token_hash=abc123&type=recovery',
+      );
+
+      expect(decision.otpType, OtpType.recovery);
+    });
+
+    test('accepts a token hash delivered in the fragment', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback#token_hash=abc123&type=signup',
+      );
+
+      expect(decision.tokenHash, 'abc123');
+    });
+
+    test('refuses a type this app never issues', () {
+      // sms and phone_change are real OtpType values, but nothing in the app
+      // sends them - so a callback naming one did not come from us.
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?token_hash=abc123&type=sms',
+      );
+
+      expect(decision.isAccepted, isFalse);
+      expect(decision.rejection, AuthCallbackRejection.unsupportedOtpType);
+      expect(decision.detail, 'sms');
+    });
+
+    test('refuses a token hash with no type at all', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?token_hash=abc123',
+      );
+
+      expect(decision.rejection, AuthCallbackRejection.unsupportedOtpType);
+      expect(decision.detail, 'absent');
+    });
+
+    test('still refuses implicit tokens alongside a token hash', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?token_hash=abc123&type=signup'
+        '&access_token=attacker',
+      );
+
+      expect(decision.rejection, AuthCallbackRejection.implicitTokens);
+    });
+
+    test('never puts the token hash in the log detail', () {
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?token_hash=secret-hash&type=signup',
+      );
+
+      expect(decision.detail, isNull);
     });
   });
 
@@ -185,12 +265,12 @@ void main() {
       expect(decision.detail, 'User declined');
     });
 
-    test('refuses a callback with no code at all', () {
+    test('refuses a callback with nothing redeemable', () {
       final decision = AuthCallbackDecision.evaluate(
         'ghostcopy://auth-callback',
       );
 
-      expect(decision.rejection, AuthCallbackRejection.noCode);
+      expect(decision.rejection, AuthCallbackRejection.noCredential);
     });
 
     test('refuses an empty code', () {
@@ -198,7 +278,7 @@ void main() {
         'ghostcopy://auth-callback?code=',
       );
 
-      expect(decision.rejection, AuthCallbackRejection.noCode);
+      expect(decision.rejection, AuthCallbackRejection.noCredential);
     });
 
     test('never puts the code in the log detail', () {
