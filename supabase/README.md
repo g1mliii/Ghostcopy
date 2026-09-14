@@ -3,18 +3,44 @@
 ## Production is the source of truth
 
 `schema.sql` is a dump of the **live** production schema
-(project `xhbggxftvnlkotvehwmj`, captured 2026-09-11). It is the authoritative
-description of the database. Regenerate it with:
+(project `xhbggxftvnlkotvehwmj`). Regenerate it with:
 
 ```bash
 supabase db dump --linked -f supabase/schema.sql   # requires Docker running
 ```
 
-It contains 5 tables (`clipboard`, `devices`, `app_config`,
-`mobile_link_tokens`, `user_rate_limit`), 5 triggers, 11 functions, 14 RLS
-policies and 16 indexes.
+> **STALE as of 2026-09-14 - do not trust this file.** It was last dumped
+> 2026-09-12, and two migrations reached production after that. Verified by
+> grepping the dump:
+>
+> | Object | In production | In `schema.sql` |
+> |---|---|---|
+> | `mobile_link_tokens.pin_attempts` (added 09-13) | yes | **absent** |
+> | `register_link_token_pin_failure()` (added 09-13) | yes | **absent** |
+> | `storage.delete_object` call (removed 09-14) | no | **still present** |
+>
+> It is stale in both directions: missing what was added, still carrying what
+> was removed. Re-dump before reasoning about the database from it.
 
-## Why `migrations/` is empty
+At the 2026-09-11 capture it contained 5 tables (`clipboard`, `devices`,
+`app_config`, `mobile_link_tokens`, `user_rate_limit`), 5 triggers, 11
+functions, 14 RLS policies and 16 indexes.
+
+## Why `migrations/` does not match production
+
+`migrations/` is **not** empty - it holds four files added since 2026-09-11:
+
+| File | Evidence it is already in production |
+|---|---|
+| `20260911000000_security_hardening.sql` | its own header says "Run this in the Supabase dashboard SQL editor"; commit e43a4dc: "has been applied to production and verified" |
+| `20260911010000_link_token_pin.sql` | QR linking works, which needs the columns it adds |
+| `20260913000000_link_token_pin_attempts.sql` | `exchange-link-token` calls `register_link_token_pin_failure()` and is deployed and working |
+| `20260914000000_repair_cleanup_old_clipboard_items.sql` | commit 50e2a6b found the defect via `supabase db lint --linked`, i.e. against prod |
+
+They are a *record* of DDL already applied, not a queue of DDL to apply. Nothing
+in the git history runs `supabase db push`, `supabase migration repair` or
+creates a baseline migration, and no baseline file exists - so the remote CLI
+history still does not know about any of them.
 
 The production schema was built through the Supabase dashboard's SQL editor,
 which records its own timestamped entries in the remote migration history. The
@@ -31,7 +57,23 @@ Zero overlap. Those 33 files are preserved in `migrations_archive/` as a record
 of intent, but they never described what prod actually ran, and applying them
 now would double-apply DDL that already exists.
 
-**Do not run `supabase db push`.**
+**Do not run `supabase db push`.** This still holds as of 2026-09-14, and the
+four files above make it more true, not less - a push would now try to re-apply
+them on top of DDL production already has.
+
+Those counts have not been re-measured since 2026-09-11. To check the current
+state (read-only, safe):
+
+```bash
+supabase migration list --linked
+```
+
+Any row with a `Local` entry and no `Remote` entry is a file `db push` would
+try to re-apply.
+
+CI does not automate migrations for exactly this reason - see
+`.github/workflows/deploy.yml`, which deploys edge functions only and never
+touches the database.
 
 ## If you want CLI-managed migrations again
 
