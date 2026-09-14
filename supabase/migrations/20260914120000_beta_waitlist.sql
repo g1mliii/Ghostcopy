@@ -56,3 +56,42 @@ create policy "anyone may join the waitlist"
 
 revoke all on table public.waitlist from anon, authenticated;
 grant insert on table public.waitlist to anon, authenticated;
+
+-- A hard ceiling on the table.
+--
+-- The anon key is public, so anybody can write rows here; the constraints above
+-- bound what a row can contain, but nothing bounds how many. This does. The
+-- count is deliberately exact rather than an estimate from pg_class: it makes
+-- each insert marginally more expensive as the table grows, which throttles a
+-- flood at the same time as it caps one. Legitimate signup volume will never
+-- notice.
+--
+-- security definer because anon has no SELECT on the table - the guard has to
+-- read what the caller cannot.
+create or replace function public.waitlist_capacity_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  cap constant bigint := 50000;
+begin
+  if (select count(*) from public.waitlist) >= cap then
+    raise exception 'The waitlist is not accepting signups right now.'
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
+
+-- Note: EXECUTE is deliberately NOT revoked from anon here. A function whose
+-- return type is `trigger` cannot be invoked directly - Postgres refuses with
+-- "trigger functions can only be called as trigger triggers" - so leaving the
+-- default grant in place exposes nothing, while revoking it risks breaking the
+-- very inserts this table exists to accept.
+
+drop trigger if exists waitlist_capacity_guard on public.waitlist;
+create trigger waitlist_capacity_guard
+  before insert on public.waitlist
+  for each row execute function public.waitlist_capacity_guard();

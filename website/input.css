@@ -66,6 +66,15 @@
            focus:border-accent transition-colors;
   }
 
+  /* Honeypot wrapper. Off-canvas rather than display:none, because some bots
+     skip fields they can tell are not rendered. Paired with aria-hidden and
+     tabindex="-1" in the markup so nobody using a keyboard or a screen reader
+     can reach it by accident. */
+  .hp {
+    @apply absolute w-px h-px overflow-hidden whitespace-nowrap -m-px p-0 border-0;
+    clip-path: inset(50%);
+  }
+
   /* Text-link call to action, used everywhere a button would normally go. */
   .cta {
     @apply inline-flex items-center gap-2 text-accent-text hover:text-ink-4
@@ -87,6 +96,13 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Staggered as classes rather than inline style="animation-delay", so the CSP
+   can keep style-src at 'self' with no 'unsafe-inline'. */
 .reveal {
   animation: reveal 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+.reveal-1 { animation-delay: 130ms; }
+.reveal-2 { animation-delay: 260ms; }
+.reveal-3 { animation-delay: 390ms; }
+.reveal-4 { animation-delay: 520ms; }

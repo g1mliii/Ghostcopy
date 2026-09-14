@@ -57,9 +57,9 @@
                 <div class="lg:max-w-[780px]">
                     <h1 class="font-bold leading-[1.02] tracking-display text-[40px] sm:text-6xl lg:text-7xl xl:text-[92px]">
                         <span class="block text-ink-0 reveal">Nothing to open.</span>
-                        <span class="block text-ink-1 reveal" style="animation-delay: 130ms">Nothing to find.</span>
-                        <span class="block text-ink-2 reveal" style="animation-delay: 260ms">It is just</span>
-                        <span class="block text-ink-4 reveal" style="animation-delay: 390ms">already there.</span>
+                        <span class="block text-ink-1 reveal reveal-1">Nothing to find.</span>
+                        <span class="block text-ink-2 reveal reveal-2">It is just</span>
+                        <span class="block text-ink-4 reveal reveal-3">already there.</span>
                     </h1>
                 </div>
 
@@ -67,7 +67,7 @@
                      wide screens, centred underneath on narrow ones. -->
                 <div class="mt-14 lg:mt-0 mx-auto lg:mx-0 w-full max-w-[500px]
                             lg:absolute lg:top-24 lg:right-0 lg:translate-x-[34%] xl:translate-x-[24%]
-                            reveal" style="animation-delay: 300ms">
+                            reveal reveal-2">
                     <div class="bg-surface border border-white/[0.07] rounded-2xl shadow-[0_40px_120px_rgba(0,0,0,0.8)]">
                         <div class="flex items-center gap-2.5 px-4 sm:px-[18px] pt-4 pb-3.5">
                             <svg width="17" height="17" viewBox="0 0 32 32" aria-hidden="true">
@@ -92,8 +92,11 @@
                 </div>
 
                 <!-- waitlist -->
-                <div id="waitlist" class="mt-14 sm:mt-20 lg:mt-24 max-w-[470px] reveal" style="animation-delay: 520ms">
+                <div id="waitlist" class="mt-14 sm:mt-20 lg:mt-24 max-w-[470px] reveal reveal-4">
                     <form data-waitlist data-source="landing" novalidate>
+                        <div class="hp" aria-hidden="true">
+                            <label>Company<input type="text" name="company" tabindex="-1" autocomplete="off" /></label>
+                        </div>
                         <div class="flex items-end gap-4">
                             <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"
                                 aria-label="Email address" class="field" />
@@ -293,6 +296,9 @@
             </h2>
             <div class="mt-10 sm:mt-12 max-w-[470px]">
                 <form data-waitlist data-source="landing-footer" novalidate>
+                        <div class="hp" aria-hidden="true">
+                            <label>Company<input type="text" name="company" tabindex="-1" autocomplete="off" /></label>
+                        </div>
                     <div class="flex items-end gap-4">
                         <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"
                             aria-label="Email address" class="field" />

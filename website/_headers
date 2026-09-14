@@ -2,19 +2,40 @@
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=()
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=(), payment=(), usb=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Cross-Origin-Opener-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://xhbggxftvnlkotvehwmj.supabase.co; form-action 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+  Cross-Origin-Resource-Policy: same-origin
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://xhbggxftvnlkotvehwmj.supabase.co; manifest-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; worker-src 'self'; upgrade-insecure-requests
 
-/output.css
+# Content-hashed by build.mjs, so the URL changes whenever the bytes do.
+# Safe to keep forever; this is what keeps repeat visits off the origin.
+/assets/*
   Cache-Control: public, max-age=31536000, immutable
 
+# Not hashed, and they do change (the ghost mark was replaced once already),
+# so a week with background revalidation rather than a year.
 /icons/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
 
-/waitlist.js
-  Cache-Control: public, max-age=3600
+/site.webmanifest
+  Cache-Control: public, max-age=604800
 
+# Pages must revalidate or a deploy stays invisible. They are small and gzip
+# well, and Cloudflare still serves the 304s from the edge.
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+# The worker decides when everything else is stale, so it can never be stale
+# itself.
 /sw.js
   Cache-Control: public, max-age=0, must-revalidate
+
+# No token should ever be written to a shared cache, and the page scrubs the
+# URL as soon as it reads one.
+/reset-password.html
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer

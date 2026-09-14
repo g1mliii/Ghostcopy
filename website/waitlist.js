@@ -18,6 +18,12 @@
     // catches the obvious typo before a round trip.
     var EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+    // A human does not land on the page and submit inside two seconds. This is
+    // friction for naive bots, not a security control - anything that runs a
+    // real browser or posts straight to the API walks past it.
+    var MIN_DWELL_MS = 2000;
+    var loadedAt = Date.now();
+
     function setStatus(form, message, tone) {
         var el = form.querySelector('[data-waitlist-status]');
         var idle = form.querySelector('[data-waitlist-idle]');
@@ -35,6 +41,17 @@
         var button = form.querySelector('button[type="submit"]');
         var label = form.querySelector('[data-waitlist-label]');
         var email = (input && input.value || '').trim();
+
+        // Honeypot. Hidden from people and from screen readers; a bot that
+        // fills every field trips it. Report success and send nothing, so it
+        // has no signal to adapt to.
+        var trap = form.querySelector('input[name="company"]');
+        if ((trap && trap.value) || Date.now() - loadedAt < MIN_DWELL_MS) {
+            form.reset();
+            setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
+            if (button) button.hidden = true;
+            return;
+        }
 
         if (!EMAIL.test(email) || email.length > 254) {
             setStatus(form, 'That does not look like an email address.', 'error');
@@ -56,7 +73,11 @@
             headers: {
                 'Content-Type': 'application/json',
                 'apikey': SUPABASE_ANON_KEY,
-                'Prefer': 'return=minimal'
+                // ignore-duplicates makes a repeat signup a silent no-op rather
+                // than a 409. Without it the status code tells anyone holding
+                // the public key whether a given address is on the list, which
+                // is an email enumeration oracle we do not need to offer.
+                'Prefer': 'return=minimal, resolution=ignore-duplicates'
             },
             body: JSON.stringify({
                 email: email,
@@ -64,14 +85,12 @@
                 source: form.getAttribute('data-source') || null
             })
         }).then(function (res) {
-            // 409 is the unique index doing its job. From the visitor's side
-            // "already on the list" and "just added" are the same outcome, and
-            // saying so does not leak anything - they typed the address.
+            // A duplicate resolves to 201 because of the Prefer header above,
+            // so both outcomes look identical from here - which is the point.
+            // 409 is still handled in case the header is ever dropped.
             if (res.ok || res.status === 409) {
                 form.reset();
-                setStatus(form, res.status === 409
-                    ? 'You are already on the list. We will be in touch.'
-                    : 'You are on the list. We will email you when builds are ready.', 'success');
+                setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
                 if (button) button.hidden = true;
                 return;
             }
