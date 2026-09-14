@@ -32,6 +32,14 @@ const corsHeaders = {
 /** Domain used to synthesise an email for anonymous accounts. */
 const ANON_EMAIL_DOMAIN = 'anon.ghostcopy.app'
 
+/**
+ * Wrong PINs a single link token will tolerate before it is destroyed.
+ *
+ * Low enough that guessing 6 digits is hopeless, high enough to absorb an
+ * honest typo or two on a phone keypad.
+ */
+const MAX_PIN_ATTEMPTS = 5
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -117,15 +125,39 @@ Deno.serve(async (req) => {
     }
 
     if (!consumedToken) {
-      // Distinguish wrong-PIN from expired/unknown so the phone can tell the
-      // user which it was, without revealing whether the token exists.
-      const { data: existing } = await supabase
-        .from('mobile_link_tokens')
-        .select('expires_at')
-        .eq('token', normalizedToken)
+      // Count the failed guess and find out whether the token was even live,
+      // in one atomic step. A wrong PIN deliberately does not consume the
+      // token, and the reply distinguishes wrong-PIN from expired - together
+      // that is an oracle for guessing the 6 digits, so the allowance has to
+      // be bounded. After MAX_PIN_ATTEMPTS the token is destroyed and the user
+      // generates a fresh QR.
+      const { data: failure, error: failureError } = await supabase
+        .rpc('register_link_token_pin_failure', {
+          p_token: normalizedToken,
+          p_max_attempts: MAX_PIN_ATTEMPTS,
+        })
         .maybeSingle()
 
-      if (existing && new Date(existing.expires_at) > new Date()) {
+      if (failureError) {
+        console.error(
+          '[exchange-link-token] Failed to record PIN attempt:',
+          failureError.message,
+        )
+        // Fail closed: without a working counter we cannot bound guessing.
+        return json({ error: 'Failed to exchange token' }, 500)
+      }
+
+      if (failure?.attempts_exhausted) {
+        return json(
+          {
+            error: 'Too many incorrect PIN attempts. Generate a new QR code.',
+            code: 'expired',
+          },
+          400,
+        )
+      }
+
+      if (failure?.token_live) {
         return json({ error: 'Incorrect PIN', code: 'invalid_pin' }, 401)
       }
       return json(
@@ -206,6 +238,9 @@ Deno.serve(async (req) => {
 
     // 5. Never hand back a session for a different account than the QR named.
     if (sessionData.user?.id !== consumed.user_id) {
+      // Restore like every other post-consume failure: the user did nothing
+      // wrong here, so this should not cost them their QR.
+      await restoreToken('identity mismatch')
       console.error(
         '[exchange-link-token] Identity mismatch - refusing to issue session',
       )

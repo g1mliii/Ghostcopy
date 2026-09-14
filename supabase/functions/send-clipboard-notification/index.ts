@@ -68,7 +68,9 @@ async function checkRateLimit(userId) {
   }
   const remaining = RATE_LIMIT_MAX_CALLS - data.insert_count;
   return {
-    allowed: data.insert_count <= RATE_LIMIT_MAX_CALLS,
+    // Strictly less-than: `<=` admitted the (MAX + 1)th call, and returned it
+    // alongside `remaining: 0` - the header contradicting the decision.
+    allowed: data.insert_count < RATE_LIMIT_MAX_CALLS,
     remaining: Math.max(0, remaining)
   };
 }
@@ -132,7 +134,13 @@ Deno.serve(async (req)=>{
       // A normal caller may only ever act on its own rows. Without this an
       // authenticated user could POST an arbitrary `record` naming someone
       // else's user_id and push notifications at their devices.
-      if (body?.record && body.record.user_id && body.record.user_id !== user.id) {
+      // Note the check is on `record.user_id !== user.id`, NOT on a truthy
+      // user_id. Requiring truthiness let a caller simply omit the field: the
+      // guard passed, clipboardItemFromWebhook was then built from the
+      // attacker's own payload, and that non-null item skipped the DB fetch
+      // below - the fetch that enforces both `.eq('user_id', ...)` and the
+      // 5-minute recency replay guard. Omitting user_id now fails here.
+      if (body?.record && body.record.user_id !== user.id) {
         console.warn('[Notification] record.user_id does not match caller - refusing');
         return new Response(JSON.stringify({
           error: 'Forbidden'
