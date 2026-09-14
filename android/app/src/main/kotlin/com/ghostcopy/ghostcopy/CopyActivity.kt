@@ -99,7 +99,11 @@ class CopyActivity : AppCompatActivity() {
             val staged = JSONObject(file.readText())
             // A stale file from an earlier clip must never be copied for this one.
             if (staged.optString("id") != clipboardId) {
-                Log.d(TAG, "Staged clip is for a different id - ignoring")
+                Log.d(TAG, "Staged clip is for a different id - discarding")
+                // Delete it rather than just ignoring it: this file holds one
+                // clip's decrypted PLAINTEXT, and nothing else removes it. A
+                // stale entry used to sit in filesDir indefinitely.
+                clearStagedClip()
                 return null
             }
             if (staged.optString("content").isEmpty()) null else staged

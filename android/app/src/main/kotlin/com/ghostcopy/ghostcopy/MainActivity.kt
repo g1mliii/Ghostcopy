@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
@@ -205,6 +206,22 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * Typed EXTRA_STREAM lookup.
+     *
+     * The single-argument getParcelableExtra has been deprecated since API 33;
+     * the typed overload is also the safe one, because it will not hand back an
+     * object of an unexpected class from an intent any installed app can send.
+     */
+    @Suppress("DEPRECATION")
+    private fun streamExtra(intent: Intent): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+        }
+    }
+
     private fun handleShareIntent(intent: Intent) {
         when {
             intent.type?.startsWith("text/") == true -> {
@@ -214,14 +231,14 @@ class MainActivity : FlutterActivity() {
                 }
             }
             intent.type?.startsWith("image/") == true -> {
-                val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                val imageUri = streamExtra(intent)
                 if (imageUri != null) {
                     saveSharedImageFast(imageUri)
                 }
             }
             // Handle all other file types (PDFs, DOCs, ZIPs, etc.)
             else -> {
-                val fileUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                val fileUri = streamExtra(intent)
                 if (fileUri != null) {
                     saveSharedFileFast(fileUri)
                 }
@@ -242,25 +259,78 @@ class MainActivity : FlutterActivity() {
         finish()
     }
 
+    /**
+     * Size of the content behind [uri], or null when it cannot be determined.
+     *
+     * Checked BEFORE reading. readBytes() pulls the whole stream into memory,
+     * so validating the size afterwards meant sharing a multi-gigabyte video
+     * allocated all of it just to reject it - an OOM kill rather than a toast.
+     */
+    private fun contentSize(uri: Uri): Long? {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                    return cursor.getLong(index)
+                }
+            }
+
+        return try {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { fd ->
+                fd.length.takeIf { it != android.content.res.AssetFileDescriptor.UNKNOWN_LENGTH }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Read at most [limit] bytes, or null if the stream is longer.
+     *
+     * The bound matters even when [contentSize] answered: a provider can report
+     * one size and then serve more.
+     */
+    private fun readBounded(uri: Uri, limit: Int): ByteArray? {
+        return contentResolver.openInputStream(uri)?.use { stream ->
+            val buffer = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val read = stream.read(chunk)
+                if (read <= 0) break
+                total += read
+                if (total > limit) return null
+                buffer.write(chunk, 0, read)
+            }
+            buffer.toByteArray()
+        }
+    }
+
     private fun saveSharedImageFast(imageUri: Uri) {
         try {
-            // Read image bytes from URI
-            val inputStream = contentResolver.openInputStream(imageUri)
-            val bytes = inputStream?.readBytes()
-            inputStream?.close()
+            val maxSize = 10 * 1024 * 1024 // 10MB
 
-            if (bytes == null || bytes.isEmpty()) {
-                Log.e(TAG, "❌ Failed to read image from URI: $imageUri")
-                Toast.makeText(this, "Failed to read image", Toast.LENGTH_SHORT).show()
+            // Size first, then a bounded read - never readBytes() on untrusted
+            // content of unknown length.
+            val declaredSize = contentSize(imageUri)
+            if (declaredSize != null && declaredSize > maxSize) {
+                Log.e(TAG, "❌ Image too large: $declaredSize bytes (max: $maxSize)")
+                Toast.makeText(this, "Image too large (max 10MB)", Toast.LENGTH_SHORT).show()
                 finish()
                 return
             }
 
-            // Validate size (10MB limit)
-            val maxSize = 10 * 1024 * 1024 // 10MB
-            if (bytes.size > maxSize) {
-                Log.e(TAG, "❌ Image too large: ${bytes.size} bytes (max: $maxSize)")
+            val bytes = readBounded(imageUri, maxSize)
+            if (bytes == null) {
+                Log.e(TAG, "❌ Image exceeded $maxSize bytes while reading")
                 Toast.makeText(this, "Image too large (max 10MB)", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+
+            if (bytes.isEmpty()) {
+                Log.e(TAG, "❌ Failed to read image from URI: $imageUri")
+                Toast.makeText(this, "Failed to read image", Toast.LENGTH_SHORT).show()
                 finish()
                 return
             }
@@ -292,23 +362,27 @@ class MainActivity : FlutterActivity() {
 
     private fun saveSharedFileFast(fileUri: Uri) {
         try {
-            // Read file bytes from URI
-            val inputStream = contentResolver.openInputStream(fileUri)
-            val bytes = inputStream?.readBytes()
-            inputStream?.close()
+            val maxSize = 10 * 1024 * 1024 // 10MB
 
-            if (bytes == null || bytes.isEmpty()) {
-                Log.e(TAG, "❌ Failed to read file from URI: $fileUri")
-                Toast.makeText(this, "Failed to read file", Toast.LENGTH_SHORT).show()
+            val declaredSize = contentSize(fileUri)
+            if (declaredSize != null && declaredSize > maxSize) {
+                Log.e(TAG, "❌ File too large: $declaredSize bytes (max: $maxSize)")
+                Toast.makeText(this, "File too large (max 10MB)", Toast.LENGTH_SHORT).show()
                 finish()
                 return
             }
 
-            // Validate size (10MB limit)
-            val maxSize = 10 * 1024 * 1024 // 10MB
-            if (bytes.size > maxSize) {
-                Log.e(TAG, "❌ File too large: ${bytes.size} bytes (max: $maxSize)")
+            val bytes = readBounded(fileUri, maxSize)
+            if (bytes == null) {
+                Log.e(TAG, "❌ File exceeded $maxSize bytes while reading")
                 Toast.makeText(this, "File too large (max 10MB)", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+
+            if (bytes.isEmpty()) {
+                Log.e(TAG, "❌ Failed to read file from URI: $fileUri")
+                Toast.makeText(this, "Failed to read file", Toast.LENGTH_SHORT).show()
                 finish()
                 return
             }
@@ -317,10 +391,17 @@ class MainActivity : FlutterActivity() {
             val mimeType = contentResolver.getType(fileUri) ?: "application/octet-stream"
 
             // Get original filename from URI
+            // getColumnIndex returns -1 for a provider that does not expose
+            // DISPLAY_NAME, and moveToFirst is false for an empty cursor -
+            // getString() then threw and the whole share failed with "Failed to
+            // share file" for a file that was perfectly shareable.
             val filename = contentResolver.query(fileUri, null, null, null, null)?.use { cursor ->
                 val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                cursor.moveToFirst()
-                cursor.getString(nameIndex)
+                if (nameIndex >= 0 && cursor.moveToFirst()) {
+                    cursor.getString(nameIndex)
+                } else {
+                    null
+                }
             } ?: "file"
 
             val channel = MethodChannel(
