@@ -58,7 +58,6 @@ void main() {
       clipboardRepository: clipboardRepository,
       deviceService: deviceService,
       securityService: securityService,
-      settingsService: settingsService,
     );
   });
 
@@ -116,5 +115,211 @@ void main() {
     verifyNever(() => clipboardRepository.insert(any()));
     expect(viewModel.sendErrorMessage, 'Please paste or type content to send');
     expect(viewModel.isSending, isFalse);
+  });
+
+  group('history error lifecycle', () {
+    ClipboardItem item(String id) => ClipboardItem(
+      id: id,
+      userId: 'u1',
+      content: 'clip $id',
+      deviceType: 'windows',
+      createdAt: DateTime(2026),
+    );
+
+    test('a failed load reports an error when nothing is on screen', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+
+      await viewModel.loadHistory();
+
+      expect(viewModel.historyError, isNotNull);
+      expect(viewModel.historyLoading, isFalse);
+    });
+
+    test('a successful load clears a previous error', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+      await viewModel.loadHistory();
+      expect(viewModel.historyError, isNotNull);
+
+      // Pull to refresh, and this time the fetch works.
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1')]);
+      await viewModel.loadHistory();
+
+      // The regression: historyError was only ever cleared on sign-out, and
+      // the UI returns the error pane before it looks at the items - so the
+      // list stayed hidden and pull-to-refresh looked like it did nothing.
+      expect(viewModel.historyError, isNull);
+      expect(viewModel.filteredHistoryItems, hasLength(1));
+    });
+
+    test('a failed refresh keeps the clips already loaded', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+      await viewModel.loadHistory();
+
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+      await viewModel.loadHistory();
+
+      // Losing the connection must not blank a list the user can still read.
+      expect(viewModel.filteredHistoryItems, hasLength(2));
+      expect(viewModel.historyError, isNull);
+    });
+
+    test('an active search survives a reload', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+      await viewModel.loadHistory();
+      viewModel.filterHistory('clip 2');
+      expect(viewModel.filteredHistoryItems, hasLength(1));
+
+      await viewModel.loadHistory();
+
+      // loadHistory used to assign the unfiltered list straight to
+      // _filteredHistoryItems, so a background refresh silently dropped the
+      // user's search.
+      expect(viewModel.filteredHistoryItems, hasLength(1));
+      expect(viewModel.filteredHistoryItems.single.id, '2');
+    });
+  });
+
+  group('device type targeting', () {
+    Device device(String id, String type, String name) => Device(
+      id: id,
+      userId: 'u1',
+      deviceType: type,
+      deviceName: name,
+      lastActive: DateTime(2026),
+      createdAt: DateTime(2026),
+    );
+
+    test('two devices of one type collapse to a single chip', () async {
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          device('1', 'windows', 'Work PC'),
+          device('2', 'windows', 'Home PC'),
+          device('3', 'android', 'Pixel'),
+        ],
+      );
+      await viewModel.loadDevices();
+
+      final targets = viewModel.deviceTypeTargets;
+
+      // target_device_type is an enum array - the backend cannot address an
+      // individual machine, so one chip per device was a promise it could not
+      // keep. Three devices, two types, two chips.
+      expect(targets, hasLength(2));
+      expect(
+        targets.map((t) => t.deviceType),
+        containsAll(['windows', 'android']),
+      );
+    });
+
+    test('a chip is labelled by platform, never by device name', () async {
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          device('1', 'windows', 'Work PC'),
+          device('2', 'windows', 'Home PC'),
+        ],
+      );
+      await viewModel.loadDevices();
+
+      final windows = viewModel.deviceTypeTargets.single;
+
+      // A chip selects a device_type_enum, so the platform is what it does.
+      // Naming either machine would also be a lie - the clip reaches both.
+      expect(windows.label, 'Windows');
+      expect(
+        windows.deviceNames,
+        allOf(contains('Work PC'), contains('Home PC')),
+      );
+    });
+
+    test('a lone device of its type is still labelled by platform', () async {
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+      await viewModel.loadDevices();
+
+      // Using the device name here would be accurate but inconsistent: the
+      // same chip would read "Work PC" today and "Windows" after adding a
+      // second PC. The name stays available via deviceNames.
+      expect(viewModel.deviceTypeTargets.single.label, 'Windows');
+      expect(viewModel.deviceTypeTargets.single.deviceNames, 'Work PC');
+    });
+
+    test('platformLabel spells product names properly', () {
+      // Capitalising the first letter gave "Macos" and "Ios".
+      expect(DeviceTypeTarget.platformLabel('macos'), 'macOS');
+      expect(DeviceTypeTarget.platformLabel('ios'), 'iOS');
+      expect(DeviceTypeTarget.platformLabel('windows'), 'Windows');
+      expect(DeviceTypeTarget.platformLabel('android'), 'Android');
+    });
+  });
+
+  group('delete', () {
+    ClipboardItem item(String id) => ClipboardItem(
+      id: id,
+      userId: 'u1',
+      content: 'clip $id',
+      deviceType: 'windows',
+      createdAt: DateTime(2026),
+    );
+
+    test('removes the clip from the list on success', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+      await viewModel.loadHistory();
+      when(() => clipboardRepository.delete('1')).thenAnswer((_) async {});
+
+      final ok = await viewModel.handleHistoryItemDelete(item('1'));
+
+      expect(ok, isTrue);
+      expect(viewModel.filteredHistoryItems.map((i) => i.id), ['2']);
+    });
+
+    test(
+      'restores the clip at its original index when the delete fails',
+      () async {
+        when(
+          () => clipboardRepository.getHistory(),
+        ).thenAnswer((_) async => [item('1'), item('2'), item('3')]);
+        await viewModel.loadHistory();
+        when(
+          () => clipboardRepository.delete('2'),
+        ).thenThrow(Exception('offline'));
+
+        final ok = await viewModel.handleHistoryItemDelete(item('2'));
+
+        // The row is removed optimistically so it does not spring back mid-swipe.
+        // If the server never deleted it, leaving the list short would claim a
+        // deletion that did not happen - and the clip is still on every device.
+        expect(ok, isFalse);
+        expect(viewModel.filteredHistoryItems.map((i) => i.id), [
+          '1',
+          '2',
+          '3',
+        ]);
+      },
+    );
   });
 }

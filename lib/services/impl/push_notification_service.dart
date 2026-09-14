@@ -41,8 +41,7 @@ class PushNotificationService implements IPushNotificationService {
           'clipboard_id': clipboardId,
           'content_preview': contentPreview,
           'device_type': deviceType,
-          if (targetDeviceTypes != null)
-            'target_device_types': targetDeviceTypes,
+          'target_device_types': ?targetDeviceTypes,
         },
       );
 

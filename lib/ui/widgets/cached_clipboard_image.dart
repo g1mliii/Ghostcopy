@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/impl/encryption_service.dart';
 import '../theme/colors.dart';
 
 /// Smart image widget that uses CDN for fast loading with API fallback
@@ -49,12 +51,83 @@ class CachedClipboardImage extends StatefulWidget {
 }
 
 class _CachedClipboardImageState extends State<CachedClipboardImage> {
+  /// Whether this device holds a passphrase, so an encrypted image can be
+  /// shown rather than reported as a load failure. Resolved asynchronously
+  /// because build() cannot await, and re-resolved whenever the source or the
+  /// service's loaded key changes.
+  bool _canDecrypt = false;
+
   bool _useFallback = false;
   Uint8List? _fallbackImageBytes;
   bool _isLoadingFallback = false;
+
+  /// Set once a storage load has failed for the current source.
+  ///
+  /// Without it the build path re-schedules [_loadFallbackImage] on every
+  /// frame: clearing [_isLoadingFallback] on failure re-satisfies the same
+  /// condition that started the load, so an undecryptable image or one
+  /// transient 5xx spins forever, re-hitting storage-presign (rate-limited at
+  /// 120/min) and starving every other image on screen. Cleared whenever the
+  /// source changes so a genuinely new item still gets its own attempt.
+  bool _fallbackFailed = false;
   ui.Image? _decodedImage; // Track decoded image for disposal
   Future<ui.Image>? _fallbackDecodeFuture;
   int? _fallbackDecodeKey;
+
+  /// Convert a layout dimension to a decode dimension.
+  ///
+  /// Callers legitimately pass `double.infinity` (the desktop history tile uses
+  /// `width: double.infinity` to fill its row). `infinity.toInt()` throws
+  /// "Unsupported operation: Infinity", which surfaced as a broken preview on
+  /// every image. NaN and non-positive values are equally unusable as decode
+  /// targets, so all of them mean "decode at natural size".
+  int? _decodeDimension(double? value) {
+    if (value == null || !value.isFinite || value <= 0) return null;
+    return value.toInt();
+  }
+
+  /// Decode target in PHYSICAL pixels, which is what the decoder wants.
+  ///
+  /// cacheWidth/memCacheWidth are physical, not logical. Passing the logical
+  /// size decoded a 52dp thumbnail at 52px and let the framework upscale it
+  /// ~2.6x, which is why previews looked soft. Passing nothing at all is worse
+  /// in the other direction: the image is then decoded at its natural size, so
+  /// a photo off a phone camera costs tens of MB of image cache to fill a 52dp
+  /// box - several of those in a history list is real memory.
+  ///
+  /// Clamped at 2x: beyond that the extra pixels are indistinguishable at
+  /// thumbnail size and only cost memory.
+  int? _decodePx(BuildContext context, double? value) {
+    if (value == null || !value.isFinite || value <= 0) return null;
+    final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 2.0);
+    return (value * dpr).round();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Re-resolve whenever the key changes. On a cold start this widget builds
+    // before EncryptionService.initialize() has derived the key, so isEnabled()
+    // answers false and, cached, would lock every encrypted image for the life
+    // of the screen.
+    EncryptionService.instance.keyRevision.addListener(_onKeyRevisionChanged);
+    if (widget.item.isEncrypted) {
+      unawaited(_resolveCanDecrypt());
+    }
+  }
+
+  void _onKeyRevisionChanged() {
+    if (widget.item.isEncrypted) {
+      unawaited(_resolveCanDecrypt());
+    }
+  }
+
+  Future<void> _resolveCanDecrypt() async {
+    final enabled = await EncryptionService.instance.isEnabled();
+    if (mounted && enabled != _canDecrypt) {
+      setState(() => _canDecrypt = enabled);
+    }
+  }
 
   @override
   void didUpdateWidget(covariant CachedClipboardImage oldWidget) {
@@ -65,13 +138,22 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         oldWidget.item.content != widget.item.content ||
         oldWidget.item.storagePath != widget.item.storagePath;
     final didTargetSizeChange =
-        oldWidget.width?.toInt() != widget.width?.toInt() ||
-        oldWidget.height?.toInt() != widget.height?.toInt();
+        _decodeDimension(oldWidget.width) != _decodeDimension(widget.width) ||
+        _decodeDimension(oldWidget.height) != _decodeDimension(widget.height);
 
     if (didSourceChange) {
       _useFallback = false;
       _fallbackImageBytes = null;
       _isLoadingFallback = false;
+      _fallbackFailed = false;
+    }
+
+    // Re-resolve on every encrypted source. A recycled State whose first item
+    // was unencrypted never ran this in initState, so it kept _canDecrypt
+    // false and showed the locked placeholder for an item it can in fact
+    // decrypt.
+    if (didSourceChange && widget.item.isEncrypted) {
+      unawaited(_resolveCanDecrypt());
     }
 
     if (didSourceChange || didTargetSizeChange) {
@@ -81,6 +163,9 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   @override
   void dispose() {
+    EncryptionService.instance.keyRevision.removeListener(
+      _onKeyRevisionChanged,
+    );
     _resetDecodedImageState();
 
     // Clear fallback image bytes
@@ -95,13 +180,28 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       return _buildErrorWidget('Not an image');
     }
 
-    // Check if we have a valid URL for CDN
+    // An encrypted image on a device without the passphrase is not an error -
+    // the bytes are fine, this device just cannot read them. downloadFile
+    // returns null in that case, which would otherwise render as a generic
+    // "Failed to load" and look like a bug.
+    if (widget.item.isEncrypted && !_canDecrypt) {
+      return _buildLockedWidget();
+    }
+
+    // The R2 bucket is PRIVATE. `content` holds a public r2.dev URL written
+    // when it was public, and that now returns 401 for every object - so the
+    // CDN path cannot succeed and would just burn a failed request before
+    // falling back. Whenever the row has a storage_path, go straight to the
+    // signed-URL download instead.
+    final hasStoragePath = (widget.item.storagePath ?? '').isNotEmpty;
+
     final hasValidUrl =
+        !hasStoragePath &&
         widget.item.content.isNotEmpty &&
         widget.item.content.startsWith('http');
 
     if (!hasValidUrl || _useFallback) {
-      return _buildFallbackImage();
+      return _buildFallbackImage(context);
     }
 
     // Use CDN (fast path) with custom cache manager
@@ -161,13 +261,12 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
           );
         },
 
-        // Memory cache configuration
-        memCacheWidth: (widget.width?.isFinite ?? false)
-            ? (widget.width! * 2).toInt()
-            : null,
-        memCacheHeight: (widget.height?.isFinite ?? false)
-            ? (widget.height! * 2).toInt()
-            : null,
+        // Decode bound to display size. The hardcoded 2x this replaces was a
+        // stand-in for device pixel ratio; using the real one decodes less on
+        // 1x displays and is still capped at 2x, where extra detail stops being
+        // visible at thumbnail size. See _decodePx.
+        memCacheWidth: _decodePx(context, widget.width),
+        memCacheHeight: _decodePx(context, widget.height),
 
         // Disk cache configuration
         // maxWidthDiskCache: 1000, // Removed to prevent crash (ImageCacheManager required)
@@ -177,10 +276,10 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   }
 
   /// Build fallback image using direct storage download
-  Widget _buildFallbackImage() {
+  Widget _buildFallbackImage(BuildContext context) {
     // If already loaded, decode in isolate and display
     if (_fallbackImageBytes != null) {
-      final decodeFuture = _getDecodeFuture(_fallbackImageBytes!);
+      final decodeFuture = _getDecodeFuture(context, _fallbackImageBytes!);
       return FutureBuilder<ui.Image>(
         future: decodeFuture,
         builder: (context, snapshot) {
@@ -223,8 +322,18 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       return _buildLoadingIndicator();
     }
 
-    // Start loading
-    _loadFallbackImage();
+    // A previous attempt for this source failed. Stop here rather than
+    // scheduling another download; retrying is what looped.
+    if (_fallbackFailed) {
+      return _buildErrorWidget('Failed to load image');
+    }
+
+    // Start loading after this frame. Calling it directly from build() reached
+    // a synchronous setState() inside _loadFallbackImage (it runs before the
+    // first await), triggering "setState() called during build".
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadFallbackImage());
+    });
 
     return _buildLoadingIndicator();
   }
@@ -247,19 +356,21 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     );
   }
 
-  Future<ui.Image> _getDecodeFuture(Uint8List bytes) {
-    final decodeKey = Object.hash(
-      bytes,
-      widget.width?.toInt(),
-      widget.height?.toInt(),
-    );
+  Future<ui.Image> _getDecodeFuture(BuildContext context, Uint8List bytes) {
+    // Physical pixels, like the primary path. This decoded at the LOGICAL size,
+    // so a 52dp thumbnail was decoded at 52px and then upscaled by the device
+    // pixel ratio - the reason fallback previews looked softer than the ones
+    // served through CachedNetworkImage.
+    final targetW = _decodePx(context, widget.width);
+    final targetH = _decodePx(context, widget.height);
+    final decodeKey = Object.hash(bytes, targetW, targetH);
 
     if (_fallbackDecodeFuture == null || _fallbackDecodeKey != decodeKey) {
       _fallbackDecodeKey = decodeKey;
       _fallbackDecodeFuture = _decodeImageInIsolate(
         bytes,
-        targetWidth: widget.width?.toInt(),
-        targetHeight: widget.height?.toInt(),
+        targetWidth: targetW,
+        targetHeight: targetH,
       );
     }
 
@@ -316,9 +427,10 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   Future<void> _loadFallbackImage() async {
     if (_isLoadingFallback) return;
 
-    setState(() {
-      _isLoadingFallback = true;
-    });
+    // Plain assignment, not setState: the caller already renders the loading
+    // indicator for this state, so no rebuild is needed, and this method can be
+    // reached from a build-adjacent path where setState would be illegal.
+    _isLoadingFallback = true;
 
     try {
       debugPrint(
@@ -340,6 +452,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         } else {
           setState(() {
             _isLoadingFallback = false;
+            _fallbackFailed = true;
           });
           debugPrint('[CachedClipboardImage] ✗ Failed to load from storage');
         }
@@ -349,12 +462,67 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       if (mounted) {
         setState(() {
           _isLoadingFallback = false;
+          _fallbackFailed = true;
         });
       }
     }
   }
 
   /// Build error widget
+  /// Shown for an encrypted image this device holds no passphrase for.
+  /// True when this instance is rendering a list thumbnail rather than a
+  /// full-width preview.
+  ///
+  /// The placeholders below pair an icon with a sentence, which fits a
+  /// full-width preview and overflows a 52px thumbnail by more than its own
+  /// height. At thumbnail size the icon alone has to carry the meaning.
+  bool get _isCompact {
+    final height = widget.height;
+    return height != null && height < 96;
+  }
+
+  Widget _buildLockedWidget() {
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: GhostColors.surface,
+        borderRadius: BorderRadius.circular(widget.borderRadius),
+        border: Border.all(color: GhostColors.primary.withValues(alpha: 0.4)),
+      ),
+      child: _isCompact
+          ? const Center(
+              child: Icon(
+                Icons.lock_outline,
+                color: GhostColors.primary,
+                size: 20,
+              ),
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.lock_outline,
+                  color: GhostColors.primary,
+                  size: 28,
+                ),
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    'Encrypted - add your passphrase in Settings to view',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: GhostColors.textMutedAlpha70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
   Widget _buildErrorWidget(String message) {
     return Container(
       width: widget.width,
@@ -363,24 +531,33 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(widget.borderRadius),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.broken_image_outlined,
-            color: GhostColors.textMutedAlpha50,
-            size: 32,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            message,
-            style: TextStyle(
-              color: GhostColors.textMutedAlpha70,
-              fontSize: 11,
+      child: _isCompact
+          ? Center(
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: GhostColors.textMutedAlpha50,
+                size: 20,
+              ),
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.broken_image_outlined,
+                  color: GhostColors.textMutedAlpha50,
+                  size: 32,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: GhostColors.textMutedAlpha70,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 }

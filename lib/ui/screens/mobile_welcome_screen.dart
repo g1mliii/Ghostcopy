@@ -3,13 +3,16 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../locator.dart';
 import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
+import '../theme/spacing.dart';
 import '../theme/typography.dart';
 
 /// Mobile welcome/auth screen with QR code scanning and email/Google auth
@@ -19,12 +22,12 @@ import '../theme/typography.dart';
 class MobileWelcomeScreen extends StatefulWidget {
   const MobileWelcomeScreen({
     required this.onAuthComplete,
-    this.fcmToken,
+    this.fcmTokenFuture,
     super.key,
   });
 
   final VoidCallback onAuthComplete;
-  final String? fcmToken;
+  final Future<String?>? fcmTokenFuture;
 
   @override
   State<MobileWelcomeScreen> createState() => _MobileWelcomeScreenState();
@@ -96,20 +99,32 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     return Scaffold(
       backgroundColor: GhostColors.background,
       body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(),
-            // Tab bar
-            _buildTabBar(),
-            // Tab views
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [_buildQRScanTab(), _buildAuthTab()],
-              ),
+        // Capped and centred, like the main and settings screens. This screen
+        // is a stack of full-width controls, so on a tablet the Scan QR / Sign
+        // In pair, the Login / Sign Up tabs and the email and password fields
+        // all stretched the full 1300dp - a sign-in form running the width of an
+        // iPad, with each label stranded far from its field.
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: GhostSpacing.maxContentWidth,
             ),
-          ],
+            child: Column(
+              children: [
+                // Header
+                _buildHeader(),
+                // Tab bar
+                _buildTabBar(),
+                // Tab views
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [_buildQRScanTab(), _buildAuthTab()],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -129,10 +144,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: GhostColors.glassBorder),
             ),
-            child: const Icon(
-              Icons.content_copy_rounded,
-              size: 40,
-              color: GhostColors.primary,
+            // The real mark, not a generic Material copy glyph. White variant:
+            // this sits on GhostColors.surface, which is near-black.
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Image.asset('assets/icons/logo_white.png'),
             ),
           ),
           const SizedBox(height: 16),
@@ -185,6 +201,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildQRScanTab() {
     return SingleChildScrollView(
+      physics: Adaptive.scrollPhysics,
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -217,8 +234,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             ),
           ),
           const SizedBox(height: 24),
-          // QR Scanner
-          _buildQRScanner(),
+          // QR Scanner - centred, since it no longer fills the column width.
+          Center(child: _buildQRScanner()),
           if (_qrError != null) ...[
             const SizedBox(height: 16),
             _buildQRError(),
@@ -230,7 +247,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildQRScanner() {
     return Container(
-      height: 300,
+      // Square, and no wider than it is tall. A camera viewfinder stretched to
+      // the full width of a tablet shows a letterboxed preview of a square
+      // subject, and the framing guides stop matching what the camera sees.
+      // 320 is roughly the width this had on a phone, so nothing changes there.
+      height: 320,
+      width: 320,
       decoration: BoxDecoration(
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -238,34 +260,36 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       ),
       clipBehavior: Clip.antiAlias,
       child: () {
-          final controller = _scannerController;
-          return controller != null
-              ? Stack(
-                  children: [
-                    MobileScanner(
-                      controller: controller,
-                      onDetect: _onQRCodeDetected,
-                    ),
-                    if (_qrScanning)
-                      Container(
-                        color: Colors.black54,
-                        child: const Center(
-                          child: CircularProgressIndicator(
-                            color: GhostColors.primary,
-                          ),
+        final controller = _scannerController;
+        return controller != null
+            ? Stack(
+                children: [
+                  MobileScanner(
+                    controller: controller,
+                    onDetect: _onQRCodeDetected,
+                  ),
+                  if (_qrScanning)
+                    Container(
+                      color: Colors.black54,
+                      child: Center(
+                        child: Adaptive.progressIndicator(
+                          size: 32,
+                          strokeWidth: 3,
+                          color: GhostColors.primary,
                         ),
                       ),
-                  ],
-                )
-              : Center(
-                  child: Text(
-                    'Switch to this tab to activate scanner',
-                    style: GhostTypography.caption.copyWith(
-                      color: GhostColors.textMuted,
                     ),
+                ],
+              )
+            : Center(
+                child: Text(
+                  'Switch to this tab to activate scanner',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textMuted,
                   ),
-                );
-        }(),
+                ),
+              );
+      }(),
     );
   }
 
@@ -294,6 +318,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   Widget _buildAuthTab() {
     return SingleChildScrollView(
+      physics: Adaptive.scrollPhysics,
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -478,14 +503,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           ),
         ),
         child: _authLoading
-            ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
+            ? Adaptive.progressIndicator(color: Colors.white)
             : Text(
                 _isLogin ? 'Login' : 'Sign Up',
                 style: GhostTypography.body.copyWith(
@@ -532,6 +550,115 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     );
   }
 
+  /// Turn a link-token exchange failure into something worth reading.
+  ///
+  /// functions_client throws [FunctionsHttpException] for any non-2xx rather
+  /// than returning it, so the server's `code` lives in `details` - not in a
+  /// response the caller can inspect. Without unpacking it the user saw raw
+  /// exception text and the whole point of the server distinguishing a wrong
+  /// PIN from an expired code was lost.
+  String _describeExchangeError(Object error) {
+    if (error is FunctionsHttpException) {
+      final details = error.details;
+      final code = details is Map ? details['code'] as String? : null;
+      switch (code) {
+        case 'invalid_pin':
+          return 'Incorrect PIN. Check the code on your other device and '
+              'try again.';
+        case 'expired':
+          return 'This code has expired or was already used. Generate a new '
+              'QR code on your other device.';
+      }
+      final message = details is Map ? details['error'] as String? : null;
+      if (message != null && message.isNotEmpty) return message;
+      return 'Could not link this device. Please try again.';
+    }
+    return error.toString().replaceAll('Exception: ', '');
+  }
+
+  /// Ask for the 6-digit PIN shown on the sending device.
+  ///
+  /// Returns null if the user cancels. A wrong PIN does not consume the link
+  /// token server-side, so retrying does not require a new QR code.
+  Future<String?> _promptForPin() async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          String? error;
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              void submit() {
+                final value = controller.text.trim();
+                if (!RegExp(r'^\d{6}$').hasMatch(value)) {
+                  setDialogState(() => error = 'Enter the 6 digits');
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              }
+
+              return AlertDialog(
+                backgroundColor: GhostColors.surface,
+                title: const Text(
+                  'Enter PIN',
+                  style: TextStyle(color: GhostColors.textPrimary),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Type the 6-digit PIN shown next to the QR code on your '
+                      'other device.',
+                      style: GhostTypography.caption.copyWith(
+                        color: GhostColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: GhostColors.textPrimary,
+                        fontSize: 24,
+                        letterSpacing: 8,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        errorText: error,
+                        hintText: '000000',
+                        hintStyle: const TextStyle(
+                          color: GhostColors.textMuted,
+                          letterSpacing: 8,
+                        ),
+                      ),
+                      onSubmitted: (_) => submit(),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(onPressed: submit, child: const Text('Link')),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
   // QR Code handlers
   Future<void> _onQRCodeDetected(BarcodeCapture capture) async {
     if (_qrScanning) return; // Prevent multiple scans
@@ -567,10 +694,19 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       }
 
       final linkToken = qrData['link_token'] as String?;
-      final encryptedPassphrase = qrData['passphrase_encrypted'] as String?;
 
       if (linkToken == null || linkToken.isEmpty) {
         throw Exception('Invalid QR code: missing token.');
+      }
+
+      // The QR is useless without the PIN shown on the sending device. A wrong
+      // PIN does not consume the token, so the user can simply retype it.
+      if (!mounted) return;
+      final pin = await _promptForPin();
+      if (pin == null) {
+        // Cancelled - drop out of scanning state without an error.
+        if (mounted) setState(() => _qrScanning = false);
+        return;
       }
 
       debugPrint('[QR] Exchanging link token...');
@@ -578,67 +714,78 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // Call edge function to exchange token for session
       final response = await supabase.functions.invoke(
         'exchange-link-token',
-        body: {'token': linkToken},
+        body: {'token': linkToken, 'pin': pin},
       );
 
-      if (response.status != 200 || response.data == null) {
-        final errorData = response.data as Map<String, dynamic>?;
-        final errorMsg =
-            errorData?['error'] as String? ?? 'Failed to authenticate';
-        throw Exception(errorMsg);
+      // Note: functions_client throws FunctionsHttpException for any non-2xx,
+      // so this only catches a 2xx with an empty body. The error codes the
+      // server sends (invalid_pin / expired) arrive as that exception instead
+      // and are unpacked in the catch below.
+      if (response.data == null) {
+        throw Exception('Failed to authenticate');
       }
 
       final data = response.data as Map<String, dynamic>;
-      final refreshToken = data['refresh_token'] as String;
+      // Nullable cast: this used to be `as String`, and when the server
+      // returned no tokens the resulting TypeError was an Error, not an
+      // Exception - so `on Exception catch` below never caught it, the scanner
+      // hung on a spinner forever, and the single-use token was already gone.
+      final refreshToken = data['refresh_token'] as String?;
+      if (refreshToken == null || refreshToken.isEmpty) {
+        throw Exception(
+          'The server did not return a session. Please generate a new QR code.',
+        );
+      }
 
       debugPrint('[QR] ✅ Got session tokens, setting session...');
+
+      // Release this device's rows from the account we are leaving, BEFORE
+      // switching. devices.fcm_token is now globally unique, so a device that
+      // re-links to a second account otherwise collides on
+      // devices_fcm_token_global_unique; DeviceService swallows the 23505 into
+      // a debugPrint and push notifications then silently never arrive. The
+      // email and Google sign-in paths already do this - the QR path did not.
+      final previousUserId = locator<IAuthService>().currentUserId;
+      final wasAnonymous = locator<IAuthService>().isAnonymous;
+      if (wasAnonymous && previousUserId != null) {
+        try {
+          await locator<IAuthService>().cleanupOldAccountData(previousUserId);
+        } on Object catch (e) {
+          debugPrint('[QR] ⚠️ Could not clean up previous account: $e');
+          // Non-fatal: the token conflict is handled in updateFcmToken too.
+        }
+      }
 
       // Set session in Supabase client using refresh token
       await supabase.auth.setSession(refreshToken);
 
       debugPrint('[QR] ✅ Session set');
 
-      // Import passphrase if included in QR code
-      if (encryptedPassphrase != null) {
-        debugPrint('[QR] Importing encrypted passphrase...');
-        try {
-          // Use shared singleton instance
-          final encryptionService = EncryptionService.instance;
-          final userId = supabase.auth.currentUser?.id;
-          if (userId != null) {
-            await encryptionService.initialize(userId);
-            final imported = await encryptionService.importPassphraseFromQr(
-              encryptedPassphrase,
-            );
-            if (imported) {
-              debugPrint('[QR] ✅ Passphrase imported successfully');
-            } else {
-              debugPrint('[QR] ⚠️ Failed to import passphrase');
-            }
-            // NOTE: EncryptionService is a singleton - do NOT dispose it
-          }
-        } on Exception catch (e) {
-          debugPrint('[QR] ⚠️ Passphrase import error: $e');
-          // Continue anyway - encryption is optional
-        }
-      }
+      // The QR deliberately no longer carries the passphrase - it used to be
+      // "encrypted" with a key placed in the same payload, so a photograph of
+      // the screen yielded it outright. If the account has encrypted clips,
+      // history shows a prompt to enter the passphrase by hand.
 
       // Register device and update FCM token
       if (mounted) {
-        await locator<IDeviceService>().registerCurrentDevice();
-
-        if (widget.fcmToken != null) {
-          await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+        final fcmToken = await widget.fcmTokenFuture;
+        await locator<IDeviceService>().registerCurrentDevice(
+          fcmToken: fcmToken,
+        );
+        if (fcmToken != null) {
           debugPrint('[QR] ✅ Device registered with FCM token');
         }
 
         debugPrint('[QR] ✅ QR authentication complete');
         widget.onAuthComplete();
       }
-    } on Exception catch (e) {
+    } on Object catch (e) {
+      // Catch Object, not Exception: a failed cast throws TypeError, which is
+      // an Error. Catching only Exception left the scanner spinning forever on
+      // exactly the failure that happened most often.
       if (mounted) {
         setState(() {
-          _qrError = e.toString().replaceAll('Exception: ', '');
+          _qrError = _describeExchangeError(e);
           _qrScanning = false;
         });
       }
@@ -705,8 +852,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         await locator<IDeviceService>().registerCurrentDevice();
 
         // Update FCM token if available
-        if (widget.fcmToken != null) {
-          await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+        final fcmToken = await widget.fcmTokenFuture;
+        if (fcmToken != null) {
+          await locator<IDeviceService>().updateFcmToken(fcmToken);
           debugPrint(
             '[Mobile] ✅ Device registered with FCM token after email auth',
           );
@@ -779,8 +927,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           await locator<IDeviceService>().registerCurrentDevice();
 
           // Update FCM token if available
-          if (widget.fcmToken != null) {
-            await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+          final fcmToken = await widget.fcmTokenFuture;
+          if (fcmToken != null) {
+            await locator<IDeviceService>().updateFcmToken(fcmToken);
             debugPrint(
               '[Mobile] ✅ Device registered with FCM token after Google auth',
             );

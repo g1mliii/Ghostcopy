@@ -1,3 +1,5 @@
+import 'hotkey_service.dart';
+
 export 'impl/settings_service.dart';
 
 /// Auto-receive behavior options for incoming clipboard items
@@ -61,6 +63,23 @@ abstract class ISettingsService {
   // ========== FEATURE TOGGLES ==========
 
   /// Get auto-shorten URLs enabled setting (default: false)
+  /// Whether FLAG_SECURE is applied, blocking screenshots, screen recording,
+  /// screen sharing and the Recents preview. Android only. Defaults to on.
+  Future<bool> getScreenshotProtection();
+
+  /// Persist the screenshot-protection preference. Applying it to the window
+  /// is the platform's job - see MainActivity.
+  Future<void> setScreenshotProtection({required bool enabled});
+
+  /// Get the saved global hotkey, or null if the user has never set one.
+  Future<HotKey?> getHotkey();
+
+  /// Persist the global hotkey so it survives a restart.
+  ///
+  /// Without this the app re-registered a hardcoded default on every launch and
+  /// silently discarded whatever the user had chosen.
+  Future<void> setHotkey(HotKey hotkey);
+
   Future<bool> getAutoShortenUrls();
 
   /// Set auto-shorten URLs enabled setting

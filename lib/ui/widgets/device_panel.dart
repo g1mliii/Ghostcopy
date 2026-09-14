@@ -63,7 +63,9 @@ class _DevicePanelState extends State<DevicePanel> {
       deviceId,
       newName,
     );
-    if (success) {
+    // mounted, not just success: the panel can be closed while the rename is
+    // in flight, and setState after dispose throws.
+    if (success && mounted) {
       // Update local cache to reflect name change
       setState(() {
         _cachedDevices = _cachedDevices?.map((device) {
@@ -79,7 +81,7 @@ class _DevicePanelState extends State<DevicePanel> {
 
   Future<bool> _handleRemove(String deviceId) async {
     final success = await widget.deviceService.removeDevice(deviceId);
-    if (success) {
+    if (success && mounted) {
       // Remove from local cache
       setState(() {
         _cachedDevices = _cachedDevices
@@ -188,6 +190,11 @@ class _DevicePanelState extends State<DevicePanel> {
           else
             // Device list
             ListView.builder(
+              // A null padding on a vertical list makes BoxScrollView inject
+              // MediaQuery.padding, so this nested, non-scrolling list would
+              // claim the window's system insets as its own bottom padding.
+              // Same bug that put dead space under the last device on mobile.
+              padding: EdgeInsets.zero,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _cachedDevices!.length,

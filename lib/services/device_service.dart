@@ -15,7 +15,12 @@ abstract class IDeviceService {
   ///
   /// Should be called on app startup after authentication.
   /// Updates last_active timestamp if device already exists.
-  Future<void> registerCurrentDevice();
+  /// Register (or refresh) this device.
+  ///
+  /// Pass [fcmToken] when one is already known: the upsert writes every
+  /// column, so supplying it here registers the device and its push token in a
+  /// single write instead of two.
+  Future<void> registerCurrentDevice({String? fcmToken});
 
   /// Get all devices registered for the current user
   ///

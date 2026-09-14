@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,7 +8,8 @@ import '../storage_service.dart';
 ///
 /// Upload: get presigned URL from edge function → Flutter PUTs directly to R2
 ///         (client → R2 direct, no Supabase bandwidth cost)
-/// Download: GET directly from R2 public URL (bucket is public, no auth needed)
+/// Download: ask storage-presign for a short-lived signed GET URL. The bucket
+/// is PRIVATE; public r2.dev access is disabled and returns 401 for every key.
 /// Delete: call edge function which deletes from R2 server-side
 class StorageService implements IStorageService {
   factory StorageService({SupabaseClient? client}) {
@@ -21,16 +20,12 @@ class StorageService implements IStorageService {
   }
 
   StorageService._internal({SupabaseClient? client})
-      : _client = client ?? Supabase.instance.client;
+    : _client = client ?? Supabase.instance.client;
 
   static final StorageService instance = StorageService._internal();
 
   final SupabaseClient _client;
   static const String _edgeFunctionName = 'storage-presign';
-
-  /// R2 public URL — matches R2_PUBLIC_URL in edge function secrets
-  static const String _r2PublicUrlBase =
-      'https://pub-17ef3eab5b964206b0ec1359b6fd8c53.r2.dev';
 
   @override
   Future<void> initialize() async {
@@ -61,8 +56,6 @@ class StorageService implements IStorageService {
       });
 
       final presignedUrl = presignData['presignedUrl'] as String;
-      final publicUrl = presignData['publicUrl'] as String? ??
-          '$_r2PublicUrlBase/$storagePath';
 
       debugPrint('[StorageService] → PUT directly to R2 presigned URL');
 
@@ -82,7 +75,6 @@ class StorageService implements IStorageService {
 
       return UploadResult(
         storagePath: storagePath,
-        publicUrl: publicUrl,
         fileSizeBytes: bytes.length,
       );
     } catch (e) {
@@ -97,10 +89,23 @@ class StorageService implements IStorageService {
     try {
       debugPrint('[StorageService] ↓ Downloading from R2: $storagePath');
 
-      // R2 bucket is public — direct download, no Supabase bandwidth cost
-      final url = '$_r2PublicUrlBase/$storagePath';
+      // The bucket is PRIVATE. It used to be public and this method fetched
+      // the public r2.dev URL directly, but public access is now
+      // disabled - that URL returns 401 for every object, so images sat on a
+      // loading spinner forever. Ask the edge function for a short-lived
+      // signed URL instead, which is what its `download` action exists for.
+      final presign = await _callEdgeFunctionJson({
+        'action': 'download',
+        'path': storagePath,
+      });
+
+      final downloadUrl = presign['downloadUrl'] as String?;
+      if (downloadUrl == null || downloadUrl.isEmpty) {
+        throw StorageException('No download URL returned for $storagePath');
+      }
+
       final response = await http
-          .get(Uri.parse(url))
+          .get(Uri.parse(downloadUrl))
           .timeout(const Duration(minutes: 2));
 
       if (response.statusCode != 200) {
@@ -125,10 +130,7 @@ class StorageService implements IStorageService {
     try {
       debugPrint('[StorageService] ✗ Deleting from R2: $storagePath');
 
-      await _callEdgeFunctionJson({
-        'action': 'delete',
-        'path': storagePath,
-      });
+      await _callEdgeFunctionJson({'action': 'delete', 'path': storagePath});
 
       debugPrint('[StorageService] ✓ Deleted from R2 successfully');
     } catch (e) {
@@ -150,15 +152,9 @@ class StorageService implements IStorageService {
         body: body,
       );
 
-      if (response.status != 200) {
-        final errorBody = response.data is String
-            ? response.data as String
-            : json.encode(response.data);
-        throw StorageException(
-          'Edge function returned status ${response.status}: $errorBody',
-        );
-      }
-
+      // functions_client throws FunctionsHttpException for any non-2xx, so a
+      // status check here only ever sees success codes. The real error path is
+      // the catch below, which unpacks the exception's details.
       final data = response.data as Map<String, dynamic>;
       if (data.containsKey('error')) {
         throw StorageException('Edge function error: ${data['error']}');
@@ -167,6 +163,14 @@ class StorageService implements IStorageService {
       return data;
     } on StorageException {
       rethrow;
+    } on FunctionException catch (e) {
+      // Surface what the function actually said rather than the exception's
+      // toString, which reads as a stack of client internals.
+      final details = e.details;
+      final message = details is Map && details['error'] != null
+          ? details['error'].toString()
+          : e.reasonPhrase ?? 'request failed';
+      throw StorageException('Storage request failed: $message');
     } catch (e) {
       throw StorageException('Edge function call failed: $e');
     }

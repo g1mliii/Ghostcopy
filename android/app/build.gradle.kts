@@ -9,7 +9,15 @@ plugins {
 
 android {
     namespace = "com.ghostcopy.ghostcopy"
-    compileSdk = flutter.compileSdkVersion
+
+    // Ahead of Flutter's default (36) because receive_sharing_intent compiles
+    // against 37, and AGP only warns about that mismatch today - it becomes a
+    // hard failure on a later AGP or plugin bump.
+    //
+    // compileSdk only chooses which APIs are visible at compile time and is
+    // backward compatible, so it does not change runtime behaviour. targetSdk
+    // is the one that does, and it deliberately stays on Flutter's default.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

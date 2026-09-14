@@ -19,33 +19,19 @@ class FileTypeInfo {
       'FileTypeInfo(contentType: ${contentType.value}, mimeType: $mimeType, extension: $extension)';
 }
 
-/// Abstract service for detecting file types
-abstract class IFileTypeService {
-  /// Detect file type from bytes (using magic bytes) with optional filename hint
-  FileTypeInfo detectFromBytes(Uint8List bytes, String? filename);
-
-  /// Detect file type from extension only
-  FileTypeInfo detectFromExtension(String filename);
-
-  /// Get icon for a content type
-  IconData getFileIcon(ContentType type);
-}
-
 /// Implementation of file type detection service
-class FileTypeService implements IFileTypeService {
+class FileTypeService {
   FileTypeService._();
 
   /// Singleton instance
   static final FileTypeService instance = FileTypeService._();
 
-  // Cache for detection results (key: filename_size)
+  // Cache for detection results, keyed by filename + size + signature bytes
   final Map<String, FileTypeInfo> _detectionCache = {};
   static const int _maxCacheSize = 100;
 
-  @override
   FileTypeInfo detectFromBytes(Uint8List bytes, String? filename) {
-    // Generate cache key from filename and size
-    final cacheKey = '${filename ?? 'unknown'}_${bytes.length}';
+    final cacheKey = _cacheKey(bytes, filename);
 
     // Check cache first
     if (_detectionCache.containsKey(cacheKey)) {
@@ -55,8 +41,14 @@ class FileTypeService implements IFileTypeService {
     // Try magic bytes detection first (most reliable)
     final magicResult = _detectFromMagicBytes(bytes);
     if (magicResult != null) {
-      _cacheResult(cacheKey, magicResult);
-      return magicResult;
+      // ...except where the signature is shared by several formats. A .docx is
+      // a ZIP container, so magic bytes alone reported every Word document as
+      // application/zip and the receiving device saved it as .zip, which will
+      // not open. (Other OOXML types have no ContentType member yet, so they
+      // still land on fileZip - add them here alongside the enum.)
+      final refined = _refineAmbiguousType(magicResult, filename);
+      _cacheResult(cacheKey, refined);
+      return refined;
     }
 
     // Fallback to extension-based detection
@@ -76,6 +68,39 @@ class FileTypeService implements IFileTypeService {
     return fallbackResult;
   }
 
+  /// Key identifying a detection input.
+  ///
+  /// Length and filename alone are not enough: the clipboard-image path passes
+  /// a null filename, so every unnamed file of the same length collided and the
+  /// second one was answered with the first one's type. The signature bytes are
+  /// what detection actually reads, so they belong in the key.
+  String _cacheKey(Uint8List bytes, String? filename) {
+    final prefix = bytes.take(_signatureLength).join(',');
+    return '${filename ?? ''}_${bytes.length}_$prefix';
+  }
+
+  /// Bytes the longest magic-byte check inspects (WAV reads through byte 11).
+  static const int _signatureLength = 12;
+
+  /// Prefer the extension when the magic bytes cannot tell formats apart.
+  ///
+  /// Only applied to container signatures where the extension carries strictly
+  /// more information than the bytes. Everything else keeps the magic-byte
+  /// answer, which stays authoritative against a misleading extension.
+  FileTypeInfo _refineAmbiguousType(FileTypeInfo detected, String? filename) {
+    if (detected.contentType != ContentType.fileZip) return detected;
+    if (filename == null || !filename.contains('.')) return detected;
+
+    final byExtension = detectFromExtension(filename);
+
+    // Only upgrade to another ZIP-based format; a .txt extension on ZIP bytes
+    // is a lie worth ignoring.
+    const zipBased = {ContentType.fileDocx};
+    if (zipBased.contains(byExtension.contentType)) return byExtension;
+
+    return detected;
+  }
+
   /// Cache the detection result with LRU eviction
   void _cacheResult(String key, FileTypeInfo result) {
     // Evict oldest entry if cache is full (simple FIFO)
@@ -86,7 +111,6 @@ class FileTypeService implements IFileTypeService {
     _detectionCache[key] = result;
   }
 
-  @override
   FileTypeInfo detectFromExtension(String filename) {
     final extension = filename.split('.').last.toLowerCase();
 
@@ -198,7 +222,6 @@ class FileTypeService implements IFileTypeService {
     );
   }
 
-  @override
   IconData getFileIcon(ContentType type) {
     switch (type) {
       // Images

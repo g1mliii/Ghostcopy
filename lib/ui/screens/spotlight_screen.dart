@@ -3,30 +3,36 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-
+import 'package:super_drag_and_drop/super_drag_and_drop.dart';
+import 'package:timeago/timeago.dart' as timeago;
 import 'package:window_manager/window_manager.dart';
 
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
-
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
-
 import '../../services/hotkey_service.dart';
 import '../../services/impl/encryption_service.dart';
-
+import '../../services/impl/temp_file_service.dart';
 import '../../services/lifecycle_controller.dart';
+import '../../services/media_memory_cache.dart';
 import '../../services/notification_service.dart';
-
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
+import '../../utils/platform_label.dart';
+import '../coalesced_rebuild.dart';
+import '../device_type_icon.dart';
+import '../platform_adaptive.dart';
+import '../theme/animations.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../viewmodels/spotlight_viewmodel.dart';
@@ -93,7 +99,7 @@ class SpotlightScreen extends StatefulWidget {
 }
 
 class _SpotlightScreenState extends State<SpotlightScreen>
-    with TickerProviderStateMixin, WindowListener {
+    with TickerProviderStateMixin, WindowListener, CoalescedRebuild {
   // Animation controllers
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -155,7 +161,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // Track focus time to prevent immediate blur (debounce)
   DateTime? _lastFocusTime;
-  bool _isRebuildScheduled = false;
 
   // Cached preview data to avoid recomputation on every build
   ClipboardItem? _cachedFilePreviewItem;
@@ -185,7 +190,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             TextPosition(offset: _textController.text.length),
           );
         }
-        _scheduleRebuild();
+        scheduleRebuild();
       }
     };
     _viewModel
@@ -209,53 +214,20 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
 
-    // Set up history slide animation (120ms for snappy feel)
-    _historySlideController = AnimationController(
-      duration: const Duration(milliseconds: 120),
-      vsync: this,
-    );
+    // The three panels slide in identically - 120ms, ease-out - and differ only
+    // in which edge they come from. History enters from the right, Settings and
+    // Auth from the left.
+    final (historyController, historyAnimation) = _buildSlide(fromX: 1);
+    _historySlideController = historyController;
+    _historySlideAnimation = historyAnimation;
 
-    _historySlideAnimation =
-        Tween<Offset>(
-          begin: const Offset(1, 0), // Start off-screen to the right
-          end: Offset.zero, // End at normal position
-        ).animate(
-          CurvedAnimation(
-            parent: _historySlideController,
-            curve: Curves.easeOut,
-          ),
-        );
+    final (settingsController, settingsAnimation) = _buildSlide(fromX: -1);
+    _settingsSlideController = settingsController;
+    _settingsSlideAnimation = settingsAnimation;
 
-    // Set up settings slide animation (120ms for snappy feel)
-    _settingsSlideController = AnimationController(
-      duration: const Duration(milliseconds: 120),
-      vsync: this,
-    );
-
-    _settingsSlideAnimation =
-        Tween<Offset>(
-          begin: const Offset(-1, 0), // Start off-screen to the left
-          end: Offset.zero, // End at normal position
-        ).animate(
-          CurvedAnimation(
-            parent: _settingsSlideController,
-            curve: Curves.easeOut,
-          ),
-        );
-
-    // Set up auth slide animation (120ms for snappy feel)
-    _authSlideController = AnimationController(
-      duration: const Duration(milliseconds: 120),
-      vsync: this,
-    );
-
-    _authSlideAnimation =
-        Tween<Offset>(
-          begin: const Offset(-1, 0), // Start off-screen to the left
-          end: Offset.zero, // End at normal position
-        ).animate(
-          CurvedAnimation(parent: _authSlideController, curve: Curves.easeOut),
-        );
+    final (authController, authAnimation) = _buildSlide(fromX: -1);
+    _authSlideController = authController;
+    _authSlideAnimation = authAnimation;
 
     // Wrap AnimationControllers in Pausable wrappers and register with LifecycleController
     // for Tray Mode. These will be paused when window is hidden, resumed when shown.
@@ -274,27 +246,24 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     final lifecycle = _lifecycleController;
     final pausables = [
-      (_pausableAnimationController, _animationController),
-      (_pausableHistorySlideController, _historySlideController),
-      (_pausableSettingsSlideController, _settingsSlideController),
-      (_pausableAuthSlideController, _authSlideController),
+      _pausableAnimationController,
+      _pausableHistorySlideController,
+      _pausableSettingsSlideController,
+      _pausableAuthSlideController,
     ];
 
-    for (final (pausable, controller) in pausables) {
+    for (final pausable in pausables) {
       if (!lifecycle.addPausable(pausable)) {
+        // Run unmanaged rather than disposing. Disposing here left a `late`
+        // field holding a dead controller that the rest of this State still
+        // drives - the very next `_animationController.forward()` would throw,
+        // and dispose() would then dispose it a second time. Losing tray-mode
+        // pausing for this screen is a far smaller problem than a crash, and
+        // reaching the limit at all means something else is leaking.
         debugPrint(
-          '[Spotlight] ⚠️ Failed to register pausable - lifecycle limit reached. '
-          'Disposing controller to prevent unmanaged animations.',
+          '[Spotlight] ⚠️ Could not register pausable - lifecycle limit '
+          'reached. Animations will run unmanaged in tray mode.',
         );
-        // Dispose controller immediately if lifecycle can't manage it
-        // This prevents unmanaged animations from running and wasting CPU
-        try {
-          controller.dispose();
-        } on Exception catch (e) {
-          debugPrint(
-            '[Spotlight] Failed to dispose unregistered controller: $e',
-          );
-        }
       }
     }
 
@@ -362,6 +331,24 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Close any active panel with animation, then update state after completion.
   /// Awaits the reverse animation to prevent the panel from being removed
   /// from the widget tree before the slide-out animation finishes.
+  /// A panel slide-in from the given edge: -1 is off-screen left, 1 is right.
+  (AnimationController, Animation<Offset>) _buildSlide({
+    required double fromX,
+  }) {
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 120),
+      vsync: this,
+    );
+    final animation = Tween<Offset>(begin: Offset(fromX, 0), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: controller,
+            curve: GhostAnimations.entranceCurve,
+          ),
+        );
+    return (controller, animation);
+  }
+
   Future<void> _closeActivePanel() async {
     final panel = _activePanel;
     if (panel == SpotlightPanel.none) return;
@@ -402,17 +389,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     } on Exception catch (e) {
       debugPrint('Failed to load settings: $e');
     }
-  }
-
-  void _scheduleRebuild() {
-    if (!mounted || _isRebuildScheduled) return;
-
-    _isRebuildScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _isRebuildScheduled = false;
-      if (!mounted) return;
-      setState(() {});
-    });
   }
 
   @override
@@ -541,6 +517,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // 3. Unfocus text fields to release IME resources
     FocusManager.instance.primaryFocus?.unfocus();
 
+    // 4. Release downloaded media bytes. MediaMemoryCache holds up to 24MB of
+    // image/file data while browsing history - valuable with the window open,
+    // pure overhead once it is hidden, which is ~99% of the app's life.
+    //
+    // Only the RAM copy is dropped. MediaDiskCache keeps the bytes, so
+    // reopening re-reads them from local disk instead of paying for another
+    // R2 download - which is what made this trade-off expensive before.
+    MediaMemoryCache.instance.clear();
+
     debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
   }
 
@@ -605,12 +590,76 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
+  /// Load a file into the composer preview, ready for the user to press Send.
+  ///
+  /// Shared by the upload button and by drag-and-drop. They had grown two
+  /// copies of this tail - size check, read, type detection, the display
+  /// string, the toast - and the copies had already diverged: only the picker
+  /// asked for confirmation above the warning threshold, so dragging in an 8MB
+  /// file skipped the prompt that picking the same file showed.
+  Future<bool> _stageFile(
+    File fileObj,
+    String filename, {
+    required String successMessage,
+  }) async {
+    // Checked before reading, so a huge file is rejected without ever being
+    // pulled into memory.
+    final fileSizeBytes = await fileObj.length();
+    if (fileSizeBytes > ClipboardLimits.maxFileBytes) {
+      if (mounted) {
+        _notificationService.showToast(
+          message:
+              'File too large: $filename (max ${ClipboardLimits.maxFileLabel})',
+          type: NotificationType.error,
+        );
+      }
+      return false;
+    }
+
+    if (fileSizeBytes > ClipboardLimits.largeFileWarningBytes) {
+      if (!mounted) return false;
+      final sizeMB = (fileSizeBytes / 1048576).toStringAsFixed(1);
+      final shouldContinue = await Adaptive.confirm(
+        context,
+        title: 'Large File Warning',
+        message:
+            'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
+        confirmText: 'Upload',
+      );
+      if (!shouldContinue) return false;
+    }
+
+    final bytes = await fileObj.readAsBytes();
+    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+      bytes,
+      filename,
+    );
+
+    if (!mounted) return false;
+
+    final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
+    final displayText = 'File ready to send: $filename ($sizeKB KB)';
+    _viewModel.setFileContent(
+      ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
+      displayText,
+    );
+    _textController.text = displayText;
+
+    _notificationService.showToast(
+      message: successMessage,
+      type: NotificationType.success,
+    );
+
+    debugPrint('[Spotlight] File staged: $filename (${bytes.length} bytes)');
+    return true;
+  }
+
   Future<void> _handleFileUpload() async {
     try {
       // Set flag to prevent window blur from closing window
       _viewModel.setFilePickerOpen(isOpen: true);
 
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         onFileLoading: (status) => debugPrint('File loading: $status'),
       );
 
@@ -631,95 +680,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         throw Exception('File path is null');
       }
 
-      final fileObj = File(path);
-      final filename = file.name;
-
-      // Validate file size (10MB limit) - Check BEFORE reading bytes to save memory
-      final fileSizeBytes = await fileObj.length();
-      if (fileSizeBytes > 10485760) {
-        if (mounted) {
-          _notificationService.showToast(
-            message: 'File too large: $filename (max 10MB)',
-            type: NotificationType.error,
-          );
-        }
-        return;
-      }
-
-      // Warn for large files (>5MB)
-      if (fileSizeBytes > 5242880) {
-        if (mounted) {
-          final sizeMB = (fileSizeBytes / 1048576).toStringAsFixed(1);
-          final shouldContinue =
-              await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  backgroundColor: GhostColors.surface,
-                  title: const Text(
-                    'Large File Warning',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: GhostColors.textPrimary,
-                    ),
-                  ),
-                  content: Text(
-                    'This file is $sizeMB MB. Upload may take 10-20 seconds.\n\nContinue?',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Upload'),
-                    ),
-                  ],
-                ),
-              ) ??
-              false;
-
-          if (!shouldContinue) {
-            return;
-          }
-        }
-      }
-
-      // Read file bytes
-      final bytes = await fileObj.readAsBytes();
-
-      // Detect file type
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        bytes,
-        filename,
+      await _stageFile(
+        File(path),
+        file.name,
+        successMessage: 'File ready: ${file.name}',
       );
-
-      // FIXED: Store file in _viewModel.clipboardContent for preview (don't send yet)
-      // User will click Send button to actually share it
-      if (mounted) {
-        // Update ViewModel with file content
-        final sizeKB = (bytes.length / 1024).toStringAsFixed(1);
-        final displayText = 'File ready to send: $filename ($sizeKB KB)';
-        _viewModel.setFileContent(
-          ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
-          displayText,
-        );
-        _textController.text = displayText;
-
-        _notificationService.showToast(
-          message: 'File ready: $filename',
-          type: NotificationType.success,
-        );
-
-        debugPrint(
-          '[Spotlight] File loaded: $filename (${bytes.length} bytes)',
-        );
-      }
     } on Exception catch (e) {
       debugPrint('[SpotlightScreen] Failed to load file: $e');
       if (mounted) {
@@ -739,133 +704,191 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
   }
 
+  /// Stage a file that arrived by drag-and-drop, exactly as the upload button
+  /// does: load it into the preview and let the user press Send.
+  Future<void> _stageDroppedFile(String path) async {
+    try {
+      final fileObj = File(path);
+      if (!fileObj.existsSync()) return;
+
+      final filename = path.split(Platform.pathSeparator).last;
+      await _stageFile(fileObj, filename, successMessage: 'Dropped: $filename');
+    } on Object catch (e) {
+      debugPrint('[Spotlight] Failed to stage dropped file: $e');
+      if (mounted) {
+        _notificationService.showToast(
+          message: 'Could not read dropped file',
+          type: NotificationType.error,
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Shortcuts(
-      shortcuts: <ShortcutActivator, Intent>{
-        const SingleActivator(LogicalKeyboardKey.escape): const DismissIntent(),
+    // Accept files and images dropped onto the window, so dragging something in
+    // works as well as the upload button - and mirrors dragging clips out.
+    return DropRegion(
+      formats: const [...Formats.standardFormats],
+      hitTestBehavior: HitTestBehavior.opaque,
+      onDropOver: (event) {
+        // Only offer a copy cursor for things we can actually accept.
+        final item = event.session.items.firstOrNull;
+        if (item == null) return DropOperation.none;
+        return item.canProvide(Formats.fileUri)
+            ? DropOperation.copy
+            : DropOperation.none;
       },
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          DismissIntent: CallbackAction<DismissIntent>(
-            onInvoke: (intent) {
-              // Handle Escape key - close active panel or hide window
-              if (_activePanel != SpotlightPanel.none) {
-                _closeActivePanel();
-              } else {
-                // Clear file content to free memory before closing
-                if ((_viewModel.clipboardContent?.hasFile ?? false) ||
-                    (_viewModel.clipboardContent?.hasImage ?? false)) {
-                  _clearPendingAttachmentPreview(requestFocus: false);
-                  debugPrint(
-                    '[Spotlight] Cleared file/image content (freed memory)',
-                  );
-                }
-                _windowService.hideSpotlight();
-              }
-              return null;
-            },
-          ),
+      onPerformDrop: (event) async {
+        for (final item in event.session.items) {
+          final reader = item.dataReader;
+          if (reader == null) continue;
+          if (!reader.canProvide(Formats.fileUri)) continue;
+
+          // getValue is callback-based; bridge it to a Future so drops are
+          // staged one at a time rather than racing each other.
+          final completer = Completer<Uri?>();
+          reader.getValue(
+            Formats.fileUri,
+            completer.complete,
+            onError: (_) => completer.complete(null),
+          );
+          final uri = await completer.future;
+          if (uri == null) continue;
+
+          await _stageDroppedFile(uri.toFilePath());
+          // One attachment at a time: the send flow stages a single file.
+          break;
+        }
+      },
+      child: Shortcuts(
+        shortcuts: <ShortcutActivator, Intent>{
+          const SingleActivator(LogicalKeyboardKey.escape):
+              const DismissIntent(),
         },
-        child: Focus(
-          autofocus: true,
-          descendantsAreFocusable: true,
-          child: Scaffold(
-            backgroundColor: GhostColors.surface,
-            body: Stack(
-              children: [
-                // Main content - wrapped in IgnorePointer when a panel is open
-                // to skip hit-testing the entire main content tree (perf: reduces
-                // hit-test depth from ~123 to ~40 layers when panels are open)
-                IgnorePointer(
-                  ignoring: _activePanel != SpotlightPanel.none,
-                  child: RepaintBoundary(
-                    child: FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: ScaleTransition(
-                        scale: _scaleAnimation,
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(
-                              20,
-                              50,
-                              20,
-                              20,
-                            ), // Extra top padding for buttons
-                            child: SingleChildScrollView(
-                              physics: const ClampingScrollPhysics(),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  _buildHeader(),
-                                  const SizedBox(height: 12),
-                                  _buildTextField(),
-                                  const SizedBox(height: 10),
-                                  // Show transformer previews if content is transformable
-                                  if (_viewModel
-                                          .detectedContentType
-                                          ?.isTransformable ??
-                                      false)
-                                    ..._buildTransformerUI(),
-                                  _buildPlatformSelector(),
-                                  const SizedBox(height: 12),
-                                  _buildSendButton(),
-                                  if (_viewModel.errorMessage != null) ...[
+        child: Actions(
+          actions: <Type, Action<Intent>>{
+            DismissIntent: CallbackAction<DismissIntent>(
+              onInvoke: (intent) {
+                // Handle Escape key - close active panel or hide window
+                if (_activePanel != SpotlightPanel.none) {
+                  _closeActivePanel();
+                } else {
+                  // Clear file content to free memory before closing
+                  if ((_viewModel.clipboardContent?.hasFile ?? false) ||
+                      (_viewModel.clipboardContent?.hasImage ?? false)) {
+                    _clearPendingAttachmentPreview(requestFocus: false);
+                    debugPrint(
+                      '[Spotlight] Cleared file/image content (freed memory)',
+                    );
+                  }
+                  _windowService.hideSpotlight();
+                }
+                return null;
+              },
+            ),
+          },
+          child: Focus(
+            autofocus: true,
+            descendantsAreFocusable: true,
+            child: Scaffold(
+              backgroundColor: GhostColors.surface,
+              body: Stack(
+                children: [
+                  // Main content - wrapped in IgnorePointer when a panel is open
+                  // to skip hit-testing the entire main content tree (perf: reduces
+                  // hit-test depth from ~123 to ~40 layers when panels are open)
+                  IgnorePointer(
+                    ignoring: _activePanel != SpotlightPanel.none,
+                    child: RepaintBoundary(
+                      child: FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: ScaleTransition(
+                          scale: _scaleAnimation,
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                50,
+                                20,
+                                20,
+                              ), // Extra top padding for buttons
+                              child: SingleChildScrollView(
+                                physics: const ClampingScrollPhysics(),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _buildHeader(),
+                                    const SizedBox(height: 12),
+                                    _buildTextField(),
                                     const SizedBox(height: 10),
-                                    _buildErrorMessage(),
+                                    // Show transformer previews if content is transformable
+                                    if (_viewModel
+                                            .detectedContentType
+                                            ?.isTransformable ??
+                                        false)
+                                      ..._buildTransformerUI(),
+                                    _buildPlatformSelector(),
+                                    const SizedBox(height: 12),
+                                    _buildSendButton(),
+                                    if (_viewModel.errorMessage != null) ...[
+                                      const SizedBox(height: 10),
+                                      _buildErrorMessage(),
+                                    ],
                                   ],
-                                ],
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ), // Close IgnorePointer
-                // Settings button - Top Left
-                Positioned(top: 12, left: 12, child: _buildSettingsButton()),
-                // History button - Top Right
-                Positioned(top: 12, right: 12, child: _buildHistoryButton()),
-                // Click-outside overlay to close any active panel
-                // Uses HitTestBehavior.opaque to catch taps without walking
-                // child tree (perf: stops hit-test traversal immediately)
-                if (_activePanel != SpotlightPanel.none)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _closeActivePanel,
+                  ), // Close IgnorePointer
+                  // Settings button - Top Left
+                  Positioned(top: 12, left: 12, child: _buildSettingsButton()),
+                  // History button - Top Right
+                  Positioned(top: 12, right: 12, child: _buildHistoryButton()),
+                  // Click-outside overlay to close any active panel
+                  // Uses HitTestBehavior.opaque to catch taps without walking
+                  // child tree (perf: stops hit-test traversal immediately)
+                  if (_activePanel != SpotlightPanel.none)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _closeActivePanel,
+                      ),
                     ),
-                  ),
-                // Auth panel overlay (left side, wider than settings)
-                if (_showAuth) _buildAuthPanel(),
-                // Settings panel overlay (left side)
-                if (_showSettings) _buildSettingsPanel(),
-                // History panel overlay (right side)
-                if (_showHistory) _buildHistoryPanel(),
-              ],
-            ), // Close Stack (body)
-          ), // Close Scaffold
-        ), // Close Focus
-      ), // Close Actions
-    ); // Close Shortcuts
+                  // Auth panel overlay (left side, wider than settings)
+                  if (_showAuth) _buildAuthPanel(),
+                  // Settings panel overlay (left side)
+                  if (_showSettings) _buildSettingsPanel(),
+                  // History panel overlay (right side)
+                  if (_showHistory) _buildHistoryPanel(),
+                ],
+              ), // Close Stack (body)
+            ), // Close Scaffold
+          ), // Close Focus
+        ), // Close Actions
+      ), // Close Shortcuts
+    ); // Close DropRegion
   }
 
-  /// Build header with icon and title (centered)
+  /// Build header: the wordmark alone, centred.
+  ///
+  /// The logo image sat beside it, which pushed the pair off-centre (the Row
+  /// centred icon+text as a unit, so the word itself never lined up with the
+  /// window). The mark is already on the tray icon and the taskbar, so it was
+  /// restating what the user can see anyway.
   Widget _buildHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.content_copy, size: 24, color: GhostColors.primary),
-        const SizedBox(width: 12),
-        Text(
-          'GhostCopy',
-          style: GhostTypography.headline.copyWith(
-            color: GhostColors.textPrimary,
-          ),
+    return Center(
+      child: Text(
+        'GhostCopy',
+        style: GhostTypography.headline.copyWith(
+          color: GhostColors.textPrimary,
         ),
-      ],
+      ),
     );
   }
 
@@ -943,9 +966,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           // Perf: Container with clipBehavior instead of ClipRRect to
           // avoid saveLayer on raster thread
           Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-            ),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(6)),
             clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 80),
@@ -1062,9 +1083,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // File preview (if clipboard has file) - cached to avoid double construction
-          if (cachedFilePreview != null) cachedFilePreview,
+          ?cachedFilePreview,
           // Image preview (if clipboard has image) - cached to avoid double construction
-          if (cachedImagePreview != null) cachedImagePreview,
+          ?cachedImagePreview,
           // FIXED: Hide text field when file/image present (text is ignored anyway)
           if (!hasFile && !hasImage)
             TextField(
@@ -1299,9 +1320,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 else if (result?.preview != null)
                   Text(
                     result!.preview!,
-                    style: const TextStyle(
+                    style: GhostTypography.mono.copyWith(
                       fontSize: 10,
-                      fontFamily: 'monospace',
                       color: Colors.white70,
                     ),
                     maxLines: 6,
@@ -1354,10 +1374,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   ),
                   Text(
                     colorValue.toUpperCase(),
-                    style: const TextStyle(
+                    style: GhostTypography.mono.copyWith(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      fontFamily: 'monospace',
                     ),
                   ),
                 ],
@@ -1766,9 +1785,7 @@ class _PlatformChip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: _borderRadius,
             border: Border.all(
-              color: isSelected
-                  ? Colors.transparent
-                  : GhostColors.surfaceLight,
+              color: isSelected ? Colors.transparent : GhostColors.surfaceLight,
             ),
           ),
           child: Row(
@@ -1777,9 +1794,7 @@ class _PlatformChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: isSelected
-                    ? Colors.white
-                    : GhostColors.textSecondary,
+                color: isSelected ? Colors.white : GhostColors.textSecondary,
               ),
               const SizedBox(width: 5),
               Text(
@@ -1787,9 +1802,7 @@ class _PlatformChip extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
-                  color: isSelected
-                      ? Colors.white
-                      : GhostColors.textSecondary,
+                  color: isSelected ? Colors.white : GhostColors.textSecondary,
                 ),
               ),
             ],
@@ -1871,44 +1884,10 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
       _filteredItems = widget.historyItems;
     } else {
       final lowerQuery = _searchQuery.toLowerCase();
-      _filteredItems = widget.historyItems.where((item) {
-        if (item.content.toLowerCase().contains(lowerQuery)) return true;
-        if (item.deviceName != null &&
-            item.deviceName!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        if (item.mimeType != null &&
-            item.mimeType!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        return false;
-      }).toList();
+      _filteredItems = widget.historyItems
+          .where((item) => item.matchesQuery(lowerQuery))
+          .toList();
     }
-  }
-
-  String _formatTimeAgo(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-    if (difference.inSeconds < 60) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      final minutes = difference.inMinutes;
-      return '$minutes${minutes == 1 ? " min" : " mins"} ago';
-    } else if (difference.inHours < 24) {
-      final hours = difference.inHours;
-      return '$hours${hours == 1 ? " hour" : " hours"} ago';
-    } else if (difference.inDays < 7) {
-      final days = difference.inDays;
-      return '$days${days == 1 ? " day" : " days"} ago';
-    } else {
-      final weeks = (difference.inDays / 7).floor();
-      return '$weeks${weeks == 1 ? " week" : " weeks"} ago';
-    }
-  }
-
-  String _capitalizeFirst(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
   }
 
   int? _findFilteredIndexByKey(Key key) {
@@ -1953,6 +1932,47 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
           controller: _searchController,
           onChanged: _filterHistory,
         ),
+        // Locked-clips banner. Outside the list for the same reason as mobile:
+        // undecryptable clips are removed from the list, so when readable ones
+        // exist the empty-state never renders and they would vanish silently.
+        ValueListenableBuilder<int>(
+          valueListenable: widget.clipboardRepository.undecryptableItemCount,
+          builder: (context, locked, _) {
+            if (locked == 0) return const SizedBox.shrink();
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: GhostColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.lock_outline,
+                    size: 16,
+                    color: GhostColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      locked == 1
+                          ? '1 clip is encrypted - enter your passphrase in '
+                                'Settings to unlock it'
+                          : '$locked clips are encrypted - enter your '
+                                'passphrase in Settings to unlock them',
+                      style: const TextStyle(
+                        color: GhostColors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
         // History list
         Expanded(
           child: widget.isLoading
@@ -1961,21 +1981,73 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                 )
               : _filteredItems.isEmpty
               ? Center(
-                  child: Text(
-                    _searchQuery.isNotEmpty
-                        ? 'No results found'
-                        : 'No clipboard history yet',
-                    style: const TextStyle(
-                      color: GhostColors.textMuted,
-                      fontSize: 13,
-                    ),
+                  // Encrypted clips this device has no passphrase for are
+                  // dropped from the list, so "no history" would be wrong -
+                  // the clips exist and simply cannot be read here yet. Same
+                  // treatment as mobile; this is the normal state on any
+                  // device that has not had the passphrase entered, since it
+                  // is deliberately never synced through the server.
+                  child: ValueListenableBuilder<int>(
+                    valueListenable:
+                        widget.clipboardRepository.undecryptableItemCount,
+                    builder: (context, locked, _) {
+                      if (locked > 0 && _searchQuery.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.lock_outline,
+                                size: 32,
+                                color: GhostColors.primary,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                locked == 1
+                                    ? '1 encrypted clip'
+                                    : '$locked encrypted clips',
+                                style: const TextStyle(
+                                  color: GhostColors.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Enter your passphrase in Settings to unlock '
+                                'them. It is never sent to the server, so it '
+                                'has to be entered on each device.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: GhostColors.textMuted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return Text(
+                        _searchQuery.isNotEmpty
+                            ? 'No results found'
+                            : 'No clipboard history yet',
+                        style: const TextStyle(
+                          color: GhostColors.textMuted,
+                          fontSize: 13,
+                        ),
+                      );
+                    },
                   ),
                 )
               : RepaintBoundary(
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     physics: const ClampingScrollPhysics(),
-                    cacheExtent: 200, // Pre-build items 200px offscreen
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(
+                      200,
+                    ), // Pre-build items 200px offscreen
                     findChildIndexCallback: _findFilteredIndexByKey,
                     itemCount: _filteredItems.length,
                     itemBuilder: (context, index) {
@@ -1986,8 +2058,11 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                           item: item,
                           clipboardRepository: widget.clipboardRepository,
                           notificationService: widget.notificationService,
-                          timeAgo: _formatTimeAgo(item.createdAt),
-                          device: _capitalizeFirst(item.deviceType),
+                          timeAgo: timeago.format(
+                            item.createdAt,
+                            locale: 'en_short',
+                          ),
+                          device: platformLabel(item.deviceType),
                           onDelete: () => widget.onItemDelete(item),
                           onTap: () => widget.onItemTap(item),
                         ),
@@ -2195,11 +2270,14 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     try {
       if (!widget.item.requiresDownload) return;
 
+      // contentType.value is an enum name like `file_pdf`, so using it as an
+      // extension suggested "file.file_pdf" in the save dialog. mimeType maps
+      // to a real extension.
       final filename =
           widget.item.metadata?.originalFilename ??
-          'file.${widget.item.contentType.value}';
+          'file.${widget.item.contentType.fileExtension}';
 
-      final savePath = await FilePicker.platform.saveFile(
+      final savePath = await FilePicker.saveFile(
         dialogTitle: 'Save File',
         fileName: filename,
       );
@@ -2230,6 +2308,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     }
   }
 
+  /// Best-effort file extension for a clip with no original filename.
   Future<void> _handleDelete() async {
     try {
       await widget.clipboardRepository.delete(widget.item.id);
@@ -2302,140 +2381,167 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     });
   }
 
-  IconData _getDeviceIconByType(String deviceType) {
-    switch (deviceType.toLowerCase()) {
-      case 'windows':
-        return Icons.desktop_windows;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'android':
-        return Icons.phone_android;
-      case 'ios':
-        return Icons.phone_iphone;
-      case 'linux':
-        return Icons.computer;
-      default:
-        return Icons.devices;
+  /// Build the payload for dragging this clip out of the app.
+  ///
+  /// Files and images are offered as real files so Explorer/Finder accept a
+  /// drop onto the desktop: the bytes are fetched (decrypted on the way
+  /// through by downloadFile) and written to a temp file, then offered as a
+  /// file URI. Text clips are offered as plain text so they can be dropped
+  /// into an editor.
+  ///
+  /// Returns null when there is nothing draggable, which cancels the drag.
+  Future<DragItem?> _buildDragItem(DragItemRequest request) async {
+    final item = widget.item;
+
+    if (item.requiresDownload) {
+      final bytes = await widget.clipboardRepository.downloadFile(item);
+      if (bytes == null || bytes.isEmpty) return null;
+
+      final filename =
+          item.metadata?.originalFilename ??
+          'ghostcopy-${item.id}.${item.contentType.value}';
+
+      // Reuses the temp file service, which already sweeps these up
+      // periodically, so dragging does not leak files.
+      final file = await TempFileService.instance.saveTempFile(bytes, filename);
+
+      return DragItem(
+        localData: {'clipboard_id': item.id},
+        suggestedName: filename,
+      )..add(Formats.fileUri(file.uri));
     }
+
+    if (item.content.isEmpty) return null;
+
+    return DragItem(
+      localData: {'clipboard_id': item.id},
+      suggestedName: 'clip.txt',
+    )..add(Formats.plainText(item.content));
   }
 
   @override
   Widget build(BuildContext context) {
     // Perf: Merged GestureDetector+MouseRegion+InkWell into single InkWell
     // with onSecondaryTapDown. Reduces hit-test layers from 5 to 2 per item.
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: widget.onTap,
-        onSecondaryTapDown: (details) {
-          _showContextMenu(context, details.globalPosition);
-        },
-        onHover: (hovering) => _isHovered.value = hovering,
-        hoverColor: GhostColors.surfaceAlpha70,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    return DragItemWidget(
+      allowedOperations: () => const [DropOperation.copy],
+      dragItemProvider: _buildDragItem,
+      child: DraggableWidget(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: widget.onTap,
+            onSecondaryTapDown: (details) {
+              _showContextMenu(context, details.globalPosition);
+            },
+            onHover: (hovering) => _isHovered.value = hovering,
+            hoverColor: GhostColors.surfaceAlpha70,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: _buildContentPreview()),
-                  if (!widget.item.isImage &&
-                      !widget.item.isFile &&
-                      widget.item.content.length > 100) ...[
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () =>
-                          setState(() => _isExpanded = !_isExpanded),
-                      child: AnimatedRotation(
-                        turns: _isExpanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: ValueListenableBuilder<bool>(
-                          valueListenable: _isHovered,
-                          builder: (context, hovered, _) => Icon(
-                            Icons.expand_more,
-                            size: 16,
-                            color: GhostColors.primary.withValues(
-                              alpha: hovered ? 1 : 0.6,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _buildContentPreview()),
+                      if (!widget.item.isImage &&
+                          !widget.item.isFile &&
+                          widget.item.content.length > 100) ...[
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () =>
+                              setState(() => _isExpanded = !_isExpanded),
+                          child: AnimatedRotation(
+                            turns: _isExpanded ? 0.5 : 0,
+                            duration: GhostAnimations.normal,
+                            child: ValueListenableBuilder<bool>(
+                              valueListenable: _isHovered,
+                              builder: (context, hovered, _) => Icon(
+                                Icons.expand_more,
+                                size: 16,
+                                color: GhostColors.primary.withValues(
+                                  alpha: hovered ? 1 : 0.6,
+                                ),
+                              ),
                             ),
                           ),
                         ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        iconForDeviceType(_deviceLower),
+                        size: 12,
+                        color: GhostColors.textMuted,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.device,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 10,
+                        color: GhostColors.primaryAlpha70,
+                      ),
+                      const SizedBox(width: 6),
+                      if (widget.item.targetDeviceTypes == null ||
+                          widget.item.targetDeviceTypes!.isEmpty)
+                        const Text(
+                          'All',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: GhostColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else if (widget.item.targetDeviceTypes!.length == 1)
+                        Icon(
+                          iconForDeviceType(
+                            widget.item.targetDeviceTypes!.first,
+                          ),
+                          size: 12,
+                          color: GhostColors.primary,
+                        )
+                      else
+                        Text(
+                          '${widget.item.targetDeviceTypes!.length}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: GhostColors.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '\u2022',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.timeAgo,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: GhostColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(
-                    _getDeviceIconByType(_deviceLower),
-                    size: 12,
-                    color: GhostColors.textMuted,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    widget.device,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Icon(
-                    Icons.arrow_forward,
-                    size: 10,
-                    color: GhostColors.primaryAlpha70,
-                  ),
-                  const SizedBox(width: 6),
-                  if (widget.item.targetDeviceTypes == null ||
-                      widget.item.targetDeviceTypes!.isEmpty)
-                    const Text(
-                      'All',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: GhostColors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    )
-                  else if (widget.item.targetDeviceTypes!.length == 1)
-                    Icon(
-                      _getDeviceIconByType(
-                        widget.item.targetDeviceTypes!.first,
-                      ),
-                      size: 12,
-                      color: GhostColors.primary,
-                    )
-                  else
-                    Text(
-                      '${widget.item.targetDeviceTypes!.length}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: GhostColors.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    '\u2022',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.timeAgo,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       ),

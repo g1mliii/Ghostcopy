@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -63,7 +64,9 @@ class _AuthPanelState extends State<AuthPanel> {
     // Auto-restore passphrase from cloud backup if available
     final userId = widget.authService.currentUserId;
     if (userId != null) {
-      debugPrint('[AuthPanel] Post-login: restoring passphrase for user $userId');
+      debugPrint(
+        '[AuthPanel] Post-login: restoring passphrase for user $userId',
+      );
       final encryptionService = EncryptionService.instance;
       await encryptionService.initialize(userId);
 
@@ -79,7 +82,8 @@ class _AuthPanelState extends State<AuthPanel> {
         final hasPassphrase = await encryptionService.isEnabled();
         if (!hasPassphrase) {
           widget.notificationService.showToast(
-            message: 'No encryption passphrase found. Enable encryption in Settings.',
+            message:
+                'No encryption passphrase found. Enable encryption in Settings.',
           );
         }
       }
@@ -146,6 +150,7 @@ class _AuthPanelState extends State<AuthPanel> {
 
     // Anonymous user - show login/signup form
     return SingleChildScrollView(
+      physics: Adaptive.scrollPhysics,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -423,7 +428,9 @@ class _AuthPanelState extends State<AuthPanel> {
         // Clean up anonymous account data BEFORE switching accounts
         // This way user is still authenticated as the old account
         if (wasAnonymous && currentUserId != null) {
-          debugPrint('[AuthPanel] Cleaning up anonymous account before switching');
+          debugPrint(
+            '[AuthPanel] Cleaning up anonymous account before switching',
+          );
           await widget.authService.cleanupOldAccountData(currentUserId);
         }
 
@@ -557,7 +564,9 @@ class _AuthPanelState extends State<AuthPanel> {
 
         // Clean up anonymous account data BEFORE switching accounts
         if (wasAnonymous && currentUserId != null) {
-          debugPrint('[AuthPanel] Cleaning up anonymous account before switching');
+          debugPrint(
+            '[AuthPanel] Cleaning up anonymous account before switching',
+          );
           await widget.authService.cleanupOldAccountData(currentUserId);
         }
 
@@ -582,6 +591,10 @@ class _AuthPanelState extends State<AuthPanel> {
         if (success) {
           // Run shared post-login logic (passphrase restore + realtime reinit)
           await _handlePostLogin();
+
+          // Re-check: the guard above was evaluated BEFORE that await, so the
+          // panel may have been disposed while post-login work was running.
+          if (!mounted) return;
 
           // Success - close auth panel
           widget.onClose();

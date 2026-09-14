@@ -32,16 +32,13 @@ import '../../services/transformer_service.dart';
 /// - Pausable wrappers (widget lifecycle)
 class SpotlightViewModel extends ChangeNotifier {
   SpotlightViewModel({
-    required IAuthService authService,
+    required this._authService,
     required IClipboardRepository clipboardRepository,
     required IClipboardSyncService clipboardSyncService,
-    required ITransformerService transformerService,
-    required INotificationService notificationService,
-  }) : _authService = authService,
-       _clipboardRepo = clipboardRepository,
-       _syncService = clipboardSyncService,
-       _transformerService = transformerService,
-       _notificationService = notificationService;
+    required this._transformerService,
+    required this._notificationService,
+  }) : _clipboardRepo = clipboardRepository,
+       _syncService = clipboardSyncService;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
@@ -325,11 +322,14 @@ class SpotlightViewModel extends ChangeNotifier {
         // Image content - upload to storage
         final bytes = _clipboardContent!.imageBytes!;
         final mimeType = _clipboardContent!.mimeType ?? 'image/png';
-        final contentType = mimeType.startsWith('image/png')
-            ? ContentType.imagePng
-            : mimeType.startsWith('image/jpeg')
-            ? ContentType.imageJpeg
-            : ContentType.imageGif;
+        // Unknown image MIMEs used to fall through to GIF here, which sent a
+        // PNG labelled as a GIF rather than failing.
+        final contentType = ContentType.fromMimeType(mimeType);
+        if (contentType == null || !contentType.isImage) {
+          _isSending = false;
+          _setError('Unsupported image type: $mimeType');
+          return;
+        }
 
         await _clipboardRepo.insertImage(
           userId: userId,
@@ -343,13 +343,13 @@ class SpotlightViewModel extends ChangeNotifier {
         debugPrint('[SpotlightVM] ↑ Sent image: ${bytes.length} bytes');
       } else if (_clipboardContent?.hasHtml ?? false) {
         // HTML content
-        // Note: insertRichText doesn't support targetDeviceTypes yet
         await _clipboardRepo.insertRichText(
           userId: userId,
           deviceType: currentDeviceType,
           deviceName: currentDeviceName,
           content: _clipboardContent!.html!,
           format: RichTextFormat.html,
+          targetDeviceTypes: targetDevicesList,
         );
         debugPrint('[SpotlightVM] ↑ Sent HTML: ${_content.length} chars');
       } else {

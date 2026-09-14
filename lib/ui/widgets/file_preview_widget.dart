@@ -27,7 +27,12 @@ class FilePreviewWidget extends StatelessWidget {
     }
   }
 
-  Widget _buildCompactView(BuildContext context, String filename, IconData icon, String size) {
+  Widget _buildCompactView(
+    BuildContext context,
+    String filename,
+    IconData icon,
+    String size,
+  ) {
     return Row(
       children: [
         Container(
@@ -36,11 +41,7 @@ class FilePreviewWidget extends StatelessWidget {
             color: GhostColors.surface,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(
-            icon,
-            size: 24,
-            color: GhostColors.primary,
-          ),
+          child: Icon(icon, size: 24, color: GhostColors.primary),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -60,10 +61,7 @@ class FilePreviewWidget extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 '$size • ${item.contentType.value}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: GhostColors.whiteAlpha60,
-                ),
+                style: TextStyle(fontSize: 12, color: GhostColors.whiteAlpha60),
               ),
             ],
           ),
@@ -72,16 +70,18 @@ class FilePreviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildFullView(BuildContext context, String filename, IconData icon, String size) {
+  Widget _buildFullView(
+    BuildContext context,
+    String filename,
+    IconData icon,
+    String size,
+  ) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: GhostColors.surfaceAlpha50,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: GhostColors.primaryAlpha30,
-
-        ),
+        border: Border.all(color: GhostColors.primaryAlpha30),
       ),
       child: Row(
         children: [
@@ -91,11 +91,7 @@ class FilePreviewWidget extends StatelessWidget {
               color: GhostColors.primaryAlpha10,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(
-              icon,
-              size: 48,
-              color: GhostColors.primary,
-            ),
+            child: Icon(icon, size: 48, color: GhostColors.primary),
           ),
           const SizedBox(width: 16),
           Expanded(

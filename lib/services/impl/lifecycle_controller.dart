@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../models/clipboard_item.dart';
@@ -17,10 +18,9 @@ import '../lifecycle_controller.dart';
 /// Single source of truth for all app lifecycle management.
 class LifecycleController implements ILifecycleController {
   LifecycleController({
-    required IClipboardSyncService clipboardSyncService,
-    required ISettingsService settingsService,
-  }) : _clipboardSyncService = clipboardSyncService,
-       _settingsService = settingsService;
+    required this._clipboardSyncService,
+    required this._settingsService,
+  });
 
   final IClipboardSyncService _clipboardSyncService;
   final ISettingsService _settingsService;
@@ -59,6 +59,14 @@ class LifecycleController implements ILifecycleController {
   // ========== INACTIVITY TRACKING ==========
 
   DateTime? _lastClipboardActivity;
+
+  /// Fallback origin for idle time before any clipboard activity happens.
+  ///
+  /// clock.now() rather than DateTime.now() throughout this class: idle
+  /// switching is driven entirely by elapsed time, and DateTime.now() ignores
+  /// fakeAsync, which made the behaviour untestable. Identical in production.
+  final DateTime _startedAt = clock.now();
+
   Timer? _inactivityCheckTimer;
   static const Duration _realtimeIdleThreshold = Duration(minutes: 15);
 
@@ -200,13 +208,17 @@ class LifecycleController implements ILifecycleController {
       return; // Don't check during sleep/lock
     }
 
-    final now = DateTime.now();
+    final now = clock.now();
     final isWindowHidden = _isInTrayMode;
 
-    // Calculate idle time
-    final idleDuration = _lastClipboardActivity != null
-        ? now.difference(_lastClipboardActivity!)
-        : Duration.zero;
+    // Idle time, measured from app start when there has been no activity yet.
+    //
+    // This used to fall back to Duration.zero, which reads as "active right
+    // now" - so a session where the user never copied anything was never
+    // considered idle and hybrid mode never switched to polling. That is
+    // precisely the session polling exists for.
+    _lastClipboardActivity ??= _startedAt;
+    final idleDuration = now.difference(_lastClipboardActivity!);
 
     // Switch to polling if BOTH conditions true:
     // - Window is hidden (in tray) AND
@@ -255,7 +267,7 @@ class LifecycleController implements ILifecycleController {
 
   @override
   void notifyClipboardActivity() {
-    _lastClipboardActivity = DateTime.now();
+    _lastClipboardActivity = clock.now();
 
     // If in polling mode and user becomes active, switch back to realtime
     if (_connectionMode == ConnectionMode.polling && _isHybridModeEnabled) {

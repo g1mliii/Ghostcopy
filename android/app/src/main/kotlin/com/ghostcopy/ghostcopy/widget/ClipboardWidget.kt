@@ -8,11 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.widget.RemoteViews
+import com.ghostcopy.ghostcopy.IntentAuth
 import com.ghostcopy.ghostcopy.MainActivity
 import com.ghostcopy.ghostcopy.R
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * App Widget Provider for clipboard synchronization.
@@ -72,6 +70,9 @@ class ClipboardWidget : AppWidgetProvider() {
       val itemClickIntent = Intent(context, MainActivity::class.java).apply {
         action = ACTION_WIDGET_ITEM_CLICK
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        // Proves the intent originated in this app - MainActivity is exported
+        // and would otherwise accept this action from any installed app.
+        putExtra(IntentAuth.EXTRA_TOKEN, IntentAuth.token(context))
       }
       val itemClickPendingIntent = PendingIntent.getActivity(
         context,
@@ -83,7 +84,7 @@ class ClipboardWidget : AppWidgetProvider() {
 
       // Update last updated timestamp
       val lastUpdated = WidgetDataManager.getInstance(context).getLastUpdated()
-      views.setTextViewText(R.id.last_updated_text, formatTimeAgo(lastUpdated))
+      views.setTextViewText(R.id.last_updated_text, TimeAgo.format(lastUpdated))
 
       // Update the widget
       appWidgetManager.updateAppWidget(widgetId, views)
@@ -125,28 +126,6 @@ class ClipboardWidget : AppWidgetProvider() {
   }
 
 
-
-  /**
-   * Format timestamp as relative time (e.g., "2m ago", "Just now").
-   */
-  private fun formatTimeAgo(timestampMs: Long): String {
-    if (timestampMs == 0L) return "Never"
-
-    val now = System.currentTimeMillis()
-    val diffMs = now - timestampMs
-
-    return when {
-      diffMs < 1000 -> "Just now"
-      diffMs < 60_000 -> "${diffMs / 1000}s ago"
-      diffMs < 3_600_000 -> "${diffMs / 60_000}m ago"
-      diffMs < 86_400_000 -> "${diffMs / 3_600_000}h ago"
-      else -> {
-        // Format as date for older items
-        val sdf = SimpleDateFormat("MMM d", Locale.getDefault())
-        sdf.format(Date(timestampMs))
-      }
-    }
-  }
 
   companion object {
     private const val TAG = "ClipboardWidget"

@@ -1,20 +1,22 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
+import 'dart:ui' show Rect;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
-import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/widget_service.dart';
 
@@ -28,7 +30,7 @@ import '../../services/widget_service.dart';
 /// - Device state management (_devices, _selectedDeviceTypes)
 /// - History state management (_historyItems, _filteredHistoryItems)
 /// - Content caching (decrypted content, detection results)
-/// - Timer management (clipboard clear, search debounce)
+/// - Timer management (search debounce, realtime reconnect)
 /// - Lifecycle hooks (onAppPaused, onAppResumed, onMemoryPressure)
 ///
 /// UI responsibilities (remain in widget):
@@ -39,22 +41,22 @@ import '../../services/widget_service.dart';
 /// - Animations (_StaggeredHistoryItem)
 class MobileMainViewModel extends ChangeNotifier {
   MobileMainViewModel({
-    required IAuthService authService,
+    required this._authService,
     required IClipboardRepository clipboardRepository,
-    required IDeviceService deviceService,
-    required ISecurityService securityService,
-    required ISettingsService settingsService,
-  }) : _authService = authService,
-       _clipboardRepo = clipboardRepository,
-       _deviceService = deviceService,
-       _securityService = securityService,
-       _settingsService = settingsService;
+    required this._deviceService,
+    required this._securityService,
+  }) : _clipboardRepo = clipboardRepository;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
+
+  /// Encrypted clips in the last history load that the local passphrase could
+  /// not open. They are excluded from [historyItems], so the UI shows a
+  /// passphrase prompt rather than an empty-history message.
+  ValueListenable<int> get undecryptableItemCount =>
+      _clipboardRepo.undecryptableItemCount;
   final IDeviceService _deviceService;
   final ISecurityService _securityService;
-  final ISettingsService _settingsService;
 
   // ========== SEND STATE ==========
 
@@ -70,12 +72,45 @@ class MobileMainViewModel extends ChangeNotifier {
   ClipboardContent? _clipboardContent;
   ClipboardContent? get clipboardContent => _clipboardContent;
 
-  bool _lastSendWasFromPaste = false;
-
   // ========== DEVICE STATE ==========
 
   List<Device> _devices = [];
   List<Device> get devices => _devices;
+
+  /// Cache for [deviceTypeTargets]. Invalidated wherever _devices changes.
+  List<DeviceTypeTarget>? _deviceTypeTargetsCache;
+
+  /// The user's devices collapsed to one entry per device TYPE.
+  ///
+  /// target_device_type is a device_type_enum[] - the backend can only route by
+  /// platform, never to an individual machine. The chip row used to render one
+  /// chip per device but toggle that device's TYPE, so with two Windows
+  /// machines tapping "Work PC" lit up "Home PC" as well and delivered to both.
+  /// The label promised something the schema cannot do.
+  ///
+  /// Grouping here keeps the selector honest while preserving what was good
+  /// about it: when a type has exactly one device, that device's name IS an
+  /// accurate label for the type, so it is still shown.
+  ///
+  /// Cached: this allocates a map and sorts, and the chip row reads it from
+  /// build(), so it recomputed on every rebuild for a list that only changes
+  /// when devices load.
+  List<DeviceTypeTarget> get deviceTypeTargets =>
+      _deviceTypeTargetsCache ??= _computeDeviceTypeTargets();
+
+  List<DeviceTypeTarget> _computeDeviceTypeTargets() {
+    final byType = <String, List<Device>>{};
+    for (final device in _devices) {
+      byType.putIfAbsent(device.deviceType, () => <Device>[]).add(device);
+    }
+
+    final targets =
+        byType.entries
+            .map((e) => DeviceTypeTarget(deviceType: e.key, devices: e.value))
+            .toList()
+          ..sort((a, b) => a.deviceType.compareTo(b.deviceType));
+    return targets;
+  }
 
   final Set<String> _selectedDeviceTypes = {};
   Set<String> get selectedDeviceTypes => _selectedDeviceTypes;
@@ -94,8 +129,39 @@ class MobileMainViewModel extends ChangeNotifier {
   List<ClipboardItem> _filteredHistoryItems = [];
   List<ClipboardItem> get filteredHistoryItems => _filteredHistoryItems;
 
-  bool _historyLoading = false;
+  /// True only while a pull-to-refresh is running.
+  ///
+  /// A refresh reloads devices and history together, and each section shows its
+  /// own spinner while loading - so a single pull put three indicators on screen
+  /// at once: the indicator arc the user dragged down, plus one in the chips row
+  /// and one in the history list. The sections suppress theirs while this is set
+  /// and let the indicator the user actually pulled stand for the whole refresh.
+  /// Their own spinners still appear when those sections load independently.
+  bool _isRefreshing = false;
+  bool get isRefreshing => _isRefreshing;
+
+  bool _historyLoadingBacking = false;
   bool get historyLoading => _historyLoading;
+
+  // Written from several places (first load, pull to refresh, the realtime
+  // stream, its error handler). Routing them all through one setter is what
+  // keeps _initialLoadComplete honest without having to find every assignment.
+  bool get _historyLoading => _historyLoadingBacking;
+  set _historyLoading(bool value) {
+    _historyLoadingBacking = value;
+    // Settling either way - loaded, empty, or failed - means the screen has
+    // something real to show. Failure counts deliberately: gating the splash on
+    // success alone would leave a user with no connection staring at a spinner.
+    if (!value) _initialLoadComplete = true;
+  }
+
+  /// Whether the first history load has finished, successfully or not.
+  ///
+  /// The screen shows a single centred splash until this flips, then renders
+  /// everything at once, rather than letting header, composer and list pop in
+  /// separately.
+  bool _initialLoadComplete = false;
+  bool get initialLoadComplete => _initialLoadComplete;
 
   String? _historyError;
   String? get historyError => _historyError;
@@ -104,6 +170,8 @@ class MobileMainViewModel extends ChangeNotifier {
   String get historySearchQuery => _historySearchQuery;
 
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
+  Timer? _realtimeReconnectTimer;
+  int _realtimeRetryCount = 0;
 
   // ========== CACHES ==========
 
@@ -125,7 +193,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
   // ========== TIMERS ==========
 
-  Timer? _clipboardClearTimer;
   Timer? _searchDebounceTimer;
   static const Duration _searchDebounceDelay = Duration(milliseconds: 200);
 
@@ -137,11 +204,26 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Initialize the ViewModel - call once after construction
   Future<void> initialize() async {
-    await _initializeEncryption();
-    await loadDevices();
     _historyLoading = true;
     notifyListeners();
     subscribeToRealtimeUpdates();
+
+    // Run all three concurrently. They were serialized - key derivation, then
+    // the device list, then history - which put ~1s of device fetch on the
+    // critical path for a list that does not need it, and made the clipboard
+    // appear about four seconds after the screen did.
+    //
+    // Safe to overlap because EncryptionService.initialize() guards concurrent
+    // callers with _initFuture, and the decrypt step inside loadHistory()
+    // calls it again through _ensureEncryptionInitialized() - so the rows are
+    // fetched over the network WHILE the key is being derived, and decryption
+    // still waits for the same single derivation.
+    //
+    // Do not let first paint depend on the websocket either: the stream used
+    // to be the ONLY source of the initial list, so a realtime failure left
+    // the screen on a spinner even though a plain REST fetch would have
+    // worked.
+    await Future.wait([_initializeEncryption(), loadDevices(), loadHistory()]);
   }
 
   Future<void> _initializeEncryption() async {
@@ -262,6 +344,7 @@ class MobileMainViewModel extends ChangeNotifier {
       );
       if (!_isDisposed) {
         _devices = devices;
+        _deviceTypeTargetsCache = null;
         _devicesLoading = false;
         _deviceError = null;
         notifyListeners();
@@ -285,8 +368,14 @@ class MobileMainViewModel extends ChangeNotifier {
       final items = await _clipboardRepo.getHistory();
       if (!_isDisposed) {
         _historyItems = items;
-        _filteredHistoryItems = items;
+        _filterHistory(_historySearchQuery);
         _historyLoading = false;
+        // A successful fetch is what "pull to refresh" promised, so the error
+        // MUST be cleared here. It previously survived until sign-out, and
+        // _buildHistoryList() returns the error pane before it ever looks at
+        // the items - so one realtime hiccup hid the list permanently and
+        // pulling to refresh appeared to do nothing at all.
+        _historyError = null;
         _cleanupCache();
         notifyListeners();
 
@@ -301,6 +390,12 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to load history: $e');
       if (!_isDisposed) {
         _historyLoading = false;
+        // Only claim failure when there is nothing on screen. Replacing a good
+        // list with a full-page error because a refresh failed loses the
+        // user's clips over a dropped connection.
+        if (_historyItems.isEmpty) {
+          _historyError = 'Failed to load history. Pull to refresh.';
+        }
         notifyListeners();
       }
     }
@@ -308,9 +403,25 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Subscribe to realtime history updates
   void subscribeToRealtimeUpdates() {
-    _historySubscription = _clipboardRepo.watchHistory().listen(
+    final Stream<List<ClipboardItem>> stream;
+    try {
+      // watchHistory() throws synchronously when there is no session, which
+      // bypasses onError entirely and previously escaped initialize() as an
+      // unhandled exception - leaving historyLoading stuck true forever.
+      stream = _clipboardRepo.watchHistory();
+    } on Exception catch (e) {
+      debugPrint('[MobileMainVM] Could not open realtime stream: $e');
+      _scheduleRealtimeReconnect();
+      return;
+    }
+
+    _historySubscription = stream.listen(
       (items) {
         if (_isDisposed) return;
+
+        // The stream is alive again; forget any previous backoff.
+        _realtimeRetryCount = 0;
+        _historyError = null;
 
         final oldFirstId = _historyItems.isNotEmpty
             ? _historyItems.first.id
@@ -322,23 +433,82 @@ class MobileMainViewModel extends ChangeNotifier {
         _cleanupCache();
         notifyListeners();
 
-        // Auto-copy latest item if it's from another device
+        // Auto-copy the latest item, but only when it genuinely came from
+        // another device AND was targeted at this one. Previously this copied
+        // any new row, so a clip sent to "Windows only" still overwrote the
+        // phone's clipboard - the exact leak device targeting exists to stop.
+        // Mirrors the desktop checks in ClipboardSyncService.
         if (items.isNotEmpty) {
           final latest = items.first;
           if (oldFirstId == null || latest.id != oldFirstId) {
-            unawaited(_autoCopyToClipboard(latest));
+            final currentDeviceName =
+                ClipboardRepository.getCurrentDeviceName();
+            final isFromDifferentDevice =
+                latest.deviceName == null ||
+                currentDeviceName == null ||
+                latest.deviceName != currentDeviceName;
+
+            final targets = latest.targetDeviceTypes;
+            final isTargetedToMe =
+                targets == null ||
+                targets.isEmpty ||
+                targets.contains(ClipboardRepository.getCurrentDeviceType());
+
+            if (isFromDifferentDevice && isTargetedToMe) {
+              unawaited(_autoCopyToClipboard(latest));
+            } else {
+              debugPrint(
+                '[MobileMainVM] Skipped auto-copy '
+                '(fromOtherDevice=$isFromDifferentDevice, '
+                'targeted=$isTargetedToMe)',
+              );
+            }
           }
         }
       },
       onError: (Object error) {
         debugPrint('[MobileMainVM] Realtime subscription error: $error');
-        if (!_isDisposed) {
-          _historyLoading = false;
+        if (_isDisposed) return;
+
+        _historyLoading = false;
+        // Keep whatever is already on screen. Only a cold failure - nothing
+        // loaded at all - justifies replacing the list with an error pane.
+        if (_historyItems.isEmpty) {
           _historyError = 'Failed to load history. Pull to refresh.';
-          notifyListeners();
         }
+        notifyListeners();
+
+        // A stream error ends the subscription, and nothing re-armed it: one
+        // dropped websocket meant new clips silently stopped arriving for the
+        // rest of the session, with pull-to-refresh the only way to see
+        // anything. Re-subscribe, and fall back to a one-shot fetch so the
+        // list is correct even while realtime is still down.
+        _scheduleRealtimeReconnect();
       },
     );
+  }
+
+  /// Re-arm the realtime subscription after an error, backing off so a server
+  /// outage does not turn into a reconnect loop.
+  void _scheduleRealtimeReconnect() {
+    if (_isDisposed || _realtimeReconnectTimer?.isActive == true) return;
+
+    final attempt = ++_realtimeRetryCount;
+    // 2s, 4s, 8s, 16s, 30s, 30s...
+    final seconds = attempt >= 5 ? 30 : 1 << attempt;
+    debugPrint(
+      '[MobileMainVM] Reconnecting realtime in ${seconds}s (attempt $attempt)',
+    );
+
+    _realtimeReconnectTimer = Timer(Duration(seconds: seconds), () async {
+      if (_isDisposed) return;
+      await _historySubscription?.cancel();
+      _historySubscription = null;
+      subscribeToRealtimeUpdates();
+      // Realtime only delivers changes from here on, so fetch the rows that
+      // landed while the connection was down.
+      await loadHistory();
+    });
   }
 
   /// Filter history based on search query
@@ -384,6 +554,13 @@ class MobileMainViewModel extends ChangeNotifier {
       return;
     }
 
+    // Staged file (picked or shared in). Goes through the same Send button as
+    // everything else so device targeting applies.
+    if (_clipboardContent?.hasFile ?? false) {
+      await _sendFile(onSendSuccess: onSendSuccess);
+      return;
+    }
+
     final content = pasteText.trim();
     if (content.isEmpty) {
       _sendErrorMessage = 'Please paste or type content to send';
@@ -396,11 +573,10 @@ class MobileMainViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Encrypt if enabled
-      var finalContent = content;
-      if (_encryptionService != null && await _encryptionService!.isEnabled()) {
-        finalContent = await _encryptionService!.encrypt(content);
-      }
+      // NOTE: do NOT encrypt here. ClipboardRepository.insert() encrypts
+      // when encryption is enabled; doing it here as well stored E(E(content))
+      // against is_encrypted=true, so readers decrypted once and got ciphertext.
+      final finalContent = content;
 
       // Determine target devices
       List<String>? targetTypes;
@@ -429,10 +605,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
         // Reload history (non-blocking)
         unawaited(loadHistory());
-
-        // Security: Schedule clipboard auto-clear
-        _lastSendWasFromPaste = true;
-        await _scheduleClipboardClear();
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to send: $e');
@@ -445,6 +617,64 @@ class MobileMainViewModel extends ChangeNotifier {
   }
 
   /// Send image from clipboard content
+  /// Send a staged file, honouring the selected device chips.
+  ///
+  /// Mirrors _sendImage. Files previously uploaded straight from the picker,
+  /// which bypassed this entirely and therefore always went to every device.
+  Future<void> _sendFile({VoidCallback? onSendSuccess}) async {
+    final content = _clipboardContent;
+    if (content?.hasFile != true) return;
+
+    _isSending = true;
+    _sendErrorMessage = null;
+    notifyListeners();
+
+    try {
+      final bytes = content!.fileBytes!;
+      final filename = content.filename ?? 'file';
+      final typeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        filename,
+      );
+
+      List<String>? targetTypes;
+      if (_selectedDeviceTypes.isNotEmpty) {
+        targetTypes = _selectedDeviceTypes.toList();
+      }
+
+      await _clipboardRepo.insertFile(
+        userId: _authService.currentUserId!,
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        deviceName: null,
+        fileBytes: bytes,
+        originalFilename: filename,
+        contentType: typeInfo.contentType,
+        mimeType: typeInfo.mimeType,
+        targetDeviceTypes: targetTypes,
+      );
+
+      debugPrint(
+        '[MobileMainVM] Sent file $filename '
+        '(${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+      );
+
+      if (!_isDisposed) {
+        _clipboardContent = null;
+        _isSending = false;
+        notifyListeners();
+        onSendSuccess?.call();
+        unawaited(loadHistory());
+      }
+    } on Exception catch (e) {
+      debugPrint('[MobileMainVM] Failed to send file: $e');
+      if (!_isDisposed) {
+        _isSending = false;
+        _sendErrorMessage = 'Failed to send file';
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> _sendImage({VoidCallback? onSendSuccess}) async {
     if (_clipboardContent?.hasImage != true) return;
 
@@ -456,20 +686,12 @@ class MobileMainViewModel extends ChangeNotifier {
       final imageBytes = _clipboardContent!.imageBytes!;
       final mimeType = _clipboardContent!.mimeType!;
 
-      ContentType contentType;
-      switch (mimeType) {
-        case 'image/png':
-          contentType = ContentType.imagePng;
-        case 'image/jpeg':
-        case 'image/jpg':
-          contentType = ContentType.imageJpeg;
-        case 'image/gif':
-          contentType = ContentType.imageGif;
-        default:
-          _isSending = false;
-          _sendErrorMessage = 'Unsupported image type: $mimeType';
-          notifyListeners();
-          return;
+      final contentType = ContentType.fromMimeType(mimeType);
+      if (contentType == null || !contentType.isImage) {
+        _isSending = false;
+        _sendErrorMessage = 'Unsupported image type: $mimeType';
+        notifyListeners();
+        return;
       }
 
       List<String>? targetTypes;
@@ -502,9 +724,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
         // Reload history (non-blocking)
         unawaited(loadHistory());
-
-        _lastSendWasFromPaste = true;
-        await _scheduleClipboardClear();
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to send image: $e');
@@ -545,38 +764,30 @@ class MobileMainViewModel extends ChangeNotifier {
 
       final bytes = await image.readAsBytes();
 
+      // Only the mime type is needed now: _sendImage derives ContentType from
+      // it at send time.
       String mimeType;
-      ContentType contentType;
 
       final path = image.path.toLowerCase();
       if (path.endsWith('.png')) {
         mimeType = 'image/png';
-        contentType = ContentType.imagePng;
       } else if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
         mimeType = 'image/jpeg';
-        contentType = ContentType.imageJpeg;
       } else if (path.endsWith('.gif')) {
         mimeType = 'image/gif';
-        contentType = ContentType.imageGif;
       } else {
         mimeType = 'image/jpeg';
-        contentType = ContentType.imageJpeg;
       }
 
-      await _clipboardRepo.insertImage(
-        userId: _authService.currentUserId ?? '',
-        deviceType: ClipboardRepository.getCurrentDeviceType(),
-        deviceName: null,
-        imageBytes: bytes,
-        mimeType: mimeType,
-        contentType: contentType,
-      );
-
+      // STAGE, don't send. Picking an image now behaves like pasting one:
+      // it appears in the preview and the user presses Send. Sending straight
+      // from the picker skipped the device chips entirely, so every picked
+      // image went to all devices regardless of what was selected.
       if (!_isDisposed) {
+        _clipboardContent = ClipboardContent.image(bytes, mimeType);
         _isUploadingImage = false;
         notifyListeners();
         onSuccess?.call();
-        unawaited(loadHistory());
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to upload image: $e');
@@ -599,44 +810,40 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onError,
   }) async {
     try {
-      final result = await FilePicker.platform.pickFiles();
+      final result = await FilePicker.pickFiles();
       if (result == null) return;
 
       final file = result.files.single;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
 
-      // Validate file size (10MB limit)
-      if (bytes.length > 10485760) {
+      if (bytes.length > ClipboardLimits.maxFileBytes) {
         onError?.call('File too large: ${file.name} (max 10MB)');
         return;
       }
 
       // Warn for large files (>5MB)
-      if (bytes.length > 5242880) {
+      if (bytes.length > ClipboardLimits.largeFileWarningBytes) {
         final sizeMB = (bytes.length / 1048576).toStringAsFixed(1);
         final shouldContinue = await onLargeFileConfirm?.call(sizeMB) ?? true;
         if (!shouldContinue) return;
       }
 
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
       final fileTypeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
         file.name,
       );
 
-      await _clipboardRepo.insertFile(
-        userId: _authService.currentUserId!,
-        deviceType: deviceType,
-        deviceName: null,
-        fileBytes: bytes,
-        originalFilename: file.name,
-        contentType: fileTypeInfo.contentType,
-        mimeType: fileTypeInfo.mimeType,
-      );
-
+      // STAGE, don't send - same reasoning as images above. This path used to
+      // upload immediately on pick, which both skipped the preview and ignored
+      // the selected device chips.
       if (!_isDisposed) {
+        _clipboardContent = ClipboardContent.file(
+          bytes,
+          file.name,
+          fileTypeInfo.mimeType,
+        );
+        notifyListeners();
         onSuccess?.call(file.name);
-        unawaited(loadHistory());
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] File pick failed: $e');
@@ -652,6 +859,7 @@ class MobileMainViewModel extends ChangeNotifier {
     ClipboardItem item, {
     void Function(String message)? onSuccess,
     void Function(String message)? onError,
+    Rect? sharePositionOrigin,
   }) async {
     try {
       final clipboardService = ClipboardService.instance;
@@ -673,26 +881,13 @@ class MobileMainViewModel extends ChangeNotifier {
           filename,
         );
 
-        // ignore: deprecated_member_use
-        await Share.shareXFiles([
-          XFile(tempFile.path),
-        ], text: 'Shared via GhostCopy');
+        await _shareFile(tempFile.path, sharePositionOrigin);
       } else if (item.isRichText) {
-        var finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        if (_decryptedContentCache[item.id] == null &&
-            _encryptionService != null &&
-            item.isEncrypted) {
-          try {
-            finalContent = await _encryptionService!.decrypt(item.content);
-            _cacheDecryptedContent(item.id, finalContent);
-          } on Exception catch (e) {
-            debugPrint(
-              '[MobileMainVM] Decryption failed, using raw content: $e',
-            );
-            finalContent = item.content;
-          }
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
           await clipboardService.writeHtml(finalContent);
@@ -702,21 +897,11 @@ class MobileMainViewModel extends ChangeNotifier {
 
         onSuccess?.call('Copied ${item.richTextFormat?.value ?? "rich text"}');
       } else {
-        var finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        if (_decryptedContentCache[item.id] == null &&
-            _encryptionService != null &&
-            item.isEncrypted) {
-          try {
-            finalContent = await _encryptionService!.decrypt(item.content);
-            _cacheDecryptedContent(item.id, finalContent);
-          } on Exception catch (e) {
-            debugPrint(
-              '[MobileMainVM] Decryption failed, using raw content: $e',
-            );
-            finalContent = item.content;
-          }
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         await clipboardService.writeText(finalContent);
         onSuccess?.call('Copied to clipboard');
@@ -727,9 +912,72 @@ class MobileMainViewModel extends ChangeNotifier {
     }
   }
 
+  /// Open the OS share sheet for a file on disk.
+  ///
+  /// [sharePositionOrigin] is required on iPad: UIActivityViewController is
+  /// presented as a popover there and must be anchored to the widget that
+  /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
+  Future<void> _shareFile(String path, Rect? sharePositionOrigin) async {
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(path)],
+        text: 'Shared via GhostCopy',
+        sharePositionOrigin: sharePositionOrigin,
+      ),
+    );
+  }
+
+  /// Delete a clip everywhere.
+  ///
+  /// Mirrors the desktop path: the repository owns the cascade (row, RAM
+  /// cache, disk cache, image cache), and the R2 object is removed by the
+  /// cleanup_storage_on_clipboard_delete trigger. This is a sync-wide delete,
+  /// not a local hide - the clip disappears from every signed-in device.
+  Future<bool> handleHistoryItemDelete(
+    ClipboardItem item, {
+    void Function(String message)? onSuccess,
+    void Function(String message)? onError,
+  }) async {
+    // Drop it from the list first so the row does not spring back while the
+    // network call is in flight; realtime will confirm the same removal.
+    final index = _historyItems.indexWhere((i) => i.id == item.id);
+    if (index != -1) _historyItems.removeAt(index);
+    _filterHistory(_historySearchQuery);
+    _decryptedContentCache.remove(item.id);
+    _detectionCache.remove(item.id);
+    notifyListeners();
+
+    try {
+      await _clipboardRepo.delete(item.id);
+      debugPrint('[MobileMainVM] Deleted history item ${item.id}');
+      onSuccess?.call('Clip deleted');
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[MobileMainVM] Failed to delete history item: $e');
+      // Put it back where it was - the clip still exists on the server, so
+      // leaving the list short would misrepresent what is synced.
+      if (index != -1 && index <= _historyItems.length) {
+        _historyItems.insert(index, item);
+      } else {
+        _historyItems.add(item);
+      }
+      _filterHistory(_historySearchQuery);
+      notifyListeners();
+      onError?.call('Could not delete: $e');
+      return false;
+    }
+  }
+
   /// Handle refresh (pull-to-refresh)
   Future<void> handleRefresh() async {
-    await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
+    _isRefreshing = true;
+    notifyListeners();
+    try {
+      await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
+    } finally {
+      _isRefreshing = false;
+      notifyListeners();
+    }
   }
 
   /// Handle shared files from share intent
@@ -812,18 +1060,10 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onError,
   }) async {
     try {
-      ContentType contentType;
-      switch (mimeType) {
-        case 'image/png':
-          contentType = ContentType.imagePng;
-        case 'image/jpeg':
-        case 'image/jpg':
-          contentType = ContentType.imageJpeg;
-        case 'image/gif':
-          contentType = ContentType.imageGif;
-        default:
-          onError?.call('Unsupported image type: $mimeType');
-          return;
+      final contentType = ContentType.fromMimeType(mimeType);
+      if (contentType == null || !contentType.isImage) {
+        onError?.call('Unsupported image type: $mimeType');
+        return;
       }
 
       final deviceType = ClipboardRepository.getCurrentDeviceType();
@@ -897,15 +1137,7 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Process share action from notification or deep link
   Future<bool> processShareAction(String clipboardId, {String? action}) async {
     try {
-      final items = await _clipboardRepo.getHistory(limit: 100);
-
-      ClipboardItem? item;
-      for (final i in items) {
-        if (i.id == clipboardId) {
-          item = i;
-          break;
-        }
-      }
+      final item = await _clipboardRepo.getById(clipboardId);
 
       if (item == null) {
         debugPrint('[MobileMainVM] Clipboard item $clipboardId not found');
@@ -926,10 +1158,9 @@ class MobileMainViewModel extends ChangeNotifier {
             filename,
           );
 
-          // ignore: deprecated_member_use
-          await Share.shareXFiles([
-            XFile(tempFile.path),
-          ], text: 'Shared via GhostCopy');
+          // No anchor: this path is driven by an external share intent, so
+          // there is no widget to point an iPad popover at.
+          await _shareFile(tempFile.path, null);
           debugPrint(
             '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
           );
@@ -940,11 +1171,11 @@ class MobileMainViewModel extends ChangeNotifier {
       } else {
         final clipboardService = ClipboardService.instance;
 
-        // Decrypt if needed before copying to clipboard
-        var content = item.content;
-        if (_encryptionService != null && item.isEncrypted) {
-          content = await _encryptionService!.decrypt(content);
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final content = item.content;
 
         switch (item.contentType) {
           case ContentType.html:
@@ -992,10 +1223,6 @@ class MobileMainViewModel extends ChangeNotifier {
     );
     _historySubscription?.pause();
 
-    if (_lastSendWasFromPaste) {
-      _clearClipboardNow();
-    }
-
     // Clear sensitive decrypted data from memory when backgrounded
     _decryptedContentCache.clear();
 
@@ -1007,10 +1234,19 @@ class MobileMainViewModel extends ChangeNotifier {
   void onAppResumed() {
     debugPrint('[MobileMainVM] App resumed - Resuming Realtime subscription');
     _historySubscription?.resume();
+
+    // Re-fetch, don't just resume. Push notifications deliberately carry no
+    // clipboard content - the body literally says "Open GhostCopy to view it"
+    // - so opening the app IS the sync step. Resuming the subscription only
+    // restores the flow of future events; anything that arrived while the app
+    // was backgrounded would never appear until a manual pull-to-refresh.
+    unawaited(loadHistory());
   }
 
   /// Called on system memory pressure
   void onMemoryPressure() {
+    // Downloaded media is the largest thing this app holds in RAM.
+    MediaMemoryCache.instance.clear();
     debugPrint(
       '[MobileMainVM] System memory pressure detected - clearing caches',
     );
@@ -1035,6 +1271,30 @@ class MobileMainViewModel extends ChangeNotifier {
   void clearCaches() {
     _decryptedContentCache.clear();
     _detectionCache.clear();
+  }
+
+  /// Drop every trace of the signed-out account's data.
+  ///
+  /// [clearCaches] only empties the two derived caches; the history list,
+  /// filtered view, search query and device targeting all survived a sign-out,
+  /// so the previous user's clips stayed on screen until the next load
+  /// replaced them - and stayed in memory regardless.
+  void clearUserState() {
+    _decryptedContentCache.clear();
+    _detectionCache.clear();
+    _historyItems = [];
+    _filteredHistoryItems = [];
+    _historySearchQuery = '';
+    _selectedDeviceTypes.clear();
+    // The device list belongs to the account that just went away. It was left
+    // behind here, so after switching accounts the chip row still offered the
+    // PREVIOUS user's devices as send targets until a load replaced them.
+    _devices = [];
+    _deviceTypeTargetsCache = null;
+    _sendErrorMessage = null;
+    _historyError = null;
+    _clipboardContent = null;
+    if (!_isDisposed) notifyListeners();
   }
 
   // ========== CACHE MANAGEMENT ==========
@@ -1073,20 +1333,9 @@ class MobileMainViewModel extends ChangeNotifier {
       _filteredHistoryItems = _historyItems;
     } else {
       final lowerQuery = query.toLowerCase();
-      _filteredHistoryItems = _historyItems.where((item) {
-        if (item.content.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        if (item.deviceName != null &&
-            item.deviceName!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        if (item.mimeType != null &&
-            item.mimeType!.toLowerCase().contains(lowerQuery)) {
-          return true;
-        }
-        return false;
-      }).toList();
+      _filteredHistoryItems = _historyItems
+          .where((item) => item.matchesQuery(lowerQuery))
+          .toList();
     }
   }
 
@@ -1132,10 +1381,11 @@ class MobileMainViewModel extends ChangeNotifier {
           '[MobileMainVM] Auto-copied image to clipboard (${bytes.length} bytes)',
         );
       } else if (item.isRichText) {
-        var finalContent = item.content;
-        if (_encryptionService != null && item.isEncrypted) {
-          finalContent = await _encryptionService!.decrypt(item.content);
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
           await clipboardService.writeHtml(finalContent);
@@ -1147,10 +1397,11 @@ class MobileMainViewModel extends ChangeNotifier {
           '[MobileMainVM] Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard',
         );
       } else {
-        var finalContent = item.content;
-        if (_encryptionService != null && item.isEncrypted) {
-          finalContent = await _encryptionService!.decrypt(item.content);
-        }
+        // Content is already plaintext: getHistory()/watchHistory() run
+        // _decryptItems() before handing items over. isEncrypted is retained
+        // as metadata (the widget uses it to suppress previews), so it must
+        // NOT be used to trigger a second decrypt here.
+        final finalContent = item.content;
 
         await clipboardService.writeText(finalContent);
         debugPrint('[MobileMainVM] Auto-copied text to clipboard');
@@ -1158,32 +1409,6 @@ class MobileMainViewModel extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to auto-copy: $e');
     }
-  }
-
-  Future<void> _scheduleClipboardClear() async {
-    _clipboardClearTimer?.cancel();
-
-    final clearSeconds = await _settingsService.getClipboardAutoClearSeconds();
-
-    if (clearSeconds == 0) {
-      debugPrint('[MobileMainVM] Clipboard auto-clear disabled');
-      return;
-    }
-
-    debugPrint(
-      '[MobileMainVM] Clipboard will be cleared in $clearSeconds seconds',
-    );
-
-    _clipboardClearTimer = Timer(
-      Duration(seconds: clearSeconds),
-      _clearClipboardNow,
-    );
-  }
-
-  void _clearClipboardNow() {
-    ClipboardService.instance.clear();
-    _lastSendWasFromPaste = false;
-    debugPrint('[MobileMainVM] System clipboard cleared for security');
   }
 
   // ========== DISPOSAL ==========
@@ -1195,8 +1420,8 @@ class MobileMainViewModel extends ChangeNotifier {
 
     _historySubscription?.cancel();
     _historySubscription = null;
-    _clipboardClearTimer?.cancel();
-    _clipboardClearTimer = null;
+    _realtimeReconnectTimer?.cancel();
+    _realtimeReconnectTimer = null;
     _searchDebounceTimer?.cancel();
     _searchDebounceTimer = null;
 
@@ -1208,4 +1433,45 @@ class MobileMainViewModel extends ChangeNotifier {
     debugPrint('[MobileMainVM] Disposed');
     super.dispose();
   }
+}
+
+/// One selectable send target: a device TYPE, plus the devices it covers.
+///
+/// Exists because the clipboard table's target_device_type column is an array
+/// of platform enums. A chip maps to one of these, never to a single device.
+@immutable
+class DeviceTypeTarget {
+  const DeviceTypeTarget({required this.deviceType, required this.devices});
+
+  final String deviceType;
+  final List<Device> devices;
+
+  /// Always the platform, never a device name.
+  ///
+  /// A chip selects a device_type_enum, so "Windows" is what it actually does.
+  /// Showing the machine's name when a type happened to have only one device
+  /// was accurate but inconsistent: the same chip would read "subal" today and
+  /// "Windows (2)" after adding a second PC, and names like "Android Device"
+  /// say less than the platform does. The device names are still available on
+  /// long-press via [deviceNames], and in Settings > Devices.
+
+  String get label => platformLabel(deviceType);
+
+  /// Names of every device this chip delivers to, for the tooltip.
+  String get deviceNames => devices.map((d) => d.displayName).join(', ');
+
+  /// Proper platform names, shared by the chips, the send button and the clip
+  /// footer. Capitalising the first letter produced "Macos" and "Ios", which
+  /// read as typos rather than products.
+  static String platformLabel(String deviceType) => switch (deviceType) {
+    'windows' => 'Windows',
+    'macos' => 'macOS',
+    'linux' => 'Linux',
+    'android' => 'Android',
+    'ios' => 'iOS',
+    _ =>
+      deviceType.isEmpty
+          ? deviceType
+          : deviceType[0].toUpperCase() + deviceType.substring(1),
+  };
 }

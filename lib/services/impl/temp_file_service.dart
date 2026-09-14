@@ -14,6 +14,8 @@ class TempFileService implements ITempFileService {
   /// Singleton instance
   static final TempFileService instance = TempFileService._();
 
+  static final _unsafePathChars = RegExp(r'[/\\:]');
+
   static const String _filePrefix = 'ghostcopy_';
   Timer? _periodicCleanupTimer;
 
@@ -23,7 +25,7 @@ class TempFileService implements ITempFileService {
       final tempDir = await getTemporaryDirectory();
 
       // Create safe filename by removing path separators
-      final safeFilename = filename.replaceAll(RegExp(r'[/\\:]'), '_');
+      final safeFilename = filename.replaceAll(_unsafePathChars, '_');
 
       final file = File(path.join(tempDir.path, '$_filePrefix$safeFilename'));
 

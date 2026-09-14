@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../hotkey_service.dart';
 import '../settings_service.dart';
 
 /// Concrete implementation of ISettingsService using shared_preferences
@@ -15,12 +16,19 @@ class SettingsService implements ISettingsService {
 
   // Settings keys
   static const String _keyAutoSendEnabled = 'auto_send_enabled';
-  static const String _keyStaleDurationMinutes = 'clipboard_stale_duration_minutes';
+  static const String _keyStaleDurationMinutes =
+      'clipboard_stale_duration_minutes';
   static const String _keyAutoSendTargetDevices = 'auto_send_target_devices';
   static const String _keyAutoStartEnabled = 'auto_start_enabled';
   static const String _keyAutoReceiveBehavior = 'auto_receive_behavior';
-  static const String _keyClipboardAutoClearSeconds = 'clipboard_auto_clear_seconds';
+  static const String _keyClipboardAutoClearSeconds =
+      'clipboard_auto_clear_seconds';
+  // Read natively too, straight from FlutterSharedPreferences, so the flag can
+  // be applied before Dart starts - see MainActivity.applyScreenshotProtection.
+  // The key string is therefore duplicated there; keep them in step.
+  static const String _keyScreenshotProtection = 'screenshot_protection';
   static const String _keyAutoShortenUrls = 'auto_shorten_urls';
+  static const String _keyHotkey = 'global_hotkey';
   static const String _keyWebhookEnabled = 'webhook_enabled';
   static const String _keyWebhookUrl = 'webhook_url';
   static const String _keyObsidianEnabled = 'obsidian_enabled';
@@ -30,9 +38,11 @@ class SettingsService implements ISettingsService {
   // Default values
   static const bool _defaultAutoSendEnabled = false;
   static const int _defaultStaleDurationMinutes = 5;
-  static const Set<String> _defaultAutoSendTargetDevices = {}; // Empty = all devices
+  static const Set<String> _defaultAutoSendTargetDevices =
+      {}; // Empty = all devices
   static const bool _defaultAutoStartEnabled = false;
-  static const AutoReceiveBehavior _defaultAutoReceiveBehavior = AutoReceiveBehavior.smart;
+  static const AutoReceiveBehavior _defaultAutoReceiveBehavior =
+      AutoReceiveBehavior.smart;
   static const int _defaultClipboardAutoClearSeconds = 30; // 30 seconds default
   static const bool _defaultAutoShortenUrls = false;
   static const bool _defaultWebhookEnabled = false;
@@ -55,7 +65,9 @@ class SettingsService implements ISettingsService {
 
   void _ensureInitialized() {
     if (!_initialized || _prefs == null) {
-      throw StateError('SettingsService not initialized. Call initialize() first.');
+      throw StateError(
+        'SettingsService not initialized. Call initialize() first.',
+      );
     }
   }
 
@@ -75,7 +87,8 @@ class SettingsService implements ISettingsService {
   @override
   Future<int> getClipboardStaleDurationMinutes() async {
     _ensureInitialized();
-    return _prefs!.getInt(_keyStaleDurationMinutes) ?? _defaultStaleDurationMinutes;
+    return _prefs!.getInt(_keyStaleDurationMinutes) ??
+        _defaultStaleDurationMinutes;
   }
 
   @override
@@ -154,7 +167,8 @@ class SettingsService implements ISettingsService {
   @override
   Future<int> getClipboardAutoClearSeconds() async {
     _ensureInitialized();
-    return _prefs!.getInt(_keyClipboardAutoClearSeconds) ?? _defaultClipboardAutoClearSeconds;
+    return _prefs!.getInt(_keyClipboardAutoClearSeconds) ??
+        _defaultClipboardAutoClearSeconds;
   }
 
   @override
@@ -175,6 +189,34 @@ class SettingsService implements ISettingsService {
   }
 
   // ========== FEATURE TOGGLES ==========
+
+  @override
+  Future<bool> getScreenshotProtection() async {
+    _ensureInitialized();
+    // Defaults ON: a clipboard history is worth protecting from the app
+    // switcher and casual screen shares, so opting out is the deliberate act.
+    return _prefs!.getBool(_keyScreenshotProtection) ?? true;
+  }
+
+  @override
+  Future<void> setScreenshotProtection({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyScreenshotProtection, enabled);
+    debugPrint('Screenshot protection ${enabled ? "enabled" : "disabled"}');
+  }
+
+  @override
+  Future<HotKey?> getHotkey() async {
+    _ensureInitialized();
+    return HotKey.fromStorageString(_prefs!.getString(_keyHotkey));
+  }
+
+  @override
+  Future<void> setHotkey(HotKey hotkey) async {
+    _ensureInitialized();
+    await _prefs!.setString(_keyHotkey, hotkey.toStorageString());
+    debugPrint('Global hotkey saved: ${hotkey.toStorageString()}');
+  }
 
   @override
   Future<bool> getAutoShortenUrls() async {

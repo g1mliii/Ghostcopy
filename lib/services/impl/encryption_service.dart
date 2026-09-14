@@ -12,19 +12,26 @@ import '../encryption_service.dart';
 import '../passphrase_sync_service.dart';
 import 'passphrase_sync_service.dart';
 
-/// Parameters for background encryption
-class _EncryptParams {
-  const _EncryptParams({required this.plaintext, required this.keyBytes});
+/// Payload for a crypto operation running on a background isolate.
+///
+/// `compute` takes a single argument, which is the only reason these exist.
+/// There were four of them - encrypt, decrypt, encrypt-bytes, decrypt-bytes -
+/// structurally identical in pairs and differing only in what the field
+/// happened to be called.
+class _StringCryptoParams {
+  const _StringCryptoParams({required this.data, required this.keyBytes});
 
-  final String plaintext;
+  /// Plaintext when encrypting, `iv:ciphertext` when decrypting.
+  final String data;
   final Uint8List keyBytes;
 }
 
-/// Parameters for background decryption
-class _DecryptParams {
-  const _DecryptParams({required this.ciphertext, required this.keyBytes});
+/// The byte-payload counterpart of [_StringCryptoParams], for files and images.
+class _BytesCryptoParams {
+  const _BytesCryptoParams({required this.data, required this.keyBytes});
 
-  final String ciphertext;
+  /// Plain bytes when encrypting, `iv + ciphertext` when decrypting.
+  final Uint8List data;
   final Uint8List keyBytes;
 }
 
@@ -91,6 +98,17 @@ class EncryptionService implements IEncryptionService {
   // Guard to prevent concurrent initializations across callers
   Future<void>? _initFuture;
 
+  final ValueNotifier<int> _keyRevision = ValueNotifier<int>(0);
+
+  @override
+  ValueListenable<int> get keyRevision => _keyRevision;
+
+  /// Replace the loaded key and tell anything caching [isEnabled] about it.
+  void _setKeyBytes(Uint8List? bytes) {
+    _keyBytes = bytes;
+    _keyRevision.value++;
+  }
+
   // Storage keys - user-specific to prevent cross-user passphrase leakage
   String get _passphraseKey => 'encryption_passphrase_$_userId';
   String get _verificationHashKey => 'encryption_verification_hash_$_userId';
@@ -104,13 +122,42 @@ class EncryptionService implements IEncryptionService {
   Future<void> initialize(String userId) async {
     debugPrint('[EncryptionService] Starting initialization for user: $userId');
 
-    // If already initialized, nothing to do
-    if (_initialized) return;
+    // Already set up for THIS user - nothing to do.
+    if (_initialized && _userId == userId) return;
 
-    // If another initialization is in-flight, wait for it
-    if (_initFuture != null) {
-      await _initFuture;
-      return;
+    // Let any in-flight initialization finish BEFORE deciding whether to
+    // re-key. The guard below tests _initialized, which is still false while
+    // an initialize() is running, so testing it first let a concurrent
+    // initialize(userB) skip the re-key, fall into the in-flight branch, and
+    // return "successfully" still holding userA's key and _userId - exactly
+    // the cross-user corruption the re-key exists to prevent. Loops because
+    // another caller can start a fresh init while we are awaiting this one.
+    while (_initFuture != null) {
+      try {
+        await _initFuture;
+      } on Object {
+        // The caller that started that init handles its own failure; we care
+        // only about the resulting state, checked below.
+      }
+      // That init may have been for our user, in which case we are done.
+      if (_initialized && _userId == userId) return;
+    }
+
+    // Set up for somebody else. This must re-key, not return early.
+    //
+    // Signing out signs straight back in anonymously, so that anonymous id is
+    // what gets initialised next - with no passphrase and therefore no key.
+    // Signing back in then hit the old `if (_initialized) return;` and kept the
+    // anonymous id, which broke two things at once: every clip read as
+    // undecryptable because no key was loaded, and any passphrase entered
+    // afterwards was salted and stored under the ANONYMOUS id (see _deriveKey,
+    // which salts with _userId), so recovering encryption produced a key that
+    // could never open the user's own clips.
+    if (_initialized && _userId != userId) {
+      debugPrint(
+        '[EncryptionService] User changed ($_userId -> $userId) - re-keying',
+      );
+      reset();
     }
 
     _userId = userId;
@@ -190,13 +237,11 @@ class EncryptionService implements IEncryptionService {
       // Derive encryption key
       await _deriveKey(passphrase);
 
-      // Auto-backup to cloud if available
+      // Cloud backup is disabled: it encrypted the passphrase with a key
+      // derived purely from server-known values, so the server could recover
+      // it. Instead of uploading, purge anything an earlier build left behind.
       if (_passphraseSync != null) {
-        final canBackup = await _passphraseSync.canUseCloudBackup();
-        if (canBackup) {
-          debugPrint('[EncryptionService] Backing up to cloud...');
-          await _passphraseSync.uploadToCloud(passphrase);
-        }
+        await _passphraseSync.deleteCloudBackup();
       }
 
       debugPrint('[EncryptionService] ✅ Encryption enabled successfully');
@@ -225,7 +270,7 @@ class EncryptionService implements IEncryptionService {
       await _secureStorage.delete(key: _verificationHashKey);
 
       // Clear from memory
-      _keyBytes = null;
+      _setKeyBytes(null);
 
       debugPrint('Encryption disabled - passphrase cleared');
     } on Exception catch (e) {
@@ -241,7 +286,7 @@ class EncryptionService implements IEncryptionService {
     debugPrint('[EncryptionService] Resetting encryption state');
     _initialized = false;
     _userId = null;
-    _keyBytes = null;
+    _setKeyBytes(null);
     _initFuture = null;
     // Note: _passphraseSync is final and cannot be reset
   }
@@ -254,45 +299,18 @@ class EncryptionService implements IEncryptionService {
       throw StateError('EncryptionService not initialized');
     }
 
-    // Check if passphrase already exists locally
-    final existingPassphrase = await _secureStorage.read(key: _passphraseKey);
-    if (existingPassphrase != null && existingPassphrase.isNotEmpty) {
-      debugPrint(
-        '[EncryptionService] Passphrase already exists locally, skipping restore',
-      );
-      return false;
+    // Cloud restore is disabled - see PassphraseSyncService. The backup key was
+    // derived entirely from server-known values, so restoring from it (and the
+    // upload that fed it) defeated end-to-end encryption. Passphrases now move
+    // between devices via the QR/manual transfer flow only.
+    //
+    // Opportunistically purge any backup an earlier build uploaded, so users
+    // stop carrying a server-recoverable passphrase in their user_metadata.
+    if (_passphraseSync != null) {
+      await _passphraseSync.deleteCloudBackup();
     }
 
-    // Try to get passphrase from cloud backup
-    if (_passphraseSync == null) {
-      debugPrint('[EncryptionService] PassphraseSync not available');
-      return false;
-    }
-
-    try {
-      final cloudPassphrase = await _passphraseSync.getPassphraseFromCloud();
-      if (cloudPassphrase == null || cloudPassphrase.isEmpty) {
-        debugPrint('[EncryptionService] No cloud backup found');
-        return false;
-      }
-
-      debugPrint('[EncryptionService] Found cloud backup, restoring...');
-
-      // Store the passphrase locally
-      final success = await setPassphrase(cloudPassphrase);
-      if (success) {
-        debugPrint('[EncryptionService] ✅ Passphrase auto-restored from cloud');
-      } else {
-        debugPrint(
-          '[EncryptionService] ❌ Failed to restore passphrase from cloud',
-        );
-      }
-
-      return success;
-    } on Exception catch (e) {
-      debugPrint('[EncryptionService] Failed to auto-restore from cloud: $e');
-      return false;
-    }
+    return false;
   }
 
   @override
@@ -406,7 +424,7 @@ class EncryptionService implements IEncryptionService {
         'iterations': 100000,
       });
 
-      _keyBytes = Uint8List.fromList(List<int>.from(result));
+      _setKeyBytes(Uint8List.fromList(List<int>.from(result)));
       debugPrint('Encryption key derived via PBKDF2 (100k iterations)');
     } on Exception catch (e) {
       debugPrint('Failed to derive key: $e');
@@ -429,14 +447,14 @@ class EncryptionService implements IEncryptionService {
       // For small content (<5KB), encrypt directly to avoid isolate overhead
       if (plaintext.length < 5000) {
         return _encryptSync(
-          _EncryptParams(plaintext: plaintext, keyBytes: _keyBytes!),
+          _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
         );
       }
 
       // For larger content, run in background isolate to prevent UI blocking
       return await compute(
         _encryptSync,
-        _EncryptParams(plaintext: plaintext, keyBytes: _keyBytes!),
+        _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
       );
     } on Exception catch (e) {
       debugPrint('Encryption failed: $e');
@@ -445,7 +463,88 @@ class EncryptionService implements IEncryptionService {
   }
 
   /// Static encryption helper that can run in isolate
-  static String _encryptSync(_EncryptParams params) {
+  @override
+  Future<Uint8List> encryptBytes(Uint8List plain) async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+    // Pass through when encryption is off, so callers do not have to branch.
+    final key = _keyBytes;
+    if (key == null) return plain;
+
+    // Files are large by definition; always use an isolate to keep the UI and
+    // the tray-mode event loop responsive.
+    return compute(
+      _encryptBytesSync,
+      _BytesCryptoParams(data: plain, keyBytes: key),
+    );
+  }
+
+  @override
+  Future<Uint8List> decryptBytes(Uint8List cipher) async {
+    if (!_initialized) {
+      throw StateError('EncryptionService not initialized');
+    }
+    final key = _keyBytes;
+    if (key == null) return cipher;
+
+    return compute(
+      _decryptBytesSync,
+      _BytesCryptoParams(data: cipher, keyBytes: key),
+    );
+  }
+
+  /// Encrypt raw bytes for R2 upload.
+  ///
+  /// Deliberately NOT the base64 string path: that inflates by ~33%, which is
+  /// why files were left unencrypted ("too large, would exceed 10MB limit
+  /// after base64"). Encrypting the bytes themselves costs 16 bytes of IV plus
+  /// a 16-byte GCM tag - a flat 32 bytes - so a 10MB file stays a 10MB file.
+  ///
+  /// Layout: [16-byte IV][ciphertext+tag]
+  static Uint8List _encryptBytesSync(_BytesCryptoParams params) {
+    try {
+      final key = enc.Key(params.keyBytes);
+      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
+      final iv = enc.IV.fromSecureRandom(16);
+
+      final encrypted = encrypter.encryptBytes(params.data, iv: iv);
+
+      final out = Uint8List(iv.bytes.length + encrypted.bytes.length)
+        ..setRange(0, iv.bytes.length, iv.bytes)
+        ..setRange(
+          iv.bytes.length,
+          iv.bytes.length + encrypted.bytes.length,
+          encrypted.bytes,
+        );
+      return out;
+    } on Exception catch (e) {
+      throw EncryptionException('Byte encryption failed: $e');
+    }
+  }
+
+  static Uint8List _decryptBytesSync(_BytesCryptoParams params) {
+    try {
+      if (params.data.length <= 16) {
+        throw EncryptionException('Ciphertext too short to contain an IV');
+      }
+      final key = enc.Key(params.keyBytes);
+      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
+
+      final iv = enc.IV(Uint8List.sublistView(params.data, 0, 16));
+      final body = Uint8List.sublistView(params.data, 16);
+
+      return Uint8List.fromList(
+        encrypter.decryptBytes(enc.Encrypted(body), iv: iv),
+      );
+    } on EncryptionException {
+      rethrow;
+    } on Exception catch (e) {
+      throw EncryptionException('Byte decryption failed: $e');
+    }
+  }
+
+  static String _encryptSync(_StringCryptoParams params) {
     try {
       // Create encrypter with AES GCM mode
       final key = enc.Key(params.keyBytes);
@@ -455,7 +554,7 @@ class EncryptionService implements IEncryptionService {
       final iv = enc.IV.fromSecureRandom(16);
 
       // Encrypt the plaintext
-      final encrypted = encrypter.encrypt(params.plaintext, iv: iv);
+      final encrypted = encrypter.encrypt(params.data, iv: iv);
 
       // Combine IV + encrypted data for storage
       // Format: base64(IV) + ":" + base64(ciphertext)
@@ -481,14 +580,14 @@ class EncryptionService implements IEncryptionService {
       if (ciphertext.length < 7000) {
         // ~5KB plaintext = ~7KB base64
         return _decryptSync(
-          _DecryptParams(ciphertext: ciphertext, keyBytes: _keyBytes!),
+          _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
         );
       }
 
       // For larger content, run in background isolate to prevent UI blocking
       return await compute(
         _decryptSync,
-        _DecryptParams(ciphertext: ciphertext, keyBytes: _keyBytes!),
+        _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
       );
     } on Exception catch (e) {
       debugPrint('Decryption failed: $e');
@@ -497,14 +596,14 @@ class EncryptionService implements IEncryptionService {
   }
 
   /// Static decryption helper that can run in isolate
-  static String _decryptSync(_DecryptParams params) {
+  static String _decryptSync(_StringCryptoParams params) {
     try {
       // Create encrypter with AES GCM mode
       final key = enc.Key(params.keyBytes);
       final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
 
       // Split IV and ciphertext
-      final parts = params.ciphertext.split(':');
+      final parts = params.data.split(':');
       if (parts.length != 2) {
         throw const FormatException('Invalid encrypted data format');
       }

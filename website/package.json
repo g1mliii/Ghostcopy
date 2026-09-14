@@ -4,7 +4,9 @@
   "description": "GhostCopy website",
   "scripts": {
     "build:css": "tailwindcss -i ./input.css -o ./output.css --minify",
-    "watch:css": "tailwindcss -i ./input.css -o ./output.css --watch"
+    "watch:css": "tailwindcss -i ./input.css -o ./output.css --watch",
+    "build": "npm run build:css && node build.mjs",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name ghostcopy --branch main --commit-dirty=true"
   },
   "devDependencies": {
     "tailwindcss": "^3.4.0"

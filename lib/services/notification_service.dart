@@ -1,12 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// Type of notification to display
-enum NotificationType {
-  success,
-  info,
-  warning,
-  error,
-}
+enum NotificationType { success, info, warning, error }
 
 /// Abstract interface for universal notification service
 abstract class INotificationService {

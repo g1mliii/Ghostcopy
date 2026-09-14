@@ -4,8 +4,37 @@
     <application
         android:label="ghostcopy"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="false">
-        
+        android:usesCleartextTraffic="false"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+
+        <!--
+            Without this, FCM logs "Missing Default Notification Channel metadata
+            in AndroidManifest. Default value will be used." and pushes land on a
+            fallback channel at default importance - no heads-up banner, so a clip
+            sent while the phone is in use is not visible until the shade is pulled.
+            The channel itself is created in MainActivity (see ensureNotificationChannel)
+            because a push can be displayed with the app killed, before any Dart runs.
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ghostcopy_notifications" />
+
+        <!--
+            Without this FCM falls back to the launcher icon, and because Android
+            draws status bar icons from the alpha channel alone - every opaque
+            pixel painted flat white - a full-colour launcher icon renders as a
+            solid white square. ic_stat_ghostcopy is the logo reduced to an
+            alpha-only silhouette, so the ghost cutout survives.
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_ghostcopy" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
+
 
         <activity
             android:name=".MainActivity"
@@ -65,9 +94,20 @@
         </activity>
 
         <!-- Transparent copy activity for notifications -->
+        <!--
+            exported="false": this activity writes its `clipboard_content` extra
+            straight to the system clipboard. While exported with no permission,
+            any installed app could fire
+            Intent("com.ghostcopy.ghostcopy.COPY_ACTION") and silently replace
+            the user's clipboard (e.g. swapping a wallet address), with the
+            toast showing an attacker-supplied device name to make it look
+            legitimate. FCM's clickAction PendingIntent is constructed in this
+            app's own process, and Android allows same-UID callers to start
+            non-exported components, so notification taps still work.
+        -->
         <activity
             android:name=".CopyActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:noHistory="true"
             android:excludeFromRecents="true"

@@ -100,8 +100,7 @@ CompressionResult _compress(_CompressParams params) {
 
   // Resize if any dimension exceeds maxDimension
   var processed = image;
-  if (image.width > params.maxDimension ||
-      image.height > params.maxDimension) {
+  if (image.width > params.maxDimension || image.height > params.maxDimension) {
     if (image.width >= image.height) {
       processed = img.copyResize(
         image,

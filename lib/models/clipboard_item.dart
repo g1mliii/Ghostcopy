@@ -64,6 +64,58 @@ enum ContentType {
     }
   }
 
+  /// The file extension that belongs with [mimeType].
+  ///
+  /// One table, derived from the MIME mapping above rather than re-spelled:
+  /// this used to exist as a byte-identical const map in both the repository
+  /// and the history item widget, so a new content type needed three edits and
+  /// silently produced `.bin` downloads if it only got one.
+  String get fileExtension {
+    switch (this) {
+      case imagePng:
+        return 'png';
+      case imageJpeg:
+        return 'jpg';
+      case imageGif:
+        return 'gif';
+      case filePdf:
+        return 'pdf';
+      case fileDoc:
+        return 'doc';
+      case fileDocx:
+        return 'docx';
+      case fileTxt:
+        return 'txt';
+      case fileZip:
+        return 'zip';
+      case fileTar:
+        return 'tar';
+      case fileGz:
+        return 'gz';
+      case fileMp4:
+        return 'mp4';
+      case fileMp3:
+        return 'mp3';
+      case fileWav:
+        return 'wav';
+      default:
+        return 'bin';
+    }
+  }
+
+  /// The content type for a MIME string, or null if none matches.
+  ///
+  /// The inverse of [mimeType], so the two cannot drift. Callers that only
+  /// accept images should check [isImage] on the result; several used to hand
+  /// -roll a switch that silently mapped every unrecognised MIME to GIF.
+  static ContentType? fromMimeType(String mimeType) {
+    final normalized = mimeType == 'image/jpg' ? 'image/jpeg' : mimeType;
+    for (final type in ContentType.values) {
+      if (type.mimeType == normalized) return type;
+    }
+    return null;
+  }
+
   static ContentType fromString(String value) {
     return ContentType.values.firstWhere(
       (e) => e.value == value,
@@ -113,11 +165,11 @@ class ClipboardMetadata {
   final String? originalFilename;
 
   Map<String, dynamic> toJson() => {
-        if (width != null) 'width': width,
-        if (height != null) 'height': height,
-        if (thumbnailUrl != null) 'thumbnail_url': thumbnailUrl,
-        if (originalFilename != null) 'original_filename': originalFilename,
-      };
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (thumbnailUrl != null) 'thumbnail_url': thumbnailUrl,
+    if (originalFilename != null) 'original_filename': originalFilename,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -128,7 +180,8 @@ class ClipboardMetadata {
       other.originalFilename == originalFilename;
 
   @override
-  int get hashCode => Object.hash(width, height, thumbnailUrl, originalFilename);
+  int get hashCode =>
+      Object.hash(width, height, thumbnailUrl, originalFilename);
 }
 
 /// Represents a clipboard item stored in the synchronization history
@@ -194,8 +247,10 @@ class ClipboardItem {
   final String userId;
   final String content; // Text content OR storage URL for images
   final String? deviceName;
-  final String deviceType; // sender's device type: 'windows', 'macos', 'android', 'ios'
-  final List<String>? targetDeviceTypes; // target device types filter: null = all devices, list = only those types
+  final String
+  deviceType; // sender's device type: 'windows', 'macos', 'android', 'ios'
+  final List<String>?
+  targetDeviceTypes; // target device types filter: null = all devices, list = only those types
   final bool isPublic;
   final bool isEncrypted; // true if content is encrypted with user passphrase
   final DateTime createdAt;
@@ -209,6 +264,20 @@ class ClipboardItem {
   final RichTextFormat? richTextFormat;
 
   // Helper methods
+  /// Whether this clip matches a search box's contents.
+  ///
+  /// [lowerQuery] must already be lowercased - callers filter on every
+  /// keystroke, so the query is folded once by the caller rather than once per
+  /// item. Lived as three identical predicates: the repository's search, the
+  /// desktop history filter and the mobile one, which could disagree about
+  /// which fields were searchable.
+  bool matchesQuery(String lowerQuery) {
+    if (content.toLowerCase().contains(lowerQuery)) return true;
+    if (deviceName?.toLowerCase().contains(lowerQuery) ?? false) return true;
+    if (mimeType?.toLowerCase().contains(lowerQuery) ?? false) return true;
+    return false;
+  }
+
   bool get isImage => contentType.isImage;
   bool get isRichText => contentType.isRichText;
   bool get isFile => contentType.isFile;
@@ -234,7 +303,9 @@ class ClipboardItem {
       'target_device_type': targetDeviceTypes,
       'is_public': isPublic,
       'is_encrypted': isEncrypted,
-      'created_at': createdAt.toIso8601String(),
+      // toUtc(): a local DateTime serialises without a timezone suffix and
+      // Postgres reads that as UTC, shifting the value by the device's offset.
+      'created_at': createdAt.toUtc().toIso8601String(),
       'content_type': contentType.value,
       'storage_path': storagePath,
       'file_size_bytes': fileSizeBytes,
@@ -299,6 +370,14 @@ class ClipboardItem {
 
   @override
   String toString() {
-    return 'ClipboardItem(id: $id, userId: $userId, content: ${content.substring(0, content.length > 20 ? 20 : content.length)}..., deviceName: $deviceName, deviceType: $deviceType, targetDeviceTypes: $targetDeviceTypes, contentType: ${contentType.value}, isPublic: $isPublic, isEncrypted: $isEncrypted, createdAt: $createdAt)';
+    // Length, never the content. This used to print the first 20 characters,
+    // which put decrypted clipboard text - passwords included - into any log
+    // line or error message that interpolated an item. Device.toString() masks
+    // its fcmToken the same way.
+    return 'ClipboardItem(id: $id, userId: $userId, content: '
+        '${content.length} chars, deviceName: $deviceName, '
+        'deviceType: $deviceType, targetDeviceTypes: $targetDeviceTypes, '
+        'contentType: ${contentType.value}, isPublic: $isPublic, '
+        'isEncrypted: $isEncrypted, createdAt: $createdAt)';
   }
 }

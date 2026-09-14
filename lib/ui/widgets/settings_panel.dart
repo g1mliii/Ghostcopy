@@ -2,13 +2,20 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
+import '../../main.dart';
+import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
 import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/hotkey_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/platform_label.dart';
+import '../coalesced_rebuild.dart';
+import '../device_type_icon.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'device_panel.dart';
@@ -61,7 +68,7 @@ class SettingsPanel extends StatefulWidget {
   State<SettingsPanel> createState() => _SettingsPanelState();
 }
 
-class _SettingsPanelState extends State<SettingsPanel> {
+class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Set<String> _autoSendTargetDevices = {};
   bool _autoStartEnabled = false;
   bool _encryptionEnabled = false;
@@ -72,7 +79,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
   String _obsidianFileName = 'clipboard.md';
-  HotKey _currentHotkey = const HotKey(key: 's', ctrl: true, shift: true);
+  HotKey _currentHotkey = defaultHotkey;
 
   // Text controllers
   final _webhookUrlController = TextEditingController();
@@ -98,6 +105,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     // Load async data immediately without waiting
     _loadTargetDevices();
     _loadAutoStartSetting();
+    _loadHotkey();
     _loadEncryptionStatus();
     _loadUrlShorteningStatus();
     _loadWebhookStatus();
@@ -166,21 +174,31 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   Future<void> _loadTargetDevices() async {
     final devices = await widget.settingsService.getAutoSendTargetDevices();
-    if (mounted) {
-      setState(() {
-        _autoSendTargetDevices = devices;
-        _cachedDeviceText = null; // Reset cache
-      });
-    }
+    if (!mounted) return;
+    _autoSendTargetDevices = devices;
+    _cachedDeviceText = null; // Reset cache
+    scheduleRebuild();
+  }
+
+  /// Show the shortcut that is actually registered, not the compile-time
+  /// default - otherwise the panel reports Ctrl+Shift+S to a user who set
+  /// something else.
+  Future<void> _loadHotkey() async {
+    if (widget.hotkeyService == null) return;
+
+    final saved = await widget.settingsService.getHotkey();
+    if (saved == null || !mounted) return;
+    _currentHotkey = saved;
+    scheduleRebuild();
   }
 
   Future<void> _loadAutoStartSetting() async {
     if (widget.autoStartService == null) return;
 
     final enabled = await widget.settingsService.getAutoStartEnabled();
-    if (mounted) {
-      setState(() => _autoStartEnabled = enabled);
-    }
+    if (!mounted) return;
+    _autoStartEnabled = enabled;
+    scheduleRebuild();
   }
 
   Future<void> _loadEncryptionStatus() async {
@@ -220,46 +238,44 @@ class _SettingsPanelState extends State<SettingsPanel> {
       }
     }
 
-    if (mounted) {
-      setState(() {
-        _encryptionEnabled = enabled;
-        _hasBackup = hasBackup;
-      });
-    }
+    if (!mounted) return;
+    _encryptionEnabled = enabled;
+    _hasBackup = hasBackup;
+    scheduleRebuild();
   }
 
   Future<void> _loadUrlShorteningStatus() async {
     final enabled = await widget.settingsService.getAutoShortenUrls();
-    if (mounted) {
-      setState(() => _autoShortenUrls = enabled);
-    }
+    if (!mounted) return;
+    _autoShortenUrls = enabled;
+    scheduleRebuild();
   }
 
   Future<void> _loadWebhookStatus() async {
-    final enabled = await widget.settingsService.getWebhookEnabled();
-    final url = await widget.settingsService.getWebhookUrl();
-    if (mounted) {
-      setState(() {
-        _webhookEnabled = enabled;
-        _webhookUrl = url ?? '';
-        _webhookUrlController.text = _webhookUrl;
-      });
-    }
+    final (enabled, url) = await (
+      widget.settingsService.getWebhookEnabled(),
+      widget.settingsService.getWebhookUrl(),
+    ).wait;
+    if (!mounted) return;
+    _webhookEnabled = enabled;
+    _webhookUrl = url ?? '';
+    _webhookUrlController.text = _webhookUrl;
+    scheduleRebuild();
   }
 
   Future<void> _loadObsidianStatus() async {
-    final enabled = await widget.settingsService.getObsidianEnabled();
-    final vaultPath = await widget.settingsService.getObsidianVaultPath();
-    final fileName = await widget.settingsService.getObsidianFileName();
-    if (mounted) {
-      setState(() {
-        _obsidianEnabled = enabled;
-        _obsidianVaultPath = vaultPath ?? '';
-        _obsidianFileName = fileName;
-        _obsidianVaultPathController.text = _obsidianVaultPath;
-        _obsidianFileNameController.text = _obsidianFileName;
-      });
-    }
+    final (enabled, vaultPath, fileName) = await (
+      widget.settingsService.getObsidianEnabled(),
+      widget.settingsService.getObsidianVaultPath(),
+      widget.settingsService.getObsidianFileName(),
+    ).wait;
+    if (!mounted) return;
+    _obsidianEnabled = enabled;
+    _obsidianVaultPath = vaultPath ?? '';
+    _obsidianFileName = fileName;
+    _obsidianVaultPathController.text = _obsidianVaultPath;
+    _obsidianFileNameController.text = _obsidianFileName;
+    scheduleRebuild();
   }
 
   Future<void> _toggleEncryption() async {
@@ -267,29 +283,30 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
     if (_encryptionEnabled) {
       // Disable encryption - show confirmation dialog
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Disable Encryption?'),
-          content: const Text(
+      final confirmed = await Adaptive.confirm(
+        context,
+        title: 'Disable Encryption?',
+        message:
             'This will disable encryption for new clipboard items. '
             'Existing encrypted items will remain encrypted.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Disable'),
-            ),
-          ],
-        ),
+        confirmText: 'Disable',
+        isDestructive: true,
       );
 
-      if (confirmed ?? false) {
-        await widget.encryptionService!.clearPassphrase();
+      if (confirmed) {
+        try {
+          await widget.encryptionService!.clearPassphrase();
+        } on Object catch (err) {
+          debugPrint('[SettingsPanel] Failed to disable encryption: $err');
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not turn encryption off - try again'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
         if (mounted) {
           setState(() => _encryptionEnabled = false);
           widget.onEncryptionChanged?.call();
@@ -307,16 +324,100 @@ class _SettingsPanelState extends State<SettingsPanel> {
         return;
       }
 
+      // If this account already has clips this desktop cannot read, the user
+      // needs to ENTER their existing passphrase, not invent a new one. Two
+      // desktops is the common case for that. The old route into restore mode
+      // was gated on _hasBackup i.e. hasCloudBackup(), which always returns
+      // false now that cloud backup is removed - so Set mode was the only
+      // possible outcome and a second machine would silently create a second,
+      // incompatible key.
+      final repo = ClipboardRepository.instance;
+      final lockedBefore = repo.undecryptableItemCount.value;
+      final hasExistingEncrypted = lockedBefore > 0;
+
       final success = await showPassphraseDialog(
         context,
         widget.encryptionService!,
         userId,
+        isRestoreMode: hasExistingEncrypted,
       );
 
-      if (success && mounted) {
+      if (!success || !mounted) return;
+
+      // Verify against real data: setPassphrase() accepts anything, so only
+      // decrypting an actual clip proves the passphrase is right. Success is a
+      // DROP in the locked count, not reaching zero - history can hold clips
+      // under several passphrases and those stay locked by design.
+      if (hasExistingEncrypted) {
+        try {
+          await repo.getHistory();
+        } on Object catch (e) {
+          // getHistory throws RepositoryException on any network or Postgrest
+          // error; unguarded it escaped this handler as an unhandled async
+          // error and the user heard nothing about the passphrase they just
+          // entered.
+          debugPrint('[SettingsPanel] Passphrase check failed: $e');
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not check your passphrase - try again'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        if (!mounted) return;
+
+        final lockedAfter = repo.undecryptableItemCount.value;
+        debugPrint(
+          '[SettingsPanel] Passphrase check: locked $lockedBefore -> $lockedAfter',
+        );
+
+        if (lockedAfter >= lockedBefore) {
+          try {
+            await widget.encryptionService!.clearPassphrase();
+          } on Object catch (err) {
+            debugPrint('[SettingsPanel] Failed to clear passphrase: $err');
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'That passphrase did not unlock any clips, and it could not '
+                  'be cleared - try again',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+          if (!mounted) return;
+          setState(() => _encryptionEnabled = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('That passphrase did not unlock any of your clips'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+
         setState(() => _encryptionEnabled = true);
         widget.onEncryptionChanged?.call();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              lockedAfter > 0
+                  ? '${lockedBefore - lockedAfter} clip(s) unlocked. '
+                        '$lockedAfter still use a different passphrase.'
+                  : 'Passphrase accepted - your clips are unlocked',
+            ),
+          ),
+        );
+        return;
       }
+
+      setState(() => _encryptionEnabled = true);
+      widget.onEncryptionChanged?.call();
     }
   }
 
@@ -408,17 +509,12 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   /// Cache expensive string operation
-  String _getDeviceText(List<(String, IconData, String)> devices) {
+  String _getDeviceText() {
     if (_cachedDeviceText != null) return _cachedDeviceText!;
 
     _cachedDeviceText = _autoSendTargetDevices.isEmpty
         ? 'All devices'
-        : _autoSendTargetDevices
-              .map((d) {
-                final device = devices.firstWhere((item) => item.$1 == d);
-                return device.$3;
-              })
-              .join(', ');
+        : _autoSendTargetDevices.map(platformLabel).join(', ');
 
     return _cachedDeviceText!;
   }
@@ -437,7 +533,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
           : const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
-      cacheExtent: 300, // Pre-build settings items offscreen for smooth scroll
+      scrollCacheExtent: const ScrollCacheExtent.pixels(
+        300,
+      ), // Pre-build settings items offscreen for smooth scroll
       children: [
         // 1. Most Important: Feature Toggles
         // Auto-send toggle
@@ -644,13 +742,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           if (widget.hotkeyService != null) ...[
             HotkeyCapture(
               currentHotkey: _currentHotkey,
-              onHotkeyChanged: (newHotkey) async {
-                await widget.hotkeyService!.unregisterHotkey(_currentHotkey);
-                if (mounted) {
-                  setState(() => _currentHotkey = newHotkey);
-                }
-                debugPrint('Hotkey changed to: ${_formatHotkey(newHotkey)}');
-              },
+              onHotkeyChanged: _handleHotkeyChanged,
             ),
             const SizedBox(height: 20),
           ],
@@ -1005,12 +1097,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   Widget _buildDeviceSelector() {
-    const devices = [
-      ('windows', Icons.desktop_windows, 'Windows'),
-      ('macos', Icons.laptop_mac, 'macOS'),
-      ('android', Icons.phone_android, 'Android'),
-      ('ios', Icons.phone_iphone, 'iOS'),
-    ];
+    // Icon and label come from the shared helpers, so a platform cannot show
+    // one icon here and a different one on the clip it produced.
+    const devices = ['windows', 'macos', 'android', 'ios'];
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -1036,7 +1125,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           ),
           const SizedBox(height: 8),
           Text(
-            _getDeviceText(devices),
+            _getDeviceText(),
             style: GhostTypography.caption.copyWith(
               color: GhostColors.textMuted,
             ),
@@ -1046,8 +1135,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: devices.map((device) {
-              final (type, icon, label) = device;
+            children: devices.map((type) {
               final isSelected =
                   _autoSendTargetDevices.isEmpty ||
                   _autoSendTargetDevices.contains(type);
@@ -1075,7 +1163,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        icon,
+                        iconForDeviceType(type),
                         size: 14,
                         color: isSelected
                             ? GhostColors.primary
@@ -1083,7 +1171,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        label,
+                        platformLabel(type),
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w500,
@@ -1225,14 +1313,46 @@ class _SettingsPanelState extends State<SettingsPanel> {
     );
   }
 
-  String _formatHotkey(HotKey hotkey) {
-    final parts = <String>[];
-    if (hotkey.ctrl) parts.add('Ctrl');
-    if (hotkey.shift) parts.add('Shift');
-    if (hotkey.alt) parts.add('Alt');
-    if (hotkey.meta) parts.add('Meta');
-    parts.add(hotkey.key.toUpperCase());
-    return parts.join(' + ');
+  /// Apply a newly captured hotkey: register it, persist it, and only then
+  /// show it as current.
+  ///
+  /// This handler used to unregister the old hotkey and never register the new
+  /// one, so changing the shortcut silently left the app with no global hotkey
+  /// at all until the next restart.
+  Future<void> _handleHotkeyChanged(HotKey newHotkey) async {
+    if (newHotkey == _currentHotkey) return;
+
+    try {
+      await applyHotkey(newHotkey);
+    } on UnsupportedHotkeyException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${formatHotkey(newHotkey)} cannot be used as a shortcut. '
+            'Your previous shortcut is still active.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    } on Object catch (e) {
+      debugPrint('Failed to apply hotkey: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not change the shortcut. Your previous one is still active.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _currentHotkey = newHotkey);
+    debugPrint('Hotkey changed to: ${formatHotkey(newHotkey)}');
   }
 }
 

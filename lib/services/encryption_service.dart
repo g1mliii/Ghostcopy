@@ -1,7 +1,18 @@
+import 'package:flutter/foundation.dart';
+
 /// Abstract interface for encryption operations
 abstract class IEncryptionService {
   /// Check if encryption is enabled (passphrase set)
   Future<bool> isEnabled();
+
+  /// Notifies whenever the loaded key changes - a key derived, cleared, or
+  /// re-keyed for another user.
+  ///
+  /// [isEnabled] is a point-in-time answer, so anything that caches it needs
+  /// to know when that answer goes stale. Widgets built during startup ask
+  /// before [initialize] has derived the key and would otherwise cache "no
+  /// key" for the life of the screen, locking every encrypted item.
+  ValueListenable<int> get keyRevision;
 
   /// Set encryption passphrase (enables encryption)
   /// Returns true if passphrase meets security requirements
@@ -39,6 +50,20 @@ abstract class IEncryptionService {
   /// Decrypt ciphertext content (only if encryption enabled)
   /// Returns ciphertext unchanged if encryption disabled
   Future<String> decrypt(String ciphertext);
+
+  /// Encrypt raw bytes (files and images) for upload to R2.
+  ///
+  /// Unlike [encrypt], this does not base64 the payload. Base64 inflates by
+  /// ~33%, which is why files were historically left unencrypted - it would
+  /// have pushed them past the 10MB limit. Encrypting the bytes directly costs
+  /// a flat 32 bytes (16-byte IV + 16-byte GCM tag).
+  ///
+  /// Returns the input unchanged when encryption is not enabled.
+  Future<Uint8List> encryptBytes(Uint8List plain);
+
+  /// Reverse of [encryptBytes]. Returns the input unchanged when encryption is
+  /// not enabled, so callers can pass through unencrypted legacy objects.
+  Future<Uint8List> decryptBytes(Uint8List cipher);
 
   /// Initialize encryption service with user-specific context
   Future<void> initialize(String userId);

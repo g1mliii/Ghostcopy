@@ -31,28 +31,20 @@ import '../webhook_service.dart';
 /// - Push notification coordination
 class ClipboardSyncService implements IClipboardSyncService {
   ClipboardSyncService({
-    required IClipboardRepository clipboardRepository,
-    required ISettingsService settingsService,
-    required ISecurityService securityService,
+    required this._clipboardRepository,
+    required this._settingsService,
+    required this._securityService,
     SupabaseClient? supabaseClient,
     IClipboardService? clipboardService,
     ITempFileService? tempFileService,
-    INotificationService? notificationService,
-    IGameModeService? gameModeService,
-    IUrlShortenerService? urlShortenerService,
-    IWebhookService? webhookService,
-    IObsidianService? obsidianService,
-  }) : _clipboardRepository = clipboardRepository,
-       _settingsService = settingsService,
-       _securityService = securityService,
-       _supabaseClient = supabaseClient ?? Supabase.instance.client,
+    this._notificationService,
+    this._gameModeService,
+    this._urlShortenerService,
+    this._webhookService,
+    this._obsidianService,
+  }) : _supabaseClient = supabaseClient ?? Supabase.instance.client,
        _clipboardService = clipboardService ?? ClipboardService.instance,
-       _tempFileService = tempFileService ?? TempFileService.instance,
-       _notificationService = notificationService,
-       _gameModeService = gameModeService,
-       _urlShortenerService = urlShortenerService,
-       _webhookService = webhookService,
-       _obsidianService = obsidianService;
+       _tempFileService = tempFileService ?? TempFileService.instance;
 
   final IClipboardRepository _clipboardRepository;
   final ISettingsService _settingsService;
@@ -91,8 +83,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
 
-  // Temp file cleanup timer (cancellable - Fix #9)
-  Timer? _tempFileCleanupTimer;
+  // Pending temp-file cleanups, one per copied file (cancellable on dispose).
+  final Set<Timer> _tempFileCleanupTimers = <Timer>{};
 
   // Pending background operations for clean shutdown (Fix #10)
   final Set<Future<void>> _pendingFutures = {};
@@ -152,14 +144,25 @@ class ClipboardSyncService implements IClipboardSyncService {
               '[ClipboardSyncService] Realtime update received: ${payload.eventType}',
             );
 
-            // Check if from another device
+            // Check if from another device.
+            //
+            // A plain inequality, deliberately: the null guards that used to be
+            // here made this false whenever either side had no name, and mobile
+            // sends device_name: null on every path. That meant a clip sent
+            // from the phone never triggered auto-receive on the desktop -
+            // the Mobile -> Desktop half of sync - and it only appeared to work
+            // because the polling fallback (_pollForNewClipboards) compares the
+            // same two values WITHOUT the guards and takes over after 15
+            // minutes idle. Matching that comparison here keeps the two paths
+            // in agreement.
+            //
+            // Known limit: this identifies devices by name, so two machines
+            // sharing a hostname will not receive from each other. Fixing that
+            // needs a device id on the clipboard row.
             final deviceName = payload.newRecord['device_name'] as String?;
             final currentDeviceName =
                 ClipboardRepository.getCurrentDeviceName();
-            final isFromDifferentDevice =
-                deviceName != null &&
-                currentDeviceName != null &&
-                deviceName != currentDeviceName;
+            final isFromDifferentDevice = deviceName != currentDeviceName;
 
             // Check if targeted to this device
             final targetDeviceTypeJson =
@@ -426,14 +429,18 @@ class ClipboardSyncService implements IClipboardSyncService {
             '[ClipboardSyncService] Copied file ($filename, ${item.displaySize}) to clipboard',
           );
 
-          // Schedule temp file cleanup after clipboard operation completes
-          // Use cancellable timer instead of fire-and-forget Future.delayed (Fix #9)
-          _tempFileCleanupTimer?.cancel();
-          _tempFileCleanupTimer = Timer(const Duration(seconds: 5), () {
+          // One timer per file. A single shared timer meant copying a second
+          // file within 5s cancelled the first file's cleanup and never
+          // rescheduled it, leaking that temp file until the hourly sweep.
+          // Timers are tracked so dispose() can still cancel them all.
+          late final Timer timer;
+          timer = Timer(const Duration(seconds: 5), () {
+            _tempFileCleanupTimers.remove(timer);
             if (!_isDisposed) {
               _tempFileService.deleteTempFile(tempFile.path);
             }
           });
+          _tempFileCleanupTimers.add(timer);
         }
     }
   }
@@ -592,192 +599,183 @@ class ClipboardSyncService implements IClipboardSyncService {
     return '';
   }
 
-  /// Calculate partial hash for large content (first 4KB + last 4KB + size)
-  /// This is much faster than hashing multi-MB content (Fix #13)
+  /// Calculate partial hash for large content, much faster than hashing
+  /// multi-MB payloads in full.
+  ///
+  /// Samples the head, the MIDDLE and the tail, plus the length. Head + tail
+  /// alone collide on exactly the payloads this app sees most: two screenshots
+  /// of the same window differ only in the middle, so the second was treated as
+  /// a duplicate and never sent. The middle sample is what makes that case
+  /// distinguishable; this is still a heuristic, not a full digest.
   String _partialHash(Uint8List bytes) {
     const chunkSize = 4096;
-    final firstChunk = bytes.sublist(0, chunkSize.clamp(0, bytes.length));
-    final lastChunk = bytes.length > chunkSize
-        ? bytes.sublist(bytes.length - chunkSize)
-        : firstChunk;
-    final sizeBytes = utf8.encode(bytes.length.toString());
+    final length = bytes.length;
+
+    final head = bytes.sublist(0, chunkSize.clamp(0, length));
+    final tail = length > chunkSize ? bytes.sublist(length - chunkSize) : head;
+
+    final midStart = ((length - chunkSize) ~/ 2).clamp(0, length);
+    final middle = length > chunkSize * 2
+        ? bytes.sublist(midStart, (midStart + chunkSize).clamp(0, length))
+        : head;
+
     final builder = BytesBuilder(copy: false)
-      ..add(firstChunk)
-      ..add(lastChunk)
-      ..add(sizeBytes);
+      ..add(head)
+      ..add(middle)
+      ..add(tail)
+      ..add(utf8.encode(length.toString()));
     return md5.convert(builder.takeBytes()).toString();
   }
 
-  /// Auto-send clipboard content
-  Future<void> _autoSendClipboard(String content) async {
+  /// URL shortening, when the setting is on and the clip is a URL.
+  Future<String> _applyUrlShortening(String content) async {
+    final urlShortener = _urlShortenerService;
+    if (urlShortener == null) return content;
+
+    final autoShortenEnabled = await _settingsService.getAutoShortenUrls();
+    if (!autoShortenEnabled || !urlShortener.isUrl(content)) return content;
+
+    return urlShortener.shortenUrl(content);
+  }
+
+  /// The shared body of the three auto-send paths.
+  ///
+  /// Deduplication, target resolution, the send timestamp, the UI callback and
+  /// both toasts are identical for text, images and files - only the hash and
+  /// the repository call differ. This existed as three ~80-line copies,
+  /// including three copies of the "to N device types" ladder, so every change
+  /// to targeting or to the toast wording had to be made three times and the
+  /// copies had already begun to drift.
+  Future<void> _autoSend({
+    required String noun,
+    required String contentHash,
+    required Future<ClipboardItem> Function(_AutoSendContext context) insert,
+    required String Function(String targetText) message,
+    required String failureMessage,
+    void Function(_AutoSendContext context)? afterInsert,
+  }) async {
     try {
       final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null) return;
 
-      // URL shortening (if enabled)
-      var processedContent = content;
-      final urlShortener = _urlShortenerService;
-      if (urlShortener != null) {
-        final autoShortenEnabled = await _settingsService.getAutoShortenUrls();
-        if (autoShortenEnabled && urlShortener.isUrl(content)) {
-          processedContent = await urlShortener.shortenUrl(content);
-        }
-      }
-
-      // Content deduplication
-      final contentHash = _calculateContentHash(processedContent);
       if (contentHash == _lastSentContentHash) {
-        debugPrint('[ClipboardSyncService] Skipping duplicate content');
+        debugPrint('[ClipboardSyncService] Skipping duplicate $noun');
         return;
       }
       _lastSentContentHash = contentHash;
 
-      // Get target devices
       final targetDevices = await _settingsService.getAutoSendTargetDevices();
-
-      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
-      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-
-      // Convert Set to List (null if empty = all devices)
-      final targetDevicesList = targetDevices.isEmpty
-          ? null
-          : targetDevices.toList();
-
-      final item = ClipboardItem(
-        id: '0',
+      final context = _AutoSendContext(
         userId: userId,
-        content: processedContent,
-        deviceName: currentDeviceName,
-        deviceType: currentDeviceType,
-        targetDeviceTypes: targetDevicesList,
-        createdAt: DateTime.now(),
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        deviceName: ClipboardRepository.getCurrentDeviceName(),
+        // null rather than an empty list: the repository reads null as
+        // "every device".
+        targetDeviceTypes: targetDevices.isEmpty
+            ? null
+            : targetDevices.toList(),
       );
 
-      final result = await _clipboardRepository.insert(item);
+      final result = await insert(context);
 
-      // Push notification now triggered by database webhook (send-clipboard-notification)
-      // No client-side edge function invocation needed
-
-      // Fire webhook (if enabled) - non-blocking
-      _fireWebhook(processedContent, currentDeviceType);
-
-      // Append to Obsidian (if enabled) - non-blocking
-      _appendToObsidian(processedContent);
+      // Push notification is triggered by the database webhook
+      // (send-clipboard-notification), so there is nothing to invoke here.
+      afterInsert?.call(context);
 
       _lastSendTime = DateTime.now();
-
-      // Notify UI
       onClipboardSent?.call(result);
 
-      // Show success toast
-      final targetText = targetDevices.isEmpty
-          ? 'all devices'
-          : targetDevices.length == 1
-          ? targetDevices.first
-          : '${targetDevices.length} device types';
       _notificationService?.showToast(
-        message: 'Auto-sent to $targetText',
+        message: message(_describeTargets(targetDevices)),
         type: NotificationType.success,
       );
 
       debugPrint(
-        '[ClipboardSyncService] Auto-sent to ${targetDevices.isEmpty ? "all devices" : targetDevices.join(", ")}',
+        '[ClipboardSyncService] Auto-sent $noun to '
+        '${targetDevices.isEmpty ? "all devices" : targetDevices.join(", ")}',
       );
     } on Exception catch (e) {
-      debugPrint('[ClipboardSyncService] Auto-send failed: $e');
+      debugPrint('[ClipboardSyncService] Auto-send $noun failed: $e');
+      _notificationService?.showToast(
+        message: failureMessage,
+        type: NotificationType.error,
+      );
+    }
+  }
 
-      // Show error toast
+  /// How the destination is described in a toast.
+  static String _describeTargets(Set<String> targets) =>
+      switch (targets.length) {
+        0 => 'all devices',
+        1 => targets.first,
+        _ => '${targets.length} device types',
+      };
+
+  /// Auto-send clipboard content
+  Future<void> _autoSendClipboard(String content) async {
+    final String processedContent;
+    try {
+      processedContent = await _applyUrlShortening(content);
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] Auto-send content failed: $e');
       _notificationService?.showToast(
         message: 'Auto-send failed',
         type: NotificationType.error,
       );
+      return;
     }
+
+    await _autoSend(
+      noun: 'content',
+      contentHash: _calculateContentHash(processedContent),
+      insert: (context) => _clipboardRepository.insert(
+        ClipboardItem(
+          id: '0',
+          userId: context.userId,
+          content: processedContent,
+          deviceName: context.deviceName,
+          deviceType: context.deviceType,
+          targetDeviceTypes: context.targetDeviceTypes,
+          createdAt: DateTime.now(),
+        ),
+      ),
+      message: (targets) => 'Auto-sent to $targets',
+      failureMessage: 'Auto-send failed',
+      afterInsert: (context) {
+        // Both non-blocking.
+        _fireWebhook(processedContent, context.deviceType);
+        _appendToObsidian(processedContent);
+      },
+    );
   }
 
   /// Auto-send image content
   Future<void> _autoSendImage(Uint8List imageBytes, String mimeType) async {
-    try {
-      final userId = _supabaseClient.auth.currentUser?.id;
-      if (userId == null) return;
+    final contentType = ContentType.fromMimeType(mimeType);
+    if (contentType == null || !contentType.isImage) {
+      debugPrint('[ClipboardSyncService] Unsupported image type: $mimeType');
+      return;
+    }
 
-      // Content deduplication (partial hash for large payloads)
-      final contentHash = _calculateClipboardContentHash(
+    final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
+
+    await _autoSend(
+      noun: 'image',
+      contentHash: _calculateClipboardContentHash(
         ClipboardContent.image(imageBytes, mimeType),
-      );
-      if (contentHash == _lastSentContentHash) {
-        debugPrint('[ClipboardSyncService] Skipping duplicate image');
-        return;
-      }
-      _lastSentContentHash = contentHash;
-
-      // Map mimeType to ContentType
-      ContentType contentType;
-      switch (mimeType) {
-        case 'image/png':
-          contentType = ContentType.imagePng;
-        case 'image/jpeg':
-        case 'image/jpg':
-          contentType = ContentType.imageJpeg;
-        case 'image/gif':
-          contentType = ContentType.imageGif;
-        default:
-          debugPrint(
-            '[ClipboardSyncService] Unsupported image type: $mimeType',
-          );
-          return;
-      }
-
-      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
-      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-
-      // Get target devices
-      final targetDevices = await _settingsService.getAutoSendTargetDevices();
-
-      // Convert Set to List (null if empty = all devices)
-      final targetDevicesList = targetDevices.isEmpty
-          ? null
-          : targetDevices.toList();
-
-      // Insert image using repository
-      final result = await _clipboardRepository.insertImage(
-        userId: userId,
-        deviceType: currentDeviceType,
-        deviceName: currentDeviceName,
+      ),
+      insert: (context) => _clipboardRepository.insertImage(
+        userId: context.userId,
+        deviceType: context.deviceType,
+        deviceName: context.deviceName,
         imageBytes: imageBytes,
         mimeType: mimeType,
         contentType: contentType,
-        targetDeviceTypes: targetDevicesList,
-      );
-
-      _lastSendTime = DateTime.now();
-
-      // Notify UI
-      onClipboardSent?.call(result);
-
-      // Show success toast
-      final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
-      final targetText = targetDevices.isEmpty
-          ? 'all devices'
-          : targetDevices.length == 1
-          ? targetDevices.first
-          : '${targetDevices.length} device types';
-      _notificationService?.showToast(
-        message: 'Auto-sent image ($sizeKB KB) to $targetText',
-        type: NotificationType.success,
-      );
-
-      debugPrint(
-        '[ClipboardSyncService] Auto-sent image to ${targetDevices.isEmpty ? "all devices" : targetDevices.join(", ")}',
-      );
-    } on Exception catch (e) {
-      debugPrint('[ClipboardSyncService] Auto-send image failed: $e');
-
-      // Show error toast
-      _notificationService?.showToast(
-        message: 'Auto-send image failed',
-        type: NotificationType.error,
-      );
-    }
+        targetDeviceTypes: context.targetDeviceTypes,
+      ),
+      message: (targets) => 'Auto-sent image ($sizeKB KB) to $targets',
+      failureMessage: 'Auto-send image failed',
+    );
   }
 
   /// Auto-send file content
@@ -786,78 +784,31 @@ class ClipboardSyncService implements IClipboardSyncService {
     String filename,
     String? mimeType,
   ) async {
-    try {
-      final userId = _supabaseClient.auth.currentUser?.id;
-      if (userId == null) return;
+    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+      fileBytes,
+      filename,
+    );
+    final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
 
-      // Content deduplication (partial hash for large payloads)
-      final contentHash = _calculateClipboardContentHash(
+    await _autoSend(
+      noun: 'file',
+      contentHash: _calculateClipboardContentHash(
         ClipboardContent.file(fileBytes, filename, mimeType),
-      );
-      if (contentHash == _lastSentContentHash) {
-        debugPrint('[ClipboardSyncService] Skipping duplicate file');
-        return;
-      }
-      _lastSentContentHash = contentHash;
-
-      // Use FileTypeService to detect file type
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        fileBytes,
-        filename,
-      );
-
-      final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
-      final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-
-      // Get target devices
-      final targetDevices = await _settingsService.getAutoSendTargetDevices();
-
-      // Convert Set to List (null if empty = all devices)
-      final targetDevicesList = targetDevices.isEmpty
-          ? null
-          : targetDevices.toList();
-
-      // Insert file using repository
-      final result = await _clipboardRepository.insertFile(
-        userId: userId,
-        deviceType: currentDeviceType,
-        deviceName: currentDeviceName,
+      ),
+      insert: (context) => _clipboardRepository.insertFile(
+        userId: context.userId,
+        deviceType: context.deviceType,
+        deviceName: context.deviceName,
         fileBytes: fileBytes,
         mimeType: mimeType ?? fileTypeInfo.mimeType,
         contentType: fileTypeInfo.contentType,
         originalFilename: filename,
-        targetDeviceTypes: targetDevicesList,
-      );
-
-      _lastSendTime = DateTime.now();
-
-      // Notify UI
-      onClipboardSent?.call(result);
-
-      // Show success toast
-      final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
-      final targetText = targetDevices.isEmpty
-          ? 'all devices'
-          : targetDevices.length == 1
-          ? targetDevices.first
-          : '${targetDevices.length} device types';
-      _notificationService?.showToast(
-        message: 'Auto-sent file "$filename" ($sizeKB KB) to $targetText',
-        type: NotificationType.success,
-      );
-
-      debugPrint(
-        '[ClipboardSyncService] Auto-sent file to ${targetDevices.isEmpty ? "all devices" : targetDevices.join(", ")}',
-      );
-    } on Exception catch (e) {
-      debugPrint('[ClipboardSyncService] Auto-send file failed: $e');
-
-      // Show error toast
-      _notificationService?.showToast(
-        message: 'Auto-send file failed',
-        type: NotificationType.error,
-      );
-    }
+        targetDeviceTypes: context.targetDeviceTypes,
+      ),
+      message: (targets) =>
+          'Auto-sent file "$filename" ($sizeKB KB) to $targets',
+      failureMessage: 'Auto-send file failed',
+    );
   }
 
   /// Calculate SHA-256 hash for content deduplication
@@ -1100,8 +1051,10 @@ class ClipboardSyncService implements IClipboardSyncService {
     _pollingTimer = null;
 
     // Cancel temp file cleanup timer (Fix #9)
-    _tempFileCleanupTimer?.cancel();
-    _tempFileCleanupTimer = null;
+    for (final timer in _tempFileCleanupTimers) {
+      timer.cancel();
+    }
+    _tempFileCleanupTimers.clear();
 
     // Note: _pendingFutures are tracked but not awaited in dispose()
     // since dispose() is sync. The _isDisposed flag prevents new work.
@@ -1119,4 +1072,23 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     debugPrint('[ClipboardSyncService] Disposed');
   }
+}
+
+/// The per-send values every auto-send path needs.
+///
+/// Resolved once in [ClipboardSyncService._autoSend] and handed to the insert
+/// closure, so the "empty set means every device" rule is expressed in exactly
+/// one place instead of at each call site.
+class _AutoSendContext {
+  const _AutoSendContext({
+    required this.userId,
+    required this.deviceType,
+    required this.deviceName,
+    required this.targetDeviceTypes,
+  });
+
+  final String userId;
+  final String deviceType;
+  final String? deviceName;
+  final List<String>? targetDeviceTypes;
 }

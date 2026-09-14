@@ -21,11 +21,9 @@ class TrayService with TrayListener implements ITrayService {
     // Add listener for tray events
     trayManager.addListener(this);
 
-    await trayManager.setIcon(
-      _getTrayIconPath(),
-    );
-    
-    // On macOS, the title is usually not shown in tray for icon-only apps, 
+    await trayManager.setIcon(_getTrayIconPath());
+
+    // On macOS, the title is usually not shown in tray for icon-only apps,
     // but we can set it if needed. Leaving empty for now for icon-only feel.
   }
 
@@ -46,10 +44,10 @@ class TrayService with TrayListener implements ITrayService {
 
     // Clean up callback to prevent memory leak
     onRightClick = null;
-    
+
     // Remove listener
     trayManager.removeListener(this);
-    
+
     // There isn't a strict 'destroy' method for trayManager exposed usually,
     // but removing the listener helps.
   }
@@ -65,8 +63,8 @@ class TrayService with TrayListener implements ITrayService {
   void onTrayIconRightMouseDown() {
     // Right click - trigger custom menu
     onRightClick?.call();
-    
-    // Also support native menu popping up if we set one, 
+
+    // Also support native menu popping up if we set one,
     // but here we are using custom window callback.
   }
 
@@ -81,13 +79,20 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   /// Get platform-specific tray icon path
+  ///
+  /// Each platform wants a different asset, so they are no longer shared:
+  /// - Windows: .ico containing 16/32/48px frames, picked per DPI.
+  /// - macOS: a 22px black-on-transparent TEMPLATE image. The menu bar tints
+  ///   it automatically, which is what makes it invert correctly in dark mode
+  ///   and when the bar is highlighted. A full-colour icon cannot do that.
+  /// - Linux: 24px, the size most panels expect.
   String _getTrayIconPath() {
     if (Platform.isWindows) {
       return 'assets/icons/tray_icon.ico';
     } else if (Platform.isMacOS) {
-      return 'assets/icons/tray_icon.png';
+      return 'assets/icons/tray_icon_macos.png';
     } else if (Platform.isLinux) {
-      return 'assets/icons/tray_icon.png';
+      return 'assets/icons/tray_icon_linux.png';
     }
     return '';
   }

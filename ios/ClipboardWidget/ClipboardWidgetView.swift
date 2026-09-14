@@ -210,10 +210,33 @@ struct ClipboardWidgetView: View {
         }
     }
 
+    /// Parse an ISO-8601 instant, with or without fractional seconds.
+    ///
+    /// Two formatters because a single one cannot accept both: with
+    /// `.withFractionalSeconds` set, a timestamp WITHOUT them fails to parse,
+    /// and vice versa. Held statically so the widget does not rebuild them for
+    /// every row it renders.
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let plainFormatter = ISO8601DateFormatter()
+
+    private static func parseTimestamp(_ value: String) -> Date? {
+        return fractionalFormatter.date(from: value)
+            ?? plainFormatter.date(from: value)
+    }
+
     /// Format ISO8601 timestamp for display
     private func formatTimestamp(_ iso8601String: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: iso8601String) else {
+        // Dart's toIso8601String() always emits milliseconds
+        // ("2026-09-13T12:00:00.000Z"), and ISO8601DateFormatter rejects
+        // fractional seconds unless asked for them - so the default formatter
+        // returned nil for every timestamp the app actually sends and the
+        // widget showed "Unknown" against every clip.
+        guard let date = Self.parseTimestamp(iso8601String) else {
             return "Unknown"
         }
 

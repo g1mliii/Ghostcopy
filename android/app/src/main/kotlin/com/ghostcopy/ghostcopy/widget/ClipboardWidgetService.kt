@@ -7,8 +7,6 @@ import android.util.Log
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.ghostcopy.ghostcopy.R
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 /**
  * RemoteViewsService for providing data to widget ListView.
@@ -86,9 +84,9 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
         val filename = item.filename ?: (if (item.isImage) "Image" else "File")
         
         views.setTextViewText(R.id.content_preview, filename)
-        views.setTextViewText(R.id.timestamp, size.ifEmpty { formatTimeAgo(item.createdAt) })
+        views.setTextViewText(R.id.timestamp, size.ifEmpty { TimeAgo.formatIso(item.createdAt) ?: "Unknown" })
       } else {
-        views.setTextViewText(R.id.timestamp, formatTimeAgo(item.createdAt))
+        views.setTextViewText(R.id.timestamp, TimeAgo.formatIso(item.createdAt) ?: "Unknown")
       }
 
       // Load and set thumbnail if available
@@ -138,32 +136,6 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
   override fun getItemId(position: Int): Long = position.toLong()
 
   override fun hasStableIds(): Boolean = true
-
-  /**
-   * Format ISO 8601 timestamp as relative time.
-   */
-  private fun formatTimeAgo(isoString: String): String {
-    return try {
-      val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-      val date = sdf.parse(isoString) ?: return "Unknown"
-      val now = System.currentTimeMillis()
-      val diffMs = now - date.time
-
-      when {
-        diffMs < 1000 -> "Just now"
-        diffMs < 60_000 -> "${diffMs / 1000}s ago"
-        diffMs < 3_600_000 -> "${diffMs / 60_000}m ago"
-        diffMs < 86_400_000 -> "${diffMs / 3_600_000}h ago"
-        else -> {
-          val dateSdf = SimpleDateFormat("MMM d", Locale.getDefault())
-          dateSdf.format(date)
-        }
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to parse timestamp: ${e.message}")
-      "Unknown"
-    }
-  }
 
   companion object {
     private const val TAG = "ClipboardWidgetFactory"

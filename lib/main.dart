@@ -1,21 +1,28 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'locator.dart';
+import 'models/clipboard_item.dart';
+import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/device_service.dart';
 import 'services/fcm_service.dart';
+import 'services/file_type_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/hotkey_service.dart';
 import 'services/impl/auth_service.dart';
@@ -35,6 +42,7 @@ import 'services/obsidian_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
+import 'services/single_instance.dart';
 import 'services/system_power_service.dart';
 import 'services/temp_file_service.dart';
 import 'services/transformer_service.dart';
@@ -43,12 +51,14 @@ import 'services/url_shortener_service.dart';
 import 'services/webhook_service.dart';
 import 'services/widget_service.dart';
 import 'services/window_service.dart';
+import 'ui/platform_adaptive.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
+import 'utils/auth_callback.dart';
 
 // Configuration - These values are safe to be public
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
@@ -62,12 +72,167 @@ const _supabaseAnonKey =
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   debugPrint('[FCM Background] Received message: ${message.messageId}');
 
-  // For background, we don't do anything - Firebase plugin handles notification display
-  // The notification tap will be handled when app comes to foreground
+  // Pre-stage the clip so tapping the notification is instant.
+  //
+  // This isolate runs about a second after the push lands, with the app closed,
+  // which is well before the user can reach the notification. CopyActivity is
+  // then a pure local read: no network, no Flutter engine, no visible app - it
+  // writes the clipboard and finishes. Without this it has nothing to copy, so
+  // it falls back to cold starting MainActivity (~2.5s, and the app stays open).
+  //
+  // The push itself still carries no clipboard value; the content is fetched
+  // here over an authenticated, RLS-scoped connection and decrypted in Dart.
+  await _prefetchClipForInstantCopy(message);
+}
+
+/// Fetch the clip a push refers to and stage it for CopyActivity.
+///
+/// Best effort by design: every failure path just leaves no cache file, and
+/// CopyActivity falls back to opening the app. Never throws - an exception
+/// escaping a background isolate kills delivery handling for later messages.
+Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
+  final clipboardId = message.data['clipboard_id'] as String?;
+  if (clipboardId == null || clipboardId.isEmpty) return;
+
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // Before anything that can fail: note that a push really did name this
+    // clip. MainActivity is exported, so a notification tap and a third-party
+    // app inventing an id look identical in the extras - this record is what
+    // tells them apart. Deliberately ahead of the Supabase work below, which
+    // has several early returns that would otherwise leave a genuine tap
+    // unverifiable.
+    await _recordIncomingPush(clipboardId);
+
+    // A background isolate starts with none of main()'s state, so Supabase has
+    // to be stood up here. The session is restored from the same persisted
+    // store the UI isolate uses, so this runs as the signed-in user and RLS
+    // still applies.
+    await Supabase.initialize(
+      url: _supabaseUrl,
+      publishableKey: _supabaseAnonKey,
+      // Same guard as the UI isolate: this one also starts a deep-link
+      // observer, and it must not accept a session from a URL either.
+      authOptions: const FlutterAuthClientOptions(
+        detectSessionInUriPredicate: isTrustedAuthCallback,
+      ),
+    );
+
+    if (Supabase.instance.client.auth.currentUser == null) {
+      debugPrint('[FCM Background] No session in this isolate - skipping');
+      return;
+    }
+
+    // getById() applies RLS and decrypts, so `content` is plaintext here.
+    final match = await ClipboardRepository().getById(clipboardId);
+
+    if (match == null) {
+      debugPrint('[FCM Background] Clip $clipboardId not in history');
+      return;
+    }
+
+    // Images and files need a download and a share sheet, neither of which
+    // CopyActivity can do. Leave no cache so it routes to the app instead.
+    if (match.isImage || match.isFile) {
+      debugPrint(
+        '[FCM Background] $clipboardId is a file - app will handle it',
+      );
+      return;
+    }
+
+    await _writePendingCopy(match);
+  } on Object catch (e) {
+    // Object, not Exception. The doc above promises this never throws, but a
+    // bad cast raises TypeError - an Error - which an Exception-only handler
+    // lets escape, and an exception escaping a background isolate stops later
+    // messages from being handled at all.
+    debugPrint('[FCM Background] Prefetch failed (tap will open app): $e');
+  }
+}
+
+/// Note that a push arrived naming [clipboardId], for PushRegistry to check.
+///
+/// The Kotlin side (PushRegistry.kt) records the same file for foreground
+/// deliveries; this covers background and terminated ones. Which of the two
+/// runs depends on app state, so both write it and the store is keyed by id.
+///
+/// Best effort: a failure here costs one silent notification tap, which beats
+/// copying a clip whose id nothing vouched for.
+Future<void> _recordIncomingPush(String clipboardId) async {
+  // Keep in step with PushRegistry.kt.
+  const ttl = Duration(hours: 24);
+  const maxEntries = 50;
+
+  try {
+    final dir = await getApplicationSupportDirectory();
+    final file = File('${dir.path}/pending_push.json');
+
+    final entries = <String, int>{};
+    if (file.existsSync()) {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is Map) {
+        decoded.forEach((key, value) {
+          if (key is String && value is int) entries[key] = value;
+        });
+      }
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    entries[clipboardId] = now;
+
+    final cutoff = now - ttl.inMilliseconds;
+    entries.removeWhere((_, at) => at < cutoff);
+
+    if (entries.length > maxEntries) {
+      final newest = entries.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      entries
+        ..clear()
+        ..addEntries(newest.take(maxEntries));
+    }
+
+    await file.writeAsString(jsonEncode(entries), flush: true);
+    debugPrint('[FCM Background] Recorded push for $clipboardId');
+  } on Object catch (e) {
+    debugPrint('[FCM Background] Could not record push: $e');
+  }
+}
+
+/// Stage one clip's plaintext where CopyActivity can read it synchronously.
+///
+/// Deliberately holds a single clip and is deleted by CopyActivity the moment
+/// it is read, so plaintext is at rest only between the push arriving and the
+/// user acting on it. Lives in the app-private files dir (filesDir), which is
+/// the same place the widget already keeps its rows.
+Future<void> _writePendingCopy(ClipboardItem item) async {
+  final dir = await getApplicationSupportDirectory();
+  final file = File('${dir.path}/pending_copy.json');
+
+  await file.writeAsString(
+    jsonEncode({
+      'id': item.id,
+      'content': item.content,
+      'contentType': item.contentType.value,
+      'richTextFormat': item.richTextFormat?.value,
+    }),
+    flush: true,
+  );
+
+  debugPrint('[FCM Background] ✅ Staged clip ${item.id} for instant copy');
 }
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // debugPrint is NOT stripped from release builds - it formats its argument
+  // and pushes it through a throttling queue. This app is always resident and
+  // logs on the 5-second clipboard tick and once per history item, so in
+  // release that is a steady drip of string building and timer work for output
+  // nobody can read. Silence it there; debug and profile builds are untouched.
+  if (kReleaseMode) {
+    debugPrint = (message, {wrapWidth}) {};
+  }
 
   // Suppress RawKeyboard assertion errors on Windows (known Flutter issue)
   // This occurs when Windows sends key events with invalid modifier flags
@@ -89,25 +254,59 @@ Future<void> main(List<String> args) async {
     };
   }
 
+  // Only one desktop instance may run. Without this, the ghostcopy:// registry
+  // entry starts a whole second app every time Google OAuth redirects back -
+  // second window, second tray icon, second hotkey - and the callback lands in
+  // that new process, so the running app never signs in and the browser sits
+  // on the callback page forever.
+  //
+  // --send-file is exempt: it is a headless one-shot that uploads and exits
+  // without any UI, so a second process there is harmless and simpler.
+  if (_isDesktop() && !args.contains('--send-file')) {
+    final isPrimary = await SingleInstance.instance.acquire(args);
+    if (!isPrimary) {
+      // Arguments were handed to the running instance; nothing else to do.
+      exit(0);
+    }
+  }
+
   // Check if app was launched at startup (for hidden mode)
   final launchedAtStartup = args.contains('--launched-at-startup');
 
   // Start periodic cleanup timer (every 15 minutes)
   TempFileService.instance.startPeriodicCleanup();
 
+  // Sweep last session's temp files, but do not hold startup for it.
+  //
+  // This walks the temp directory, and on a cold start that disk work measured
+  // ~340ms - longer than Supabase.initialize() beside it, so it, not Supabase,
+  // was setting the length of the await below. Nothing on the startup path
+  // depends on the sweep: it is housekeeping for files already orphaned by a
+  // previous run, and a few more seconds on disk costs nothing.
+  unawaited(
+    TempFileService.instance.cleanupTempFiles().catchError((Object e) {
+      debugPrint('[Main] ⚠️ Temp file cleanup failed: $e');
+    }),
+  );
+
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
-    // Cleanup old temp files from previous sessions
-    TempFileService.instance.cleanupTempFiles(),
-
     // Initialize Supabase with session persistence
-    Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey),
+    Supabase.initialize(
+      url: _supabaseUrl,
+      publishableKey: _supabaseAnonKey,
+      // supabase_flutter starts its own AppLinks deep-link observer that calls
+      // getSessionFromUrl directly, bypassing _handleDeepLinkArgs. Its default
+      // predicate accepts any URI carrying access_token, so without this the
+      // session-injection hole stays open on that route.
+      authOptions: const FlutterAuthClientOptions(
+        detectSessionInUriPredicate: isTrustedAuthCallback,
+      ),
+    ),
 
     // Register custom URL scheme for OAuth callbacks (Windows only)
-    if (Platform.isWindows)
-      _registerWindowsUrlScheme()
-    else
-      Future<void>.value(),
+    if (Platform.isWindows) _registerWindowsUrlScheme(),
+    if (Platform.isWindows) _registerWindowsContextMenu(),
   ]);
 
   // Initialize services that depend on Supabase
@@ -117,6 +316,16 @@ Future<void> main(List<String> args) async {
   locator
     ..registerSingleton<IAuthService>(authService)
     ..registerSingleton<IDeviceService>(deviceService);
+
+  // Launched from the Explorer context menu ("Send with GhostCopy"). Send the
+  // file and exit WITHOUT building a window, tray icon or hotkey - otherwise
+  // every right-click would leave a second instance and a duplicate tray icon
+  // behind. This runs before any UI is created for that reason.
+  final sendFileIndex = args.indexOf('--send-file');
+  if (sendFileIndex != -1 && sendFileIndex + 1 < args.length) {
+    await _sendFileFromCommandLine(args[sendFileIndex + 1], authService);
+    exit(0);
+  }
 
   // PARALLEL GROUP 2: Auth and Device initialization (both depend on Supabase)
   if (_isDesktop()) {
@@ -247,11 +456,32 @@ Future<void> main(List<String> args) async {
     // Default: Ctrl+Shift+S to show Spotlight window
     // Note: We'll set the callback in MyApp since it needs state access
 
+    // Complete OAuth when the browser hands us back a ghostcopy:// callback -
+    // either in this launch's arguments (app was closed) or forwarded from a
+    // later launch by SingleInstance (app was already running). Without this
+    // nothing ever consumed the callback, so signing in with Google appeared
+    // to do nothing and left the browser tab open.
+    unawaited(_handleDeepLinkArgs(args));
+    // SingleInstance.listen, not .incomingArguments.listen: the server starts
+    // accepting connections inside acquire() near the top of main, but this
+    // runs only after Supabase and the rest of desktop setup. A broadcast
+    // stream has no replay, so a callback forwarded in that window would be
+    // dropped. listen() flushes that backlog.
+    SingleInstance.instance.listen((forwarded) {
+      unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
+      // A second launch without a URL is the user asking for the app, so show
+      // the window rather than silently doing nothing.
+      if (!forwarded.contains('ghostcopy://')) {
+        unawaited(locator<IWindowService>().showSpotlight());
+      }
+    });
+
     runApp(MyApp(launchedAtStartup: launchedAtStartup));
   } else {
     // Mobile app - initialize Firebase and FCM (optional)
     FcmService? fcmService;
-    String? fcmToken;
+    // Deliberately a Future, not an awaited String. See where it is assigned.
+    Future<String?>? fcmTokenFuture;
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
     StreamSubscription<String>? tokenRefreshSubscription;
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
@@ -318,20 +548,49 @@ Future<void> main(List<String> args) async {
         );
       }
 
-      // Get FCM token and update device
-      fcmToken = await fcmService.getToken();
-      if (fcmToken != null) {
+      // Start fetching the FCM token, but do NOT wait for it here.
+      //
+      // getToken() is a network round trip to Google's registration servers -
+      // routinely 1-3s on a cold start, and unbounded on a bad connection. It
+      // used to be awaited before runApp(), so every launch held on a blank
+      // screen for it even though nothing in the first frame needs a push token:
+      // both consumers (device registration, and the welcome screen's
+      // post-sign-in callback) run well after the UI is on screen and simply
+      // await this future when they get there.
+      fcmTokenFuture = fcmService.getToken().then((token) {
         debugPrint(
-          '[App] Got FCM token, will update device after registration',
+          token != null
+              ? '[App] FCM token ready'
+              : '[App] ⚠️ No FCM token - push will not arrive',
         );
-      }
+        return token;
+      });
+
+      // Nothing awaits this future until after startup, so an early failure
+      // would otherwise surface as an unhandled async error and take down the
+      // zone. Push is optional; startup is not.
+      unawaited(
+        fcmTokenFuture.catchError((Object e) {
+          debugPrint('[App] ⚠️ FCM token fetch failed: $e');
+          return null;
+        }),
+      );
 
       // Listen for token refresh and update device (store subscription for cleanup)
       tokenRefreshSubscription = fcmService.tokenRefreshStream.listen((
         newToken,
       ) async {
         debugPrint('[App] 🔄 FCM token refreshed, updating device...');
-        await deviceService.updateFcmToken(newToken);
+        // updateFcmToken() silently returns when the device has not been
+        // registered yet, and a refresh can land before startup registration
+        // finishes - dropping the new token and leaving a dead one on the row.
+        // registerCurrentDevice() upserts and now carries the token, so this
+        // is safe in one write.
+        try {
+          await deviceService.registerCurrentDevice(fcmToken: newToken);
+        } on Exception catch (e) {
+          debugPrint('[App] ⚠️ Could not store refreshed FCM token: $e');
+        }
       });
 
       // Handle foreground messages (when app is running) - store subscription
@@ -377,9 +636,31 @@ Future<void> main(List<String> args) async {
       );
     }
 
+    // Draw behind the status and navigation bars.
+    //
+    // The strip beside a punch-hole or notch holds only the clock, signal and
+    // battery - the OS draws those over whatever is underneath. Leaving it as
+    // an opaque bar wasted a band of screen on every modern phone. The AppBar
+    // now extends up into it (Material adds MediaQuery.padding.top to its own
+    // height automatically), so the header's surface colour runs to the very
+    // top and its content still begins below the cutout.
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        // Transparent, not coloured: the AppBar behind it supplies the colour.
+        statusBarColor: Colors.transparent,
+        // Light glyphs, because everything behind them is the dark theme.
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark, // iOS reads this one
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarContrastEnforced: false,
+      ),
+    );
+
     runApp(
       MyApp(
-        fcmToken: fcmToken,
+        fcmTokenFuture: fcmTokenFuture,
         tokenRefreshSubscription: tokenRefreshSubscription,
         foregroundMessageSubscription: foregroundMessageSubscription,
         messageOpenedAppSubscription: messageOpenedAppSubscription,
@@ -398,7 +679,7 @@ final supabase = Supabase.instance.client;
 
 class MyApp extends StatefulWidget {
   const MyApp({
-    this.fcmToken,
+    this.fcmTokenFuture,
     this.tokenRefreshSubscription,
     this.foregroundMessageSubscription,
     this.messageOpenedAppSubscription,
@@ -406,7 +687,7 @@ class MyApp extends StatefulWidget {
     super.key,
   });
 
-  final String? fcmToken;
+  final Future<String?>? fcmTokenFuture;
   final StreamSubscription<String>? tokenRefreshSubscription;
   final StreamSubscription<RemoteMessage>? foregroundMessageSubscription;
   final StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
@@ -499,12 +780,11 @@ class _MyAppState extends State<MyApp> {
       // Set up tray right-click to show custom menu
       (locator<ITrayService>() as TrayService).onRightClick = _showTrayMenu;
 
-      // Register global hotkey with state-aware callback
-      const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
-      locator<IHotkeyService>().registerHotkey(
-        defaultHotkey,
-        _handleHotkeySpotlight,
-      );
+      // Register the global hotkey the user chose, falling back to the default
+      // only when nothing has been saved. This used to always register the
+      // hardcoded default, so a customised shortcut was discarded on restart.
+      _onHotkeyPressed = _handleHotkeySpotlight;
+      unawaited(_registerSavedHotkey());
     } else {
       // Mobile: Check if user is already signed in
       final currentUser = locator<IAuthService>().currentUser;
@@ -512,7 +792,40 @@ class _MyAppState extends State<MyApp> {
         // User is already authenticated, skip welcome screen
         _mobileAuthComplete = true;
         debugPrint('[Mobile] User already signed in, skipping welcome screen');
+
+        // Persist the FCM token on THIS path too. It was only ever written
+        // inside MobileWelcomeScreen's onAuthComplete callback, which never
+        // runs for an already-signed-in user - the welcome screen is skipped
+        // entirely. So the token was fetched on every launch and thrown away,
+        // and the devices row kept whatever token happened to be current at
+        // first sign-in. FCM rotates tokens (reinstall, cleared data, restore
+        // to a new device), and every rotation silently killed push until the
+        // user signed out and back in.
+        unawaited(_registerDeviceForPush());
       }
+    }
+  }
+
+  /// Register this device and store its current FCM token.
+  ///
+  /// Safe to run on every launch: registerCurrentDevice() upserts, and
+  /// updateFcmToken() is a no-op write when the value has not changed.
+  Future<void> _registerDeviceForPush() async {
+    // Awaited here rather than at startup: by the time this runs the UI is
+    // already on screen, so waiting on Google's registration servers costs the
+    // user nothing.
+    final token = await widget.fcmTokenFuture;
+    try {
+      await locator<IDeviceService>().registerCurrentDevice();
+      if (token != null) {
+        await locator<IDeviceService>().updateFcmToken(token);
+        debugPrint('[Mobile] ✅ FCM token stored for signed-in device');
+      } else {
+        debugPrint('[Mobile] ⚠️ No FCM token available - push will not arrive');
+      }
+    } on Exception catch (e) {
+      // Push is not worth failing startup over; sync still works without it.
+      debugPrint('[Mobile] ⚠️ Could not register device for push: $e');
     }
   }
 
@@ -698,14 +1011,9 @@ class _MyAppState extends State<MyApp> {
   void _hideTrayMenu() {
     setState(() => _showingTrayMenu = false);
     locator<IWindowService>().hideSpotlight();
-
-    // Test toast notification when minimizing to tray (with delay to ensure window is hidden)
-    Future.delayed(const Duration(milliseconds: 500), () {
-      locator<INotificationService>().showToast(
-        message: 'App closed to tray',
-        duration: const Duration(seconds: 3),
-      );
-    });
+    // No "App closed to tray" toast: hiding to the tray is the app's normal
+    // resting state, so announcing it every time is noise. It was also a
+    // fire-and-forget Future.delayed that could fire after disposal.
   }
 
   Future<void> _openSettingsFromTray() async {
@@ -728,6 +1036,8 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: _navigatorKey,
       title: 'GhostCopy',
       theme: AppTheme.darkTheme,
+      // No overscroll stretch or glow anywhere in the app.
+      scrollBehavior: Adaptive.scrollBehavior,
       debugShowCheckedModeBanner: false,
       home: _buildHome(),
     );
@@ -756,14 +1066,17 @@ class _MyAppState extends State<MyApp> {
     // Mobile app - show welcome screen or main screen based on auth state
     if (!_mobileAuthComplete) {
       return MobileWelcomeScreen(
-        fcmToken: widget.fcmToken,
+        fcmTokenFuture: widget.fcmTokenFuture,
         onAuthComplete: () async {
           // Register device with FCM token after auth
           await locator<IDeviceService>().registerCurrentDevice();
 
-          // Update FCM token if available
-          if (widget.fcmToken != null) {
-            await locator<IDeviceService>().updateFcmToken(widget.fcmToken!);
+          // Update FCM token if available. Resolved by now in practice - the
+          // fetch starts at launch and signing in takes seconds - but awaited
+          // rather than assumed.
+          final token = await widget.fcmTokenFuture;
+          if (token != null) {
+            await locator<IDeviceService>().updateFcmToken(token);
             debugPrint('[Mobile] ✅ Device registered with FCM token');
           }
 
@@ -778,6 +1091,245 @@ class _MyAppState extends State<MyApp> {
 
     // Mobile main screen - show after auth complete
     return const MobileMainScreen();
+  }
+}
+
+/// The shortcut used when the user has never chosen one.
+const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
+
+/// Invoked when the global hotkey fires.
+///
+/// Set by [_MyAppState], which owns the tray/window state the handler needs.
+/// Held at top level so [applyHotkey] can re-register from anywhere (the
+/// settings panel) without threading the callback through the widget tree.
+Future<void> Function()? _onHotkeyPressed;
+
+void _invokeHotkeyCallback() {
+  unawaited(_onHotkeyPressed?.call());
+}
+
+/// Register [hotkey] as the global shortcut and persist it.
+///
+/// Single entry point so the Spotlight callback is wired in exactly one place.
+/// Throws [UnsupportedHotkeyException] if the key cannot be registered; the
+/// previous registration is left in place in that case, and nothing is saved.
+Future<void> applyHotkey(HotKey hotkey) async {
+  final hotkeyService = locator<IHotkeyService>();
+
+  // Register first: if the new combo is rejected, the old one must survive and
+  // nothing should be written to settings.
+  await hotkeyService.registerHotkey(hotkey, _invokeHotkeyCallback);
+
+  if (hotkey != _activeHotkey) {
+    await hotkeyService.unregisterHotkey(_activeHotkey);
+  }
+  _activeHotkey = hotkey;
+
+  await locator<ISettingsService>().setHotkey(hotkey);
+  debugPrint('[Hotkey] Applied ${hotkey.toStorageString()}');
+}
+
+/// The shortcut currently registered with the OS.
+HotKey _activeHotkey = defaultHotkey;
+
+/// Register the saved global hotkey, falling back to [defaultHotkey].
+///
+/// A saved hotkey naming a key this platform cannot register (written by an
+/// older build, which allowed keys the service could not map) falls back rather
+/// than leaving the app with no shortcut at all.
+Future<void> _registerSavedHotkey() async {
+  final hotkeyService = locator<IHotkeyService>();
+  HotKey? saved;
+
+  try {
+    saved = await locator<ISettingsService>().getHotkey();
+  } on Object catch (e) {
+    debugPrint('[Hotkey] Could not read saved hotkey: $e');
+  }
+
+  final wanted = saved ?? defaultHotkey;
+
+  try {
+    await hotkeyService.registerHotkey(wanted, _invokeHotkeyCallback);
+    _activeHotkey = wanted;
+    debugPrint('[Hotkey] Registered ${wanted.toStorageString()}');
+    return;
+  } on UnsupportedHotkeyException catch (e) {
+    debugPrint('[Hotkey] $e - falling back to default');
+  } on Object catch (e) {
+    debugPrint('[Hotkey] Failed to register ${wanted.toStorageString()}: $e');
+  }
+
+  if (wanted == defaultHotkey) return;
+
+  try {
+    await hotkeyService.registerHotkey(defaultHotkey, _invokeHotkeyCallback);
+    _activeHotkey = defaultHotkey;
+    debugPrint(
+      '[Hotkey] Registered default ${defaultHotkey.toStorageString()}',
+    );
+  } on Object catch (e) {
+    debugPrint('[Hotkey] Failed to register default hotkey: $e');
+  }
+}
+
+/// Feed a ghostcopy:// callback URL to Supabase so the session is established.
+///
+/// Handles both `ghostcopy://auth-callback` (Google OAuth) and
+/// `ghostcopy://reset-password`.
+///
+/// The URL is untrusted: Windows registers `ghostcopy://` as `"<exe>" "%1"`
+/// (see [_registerWindowsUrlScheme]), so any web page or local process can put
+/// one in front of this function, and a second launch forwards it here through
+/// SingleInstance. It is therefore validated rather than handed straight to
+/// `getSessionFromUrl`, which would persist whatever session the URL described.
+Future<void> _handleDeepLinkArgs(List<String> args) async {
+  final link = args.firstWhere(
+    (a) => a.startsWith('ghostcopy://'),
+    orElse: () => '',
+  );
+  if (link.isEmpty) return;
+
+  debugPrint('[Main] 🔗 Handling deep link');
+
+  final decision = AuthCallbackDecision.evaluate(link);
+  if (!decision.isAccepted) {
+    debugPrint(
+      '[Main] ⛔ Refused deep link (${decision.rejection!.name}): '
+      '${decision.detail ?? "no detail"}',
+    );
+    return;
+  }
+
+  try {
+    final auth = Supabase.instance.client.auth;
+
+    if (decision.code != null) {
+      // exchangeCodeForSession, not getSessionFromUrl: it requires the PKCE
+      // code verifier this process stored when it started the flow, so a code
+      // the app did not ask for cannot be redeemed.
+      await auth.exchangeCodeForSession(decision.code!);
+    } else {
+      // Email confirmation links carry a one-time token instead of a code,
+      // because a code can only be redeemed on the device that began the flow -
+      // and mail is routinely opened somewhere else. gotrue checks the token
+      // server-side, so possession of the account's mailbox is what is proved.
+      await auth.verifyOTP(
+        tokenHash: decision.tokenHash,
+        type: decision.otpType!,
+      );
+    }
+    debugPrint('[Main] ✅ Session established from deep link');
+
+    // Bring the app forward so the user sees that sign-in worked - they are
+    // currently looking at a browser window.
+    if (locator.isRegistered<IWindowService>()) {
+      await locator<IWindowService>().showSpotlight();
+    }
+  } on Object catch (e) {
+    debugPrint('[Main] ⚠️ Failed to handle deep link: $e');
+  }
+}
+
+/// Upload a file passed on the command line, then return so main() can exit.
+///
+/// Used by the Windows Explorer context menu. Deliberately minimal: no window,
+/// no tray, no hotkey - just auth, upload, done.
+Future<void> _sendFileFromCommandLine(
+  String path,
+  IAuthService authService,
+) async {
+  try {
+    final file = File(path);
+    if (!file.existsSync()) {
+      debugPrint('[SendFile] ✗ No such file: $path');
+      return;
+    }
+
+    final bytes = await file.readAsBytes();
+
+    // Matches the 10MB ceiling enforced by the DB CHECK and storage-presign.
+    const maxBytes = ClipboardLimits.maxFileBytes;
+    if (bytes.length > maxBytes) {
+      debugPrint(
+        '[SendFile] ✗ ${file.path} is ${bytes.length} bytes, over the 10MB limit',
+      );
+      return;
+    }
+
+    await authService.initialize();
+    final userId = authService.currentUserId;
+    if (userId == null) {
+      debugPrint('[SendFile] ✗ Not signed in');
+      return;
+    }
+
+    final filename = path.split(Platform.pathSeparator).last;
+    // Sniffs magic bytes and falls back to the extension, matching how the
+    // drop/paste paths classify files.
+    final typeInfo = FileTypeService.instance.detectFromBytes(bytes, filename);
+
+    await ClipboardRepository.instance.insertFile(
+      userId: userId,
+      deviceType: ClipboardRepository.getCurrentDeviceType(),
+      deviceName: ClipboardRepository.getCurrentDeviceName(),
+      fileBytes: bytes,
+      mimeType: typeInfo.mimeType,
+      contentType: typeInfo.contentType,
+      originalFilename: filename,
+    );
+
+    debugPrint('[SendFile] ✅ Sent $filename (${bytes.length} bytes)');
+  } on Object catch (e) {
+    debugPrint('[SendFile] ✗ Failed to send $path: $e');
+  }
+}
+
+/// Add "Send with GhostCopy" to the Explorer right-click menu for all files.
+///
+/// Written under HKCU so no elevation is needed. `*` covers every file type.
+/// The command passes the clicked path as --send-file, which main() handles
+/// before any UI exists.
+Future<void> _registerWindowsContextMenu() async {
+  try {
+    final exePath = Platform.resolvedExecutable;
+    const key = r'HKCU\Software\Classes\*\shell\GhostCopySend';
+
+    await Process.run('reg', [
+      'add',
+      key,
+      '/ve',
+      '/d',
+      'Send with GhostCopy',
+      '/f',
+    ]);
+    await Process.run('reg', [
+      'add',
+      key,
+      '/v',
+      'Icon',
+      '/d',
+      '"$exePath",0',
+      '/f',
+    ]);
+    // Interpolated, NOT a raw string: r'$key' is the literal text "$key",
+    // so the adjacent literals used to concatenate to `$key\command` and
+    // reg rejected it as a key name with no hive. The menu entry was
+    // created with its label and icon but no command subkey, so clicking
+    // "Send with GhostCopy" did nothing.
+    await Process.run('reg', [
+      'add',
+      '$key\\command',
+      '/ve',
+      '/d',
+      '"$exePath" --send-file "%1"',
+      '/f',
+    ]);
+
+    debugPrint('[Main] ✅ Registered "Send with GhostCopy" context menu');
+  } on Exception catch (e) {
+    debugPrint('[Main] ⚠️ Failed to register context menu: $e');
+    // Non-fatal - continue app startup
   }
 }
 

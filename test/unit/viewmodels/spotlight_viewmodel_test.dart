@@ -105,6 +105,7 @@ void main() {
   setUpAll(() {
     registerFallbackValue(Uint8List(0));
     registerFallbackValue(ContentType.text);
+    registerFallbackValue(RichTextFormat.html);
     registerFallbackValue(
       ClipboardItem(
         id: 'fallback',
@@ -193,6 +194,80 @@ void main() {
     verifyNever(() => clipboardRepository.insert(any()));
     expect(viewModel.errorMessage, contains('Failed to send'));
     expect(viewModel.isSending, isFalse);
+  });
+
+  test('handleSend forwards the selected target devices for HTML', () async {
+    // insertRichText took no targetDeviceTypes at all, so picking "Android
+    // only" and pasting HTML broadcast the clip to every device - silently
+    // ignoring the selection the user had just made in the UI.
+    when(() => authService.currentUserId).thenReturn('user-123');
+    when(
+      () => clipboardRepository.insertRichText(
+        userId: any(named: 'userId'),
+        deviceType: any(named: 'deviceType'),
+        deviceName: any(named: 'deviceName'),
+        content: any(named: 'content'),
+        format: any(named: 'format'),
+        targetDeviceTypes: any(named: 'targetDeviceTypes'),
+      ),
+    ).thenAnswer(
+      (_) async => _clipboardItem(id: 'html-1', content: '<p>x</p>'),
+    );
+
+    viewModel
+      ..updateContent('')
+      ..updateClipboardContent(ClipboardContent.html('<p>x</p>'))
+      ..togglePlatform('android');
+
+    await viewModel.handleSend();
+
+    verify(
+      () => clipboardRepository.insertRichText(
+        userId: 'user-123',
+        deviceType: any(named: 'deviceType'),
+        deviceName: any(named: 'deviceName'),
+        content: '<p>x</p>',
+        format: RichTextFormat.html,
+        targetDeviceTypes: ['android'],
+      ),
+    ).called(1);
+  });
+
+  test('handleSend broadcasts HTML when no target is selected', () async {
+    when(() => authService.currentUserId).thenReturn('user-123');
+    when(
+      () => clipboardRepository.insertRichText(
+        userId: any(named: 'userId'),
+        deviceType: any(named: 'deviceType'),
+        deviceName: any(named: 'deviceName'),
+        content: any(named: 'content'),
+        format: any(named: 'format'),
+        targetDeviceTypes: any(named: 'targetDeviceTypes'),
+      ),
+    ).thenAnswer(
+      (_) async => _clipboardItem(id: 'html-2', content: '<p>y</p>'),
+    );
+
+    viewModel
+      ..updateContent('')
+      ..updateClipboardContent(ClipboardContent.html('<p>y</p>'));
+
+    await viewModel.handleSend();
+
+    // null, not an empty list: null is what the schema reads as "all devices".
+    verify(
+      () => clipboardRepository.insertRichText(
+        userId: 'user-123',
+        deviceType: any(named: 'deviceType'),
+        deviceName: any(named: 'deviceName'),
+        content: '<p>y</p>',
+        format: RichTextFormat.html,
+        // Stated explicitly even though it is the default: asserting that null
+        // reaches the repository IS the point of this test.
+        // ignore: avoid_redundant_argument_values
+        targetDeviceTypes: null,
+      ),
+    ).called(1);
   });
 
   test(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -38,8 +39,16 @@ class WidgetService implements IWidgetService {
   // Singleton instance
   static final WidgetService _instance = WidgetService._internal();
 
+  // Compiled once: the widget refresh strips every rich-text clip it ships.
+  static final _htmlTag = RegExp('<[^>]*>');
+  static final _markdownMarks = RegExp(r'[*_~`#\[\]()]+');
+
   // Method channel for native widget communication
   static const _channel = MethodChannel('com.ghostcopy/widget');
+
+  /// Clips the widget displays, and therefore the only ones whose thumbnails
+  /// are worth keeping on disk.
+  static const int _maxWidgetItems = 5;
 
   // State
   bool _initialized = false;
@@ -74,7 +83,7 @@ class WidgetService implements IWidgetService {
 
     try {
       // Skip initialization on unsupported platforms (desktop)
-      if (!_isMobileOrWeb()) {
+      if (!_isMobilePlatform()) {
         debugPrint(
           '[WidgetService] Platform not supported, skipping initialization',
         );
@@ -141,12 +150,19 @@ class WidgetService implements IWidgetService {
       return;
     }
 
-    if (!_isMobileOrWeb()) {
+    if (!_isMobilePlatform()) {
       return;
     }
 
     try {
-      final widgetData = await _prepareWidgetData(items.take(5).toList());
+      final visible = items.take(_maxWidgetItems).toList();
+      final widgetData = await _prepareWidgetData(visible);
+
+      // Drop thumbnails for clips the widget no longer shows. Nothing used to
+      // delete from this directory - not on clip deletion, not on sign-out -
+      // so every image that ever reached the widget left a permanent file, and
+      // encrypted clips left a permanently decrypted one.
+      unawaited(_pruneThumbnails(visible));
 
       await _channel.invokeMethod('updateWidget', {
         'items': widgetData,
@@ -174,13 +190,12 @@ class WidgetService implements IWidgetService {
     }
 
     try {
-      // Fetch latest 5 items from Supabase
       final repo = _clipboardRepository;
       if (repo == null) {
         debugPrint('[WidgetService] Repository not initialized');
         return;
       }
-      final items = await repo.getHistory(limit: 5);
+      final items = await repo.getHistory(limit: _maxWidgetItems);
 
       // Update widget with new data
       await updateWidgetData(items);
@@ -199,22 +214,29 @@ class WidgetService implements IWidgetService {
   Future<List<Map<String, dynamic>>> _prepareWidgetData(
     List<ClipboardItem> items,
   ) async {
-    final widgetItems = <Map<String, dynamic>>[];
-
-    for (final item in items) {
-      String? thumbnailPath;
-
-      // Generate and cache thumbnail for image items
-      if (item.isImage) {
+    // Thumbnails are fetched together rather than one after another: each miss
+    // is an R2 download plus a compression pass, and awaiting them in sequence
+    // made a five-image widget refresh five serial round-trips on a mobile
+    // connection. Order is preserved because Future.wait preserves it.
+    final thumbnailPaths = await Future.wait(
+      items.map((item) async {
+        if (!item.isImage) return null;
         try {
-          thumbnailPath = await _cacheThumbnailForWidget(item);
+          return await _cacheThumbnailForWidget(item);
         } on Exception catch (e) {
           debugPrint(
             '[WidgetService] Failed to cache thumbnail for ${item.id}: $e',
           );
           // Continue without thumbnail - widget will show placeholder
+          return null;
         }
-      }
+      }),
+    );
+
+    final widgetItems = <Map<String, dynamic>>[];
+
+    for (final (index, item) in items.indexed) {
+      final thumbnailPath = thumbnailPaths[index];
 
       widgetItems.add({
         'id': item.id,
@@ -256,7 +278,14 @@ class WidgetService implements IWidgetService {
       return '🔒 Encrypted content (tap to view)';
     } else if (item.isRichText) {
       // Strip HTML/Markdown tags and truncate
-      final stripped = _stripHtmlMarkdownTags(item.content);
+      // Strip only the head of the clip. Content runs to 100KB and only
+      // maxRichTextLength characters survive, so a 4x margin over that is more
+      // than enough slack for the tags the strip removes.
+      final stripped = _stripHtmlMarkdownTags(
+        item.content.length > maxRichTextLength * 4
+            ? item.content.substring(0, maxRichTextLength * 4)
+            : item.content,
+      );
       return stripped.length > maxRichTextLength
           ? '${stripped.substring(0, maxRichTextLength)}...'
           : stripped;
@@ -274,10 +303,10 @@ class WidgetService implements IWidgetService {
   /// Also removes markdown syntax: ##, **, etc.
   String _stripHtmlMarkdownTags(String content) {
     // Remove HTML tags
-    var stripped = content.replaceAll(RegExp('<[^>]*>'), '');
+    var stripped = content.replaceAll(_htmlTag, '');
 
     // Remove markdown syntax
-    stripped = stripped.replaceAll(RegExp(r'[*_~`#\[\]()]+'), '');
+    stripped = stripped.replaceAll(_markdownMarks, '');
 
     return stripped.trim();
   }
@@ -355,6 +384,58 @@ class WidgetService implements IWidgetService {
     }
   }
 
+  /// Delete cached thumbnails that no longer back a visible widget item.
+  ///
+  /// Best effort: a thumbnail that survives a failed sweep is re-checked on the
+  /// next update, and a missing one is simply regenerated.
+  Future<void> _pruneThumbnails(List<ClipboardItem> visible) async {
+    try {
+      final cacheDir = await _getWidgetCacheDir();
+      final dir = Directory(cacheDir);
+      if (!dir.existsSync()) return;
+
+      final keep = visible.map((item) => '${item.id}.jpg').toSet();
+      var removed = 0;
+
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        if (!name.endsWith('.jpg') || keep.contains(name)) continue;
+
+        try {
+          await entity.delete();
+          removed++;
+        } on FileSystemException {
+          // Another process may hold it; it will be retried next update.
+        }
+      }
+
+      if (removed > 0) {
+        debugPrint('[WidgetService] 🧹 Removed $removed stale thumbnail(s)');
+      }
+    } on Exception catch (e) {
+      debugPrint('[WidgetService] ⚠ Thumbnail prune failed: $e');
+    }
+  }
+
+  /// Delete every cached thumbnail.
+  ///
+  /// For sign-out and account switches, where leaving one user's decrypted
+  /// images on disk for the next user is not acceptable.
+  Future<void> clearThumbnailCache() async {
+    try {
+      final cacheDir = await _getWidgetCacheDir();
+      final dir = Directory(cacheDir);
+      if (!dir.existsSync()) return;
+
+      await dir.delete(recursive: true);
+      _widgetCachePath = null;
+      debugPrint('[WidgetService] ✓ Thumbnail cache cleared');
+    } on Exception catch (e) {
+      debugPrint('[WidgetService] ⚠ Failed to clear thumbnail cache: $e');
+    }
+  }
+
   /// Get widget thumbnail cache directory
   ///
   /// Creates directory if needed:
@@ -412,8 +493,14 @@ class WidgetService implements IWidgetService {
     }
   }
 
-  /// Check if platform supports widgets (mobile or web)
-  bool _isMobileOrWeb() {
+  /// Whether this platform has a home screen widget (Android and iOS only).
+  ///
+  /// The kIsWeb guard comes first because dart:io's Platform THROWS on web, and
+  /// initialize() rethrows - so reaching this on web took the app down rather
+  /// than skipping a feature web does not have. Renamed from _isMobileOrWeb,
+  /// which claimed support this never had.
+  bool _isMobilePlatform() {
+    if (kIsWeb) return false;
     return Platform.isAndroid || Platform.isIOS;
   }
 }

@@ -55,11 +55,15 @@ abstract class IAuthService {
   /// Generate a time-limited token for mobile device linking
   /// Token expires after 5 minutes
   /// Returns token string in format: ghostcopy://link?token={jwt_token}
-  Future<String> generateMobileLinkToken();
-
-  /// Sign in using a mobile link token
-  /// Returns AuthResponse with user data or error if token is expired/invalid
-  Future<AuthResponse> signInWithToken(String token);
+  /// Mint a single-use device-linking token plus the 6-digit PIN that unlocks
+  /// it.
+  ///
+  /// The token goes in the QR code; the PIN is displayed on screen and must be
+  /// typed on the receiving device. Only the PIN's SHA-256 is stored, and the
+  /// server matches it as part of consuming the token, so a photographed QR on
+  /// its own is useless. The passphrase is deliberately NOT included - it is
+  /// entered by hand on each device.
+  Future<({String tokenHash, String pin})> generateMobileLinkToken();
 
   /// Send password reset email to user
   /// Returns true if email sent successfully, false otherwise

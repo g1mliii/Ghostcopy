@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import '../models/clipboard_item.dart';
 
@@ -6,13 +6,25 @@ export 'impl/clipboard_repository.dart';
 
 /// Abstract interface for clipboard data operations
 abstract class IClipboardRepository {
+  /// Number of items in the most recent history load that could not be
+  /// decrypted, i.e. rows stored with is_encrypted = true that the local
+  /// passphrase does not open.
+  ///
+  /// Such items are omitted from the returned list, so without this signal a
+  /// user who signs in on a new device - or whose passphrase does not match -
+  /// simply sees an empty history with no explanation. The UI uses this to
+  /// prompt for the passphrase instead.
+  ValueListenable<int> get undecryptableItemCount;
+
   /// Insert a new clipboard item and return it with generated ID
   Future<ClipboardItem> insert(ClipboardItem item);
 
   /// Insert a file clipboard item (supports all file types under 10MB)
   ///
   /// Uploads file to Supabase Storage and creates DB record with storage_path
-  /// Files are NOT encrypted (too large, would exceed 10MB limit after base64)
+  /// Bytes are encrypted before upload when a passphrase is set - encrypting
+  /// raw bytes costs a flat 32 bytes, so the 10MB limit is unaffected (the old
+  /// "too large after base64" reasoning applied only to the base64 path)
   /// Preserves original filename in metadata
   Future<ClipboardItem> insertFile({
     required String userId,
@@ -27,29 +39,17 @@ abstract class IClipboardRepository {
     List<String>? targetDeviceTypes,
   });
 
-  /// Insert a file with progress reporting (for UI feedback)
+  /// Fetch a single clipboard item by id, decrypted, or null if it is gone.
   ///
-  /// Yields progress values from 0.0 to 1.0 during upload
-  /// Returns the created ClipboardItem when complete
-  /// Throws exceptions for network/storage errors
-  Stream<double> uploadFileWithProgress({
-    required String userId,
-    required String deviceType,
-    required String? deviceName,
-    required Uint8List fileBytes,
-    required String mimeType,
-    required ContentType contentType,
-    String? originalFilename,
-    int? width,
-    int? height,
-    List<String>? targetDeviceTypes,
-  });
+  /// For the notification-tap and deep-link paths, which know exactly which
+  /// clip they want. They used to pull a page of history and scan it.
+  Future<ClipboardItem?> getById(String id);
 
   /// Insert an image clipboard item
   ///
   /// Convenience wrapper around insertFile for images
   /// Uploads image to Supabase Storage and creates DB record with storage_path
-  /// Images are NOT encrypted (too large, would exceed 10MB limit after base64)
+  /// Bytes are encrypted before upload when a passphrase is set - see insertFile
   Future<ClipboardItem> insertImage({
     required String userId,
     required String deviceType,
@@ -71,6 +71,7 @@ abstract class IClipboardRepository {
     required String? deviceName,
     required String content,
     required RichTextFormat format,
+    List<String>? targetDeviceTypes,
   });
 
   /// Download file bytes from Supabase Storage

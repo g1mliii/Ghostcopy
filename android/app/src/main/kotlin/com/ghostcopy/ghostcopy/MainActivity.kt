@@ -1,11 +1,14 @@
 package com.ghostcopy.ghostcopy
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
@@ -18,22 +21,47 @@ class MainActivity : FlutterActivity() {
     private companion object {
         private const val TAG = "MainActivity"
         private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
+
+        /**
+         * Largest shared payload accepted, in bytes.
+         *
+         * Mirrors ClipboardLimits.maxFileBytes on the Dart side and the CHECK
+         * constraint in supabase/schema.sql. Change all three together.
+         */
+        private const val MAX_SHARE_BYTES = 10 * 1024 * 1024
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
         private const val WIDGET_CHANNEL = "com.ghostcopy/widget"
+
+        // Must match the manifest's default_notification_channel_id, the
+        // channelId the edge function sets on the push, and the channel
+        // flutter_local_notifications uses for in-app notifications.
+        private const val NOTIFICATION_CHANNEL_ID = "ghostcopy_notifications"
+
+        // Mirrors _keyScreenshotProtection in settings_service.dart.
+        private const val PREF_SCREENSHOT_PROTECTION = "screenshot_protection"
     }
 
     // Method channels (stored to prevent memory leaks)
     private var shareChannel: MethodChannel? = null
     private var widgetChannel: MethodChannel? = null
 
+    // Guards against re-copying the same clip every time the activity resumes
+    // while a notification-launched intent is still attached.
+    private var lastHandledFcmClipboardId: String? = null
+
+    // A notification action that Dart has not collected yet. Written whenever a
+    // tap is handled, cleared when Dart drains it through
+    // "getPendingNotificationAction". This is what makes a cold-start tap work:
+    // the action waits here instead of being fired at a Dart handler that does
+    // not exist yet.
+    private var pendingNotificationAction: Map<String, String>? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Security: Prevent screenshots and recents preview
-        window.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SECURE,
-            android.view.WindowManager.LayoutParams.FLAG_SECURE
-        )
+        ensureNotificationChannel()
+
+        applyScreenshotProtection()
 
         // Method channel for share sheet operations
         shareChannel = MethodChannel(
@@ -46,6 +74,54 @@ class MainActivity : FlutterActivity() {
                     // Share was processed, close the activity
                     finish()
                     result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // Native toast channel. Flutter's in-app toast is a custom overlay that
+        // does not look like the platform, so short confirmations ("Copied to
+        // clipboard") go through android.widget.Toast instead.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            NOTIFICATION_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "showNativeToast" -> {
+                    val message = call.argument<String>("message")
+                    if (message.isNullOrEmpty()) {
+                        result.error("INVALID_ARGS", "message is required", null)
+                    } else {
+                        val long = call.argument<Boolean>("long") ?: false
+                        Toast.makeText(
+                            this,
+                            message,
+                            if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
+                        ).show()
+                        result.success(true)
+                    }
+                }
+                "setScreenshotProtection" -> {
+                    val enabled = call.argument<Boolean>("enabled")
+                    if (enabled == null) {
+                        result.error("INVALID_ARGS", "enabled is required", null)
+                    } else {
+                        setSecureFlag(enabled)
+                        result.success(true)
+                    }
+                }
+                // Drain a notification tap that arrived before Dart was ready.
+                //
+                // onResume() fires while the Dart entrypoint is still booting on
+                // a cold start, so pushing the action at Dart (invokeMethod) is
+                // a race the push loses: MobileMainScreen.initState() registers
+                // the receiving handler over a second later, and a platform ->
+                // Dart message with no handler is discarded silently. This
+                // handler is registered in configureFlutterEngine, i.e. before
+                // the entrypoint runs, so it is always ready to be asked.
+                "getPendingNotificationAction" -> {
+                    result.success(pendingNotificationAction)
+                    pendingNotificationAction = null
                 }
                 else -> result.notImplemented()
             }
@@ -85,9 +161,63 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // A tapped push notification can land here rather than on CopyActivity:
+        // the backend does set an FCM clickAction of COPY_ACTION
+        // (supabase/functions/send-clipboard-notification/index.ts), but that
+        // routing does not always apply - image and file clips are never staged
+        // for CopyActivity, and other platforms carry no clickAction at all.
+        // FCM delivers the message's `data` entries as intent extras, so the
+        // clip id arrives here; fetch and copy it through the existing
+        // RLS-scoped path, once handleFcmLaunchIntent has established that a
+        // push really named it.
+        handleFcmLaunchIntent(intent)
+    }
+
+    /**
+     * Copy the clip a push notification refers to, if this launch came from one.
+     *
+     * Any content in the extras is ignored - the push deliberately carries none.
+     *
+     * `clipboard_id` is resolved against Supabase under RLS, so it can only ever
+     * name a row belonging to the signed-in user. That is not by itself enough:
+     * this activity is exported (it is the LAUNCHER), so any installed app can
+     * send an explicit intent with an id of its choosing and thereby pick WHICH
+     * of the user's clips is decrypted onto the clipboard and WHEN - enough to
+     * plant a stale wallet address before a paste, or to stage a clip and read
+     * it back once the user's Back press hands focus to the caller. So the id is
+     * accepted only when a push actually named it; see [PushRegistry].
+     */
+    private fun handleFcmLaunchIntent(launchIntent: Intent?) {
+        val extras = launchIntent?.extras ?: return
+        val clipboardId = extras.getString("clipboard_id") ?: return
+        if (clipboardId.isEmpty() || clipboardId == lastHandledFcmClipboardId) return
+
+        if (!PushRegistry.consume(this, clipboardId)) {
+            Log.w(TAG, "⛔ Ignoring clipboard_id with no matching push")
+            // Drop it so a resume loop does not retry the same rejected id.
+            launchIntent.removeExtra("clipboard_id")
+            return
+        }
+
+        lastHandledFcmClipboardId = clipboardId
+        val contentType = extras.getString("content_type") ?: "text"
+        val deviceType = extras.getString("device_type") ?: "Another device"
+
+        Log.d(TAG, "📬 Launched from notification for clip $clipboardId")
+        fetchAndCopyClipboardItem(clipboardId, contentType, deviceType)
+
+        // Don't re-copy on the next resume (e.g. returning from the background).
+        launchIntent.removeExtra("clipboard_id")
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the intent so Flutter can access it
+
+        // A notification tapped while the app is already running arrives here.
+        handleFcmLaunchIntent(intent)
 
         // Handle share intent from another app
         if (intent.action == Intent.ACTION_SEND) {
@@ -101,6 +231,22 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * Typed EXTRA_STREAM lookup.
+     *
+     * The single-argument getParcelableExtra has been deprecated since API 33;
+     * the typed overload is also the safe one, because it will not hand back an
+     * object of an unexpected class from an intent any installed app can send.
+     */
+    @Suppress("DEPRECATION")
+    private fun streamExtra(intent: Intent): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+        }
+    }
+
     private fun handleShareIntent(intent: Intent) {
         when {
             intent.type?.startsWith("text/") == true -> {
@@ -110,14 +256,14 @@ class MainActivity : FlutterActivity() {
                 }
             }
             intent.type?.startsWith("image/") == true -> {
-                val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                val imageUri = streamExtra(intent)
                 if (imageUri != null) {
                     saveSharedImageFast(imageUri)
                 }
             }
             // Handle all other file types (PDFs, DOCs, ZIPs, etc.)
             else -> {
-                val fileUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                val fileUri = streamExtra(intent)
                 if (fileUri != null) {
                     saveSharedFileFast(fileUri)
                 }
@@ -138,40 +284,111 @@ class MainActivity : FlutterActivity() {
         finish()
     }
 
+    /**
+     * Size of the content behind [uri], or null when it cannot be determined.
+     *
+     * Checked BEFORE reading. readBytes() pulls the whole stream into memory,
+     * so validating the size afterwards meant sharing a multi-gigabyte video
+     * allocated all of it just to reject it - an OOM kill rather than a toast.
+     */
+    private fun contentSize(uri: Uri): Long? {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                    return cursor.getLong(index)
+                }
+            }
+
+        return try {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { fd ->
+                fd.length.takeIf { it != android.content.res.AssetFileDescriptor.UNKNOWN_LENGTH }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Read at most [limit] bytes, or null if the stream is longer.
+     *
+     * The bound matters even when [contentSize] answered: a provider can report
+     * one size and then serve more.
+     */
+    private fun readBounded(uri: Uri, limit: Int): ByteArray? {
+        return contentResolver.openInputStream(uri)?.use { stream ->
+            val buffer = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val read = stream.read(chunk)
+                if (read <= 0) break
+                total += read
+                if (total > limit) return null
+                buffer.write(chunk, 0, read)
+            }
+            buffer.toByteArray()
+        }
+    }
+
+    /**
+     * Read a shared URI, enforcing the size ceiling and reporting failures.
+     *
+     * Both share paths need exactly this: a declared-size pre-check, a bounded
+     * read, an empty check, and a toast plus finish() on each failure. They
+     * carried their own copies, differing only in the noun in the messages.
+     *
+     * Returns null when the share cannot proceed, having already told the user
+     * and closed the activity.
+     */
+    private fun readSharedBytes(uri: Uri, noun: String): ByteArray? {
+        // Size first, then a bounded read - never readBytes() on untrusted
+        // content of unknown length.
+        val declaredSize = contentSize(uri)
+        if (declaredSize != null && declaredSize > MAX_SHARE_BYTES) {
+            Log.e(TAG, "❌ $noun too large: $declaredSize bytes (max: $MAX_SHARE_BYTES)")
+            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
+            return null
+        }
+
+        val bytes = readBounded(uri, MAX_SHARE_BYTES)
+        if (bytes == null) {
+            Log.e(TAG, "❌ $noun exceeded $MAX_SHARE_BYTES bytes while reading")
+            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
+            return null
+        }
+
+        if (bytes.isEmpty()) {
+            Log.e(TAG, "❌ Failed to read $noun from URI: $uri")
+            failShare("Failed to read ${noun.lowercase()}")
+            return null
+        }
+
+        return bytes
+    }
+
+    /** Tell the user the share failed, then close. */
+    private fun failShare(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        finish()
+    }
+
+    /** The channel Flutter listens on for shared payloads. */
+    private fun shareChannel() = MethodChannel(
+        flutterEngine!!.dartExecutor.binaryMessenger,
+        SHARE_CHANNEL
+    )
+
     private fun saveSharedImageFast(imageUri: Uri) {
         try {
-            // Read image bytes from URI
-            val inputStream = contentResolver.openInputStream(imageUri)
-            val bytes = inputStream?.readBytes()
-            inputStream?.close()
+            val bytes = readSharedBytes(imageUri, "Image") ?: return
 
-            if (bytes == null || bytes.isEmpty()) {
-                Log.e(TAG, "❌ Failed to read image from URI: $imageUri")
-                Toast.makeText(this, "Failed to read image", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            // Validate size (10MB limit)
-            val maxSize = 10 * 1024 * 1024 // 10MB
-            if (bytes.size > maxSize) {
-                Log.e(TAG, "❌ Image too large: ${bytes.size} bytes (max: $maxSize)")
-                Toast.makeText(this, "Image too large (max 10MB)", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            // Get MIME type
             val mimeType = contentResolver.getType(imageUri) ?: "image/*"
 
-            val channel = MethodChannel(
-                flutterEngine!!.dartExecutor.binaryMessenger,
-                SHARE_CHANNEL
-            )
-
-            // Pass raw bytes directly to Flutter (MethodChannel supports ByteArray → Uint8List)
-            // No base64 encoding needed - saves 33% memory overhead!
-            channel.invokeMethod("handleShareImage", mapOf(
+            // Pass raw bytes directly to Flutter (MethodChannel supports
+            // ByteArray -> Uint8List). No base64 encoding needed - saves 33%
+            // memory overhead.
+            shareChannel().invokeMethod("handleShareImage", mapOf(
                 "imageBytes" to bytes,
                 "mimeType" to mimeType
             ))
@@ -181,51 +398,31 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "✅ Shared image: $mimeType, ${bytes.size / 1024}KB")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error reading shared image: ${e.message}", e)
-            Toast.makeText(this, "Failed to share image", Toast.LENGTH_SHORT).show()
-            finish()
+            failShare("Failed to share image")
         }
     }
 
     private fun saveSharedFileFast(fileUri: Uri) {
         try {
-            // Read file bytes from URI
-            val inputStream = contentResolver.openInputStream(fileUri)
-            val bytes = inputStream?.readBytes()
-            inputStream?.close()
+            val bytes = readSharedBytes(fileUri, "File") ?: return
 
-            if (bytes == null || bytes.isEmpty()) {
-                Log.e(TAG, "❌ Failed to read file from URI: $fileUri")
-                Toast.makeText(this, "Failed to read file", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            // Validate size (10MB limit)
-            val maxSize = 10 * 1024 * 1024 // 10MB
-            if (bytes.size > maxSize) {
-                Log.e(TAG, "❌ File too large: ${bytes.size} bytes (max: $maxSize)")
-                Toast.makeText(this, "File too large (max 10MB)", Toast.LENGTH_SHORT).show()
-                finish()
-                return
-            }
-
-            // Get MIME type
             val mimeType = contentResolver.getType(fileUri) ?: "application/octet-stream"
 
-            // Get original filename from URI
+            // Get original filename from URI.
+            // getColumnIndex returns -1 for a provider that does not expose
+            // DISPLAY_NAME, and moveToFirst is false for an empty cursor -
+            // getString() then threw and the whole share failed with "Failed to
+            // share file" for a file that was perfectly shareable.
             val filename = contentResolver.query(fileUri, null, null, null, null)?.use { cursor ->
                 val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                cursor.moveToFirst()
-                cursor.getString(nameIndex)
+                if (nameIndex >= 0 && cursor.moveToFirst()) {
+                    cursor.getString(nameIndex)
+                } else {
+                    null
+                }
             } ?: "file"
 
-            val channel = MethodChannel(
-                flutterEngine!!.dartExecutor.binaryMessenger,
-                SHARE_CHANNEL
-            )
-
-            // Pass raw bytes directly to Flutter
-            channel.invokeMethod("handleShareFile", mapOf(
+            shareChannel().invokeMethod("handleShareFile", mapOf(
                 "fileBytes" to bytes,
                 "mimeType" to mimeType,
                 "filename" to filename
@@ -236,26 +433,55 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "✅ Shared file: $filename ($mimeType), ${bytes.size / 1024}KB")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error reading shared file: ${e.message}", e)
-            Toast.makeText(this, "Failed to share file", Toast.LENGTH_SHORT).show()
-            finish()
+            failShare("Failed to share file")
         }
     }
 
+    /**
+     * MainActivity is exported (it is the LAUNCHER), so any installed app can
+     * send it an explicit intent with an arbitrary action and extras - an
+     * <intent-filter> is not required for explicit intents. This handler must
+     * therefore treat every extra as untrusted.
+     *
+     * `clipboard_content` is deliberately NOT honoured here. Trusting it let a
+     * malicious app write straight to the system clipboard (e.g. substituting a
+     * wallet address) while the toast displayed an attacker-supplied device
+     * name to make the swap look like a legitimate GhostCopy sync. The only
+     * in-app caller, CopyActivity, forwards *just* clipboard_id for the
+     * fetch-from-database path, so nothing legitimate needs the content extra.
+     *
+     * clipboard_id is resolved through the Flutter method channel against
+     * Supabase under RLS, so it can only ever return a row belonging to the
+     * signed-in user. That bounds the damage but does not remove it: choosing
+     * WHICH of the user's own clips is copied, and WHEN, is itself the attack -
+     * re-copying a stale wallet address just before the user pastes, or staging
+     * a clip to read back once focus returns to the caller. Hence the token
+     * check below rather than the `from_notification` boolean it replaced,
+     * which any caller could set.
+     */
     private fun handleCopyAction(intent: Intent) {
-        val clipboardContent = intent.getStringExtra("clipboard_content") ?: ""
+        // from_notification used to be the only gate, and it is an ordinary
+        // boolean extra - any app could set it to true. CopyActivity runs in
+        // this same process, so it can attach the real token instead.
+        if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
+            Log.w(TAG, "⛔ Ignoring COPY_ACTION from an untrusted caller")
+            return
+        }
+
         val clipboardId = intent.getStringExtra("clipboard_id") ?: ""
         val contentType = intent.getStringExtra("content_type") ?: "text"
-        val richTextFormat = intent.getStringExtra("rich_text_format") ?: ""
         val deviceType = intent.getStringExtra("device_type") ?: "Another device"
-        val fromNotification = intent.getBooleanExtra("from_notification", false)
 
-        if (clipboardContent.isNotEmpty()) {
-            // Direct copy from small content in FCM payload
-            copyToClipboard(clipboardContent, contentType, richTextFormat, deviceType)
-        } else if (clipboardId.isNotEmpty() && fromNotification) {
-            // Fallback: Fetch full content from database using clipboard_id
+        if (intent.hasExtra("clipboard_content")) {
+            Log.w(TAG, "⚠️ Ignoring clipboard_content on COPY_ACTION - untrusted source")
+        }
+
+        if (clipboardId.isNotEmpty()) {
+            // Fetch content from the database using clipboard_id (RLS-scoped).
             Log.d(TAG, "📥 Fetching clipboard item $clipboardId from database")
             fetchAndCopyClipboardItem(clipboardId, contentType, deviceType)
+        } else {
+            Log.w(TAG, "⚠️ COPY_ACTION without a usable clipboard_id - ignoring")
         }
     }
 
@@ -307,6 +533,64 @@ class MainActivity : FlutterActivity() {
      *
      * Uses the notifications method channel for consistency with iOS.
      */
+    /**
+     * Create the channel FCM names in its manifest metadata.
+     *
+     * flutter_local_notifications creates this channel lazily, the first time
+     * the app itself shows a local notification - which may never have happened
+     * when a push arrives. A push naming a channel that does not exist is shown
+     * on a default-importance fallback instead, with no heads-up banner. Channels
+     * are persistent and re-creating one with the same id is a no-op, so this is
+     * safe to run on every launch.
+     */
+    /**
+     * Apply the user's screenshot-protection preference to this window.
+     *
+     * Read natively, from the store shared_preferences writes to, rather than
+     * waiting for Dart to call back. FLAG_SECURE governs the Recents preview,
+     * and Recents renders whatever the window looked like when it went to the
+     * background - so a flag applied a second after launch, once Flutter had
+     * booted, would already be too late for the first backgrounding. The window
+     * has to be correct from the moment it exists.
+     *
+     * Defaults to true, matching ISettingsService: protection is the default and
+     * switching it off is the deliberate act.
+     */
+    private fun applyScreenshotProtection() {
+        val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        // shared_preferences namespaces every key it writes with "flutter.".
+        val enabled = prefs.getBoolean("flutter.$PREF_SCREENSHOT_PROTECTION", true)
+        setSecureFlag(enabled)
+    }
+
+    private fun setSecureFlag(enabled: Boolean) {
+        if (enabled) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        Log.d(TAG, "Screenshot protection ${if (enabled) "on" else "off"}")
+    }
+
+    private fun ensureNotificationChannel() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
+
+        manager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "GhostCopy Notifications",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Clips sent from your other devices"
+            }
+        )
+        Log.d(TAG, "✅ Created notification channel $NOTIFICATION_CHANNEL_ID")
+    }
+
     private fun fetchAndCopyClipboardItem(
         clipboardId: String,
         expectedContentType: String,
@@ -327,13 +611,25 @@ class MainActivity : FlutterActivity() {
                 "copy"
             }
 
+            // Park the action first. On a cold start the invokeMethod below is
+            // delivered into the void - Dart registers its handler ~1.5s later,
+            // and Flutter drops platform -> Dart messages that arrive with no
+            // handler attached, without an error or a callback. Dart therefore
+            // pulls this on startup and on resume; the push below only shortens
+            // the warm path, and MobileMainViewModel de-dupes by clipboard id so
+            // the two transports cannot copy the same clip twice.
+            pendingNotificationAction = mapOf(
+                "clipboardId" to clipboardId,
+                "action" to action
+            )
+
             // Invoke Flutter method to fetch clipboard item and perform action
             // Same method call that iOS uses via AppDelegate
             channel.invokeMethod("handleNotificationAction", mapOf(
                 "clipboardId" to clipboardId,
                 "action" to action
             ))
-            Log.d(TAG, "✅ Triggered $action action for clipboard item $clipboardId ($expectedContentType)")
+            Log.d(TAG, "✅ Queued+triggered $action action for clipboard item $clipboardId ($expectedContentType)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)
             Toast.makeText(this, "Failed to process item", Toast.LENGTH_SHORT).show()
@@ -349,6 +645,18 @@ class MainActivity : FlutterActivity() {
      * - Encrypted: Copy encrypted text (user decrypts in app)
      */
     private fun handleWidgetItemClick(intent: Intent) {
+        // MainActivity is exported (LAUNCHER), so an explicit intent with this
+        // action can be sent by any installed app - an <intent-filter> is not
+        // required for explicit delivery. This handler copies an intent-supplied
+        // content_preview to the system clipboard and reads an intent-supplied
+        // thumbnail path from disk, so the caller must be proven to be us.
+        // The widget's own PendingIntent carries the token; an external caller
+        // cannot read it out of app-private SharedPreferences.
+        if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
+            Log.w(TAG, "⚠️ Rejected WIDGET_ITEM_CLICK from an untrusted caller")
+            return
+        }
+
         try {
             val clipboardId = intent.getStringExtra(ClipboardWidgetFactory.KEY_CLIPBOARD_ID) ?: ""
             val contentType = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_TYPE) ?: "text"

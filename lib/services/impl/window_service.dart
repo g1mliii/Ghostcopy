@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
+import '../../ui/theme/colors.dart';
 
 import '../lifecycle_controller.dart';
 import '../window_service.dart';
@@ -25,8 +26,7 @@ import '../window_service.dart';
 /// - Non-essential UI streams (search filters, etc.)
 /// - DO NOT register Realtime clipboard sync stream as Pausable!
 class WindowService implements IWindowService {
-  WindowService({ILifecycleController? lifecycleController})
-    : _lifecycleController = lifecycleController;
+  WindowService({this._lifecycleController});
 
   final ILifecycleController? _lifecycleController;
   bool _isVisible = false;
@@ -51,7 +51,8 @@ class WindowService implements IWindowService {
     const windowOptions = WindowOptions(
       size: Size(_windowWidth, _windowHeight),
       center: true,
-      backgroundColor: Colors.transparent, // Start transparent to support tray menu
+      backgroundColor:
+          Colors.transparent, // Start transparent to support tray menu
       skipTaskbar: true,
       titleBarStyle: TitleBarStyle.hidden, // Borderless window
       windowButtonVisibility: false,
@@ -80,7 +81,7 @@ class WindowService implements IWindowService {
     _lifecycleController?.exitTrayMode();
 
     // Set background color FIRST before any visibility changes
-    await windowManager.setBackgroundColor(const Color(0xFF1A1A1D));
+    await windowManager.setBackgroundColor(GhostColors.surface);
 
     // Hide to avoid warping during resize
     await windowManager.hide();

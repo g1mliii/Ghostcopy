@@ -36,6 +36,7 @@ class LinkDeviceDialog extends StatefulWidget {
 }
 
 class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
+  String? _pin;
   String? _qrData;
   String? _errorMessage;
   bool _isLoading = true;
@@ -57,6 +58,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
 
     // Clear sensitive data from memory
     _qrData = null;
+    _pin = null;
 
     super.dispose();
   }
@@ -68,35 +70,24 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
     });
 
     try {
-      // 1. Generate link token from auth service
-      final linkToken = await widget.authService.generateMobileLinkToken();
+      // 1. Generate the link token and its PIN
+      final link = await widget.authService.generateMobileLinkToken();
 
-      // 2. Extract token hash from deep link
-      final uri = Uri.parse(linkToken);
-      final tokenHash = uri.queryParameters['token'];
-
-      if (tokenHash == null) {
-        throw Exception('Invalid link token format');
-      }
-
-      // 3. Get encrypted passphrase if encryption is enabled
-      String? encryptedPassphrase;
-      if (await widget.encryptionService.isEnabled()) {
-        encryptedPassphrase = await widget.encryptionService.exportPassphraseForQr();
-      }
-
-      // 4. Build QR data JSON
-      final qrDataMap = {
-        'link_token': tokenHash,
-        if (encryptedPassphrase != null)
-          'passphrase_encrypted': encryptedPassphrase,
-        'version': 1,
-      };
+      // 2. Build QR data JSON.
+      //
+      // The passphrase is deliberately NOT included. It used to be shipped
+      // here "encrypted" with a one-time key that was placed in the same
+      // payload, so anyone who photographed the QR obtained both the
+      // passphrase and a token redeemable for an account session. The
+      // passphrase is now typed by hand on each device; the QR only carries
+      // the link token, which is useless without the PIN below.
+      final qrDataMap = {'link_token': link.tokenHash, 'version': 2};
 
       if (!mounted) return;
 
       setState(() {
         _qrData = jsonEncode(qrDataMap);
+        _pin = link.pin;
         _isLoading = false;
       });
 
@@ -146,9 +137,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: GhostColors.background,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400),
         child: Padding(
@@ -159,11 +148,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
               // Header
               Row(
                 children: [
-                  Icon(
-                    Icons.qr_code_2,
-                    color: GhostColors.primary,
-                    size: 24,
-                  ),
+                  Icon(Icons.qr_code_2, color: GhostColors.primary, size: 24),
                   const SizedBox(width: 12),
                   Text(
                     'Link New Device',
@@ -228,10 +213,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                       Text(
                         _errorMessage!,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.red,
-                        ),
+                        style: TextStyle(fontSize: 12, color: Colors.red),
                       ),
                       const SizedBox(height: 16),
                       TextButton(
@@ -254,15 +236,47 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                       data: _qrData!,
                       size: 200,
                       backgroundColor: Colors.white,
-                      eyeStyle: const QrEyeStyle(
-                        eyeShape: QrEyeShape.square,
-                      ),
+                      eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square),
                       dataModuleStyle: const QrDataModuleStyle(
                         dataModuleShape: QrDataModuleShape.square,
                       ),
                     ),
                   ),
                 ),
+
+              // PIN. The QR alone cannot link a device - this must be typed on
+              // the receiving phone, so a photograph or a glance at the screen
+              // is not enough on its own.
+              if (_pin != null) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Enter this PIN on your phone',
+                  style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: GhostColors.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: GhostColors.primary),
+                  ),
+                  child: Text(
+                    // Grouped 3+3 so it is easy to read off the screen.
+                    '${_pin!.substring(0, 3)} ${_pin!.substring(3)}',
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 6,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: GhostColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 16),
 
@@ -364,10 +378,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
         const SizedBox(width: 12),
         Text(
           text,
-          style: TextStyle(
-            fontSize: 13,
-            color: GhostColors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 13, color: GhostColors.textSecondary),
         ),
       ],
     );

@@ -4,14 +4,9 @@ export 'impl/storage_service.dart';
 
 /// Result of file upload operation
 class UploadResult {
-  const UploadResult({
-    required this.storagePath,
-    required this.publicUrl,
-    required this.fileSizeBytes,
-  });
+  const UploadResult({required this.storagePath, required this.fileSizeBytes});
 
   final String storagePath; // Path in storage bucket
-  final String publicUrl; // Public URL to access file
   final int fileSizeBytes; // Size of uploaded file
 
   @override
@@ -24,7 +19,8 @@ abstract class IStorageService {
   /// Upload file bytes to Supabase Storage
   ///
   /// Creates path: user_id/clipboard_id/filename
-  /// Returns UploadResult with storage path and public URL
+  /// Returns UploadResult with the storage path (the bucket is private; read
+  /// back through a signed URL from storage-presign)
   Future<UploadResult> uploadFile({
     required String userId,
     required String clipboardId,

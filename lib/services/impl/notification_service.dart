@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../../ui/theme/animations.dart';
+
 import '../../ui/theme/colors.dart';
 import '../../ui/theme/typography.dart';
 import '../game_mode_service.dart';
@@ -17,11 +19,7 @@ import '../window_service.dart';
 ///
 /// This ensures toasts are always visible, even when app is in tray.
 class NotificationService implements INotificationService {
-  NotificationService({
-    IWindowService? windowService,
-    IGameModeService? gameModeService,
-  }) : _windowService = windowService,
-       _gameModeService = gameModeService;
+  NotificationService({this._windowService, this._gameModeService});
 
   final IWindowService? _windowService;
   final IGameModeService? _gameModeService;
@@ -51,8 +49,12 @@ class NotificationService implements INotificationService {
 
   Future<void> _initializeLocalNotifications() async {
     // Android initialization
+    // Not ic_launcher: Android builds status bar icons from the alpha channel
+    // only, painting every opaque pixel flat white, so the full-colour launcher
+    // icon shows up as a white square. ic_stat_ghostcopy is the alpha-only
+    // silhouette, and matches what FCM-displayed pushes use.
     const androidSettings = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
+      '@drawable/ic_stat_ghostcopy',
     );
 
     // iOS/macOS initialization
@@ -82,7 +84,7 @@ class NotificationService implements INotificationService {
     );
 
     await _flutterLocalNotificationsPlugin.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: _onNotificationResponse,
     );
 
@@ -274,10 +276,10 @@ class NotificationService implements INotificationService {
         '[NotificationService] Attempting to show system notification ID: $id',
       );
       await _flutterLocalNotificationsPlugin.show(
-        id,
-        title,
-        body,
-        details,
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: details,
         payload: actionLabel,
       );
       debugPrint(
@@ -404,8 +406,14 @@ class NotificationService implements INotificationService {
     _dismissTimer?.cancel();
     _dismissTimer = null;
 
-    _currentOverlay?.remove();
+    // mounted, because remove() asserts on an entry that was never inserted -
+    // which is the state left behind if overlay.insert() threw after the field
+    // was assigned.
+    final entry = _currentOverlay;
     _currentOverlay = null;
+    if (entry != null && entry.mounted) {
+      entry.remove();
+    }
   }
 
   @override
@@ -443,20 +451,28 @@ class _ToastWidgetState extends State<_ToastWidget>
     super.initState();
 
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: GhostAnimations.slow,
       vsync: this,
     );
 
     // Slide down from top (instead of up from bottom)
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, -1), // Start above (hidden)
-      end: Offset.zero, // End at position
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _slideAnimation =
+        Tween<Offset>(
+          begin: const Offset(0, -1), // Start above (hidden)
+          end: Offset.zero, // End at position
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: GhostAnimations.entranceCurve,
+          ),
+        );
 
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: GhostAnimations.entranceCurve,
+      ),
+    );
 
     _controller.forward();
   }
@@ -552,19 +568,27 @@ class _ClickableToastWidgetState extends State<_ClickableToastWidget>
     super.initState();
 
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: GhostAnimations.slow,
       vsync: this,
     );
 
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1), // Start below
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _slideAnimation =
+        Tween<Offset>(
+          begin: const Offset(0, 1), // Start below
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: GhostAnimations.entranceCurve,
+          ),
+        );
 
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: GhostAnimations.entranceCurve,
+      ),
+    );
 
     _controller.forward();
   }

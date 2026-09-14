@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
+import '../../utils/platform_label.dart';
 import '../device_service.dart';
 
 /// Concrete implementation of IDeviceService
@@ -61,7 +62,7 @@ class DeviceService implements IDeviceService {
   }
 
   @override
-  Future<void> registerCurrentDevice() async {
+  Future<void> registerCurrentDevice({String? fcmToken}) async {
     _ensureInitialized();
     _ensureAuthenticated();
 
@@ -70,7 +71,7 @@ class DeviceService implements IDeviceService {
       final deviceType = ClipboardRepository.getCurrentDeviceType();
       final deviceName =
           ClipboardRepository.getCurrentDeviceName() ??
-          '${_capitalizeFirst(deviceType)} Device';
+          '${platformLabel(deviceType)} Device';
 
       debugPrint(
         '[DeviceService] Registering device: $deviceType ($deviceName)',
@@ -84,8 +85,12 @@ class DeviceService implements IDeviceService {
             'user_id': userId,
             'device_type': deviceType,
             'device_name': deviceName,
-            'fcm_token':
-                null, // Desktop doesn't use FCM, mobile will update later
+            // Upsert writes every column, so this CLEARS any stored token
+            // unless one is supplied. Mobile callers pass their token here so
+            // registration is a single write; previously they followed this
+            // with updateFcmToken(), which cost a second round-trip and left a
+            // window in between where push was broken for the device.
+            'fcm_token': fcmToken,
             'last_active': DateTime.now().toUtc().toIso8601String(),
           }, onConflict: 'user_id,device_type,device_name')
           .select('id')
@@ -177,6 +182,42 @@ class DeviceService implements IDeviceService {
 
       debugPrint('[DeviceService] ✅ FCM token updated');
     } on PostgrestException catch (e) {
+      if (e.code == '23505') {
+        // devices_fcm_token_global_unique: this registration token is still
+        // claimed by a row on another account, usually because the device
+        // switched accounts without the old rows being cleaned up. Reclaim it,
+        // otherwise push silently never arrives on this device.
+        debugPrint(
+          '[DeviceService] ⚠️ FCM token already claimed by another account - '
+          'reclaiming it for this device',
+        );
+        try {
+          await _supabase
+              .from('devices')
+              .delete()
+              .eq('fcm_token', fcmToken)
+              .neq('id', _currentDeviceId!);
+
+          await _supabase
+              .from('devices')
+              .update({
+                'fcm_token': fcmToken,
+                'last_active': DateTime.now().toUtc().toIso8601String(),
+              })
+              .eq('id', _currentDeviceId!);
+
+          debugPrint('[DeviceService] ✅ FCM token reclaimed');
+          return;
+        } on Exception catch (retryError) {
+          // RLS scopes the delete to the caller's own rows, so a row owned by a
+          // different account cannot be removed from here and this will fail.
+          debugPrint(
+            '[DeviceService] ❌ Could not reclaim FCM token - push will not '
+            'arrive on this device: $retryError',
+          );
+          return;
+        }
+      }
       debugPrint(
         '[DeviceService] ❌ Postgres error updating FCM token: ${e.message}',
       );
@@ -342,11 +383,5 @@ class DeviceService implements IDeviceService {
     _cachedDevices = null;
     _lastDeviceFetch = null;
     debugPrint('[DeviceService] Cache invalidated');
-  }
-
-  /// Capitalize first letter of a string
-  String _capitalizeFirst(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
   }
 }

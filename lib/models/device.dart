@@ -1,3 +1,5 @@
+import '../utils/platform_label.dart';
+
 /// Represents a registered device for a user
 ///
 /// Devices are registered in Supabase to enable:
@@ -32,7 +34,8 @@ class Device {
   final String userId;
   final String deviceType; // 'windows', 'macos', 'android', 'ios', 'linux'
   final String? deviceName; // User-friendly name or hostname
-  final String? fcmToken; // FCM token for mobile push notifications (null for desktop)
+  final String?
+  fcmToken; // FCM token for mobile push notifications (null for desktop)
   final DateTime lastActive; // Last time device was active
   final DateTime createdAt;
 
@@ -44,8 +47,10 @@ class Device {
       'device_type': deviceType,
       'device_name': deviceName,
       'fcm_token': fcmToken,
-      'last_active': lastActive.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
+      // toUtc(): these land in timestamptz columns, and a local DateTime
+      // serialises without an offset - which Postgres then reads as UTC.
+      'last_active': lastActive.toUtc().toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
     };
   }
 
@@ -115,13 +120,6 @@ class Device {
       return deviceName!;
     }
 
-    // Fallback to capitalized device type
-    return _capitalizeFirst(deviceType);
-  }
-
-  /// Capitalize first letter of a string
-  String _capitalizeFirst(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
+    return platformLabel(deviceType);
   }
 }

@@ -27,10 +27,7 @@ class ContentPatterns {
   /// Pattern matches: {"key": "value"} or [1, 2, 3]
   ///
   /// Security: Uses non-greedy quantifier (.*?) to prevent ReDoS attacks
-  static final json = RegExp(
-    r'^\s*[\{\[].*?[\}\]]\s*$',
-    dotAll: true,
-  );
+  static final json = RegExp(r'^\s*[\{\[].*?[\}\]]\s*$', dotAll: true);
 
   /// Hex color pattern: #RGB, #RRGGBB, #RRGGBBAA
   ///
@@ -55,8 +52,7 @@ class ContentPatterns {
   /// Used by:
   /// - SecurityService: Block auto-send of credit card numbers
   ///
-  /// Matches: 4532148803436467, 4532-1488-0343-6467, 4532 1488 0343 6467
-  static final creditCard = RegExp(
-    r'\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}',
-  );
+  /// Matches: 4111111111111111, 4111-1111-1111-1111, 4111 1111 1111 1111
+  /// (examples must be Luhn-valid to be detected; 4532148803436467 was not)
+  static final creditCard = RegExp(r'\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}');
 }
