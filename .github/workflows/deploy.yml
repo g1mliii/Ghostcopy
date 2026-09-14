@@ -110,7 +110,7 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.117.0
 
       - name: Check credentials
         run: |
@@ -153,7 +153,7 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.117.0
 
       - name: Check credentials
         run: |
@@ -162,8 +162,13 @@ jobs:
             exit 1
           fi
 
-      # No --password: the CLI mints a temporary login role from the access
-      # token, so no database password is needed.
+      # No --password. The CLI mints a temporary login role from the access
+      # token ("Initialising login role..."), so no database password is
+      # needed. Verified from a cold start: with supabase/.temp deleted,
+      # `link` then `db push --dry-run` both succeed non-interactively on
+      # 2.117.0. That behaviour is why the CLI version above is pinned rather
+      # than `latest` - if it ever regressed, this job would need a
+      # SUPABASE_DB_PASSWORD secret.
       - name: Link project
         run: supabase link --project-ref "$PROJECT_REF"
 
