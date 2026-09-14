@@ -69,6 +69,8 @@ Deploys only what changed on a push to `main`, or a chosen target manually:
   `website/package.json`
 - **Edge functions** → Supabase, skipping `_shared` and never touching
   `functions_archive/`
+- **Migrations** → `supabase db push`, drift-checked and dry-run first (see
+  below)
 
 Both run in the `production` GitHub Environment, so you can add required
 reviewers under *Settings → Environments* to make deploys gated.
@@ -105,15 +107,28 @@ base64 -w0 android/app/google-services.json    # Linux
 base64 -i android/app/google-services.json     # macOS
 ```
 
-## Database migrations are NOT automated
+## Database migrations
 
-`supabase db push` is deliberately absent. Per `supabase/README.md` the local and
-production migration histories have **zero overlap** — 33 local files never
-applied, 89 applied migrations not in the repo. Pushing would double-apply DDL
-that already exists.
+Automated as of 2026-09-14, once the local and remote migration histories were
+reconciled (93 matched, zero drift). Before that `db push` would have
+double-applied existing DDL; the recovery is written up in
+`supabase/README.md`.
 
-Migrations stay manual until that history is reconciled via the
-baseline-and-repair process documented in `supabase/README.md`.
+The `migrations` job in `deploy.yml` does three things in order:
+
+1. **Drift check** — fails if any migration applied to production has no file in
+   `supabase/migrations/`. That means someone applied DDL through the dashboard,
+   and pushing on top of it is exactly the situation that caused the original
+   mess.
+2. **Dry run** — prints what would be applied.
+3. **Apply** — `supabase db push`.
+
+**Add required reviewers to the `production` environment.** DDL is the one thing
+in this repo a re-run cannot undo, so a schema change should need a human
+approval. Everything else here is idempotent; this is not.
+
+Apply schema changes as migration files from now on, never through the dashboard
+SQL editor.
 
 ## Known gaps
 

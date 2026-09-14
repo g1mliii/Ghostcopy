@@ -259,43 +259,41 @@ Users must delete old devices before registering new ones if at limit.';
 CREATE OR REPLACE FUNCTION "public"."cleanup_old_clipboard_items"("p_user_id" "uuid", "p_keep_count" integer DEFAULT 15) RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public', 'pg_temp'
-    AS $$                                                                                                                                                                                     
-  declare                                                                                                                                                                                   
-    v_to_delete record;                                                                                                                                                                     
-  begin                                                                                                                                                                                     
-    if auth.uid() is distinct from p_user_id then                                                                                                                                           
-      raise exception 'Unauthorized: Cannot delete clipboard items for other users';                                                                                                        
-    end if;                                                                                                                                                                                 
-                                                                                                                                                                                            
-    if p_keep_count < 0 then                                                                                                                                                                
-      raise exception 'Invalid parameter: p_keep_count must be >= 0';                                                                                                                       
-    end if;                                                                                                                                                                                 
-                                                                                                                                                                                            
-    for v_to_delete in                                                                                                                                                                      
-      select id, storage_path                                                                                                                                                               
-      from clipboard                                                                                                                                                                        
-      where user_id = p_user_id                                                                                                                                                             
-      order by created_at desc                                                                                                                                                              
-      offset p_keep_count                                                                                                                                                                   
-    loop                                                                                                                                                                                    
-      if v_to_delete.storage_path is not null then                                                                                                                                          
-        begin                                                                                                                                                                               
-          perform storage.delete_object('clipboard-files', v_to_delete.storage_path);                                                                                                       
-        exception when others then                                                                                                                                                          
-          raise warning 'Failed to delete storage file %: %', v_to_delete.storage_path, sqlerrm;                                                                                            
-        end;                                                                                                                                                                                
-      end if;                                                                                                                                                                               
-                                                                                                                                                                                            
-      delete from clipboard where id = v_to_delete.id;                                                                                                                                      
-    end loop;                                                                                                                                                                               
-  end;                                                                                                                                                                                      
+    AS $$
+  begin
+    -- service_role is a trusted backend caller and has no auth.uid(); every
+    -- other caller may only clean up its own rows.
+    if auth.role() is distinct from 'service_role'
+       and auth.uid() is distinct from p_user_id then
+      raise exception 'Unauthorized: Cannot delete clipboard items for other users';
+    end if;
+
+    if p_keep_count < 0 then
+      raise exception 'Invalid parameter: p_keep_count must be >= 0';
+    end if;
+
+    -- Set-based, like the _deep variant. The AFTER DELETE trigger
+    -- (cleanup_storage_after_clipboard_delete) removes the R2 object for each
+    -- row that carries a storage_path, so there is nothing to do here for files.
+    delete from clipboard
+    where id in (
+      select id
+      from clipboard
+      where user_id = p_user_id
+      order by created_at desc
+      offset p_keep_count
+    );
+  end;
   $$;
 
 
 ALTER FUNCTION "public"."cleanup_old_clipboard_items"("p_user_id" "uuid", "p_keep_count" integer) OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "public"."cleanup_old_clipboard_items"("p_user_id" "uuid", "p_keep_count" integer) IS 'Deletes old clipboard items. SECURITY: Simple auth check - users can only delete their own items (auth.uid() = p_user_id).';
+COMMENT ON FUNCTION "public"."cleanup_old_clipboard_items"("p_user_id" "uuid", "p_keep_count" integer) IS 'Deletes all but the newest p_keep_count clipboard rows for one user.
+SECURITY: service_role may act for any user; any other caller may only act on
+its own rows (auth.uid() = p_user_id). R2 objects are removed by the
+cleanup_storage_after_clipboard_delete trigger, not here.';
 
 
 
@@ -617,6 +615,42 @@ Desktop-only sends skip the edge function call entirely, saving invocation costs
 Search path is now immutably set to public (fixes security advisory).';
 
 
+
+CREATE OR REPLACE FUNCTION "public"."register_link_token_pin_failure"("p_token" "text", "p_max_attempts" integer DEFAULT 5) RETURNS TABLE("token_live" boolean, "attempts_exhausted" boolean)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_attempts integer;
+BEGIN
+  -- Single statement, so concurrent guesses serialise on the row lock and each
+  -- one is counted.
+  UPDATE public.mobile_link_tokens
+     SET pin_attempts = pin_attempts + 1
+   WHERE token = p_token
+     AND expires_at > now()
+  RETURNING pin_attempts INTO v_attempts;
+
+  IF NOT FOUND THEN
+    -- Unknown or already expired: nothing to count, and the caller reports
+    -- 'expired' either way.
+    RETURN QUERY SELECT false, false;
+    RETURN;
+  END IF;
+
+  IF v_attempts >= p_max_attempts THEN
+    DELETE FROM public.mobile_link_tokens WHERE token = p_token;
+    RETURN QUERY SELECT true, true;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT true, false;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."register_link_token_pin_failure"("p_token" "text", "p_max_attempts" integer) OWNER TO "postgres";
+
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";
@@ -748,6 +782,7 @@ CREATE TABLE IF NOT EXISTS "public"."mobile_link_tokens" (
     "expires_at" timestamp with time zone NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "pin_hash" "text",
+    "pin_attempts" integer DEFAULT 0 NOT NULL,
     CONSTRAINT "mobile_link_tokens_pin_hash_required" CHECK ((("pin_hash" IS NOT NULL) AND ("pin_hash" ~ '^[a-f0-9]{64}$'::"text"))),
     CONSTRAINT "mobile_link_tokens_token_sha256" CHECK (("token" ~ '^[a-f0-9]{64}$'::"text"))
 );
@@ -1287,6 +1322,11 @@ GRANT ALL ON FUNCTION "public"."consume_mobile_link_token"("p_token_hash" "text"
 
 REVOKE ALL ON FUNCTION "public"."notify_mobile_devices_on_clipboard_insert"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."notify_mobile_devices_on_clipboard_insert"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."register_link_token_pin_failure"("p_token" "text", "p_max_attempts" integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."register_link_token_pin_failure"("p_token" "text", "p_max_attempts" integer) TO "service_role";
 
 
 
