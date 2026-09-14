@@ -10,13 +10,14 @@
 
 const CACHE = 'ghostcopy-v2';
 
+// Extensionless, matching what the pages actually link to. Precaching
+// '/download.html' would have cached a 308 to '/download'.
 const PRECACHE = [
     '/',
-    '/index.html',
-    '/download.html',
-    '/faq.html',
-    '/privacy.html',
-    '/terms.html',
+    '/download',
+    '/faq',
+    '/privacy',
+    '/terms',
     '/output.css',
     '/waitlist.js',
     '/icons/ghost.svg',

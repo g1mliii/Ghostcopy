@@ -1,0 +1,7 @@
+# The two pages folded into the FAQ. 301 so anyone holding an old link, and any
+# search engine that indexed one, lands on the replacement rather than on a
+# soft 404.
+/docs.html      /faq   301
+/docs           /faq   301
+/support.html   /faq   301
+/support        /faq   301
