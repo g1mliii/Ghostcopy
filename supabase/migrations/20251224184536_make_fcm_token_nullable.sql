@@ -1,0 +1,42 @@
+-- Recovered from production migration history on 2026-09-14.
+--
+-- This DDL was applied to production on 2025-12-24 18:45:36 through the Supabase
+-- dashboard, which recorded it in supabase_migrations.schema_migrations
+-- but never wrote a file to this directory. The SQL below is that
+-- recorded statement text, verbatim.
+--
+-- It is ALREADY APPLIED. The file exists so the CLI migration history
+-- matches production and `supabase db push` can manage future changes.
+-- Do not edit it and do not re-run it by hand.
+
+-- Make fcm_token nullable in devices table
+-- Desktop devices don't use FCM (they use Supabase Realtime instead)
+-- Only mobile devices (Android/iOS) need FCM tokens for push notifications
+
+-- Step 1: Drop the NOT NULL constraint on fcm_token
+ALTER TABLE devices ALTER COLUMN fcm_token DROP NOT NULL;
+
+-- Step 2: Drop the existing check constraint (length validation)
+ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_fcm_token_check;
+
+-- Step 3: Add new check constraint that allows NULL or validates length
+ALTER TABLE devices ADD CONSTRAINT devices_fcm_token_check
+  CHECK (fcm_token IS NULL OR (length(fcm_token) > 0 AND length(fcm_token) <= 4096));
+
+-- Step 4: Update comment to reflect nullable state
+COMMENT ON COLUMN devices.fcm_token IS 'FCM token for push notifications. NULL for desktop devices (use Realtime), required for mobile (Android/iOS)';
+
+-- Step 5: Create unique index to prevent duplicate device registrations
+-- A device is uniquely identified by: user_id + device_type + device_name
+-- This allows multiple devices of same type if they have different names
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_user_type_name
+  ON devices(user_id, device_type, COALESCE(device_name, ''));
+
+-- Step 6: Add index for querying active devices (for cleanup)
+CREATE INDEX IF NOT EXISTS idx_devices_last_active
+  ON devices(last_active DESC);
+
+-- Step 7: Add index for FCM token lookups (for Edge Function)
+CREATE INDEX IF NOT EXISTS idx_devices_fcm_token
+  ON devices(user_id, device_type)
+  WHERE fcm_token IS NOT NULL;

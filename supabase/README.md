@@ -1,98 +1,93 @@
 # Supabase
 
-## Production is the source of truth
+## The repo is the source of truth
 
-`schema.sql` is a dump of the **live** production schema
-(project `xhbggxftvnlkotvehwmj`). Regenerate it with:
+As of **2026-09-14** the local and remote migration histories are reconciled.
+`supabase/migrations/` describes production exactly:
 
-```bash
-supabase db dump --linked -f supabase/schema.sql   # requires Docker running
+```
+MATCHED both sides : 93
+remote-only (drift): 0
+local-only  (drift): 0
 ```
 
-> **STALE as of 2026-09-14 - do not trust this file.** It was last dumped
-> 2026-09-12, and two migrations reached production after that. Verified by
-> grepping the dump:
->
-> | Object | In production | In `schema.sql` |
-> |---|---|---|
-> | `mobile_link_tokens.pin_attempts` (added 09-13) | yes | **absent** |
-> | `register_link_token_pin_failure()` (added 09-13) | yes | **absent** |
-> | `storage.delete_object` call (removed 09-14) | no | **still present** |
->
-> It is stale in both directions: missing what was added, still carrying what
-> was removed. Re-dump before reasoning about the database from it.
+Schema changes now go in as migration files and reach production through
+`supabase db push`, which CI runs for you. **Do not apply DDL through the
+dashboard SQL editor** — that is what caused the drift described below, and it
+will cause it again.
 
-At the 2026-09-11 capture it contained 5 tables (`clipboard`, `devices`,
-`app_config`, `mobile_link_tokens`, `user_rate_limit`), 5 triggers, 11
-functions, 14 RLS policies and 16 indexes.
-
-## Why `migrations/` does not match production
-
-`migrations/` is **not** empty - it holds four files added since 2026-09-11:
-
-| File | Evidence it is already in production |
-|---|---|
-| `20260911000000_security_hardening.sql` | its own header says "Run this in the Supabase dashboard SQL editor"; commit e43a4dc: "has been applied to production and verified" |
-| `20260911010000_link_token_pin.sql` | QR linking works, which needs the columns it adds |
-| `20260913000000_link_token_pin_attempts.sql` | `exchange-link-token` calls `register_link_token_pin_failure()` and is deployed and working |
-| `20260914000000_repair_cleanup_old_clipboard_items.sql` | commit 50e2a6b found the defect via `supabase db lint --linked`, i.e. against prod |
-
-They are a *record* of DDL already applied, not a queue of DDL to apply. Nothing
-in the git history runs `supabase db push`, `supabase migration repair` or
-creates a baseline migration, and no baseline file exists - so the remote CLI
-history still does not know about any of them.
-
-The production schema was built through the Supabase dashboard's SQL editor,
-which records its own timestamped entries in the remote migration history. The
-hand-written files that used to live in `migrations/` were maintained in
-parallel and **never applied through the CLI**. As of 2026-09-11:
-
-| | Count |
-|---|---|
-| Local files, not in remote history | 33 |
-| Applied in prod, not in repo | 89 |
-| Matched on both sides | **0** |
-
-Zero overlap. Those 33 files are preserved in `migrations_archive/` as a record
-of intent, but they never described what prod actually ran, and applying them
-now would double-apply DDL that already exists.
-
-**Do not run `supabase db push`.** This still holds as of 2026-09-14, and the
-four files above make it more true, not less - a push would now try to re-apply
-them on top of DDL production already has.
-
-Those counts have not been re-measured since 2026-09-11. To check the current
-state (read-only, safe):
+Check the state at any time (read-only, safe):
 
 ```bash
 supabase migration list --linked
 ```
 
-Any row with a `Local` entry and no `Remote` entry is a file `db push` would
-try to re-apply.
+Any row with a `Remote` entry and no `Local` entry means someone applied DDL
+outside the repo. `.github/workflows/deploy.yml` fails on exactly that before
+it pushes anything.
 
-CI does not automate migrations for exactly this reason - see
-`.github/workflows/deploy.yml`, which deploys edge functions only and never
-touches the database.
+### Making a schema change
 
-## If you want CLI-managed migrations again
+```bash
+supabase migration new describe_the_change   # creates a timestamped file
+# edit supabase/migrations/<version>_describe_the_change.sql
+supabase db push --dry-run --linked          # confirm what would run
+```
 
-`supabase db pull` refuses while the histories disagree, and its suggested fix
-is ~122 `supabase migration repair` calls that rewrite the **production**
-migration history table — marking 89 real migrations "reverted" and local files
-"applied". That makes the recorded history describe something that never
-happened, so it was deliberately not done.
+Commit it. On merge to `main`, the `migrations` job in `deploy.yml` checks for
+drift, dry-runs, then applies it. That job runs in the `production` GitHub
+Environment — add required reviewers there so schema changes need approval, as
+a bad migration is the one thing here that a re-run cannot undo.
 
-The honest path, when you want it:
+## `schema.sql`
 
-1. Write `schema.sql` as a single baseline migration, e.g.
-   `migrations/20260911000000_baseline.sql`.
-2. `supabase migration repair --status applied 20260911000000` so the remote
-   history records that baseline.
-3. Take every schema change from then on as a new migration file applied with
-   `supabase db push` — not through the dashboard.
+A dump of the live production schema, for reading. Regenerate with:
 
-Step 2 writes to production metadata, so do it deliberately.
+```bash
+supabase db dump --linked -f supabase/schema.sql   # requires Docker running
+```
+
+Last regenerated 2026-09-14, immediately after reconciliation. It is a
+convenience, not the source of truth — `migrations/` is.
+
+## How the drift happened, and how it was fixed
+
+The schema was originally built through the dashboard's SQL editor, which
+recorded its own timestamped entries in the remote migration history without
+writing files here. By 2026-09-11 the two sides had **zero** overlap:
+
+| | Count |
+|---|---|
+| Applied in prod, no local file | 89 |
+| Local file, not in prod history | 4 |
+| Matched on both sides | **0** |
+
+`supabase db push` was unusable: it refuses when the remote history contains
+versions with no local file, and the four local files described DDL production
+already had, so pushing them would have double-applied it.
+
+The fix avoided rewriting production history:
+
+1. **Recovered the 89.** `supabase_migrations.schema_migrations` stores the
+   real SQL of every applied migration in its `statements` column. Each was
+   written out as `<version>_<name>.sql` with its original version, name and
+   statement text. Those files carry a header saying they are already applied —
+   they are a record, not something to re-run.
+2. **Marked the 4 as applied.** `supabase migration repair --status applied`
+   for `20260911000000`, `20260911010000`, `20260913000000`, `20260914000000`.
+   This inserts history rows and runs no DDL. It was verified first that every
+   object those files create was already present in production (`pin_hash`,
+   `pin_attempts`, `register_link_token_pin_failure`, `clipboard_user_id_fkey`)
+   and that the one they remove was gone (`storage.delete_object`).
+3. **Confirmed.** `db push --dry-run` reported `Remote database is up to date.`
+
+An earlier plan had been to mark the 89 real migrations `reverted`, which would
+have made the recorded history describe something that never happened.
+Recovering them instead keeps the history true.
+
+`migrations_archive/` holds 33 hand-written files that were maintained in
+parallel and never applied through the CLI. They are kept as a record of intent
+only — they never described what production ran. Do not apply them.
 
 ## Secrets
 
