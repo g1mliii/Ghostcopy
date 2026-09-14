@@ -1,623 +1,344 @@
 <!DOCTYPE html>
-<html class="dark" lang="en" style="color-scheme: dark;">
+<html lang="en" class="bg-bg">
 
 <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="/icons/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest" />
-    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GhostCopy — Copy on your desktop, paste on your phone</title>
     <meta name="description"
-        content="GhostCopy - The ultimate cross-device clipboard tool. Copy on desktop, paste on mobile instantly with zero latency." />
-    <meta name="theme-color" content="#1a120f" />
-    <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:;">
-    <title>GhostCopy - Cinematic Masterpiece</title>
-    <!-- Preconnect to external domains for faster resource loading -->
-    <link href="https://fonts.googleapis.com" rel="preconnect" />
-    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+        content="A tray utility with no window and no idle cost. One keystroke puts what you copied on every device you own, encrypted end to end." />
+    <meta name="theme-color" content="#0F0F13" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="GhostCopy — Copy on your desktop, paste on your phone" />
+    <meta property="og:description"
+        content="A tray utility with no window and no idle cost. One keystroke puts what you copied on every device you own, encrypted end to end." />
+    <meta property="og:image" content="/icons/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-        href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,100..900;1,100..900&amp;family=Noto+Sans:ital,wght@0,100..900;1,100..900&amp;family=Cinzel:wght@400..900&amp;display=swap"
-        rel="stylesheet" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
         rel="stylesheet" />
     <link rel="stylesheet" href="./output.css" />
-    <style>
-        .text-shadow-cinematic {
-            text-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 80px rgba(230, 194, 136, 0.2);
-        }
 
-        .text-split-lighting {
-            background: linear-gradient(115deg, #ffdfba 30%, #5e4b35 70%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
-        }
-
-        .heat-distortion {
-            filter: url('#heatWave');
-        }
-
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #1a120f;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #462c25;
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #e6c288;
-        }
-    </style>
+    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
 </head>
 
-<body class="bg-sand-dark text-white overflow-x-hidden antialiased font-serif">
-    <svg class="hidden">
-        <defs>
-            <filter id="heatWave">
-                <feTurbulence baseFrequency="0.01 0.02" numOctaves="1" result="turbulence" type="turbulence">
-                    <animate attributeName="baseFrequency" dur="10s" repeatCount="indefinite"
-                        values="0.01 0.02;0.01 0.05;0.01 0.02"></animate>
-                </feTurbulence>
-                <feDisplacementMap in="SourceGraphic" in2="turbulence" scale="10" xChannelSelector="R"
-                    yChannelSelector="G"></feDisplacementMap>
-            </filter>
-        </defs>
-    </svg>
-    <nav
-        class="absolute top-0 left-0 w-full z-50 border-b border-white/5 bg-gradient-to-b from-black/90 to-transparent backdrop-blur-sm">
-        <div class="max-w-[1440px] mx-auto px-6 lg:px-12">
-            <div class="flex items-center justify-between h-24">
-                <div class="flex items-center gap-4">
-                    <span class="material-symbols-outlined text-gold-weathered text-3xl opacity-80">content_copy</span>
-                    <h2
-                        class="font-display text-2xl font-bold tracking-[0.2em] text-gold-weathered uppercase border-l border-white/20 pl-4">
-                        GhostCopy</h2>
-                </div>
-                <div class="hidden md:flex items-center gap-10">
-                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
-                        href="#origins">The Saga</a>
-                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
-                        href="download.html">Artifacts</a>
-                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
-                        href="docs.html">Codex</a>
-                    <a class="font-display text-xs font-semibold text-stone-400 hover:text-gold-weathered transition-colors tracking-[0.2em] uppercase"
-                        href="support.html">Access</a>
-                    <a href="download.html"
-                        class="relative group inline-block bg-[#2a1d1a] border border-gold-weathered/30 hover:border-gold-weathered text-gold-weathered text-xs font-display font-bold uppercase tracking-[0.15em] px-8 py-3 transition-all duration-500 rounded-sm overflow-hidden">
-                        <div
-                            class="absolute inset-0 bg-gold-weathered/10 translate-y-full group-hover:translate-y-0 transition-transform duration-500">
-                        </div>
-                        <span class="relative z-10">Beta Access</span>
-                    </a>
-                </div>
-                <button class="md:hidden text-gold-weathered" aria-label="Open navigation menu">
-                    <span class="material-symbols-outlined" aria-hidden="true">menu</span>
-                </button>
-            </div>
-        </div>
-    </nav>
-    <header class="relative w-full min-h-screen flex items-end md:items-center overflow-hidden pb-20 pt-32 md:py-0">
-        <div class="absolute inset-0 z-0 bg-slate-deep">
-            <div class="absolute inset-0 bg-[#0c0c0e]"></div>
-            <div
-                class="absolute top-[-20%] right-[-10%] w-[80%] h-[80%] bg-[radial-gradient(circle,rgba(255,200,120,0.15)_0%,rgba(181,78,53,0.05)_40%,transparent_70%)] blur-[150px]">
-            </div>
-            <div
-                class="absolute bottom-0 left-0 w-full h-full bg-gradient-to-tr from-black via-slate-deep/90 to-transparent z-10">
-            </div>
-            <div class="absolute inset-0 opacity-[0.2] mix-blend-overlay bg-cover bg-center"
-                style='background-image: url("./images/cinematic hero background.webp");'>
-            </div>
-            <div class="absolute inset-0 backdrop-blur-[1px] opacity-30 pointer-events-none"
-                style="filter: url(#heatWave)"></div>
-            <div class="absolute inset-0 bg-film-grain opacity-40 mix-blend-overlay pointer-events-none z-20"></div>
-            <div
-                class="absolute top-0 right-[20%] w-[1px] h-[150vh] bg-gradient-to-b from-transparent via-gold-weathered/20 to-transparent rotate-[25deg] blur-[2px]">
-            </div>
-            <div
-                class="absolute top-0 right-[25%] w-[2px] h-[150vh] bg-gradient-to-b from-transparent via-gold-weathered/10 to-transparent rotate-[25deg] blur-[4px]">
-            </div>
-        </div>
-        <div class="relative z-30 container mx-auto px-6 md:px-12 h-full flex flex-col justify-center">
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center h-full">
-                <div class="lg:col-span-8 relative z-20 pt-20 lg:pt-0">
-                    <div class="mb-8 opacity-0 animate-[fadeIn_1s_ease-out_forwards_0.5s] flex items-center gap-4">
-                        <div class="h-[1px] w-24 bg-gradient-to-r from-transparent to-gold-weathered"></div>
-                        <span class="font-display text-gold-weathered/80 uppercase tracking-[0.4em] text-xs">Seamless
-                            Continuity</span>
-                    </div>
-                    <h1
-                        class="font-display text-6xl md:text-8xl lg:text-[7rem] font-black uppercase leading-[0.9] tracking-tighter mb-10 opacity-0 animate-[fadeIn_1s_ease-out_forwards_0.8s] relative">
-                        <span class="block text-split-lighting drop-shadow-2xl">Copy on</span>
-                        <span class="block text-split-lighting pl-4 md:pl-16">Desktop.</span>
-                        <span
-                            class="block text-stone-500 drop-shadow-lg transform -translate-x-2 md:-translate-x-4 mix-blend-hard-light relative z-0">
-                            Paste on
-                        </span>
-                        <span class="block text-gold-weathered relative z-10 pl-8 md:pl-32">Mobile.</span>
-                        <span
-                            class="block text-primary text-4xl md:text-5xl font-serif italic tracking-normal mt-4 text-right pr-4 md:pr-20 opacity-80">
-                            — Instantly.
-                        </span>
+<body>
+
+    <!-- ============================= HEADER ============================= -->
+    <header class="shell flex items-center justify-between h-20 sm:h-24">
+        <a href="/" aria-label="GhostCopy home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+        </a>
+        <nav class="flex items-center gap-5 sm:gap-8">
+            <a href="/download.html" class="label hover:text-ink-4 transition-colors hidden sm:inline">Download</a>
+            <a href="/faq.html" class="label hover:text-ink-4 transition-colors hidden sm:inline">FAQ</a>
+            <a href="#waitlist" class="label !text-ink-2 hover:text-ink-4 transition-colors">Join the beta</a>
+        </nav>
+    </header>
+
+    <main>
+
+        <!-- ============================= HERO ============================= -->
+        <section class="relative overflow-hidden">
+            <div class="shell relative pt-12 sm:pt-20 lg:pt-24 pb-20 sm:pb-28 lg:pb-36">
+
+                <div class="lg:max-w-[780px]">
+                    <h1 class="font-bold leading-[1.02] tracking-display text-[40px] sm:text-6xl lg:text-7xl xl:text-[92px]">
+                        <span class="block text-ink-0 reveal">Nothing to open.</span>
+                        <span class="block text-ink-1 reveal reveal-1">Nothing to find.</span>
+                        <span class="block text-ink-2 reveal reveal-2">It is just</span>
+                        <span class="block text-ink-4 reveal reveal-3">already there.</span>
                     </h1>
-                    <div
-                        class="absolute top-[40%] right-[-10%] md:right-[-5%] w-[400px] h-full bg-gradient-to-l from-black via-black/90 to-transparent z-30 pointer-events-none hidden lg:block rotate-[-5deg] blur-sm">
-                    </div>
-                    <div
-                        class="absolute bottom-[-20%] left-[-10%] w-[120%] h-[30%] bg-gradient-to-t from-black to-transparent z-30 pointer-events-none">
-                    </div>
-                    <p
-                        class="font-serif text-lg md:text-xl text-stone-400 max-w-xl leading-relaxed mb-12 opacity-0 animate-[fadeIn_1s_ease-out_forwards_1.2s] border-l-2 border-primary/30 pl-6 ml-2 md:ml-16">
-                        A digital bridge across the abyss. The clipboard utility forged to conquer the distance between
-                        your devices with cinematic speed.
-                    </p>
-                    <div class="opacity-0 animate-[fadeIn_1s_ease-out_forwards_1.5s] ml-2 md:ml-16">
-                        <a href="download.html"
-                            class="group relative inline-flex items-center justify-center px-10 py-6 bg-[#4a3b32] overflow-hidden rounded-sm shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] border border-[#6d5446]">
-                            <span
-                                class="absolute w-0 h-0 transition-all duration-500 ease-out bg-[#8c6b5d] rounded-full group-hover:w-96 group-hover:h-96 opacity-30"></span>
-                            <span class="relative flex items-center gap-4">
-                                <span
-                                    class="font-display font-bold text-base uppercase tracking-[0.25em] text-[#d4c5a3] group-hover:text-white transition-colors">Start
-                                    the Journey</span>
-                                <span
-                                    class="material-symbols-outlined text-[#d4c5a3] group-hover:translate-x-1 transition-transform duration-300" aria-hidden="true">arrow_forward</span>
-                            </span>
-                            <div
-                                class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent skew-x-12 opacity-0 group-hover:opacity-100 group-hover:animate-[shimmer_1s_infinite] transition-opacity">
+                </div>
+
+                <!-- The only lit object on the page. Cropped by the viewport on
+                     wide screens, centred underneath on narrow ones. -->
+                <div class="mt-14 lg:mt-0 mx-auto lg:mx-0 w-full max-w-[500px]
+                            lg:absolute lg:top-24 lg:right-0 lg:translate-x-[34%] xl:translate-x-[24%]
+                            reveal reveal-2">
+                    <div class="bg-surface border border-white/[0.07] rounded-2xl shadow-[0_40px_120px_rgba(0,0,0,0.8)]">
+                        <div class="flex items-center gap-2.5 px-4 sm:px-[18px] pt-4 pb-3.5">
+                            <svg width="17" height="17" viewBox="0 0 32 32" aria-hidden="true">
+                                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                            </svg>
+                            <span class="font-mono text-[11px] tracking-[0.1em] text-ink-2">GHOSTCOPY</span>
+                        </div>
+                        <div class="px-4 sm:px-[18px] pb-[18px]">
+                            <div class="bg-bg border-2 border-accent rounded-lg px-4 py-3.5 min-h-[92px]">
+                                <pre class="font-mono text-[13px] leading-[1.6] text-ink-4"><span class="text-ink-2">{</span>
+  <span class="text-accent-text">"sha"</span><span class="text-ink-2">:</span> <span class="text-success">"39fbb1d"</span>
+<span class="text-ink-2">}</span><span class="inline-block align-[-3px] w-[1.5px] h-[15px] bg-accent ml-0.5"></span></pre>
                             </div>
-                        </a>
+                            <div class="flex items-center justify-center h-12 mt-3.5 bg-accent rounded-lg">
+                                <span class="text-[15px] font-semibold text-white">Send</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div
-                    class="lg:col-span-4 h-full relative z-10 hidden lg:flex items-end justify-center perspective-1000">
-                    <div
-                        class="w-full h-[120%] bg-gradient-to-br from-[#1c1c1e] to-black transform rotate-y-12 rotate-z-3 translate-y-20 border-l border-white/5 shadow-2xl relative overflow-hidden">
-                        <div
-                            class="absolute top-0 left-0 w-full h-full opacity-10 bg-cover mix-blend-overlay"
-                            style='background-image: url("./images/cinematic hero background.webp");'>
+
+                <!-- waitlist -->
+                <div id="waitlist" class="mt-14 sm:mt-20 lg:mt-24 max-w-[470px] reveal reveal-4">
+                    <form data-waitlist data-source="landing" novalidate>
+                        <div class="hp" aria-hidden="true">
+                            <label>Company<input type="text" name="company" tabindex="-1" autocomplete="off" /></label>
                         </div>
-                        <div
-                            class="absolute top-0 left-0 w-[1px] h-full bg-gradient-to-b from-gold-weathered/60 via-transparent to-transparent shadow-[0_0_15px_rgba(230,194,136,0.3)]">
+                        <div class="flex items-end gap-4">
+                            <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"
+                                aria-label="Email address" class="field" />
+                            <button type="submit" class="cta shrink-0 pb-3 border-b-0 hover:border-b-0">
+                                <span data-waitlist-label>Get early access</span>
+                                <span aria-hidden="true">&rarr;</span>
+                            </button>
                         </div>
-                    </div>
+                        <p data-waitlist-status role="status" class="mt-4 text-sm text-ink-1"></p>
+                        <p data-waitlist-idle class="label mt-4">Private beta · Windows and Android first</p>
+                    </form>
+                    <noscript>
+                        <p class="mt-4 text-sm text-ink-2">
+                            The form needs JavaScript. Email
+                            <a href="mailto:support@ghostcopy.app" class="text-accent-text">support@ghostcopy.app</a>
+                            to be added to the list.
+                        </p>
+                    </noscript>
                 </div>
             </div>
-        </div>
-        <div class="absolute bottom-10 left-12 z-40 hidden md:flex items-center gap-4 opacity-40">
-            <span
-                class="font-mono text-[10px] uppercase tracking-widest text-gold-weathered rotate-[-90deg]">Scroll</span>
-            <div class="w-[1px] h-16 bg-gold-weathered/50"></div>
-        </div>
-    </header>
-    </header>
+        </section>
 
-    <div id="origins"></div>
-    <section class="relative py-20 md:py-32 overflow-hidden bg-sand-dark">
-        <div
-            class="absolute right-0 top-1/2 -translate-y-1/2 w-1/2 h-[120%] bg-stone-900 skew-x-[-12deg] opacity-90 z-0 origin-bottom shadow-2xl border-l border-stone-800 hidden lg:block">
-            <img loading="lazy" decoding="async" alt="Weathered stone texture" width="1200" height="1600"
-                class="absolute inset-0 w-full h-full object-cover opacity-20 mix-blend-overlay"
-                src="./images/weather stone detailed.webp" />
-        </div>
-        <div class="container mx-auto px-6 relative z-10">
-            <div class="flex flex-col lg:flex-row items-center gap-16 lg:gap-24">
-                <div class="lg:w-1/2">
-                    <div class="flex items-center gap-4 mb-8">
-                        <div class="h-[1px] w-12 bg-primary"></div>
-                        <span class="text-primary font-display tracking-[0.3em] text-sm">MONOLITH I</span>
-                    </div>
-                    <h2 class="text-5xl md:text-7xl font-display font-bold text-white mb-8 leading-none">
-                        Smart <br /><span
-                            class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-amber-700">Transformers</span>
-                    </h2>
-                    <p class="text-stone-400 text-lg font-serif leading-relaxed mb-10 max-w-md">
-                        Like ancient inscriptions revealing hidden truths, our engine transmutes your syntax in
-                        real-time. It adapts to patterns in the shifting sands of your codebase without compromising
-                        structural integrity.
-                    </p>
-                    <div class="grid grid-cols-2 gap-8 border-t border-white/10 pt-8">
-                        <div>
-                            <span class="block text-3xl font-display text-white mb-2">0.01s</span>
-                            <span class="text-xs uppercase tracking-widest text-stone-500">Transformation
-                                Time</span>
-                        </div>
-                        <div>
-                            <span class="block text-3xl font-display text-white mb-2">100%</span>
-                            <span class="text-xs uppercase tracking-widest text-stone-500">Syntax Retention</span>
-                        </div>
-                    </div>
+        <!-- ===================== THE SPINE : desk to pocket ===================== -->
+        <section class="shell">
+            <div class="relative">
+
+                <!-- the line, wide screens only -->
+                <div class="hidden lg:block absolute left-7 top-10 bottom-10 w-px
+                            bg-gradient-to-b from-line via-line-strong to-line" aria-hidden="true"></div>
+
+                <!-- origin -->
+                <div class="hidden lg:flex items-center gap-6 pb-4" aria-hidden="true">
+                    <span class="w-14 flex justify-center bg-bg py-2">
+                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#55565F" stroke-width="1.3"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="4" width="20" height="13" rx="1.5" />
+                            <path d="M8 21h8" />
+                            <path d="M12 17v4" />
+                        </svg>
+                    </span>
+                    <span class="label">Your desk</span>
                 </div>
-                <div class="lg:w-1/2 perspective-1000 w-full">
-                    <div
-                        class="relative transform rotate-y-[-5deg] rotate-x-[5deg] bg-black/40 backdrop-blur-sm border border-cyan-500/20 p-8 rounded shadow-2xl">
-                        <div class="absolute -top-10 -right-10 w-40 h-40 bg-cyan-500/20 rounded-full blur-[60px]">
-                        </div>
-                        <div class="font-mono text-sm leading-7 relative z-10">
-                            <div class="flex gap-2 mb-4 opacity-50">
-                                <div class="w-2 h-2 rounded-full bg-red-500"></div>
-                                <div class="w-2 h-2 rounded-full bg-yellow-500"></div>
-                                <div class="w-2 h-2 rounded-full bg-green-500"></div>
-                            </div>
-                            <p class="text-cyan-200/60">// Initiating ancient protocols...</p>
-                            <p class="text-[#a5f3fc] drop-shadow-[0_0_5px_#00d4ff]">
-                                <span class="text-purple-400">const</span> <span
-                                    class="text-yellow-200">transmute</span> = <span
-                                    class="text-purple-400">async</span> (shard) =&gt; {<br />
-                                  <span class="text-purple-400">await</span> shard.<span
-                                    class="text-blue-400">align</span>({<br />
-                                    mode: <span class="text-green-400">'SAND_SHIFT'</span>,<br />
-                                    power: <span class="text-orange-400">INFINITY</span><br />
-                                  });<br />
-                                };
+
+                <!-- 01 -->
+                <div class="relative lg:pl-[150px] pt-16 sm:pt-24 lg:pt-32">
+                    <div class="lg:absolute lg:left-0 lg:top-32 lg:w-14 lg:flex lg:justify-center mb-4 lg:mb-0">
+                        <span class="label bg-bg lg:py-2">01</span>
+                    </div>
+                    <h2 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-4xl lg:text-5xl xl:text-[52px] text-ink-4">
+                        One keystroke is the whole interface.
+                    </h2>
+                    <p class="mt-6 sm:mt-7 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-prose">
+                        <span class="font-mono text-[15px] sm:text-[17px] text-accent-text">Ctrl&#8202;+&#8202;Shift&#8202;+&#8202;S</span>
+                        opens a 500&#8239;pixel window over whatever you were doing. Type or paste, press Enter, it is
+                        gone again. There is no main window to go back to, because there isn&rsquo;t one.
+                    </p>
+                </div>
+
+                <!-- 02 -->
+                <div class="relative lg:pl-[150px] pt-16 sm:pt-24 lg:pt-32">
+                    <div class="lg:absolute lg:left-0 lg:top-32 lg:w-14 lg:flex lg:justify-center mb-4 lg:mb-0">
+                        <span class="label !text-accent-text bg-bg lg:py-2">02</span>
+                    </div>
+                    <div class="grid lg:grid-cols-[minmax(0,1fr)_400px] gap-10 lg:gap-16 items-start">
+                        <div>
+                            <h2 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-4xl lg:text-5xl xl:text-[52px] text-ink-4">
+                                Sealed before it leaves the room.
+                            </h2>
+                            <p class="mt-6 sm:mt-7 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2">
+                                Set a passphrase and the key is derived on your device and never leaves it. There is no
+                                cloud backup of it, no recovery link, nothing we could be compelled to produce.
+                            </p>
+                            <p class="mt-6 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-1">
+                                A second device gets the key by scanning a QR code off the first one. That is the only
+                                way, on purpose.
                             </p>
                         </div>
-                        <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-500"></div>
-                        <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-500"></div>
+                        <div class="lg:pt-2">
+                            <p class="label mb-4">The row as stored</p>
+                            <div class="font-mono text-xs leading-[2.1] text-ink-1">
+                                <div>id&emsp;&emsp;<span class="text-ink-2">40217</span></div>
+                                <div>user&emsp;<span class="text-ink-2">9c1e…7b4a</span></div>
+                                <div>device&ensp;<span class="text-ink-2">"windows"</span></div>
+                                <div class="mt-2">content</div>
+                                <div class="text-danger break-all leading-[1.75] text-[11.5px]">
+                                    gAAAAABm7T1xQv9k2Lr8dX3oZs1PmWq4xYb6tC0eKjU8aH2fRnVdS5gMwXpL
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </section>
 
-    <section class="relative min-h-screen flex items-center bg-sand-dark py-16 overflow-hidden">
-        <div class="absolute inset-0 z-0">
-            <img loading="lazy" decoding="async" alt="Weathered stone texture" width="1600" height="1200"
-                class="w-full h-full object-cover opacity-30 grayscale contrast-125"
-                src="./images/weatherd stone.webp" />
-            <div class="absolute inset-0 bg-gradient-to-r from-sand-dark via-sand-dark/90 to-transparent"></div>
-        </div>
-        <div class="container mx-auto px-6 relative z-10 w-full">
-            <div class="flex flex-col-reverse lg:flex-row items-center">
-                <div class="lg:w-7/12 relative">
-                    <div class="relative p-10 md:p-20 border-[12px] border-stone-800 bg-stone-900/80 shadow-2xl">
-                        <div
-                            class="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27200%27 height=%27200%27%3E%3Cfilter id=%27c%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.9%27 numOctaves=%274%27 stitchTiles=%27stitch%27/%3E%3C/filter%3E%3Crect width=%27100%25%27 height=%27100%25%27 filter=%27url(%23c)%27 opacity=%270.55%27/%3E%3C/svg%3E')] opacity-20 mix-blend-multiply">
-                        </div>
-                        <div class="relative z-10">
-                            <h3
-                                class="text-[120px] md:text-[200px] font-display font-black text-stone-800 leading-none select-none absolute -top-16 -left-10 opacity-50 blur-[2px]">
-                                ZERO</h3>
-                            <div class="flex items-baseline gap-4 mb-4">
-                                <span
-                                    class="text-8xl md:text-9xl font-black font-display text-stone-300 drop-shadow-md">0%</span>
-                                <span class="text-2xl md:text-4xl font-serif italic text-primary">Idle Usage</span>
-                            </div>
-                            <p class="text-stone-400 font-serif text-lg md:text-xl border-l-4 border-primary pl-6 py-2">
-                                "The machine sleeps as the desert sleeps. Silent. Still. Consuming nothing until the
-                                moment of awakening."
+                <!-- 03 -->
+                <div class="relative lg:pl-[150px] pt-16 sm:pt-24 lg:pt-32">
+                    <div class="lg:absolute lg:left-0 lg:top-32 lg:w-14 lg:flex lg:justify-center mb-4 lg:mb-0">
+                        <span class="label bg-bg lg:py-2">03</span>
+                    </div>
+                    <h2 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-4xl lg:text-5xl xl:text-[52px] text-ink-4">
+                        Asleep until you need it.
+                    </h2>
+                    <p class="mt-6 sm:mt-7 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-prose">
+                        While the window is hidden every animation and stream is paused &mdash; not throttled, paused.
+                        The only thing still listening is the hotkey. Idle cost is
+                        <span class="text-ink-4">0.0&#8201;% CPU</span>, which is the entire reason it can sit in your
+                        tray forever.
+                    </p>
+                </div>
+
+                <!-- 04 -->
+                <div class="relative lg:pl-[150px] pt-16 sm:pt-24 lg:pt-32">
+                    <div class="lg:absolute lg:left-0 lg:top-32 lg:w-14 lg:flex lg:justify-center mb-4 lg:mb-0">
+                        <span class="label bg-bg lg:py-2">04</span>
+                    </div>
+                    <div class="grid lg:grid-cols-[minmax(0,1fr)_400px] gap-10 lg:gap-16 items-start">
+                        <div>
+                            <h2 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-4xl lg:text-5xl xl:text-[52px] text-ink-4">
+                                And it is in your pocket.
+                            </h2>
+                            <p class="mt-6 sm:mt-7 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2">
+                                Tap the notification and the text is on the phone&rsquo;s clipboard. Ignore it and the
+                                clip is waiting in the home screen widget anyway.
+                            </p>
+                            <p class="mt-6 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-1">
+                                Going the other way is paste&#8209;then&#8209;send, because both mobile systems block
+                                background clipboard reads &mdash; and they should.
                             </p>
                         </div>
-                    </div>
-                </div>
-                <div class="lg:w-5/12 lg:pl-20 mb-16 lg:mb-0">
-                    <div class="flex items-center gap-4 mb-8">
-                        <div class="h-[1px] w-12 bg-primary"></div>
-                        <span class="text-primary font-display tracking-[0.3em] text-sm">CORE SYSTEM</span>
-                    </div>
-                    <h2 class="text-5xl md:text-6xl font-display font-bold text-white mb-6">
-                        Invisible <br />Utility
-                    </h2>
-                    <p class="text-stone-400 mb-10 leading-relaxed font-serif">
-                        Engineered for zero disruption. The application runs silently in the background using minimal
-                        resources,
-                        waking only when summoned via Global Hotkey.
-                    </p>
-                    <div class="space-y-6">
-                        <div class="flex items-center gap-6 group">
-                            <div
-                                class="w-12 h-12 flex items-center justify-center border border-stone-700 bg-stone-800 group-hover:border-primary/50 transition-colors">
-                                <span
-                                    class="material-symbols-outlined text-stone-400 group-hover:text-primary transition-colors">keyboard_command_key</span>
-                            </div>
-                            <div>
-                                <h4 class="font-display text-white text-lg tracking-wider">Global Hotkey</h4>
-                                <p class="text-sm text-stone-500 uppercase tracking-widest">Ctrl + Shift + S</p>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-6 group">
-                            <div
-                                class="w-12 h-12 flex items-center justify-center border border-stone-700 bg-stone-800 group-hover:border-primary/50 transition-colors">
-                                <span
-                                    class="material-symbols-outlined text-stone-400 group-hover:text-primary transition-colors">nights_stay</span>
-                            </div>
-                            <div>
-                                <h4 class="font-display text-white text-lg tracking-wider">Zero-CPU Sleep</h4>
-                                <p class="text-sm text-stone-500 uppercase tracking-widest">No Performance Impact</p>
+                        <div class="lg:pt-3">
+                            <div class="bg-surface border border-line-strong rounded-2xl p-4 flex gap-3.5 items-start max-w-[400px]">
+                                <svg width="30" height="30" viewBox="0 0 32 32" class="shrink-0" aria-hidden="true">
+                                    <rect width="32" height="32" rx="9" fill="#6670FF" />
+                                    <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                                    <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                                    <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                                </svg>
+                                <div class="min-w-0 grow">
+                                    <div class="flex justify-between gap-3 mb-1">
+                                        <span class="text-[13.5px] font-semibold text-ink-4">GhostCopy</span>
+                                        <span class="text-xs text-ink-1">now</span>
+                                    </div>
+                                    <div class="font-mono text-[12.5px] text-ink-3 truncate">{ "sha": "39fbb1d" }</div>
+                                    <div class="text-[12.5px] text-ink-1 mt-1">Tap to copy</div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </section>
 
-    <section class="relative py-20 md:py-32 overflow-hidden bg-[#0c0a09]">
-        <div class="container mx-auto px-6 relative z-10">
-            <div class="text-center mb-24">
-                <div class="inline-flex items-center gap-4 mb-4 opacity-70">
-                    <span class="h-[1px] w-16 bg-blue-500"></span>
-                    <span class="text-blue-400 font-display tracking-[0.4em] text-sm uppercase">SUPABASE</span>
-                    <span class="h-[1px] w-16 bg-blue-500"></span>
-                </div>
-                <h2
-                    class="text-5xl md:text-7xl font-display font-bold text-white mb-6 drop-shadow-[0_0_25px_rgba(59,130,246,0.3)]">
-                    Real-time Sync
-                </h2>
-                <p class="text-stone-400 max-w-2xl mx-auto font-serif text-lg">
-                    Powered by Supabase Realtime architecture. Clipboard changes are instantly replicated to all
-                    connected devices via secure listeners.
-                </p>
-            </div>
-            <div class="relative max-w-5xl mx-auto h-[600px] md:h-[500px] flex items-end justify-center">
-                <div
-                    class="w-48 md:w-64 h-full bg-slate-900 border-x border-t border-blue-500/30 relative z-20 flex flex-col items-center justify-end overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]">
-                    <div
-                        class="absolute top-10 w-20 h-20 border-2 border-blue-500/50 rotate-45 flex items-center justify-center animate-pulse shadow-glow">
-                        <span class="material-symbols-outlined text-4xl text-blue-400 rotate-[-45deg]">sync</span>
-                    </div>
-                    <div
-                        class="w-full h-full absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2760%27 height=%2760%27%3E%3Cg fill=%27none%27 stroke=%27%23ffffff%27 stroke-width=%271%27 opacity=%270.5%27%3E%3Cpath d=%27M0 15h20v15h20V15h20M0 45h15v-15M45 45h15M30 60V45%27/%3E%3C/g%3E%3Cg fill=%27%23ffffff%27 opacity=%270.7%27%3E%3Ccircle cx=%2720%27 cy=%2715%27 r=%272%27/%3E%3Ccircle cx=%2740%27 cy=%2730%27 r=%272%27/%3E%3Ccircle cx=%2715%27 cy=%2745%27 r=%272%27/%3E%3Ccircle cx=%2745%27 cy=%2745%27 r=%272%27/%3E%3C/g%3E%3C/svg%3E')] opacity-10">
-                    </div>
-                </div>
-                <!-- Simplified decorative elements for citadel -->
-                <div class="absolute bottom-0 w-full h-1 bg-blue-500 shadow-[0_0_30px_#3b82f6]"></div>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-16 max-w-4xl mx-auto">
-                <div
-                    class="bg-slate-900/50 border border-slate-800 p-6 text-center hover:border-blue-500/30 transition-colors">
-                    <span class="material-symbols-outlined text-blue-500 mb-4 text-3xl">bolt</span>
-                    <h3 class="text-white font-display text-lg mb-2">Instant Push</h3>
-                </div>
-                <div
-                    class="bg-slate-900/50 border border-slate-800 p-6 text-center hover:border-blue-500/30 transition-colors">
-                    <span class="material-symbols-outlined text-blue-500 mb-4 text-3xl">database</span>
-                    <h3 class="text-white font-display text-lg mb-2">PostgreSQL</h3>
-                </div>
-                <div
-                    class="bg-slate-900/50 border border-slate-800 p-6 text-center hover:border-blue-500/30 transition-colors">
-                    <span class="material-symbols-outlined text-blue-500 mb-4 text-3xl">lock</span>
-                    <h3 class="text-white font-display text-lg mb-2">Row-Level Security</h3>
+                <!-- destination -->
+                <div class="hidden lg:flex items-center gap-6 pt-28" aria-hidden="true">
+                    <span class="w-14 flex justify-center bg-bg py-2">
+                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#55565F" stroke-width="1.3"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="6" y="2" width="12" height="20" rx="2.5" />
+                            <path d="M10.5 18.5h3" />
+                        </svg>
+                    </span>
+                    <span class="label">Your pocket</span>
                 </div>
             </div>
-        </div>
-    </section>
+        </section>
 
-    <section class="bg-[#0f0b0b] py-16 md:py-24 relative overflow-hidden border-t border-white/5">
-        <div
-            class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMjExNTEyIi8+CjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiMzMzIyMWUiLz4KPC9zdmc+')] opacity-[0.07] pointer-events-none mix-blend-luminosity">
-        </div>
-        <div class="container mx-auto px-6 md:px-12 relative z-10">
-            <div class="flex flex-col items-center mb-24 text-center">
-                <span class="material-symbols-outlined text-4xl mb-6 text-primary/80">psychology</span>
-                <h3
-                    class="font-display text-4xl md:text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-gold-weathered to-[#5e4b35] mb-6">
-                    Smart Transformers</h3>
-                <p class="font-serif text-xl text-stone-500 max-w-2xl italic">"The utility understands what you copy.
-                    JSON is prettified. JWTs are decoded. Hex codes are visualized."</p>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 auto-rows-[350px]">
-                <div
-                    class="md:col-span-2 relative group overflow-hidden bg-[#151110] border border-white/5 shadow-2xl transition-all duration-700 hover:border-gold-weathered/30">
-                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-60 grayscale group-hover:grayscale-0"
-                        data-alt="Laptop sitting on sand dune displaying code editor"
-                        style='background-image: url("./images/laptop code editor.webp");'>
-                    </div>
-                    <div class="absolute inset-0 bg-gradient-to-r from-black via-black/40 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 p-10 z-10 max-w-md">
-                        <div class="flex items-center gap-3 mb-3">
-                            <div class="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                            <span class="font-mono text-xs text-primary uppercase tracking-widest">Transmitting</span>
-                        </div>
-                        <h4 class="font-display text-3xl font-bold text-white mb-2 tracking-wide">Desktop Command</h4>
-                        <p class="font-serif text-stone-400 leading-relaxed">Copy text, images, or files. The
-                            propagation is immediate and absolute.</p>
-                    </div>
-                </div>
-                <div
-                    class="md:row-span-2 relative group overflow-hidden bg-[#151110] border border-white/5 shadow-2xl transition-all duration-700 hover:border-gold-weathered/30">
-                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-60 grayscale group-hover:grayscale-0"
-                        data-alt="Smartphone half buried in golden sand displaying notification"
-                        style='background-image: url("./images/smartphone notification send.webp");'>
-                    </div>
-                    <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 p-10 z-10">
-                        <div class="flex items-center gap-3 mb-3">
-                            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-                            <span class="font-mono text-xs text-green-500 uppercase tracking-widest">Receiving</span>
-                        </div>
-                        <h4 class="font-display text-3xl font-bold text-white mb-2 tracking-wide">Mobile Receiver</h4>
-                        <p class="font-serif text-stone-400 leading-relaxed">Paste on your phone before your hand leaves
-                            the keyboard. Magic realized.</p>
-                    </div>
-                </div>
-                <div
-                    class="relative group overflow-hidden bg-[#1c1412] border border-white/5 flex flex-col justify-center items-center p-8 text-center hover:bg-[#261b18] transition-colors duration-500">
-                    <div
-                        class="mb-6 p-6 rounded-full border border-primary/20 bg-primary/5 text-primary group-hover:border-primary/50 group-hover:bg-primary/10 transition-all duration-500">
-                        <span class="material-symbols-outlined text-5xl font-light">enhanced_encryption</span>
-                    </div>
-                    <h4 class="font-display text-2xl font-bold text-gold-weathered mb-3 tracking-wider">End-to-End
-                        Encrypted</h4>
-                    <p class="font-serif text-stone-500 leading-relaxed max-w-xs">Your data travels through a secure
-                        tunnel, invisible to prying eyes like a shadow in the night.</p>
-                </div>
-                <div class="relative group overflow-hidden bg-black border border-white/5">
-                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-110 opacity-40 mix-blend-overlay"
-                        data-alt="Abstract macro shot of sand grains resembling data particles"
-                        style='background-image: url("./images/sand grains.webp");'>
-                    </div>
-                    <div class="absolute inset-0 bg-gradient-to-tr from-black to-slate-deep/50"></div>
-                    <div class="absolute inset-0 flex flex-col justify-center items-center p-6 text-center z-10">
-                        <span class="font-display text-7xl font-bold text-white mb-2 tracking-tighter">0.2<span
-                                class="text-3xl text-stone-500">s</span></span>
-                        <div class="h-[1px] w-12 bg-primary mb-4"></div>
-                        <span
-                            class="font-display text-xs uppercase tracking-[0.3em] text-primary font-bold">Latency</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-    <footer class="bg-[#050505] border-t border-white/10 pt-16 pb-10 relative">
-        <div
-            class="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent">
-        </div>
-        <div class="container mx-auto px-6 md:px-12">
-            <div class="flex flex-col md:flex-row justify-between items-start gap-12 mb-20">
-                <div class="max-w-md">
-                    <div class="flex items-center gap-4 mb-8">
-                        <span
-                            class="material-symbols-outlined text-gold-weathered text-3xl opacity-70">content_copy</span>
-                        <h2 class="font-display text-2xl font-bold tracking-[0.2em] text-white uppercase">GhostCopy</h2>
-                    </div>
-                    <p class="font-serif text-stone-500 leading-relaxed text-lg">
-                        Born from the need for speed. GhostCopy is the essential artifact for the modern nomad
-                        traversing the digital expanse.
+        <!-- ===================== THE REST, BRIEFLY ===================== -->
+        <section class="shell pt-24 sm:pt-32">
+            <div class="rule mb-12 sm:mb-16"></div>
+            <div class="grid md:grid-cols-3 gap-10 md:gap-12 lg:gap-24">
+                <div>
+                    <p class="label mb-4">It reads what you copied</p>
+                    <p class="text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                        JSON gets a prettify button. A JWT gets decoded to its payload and expiry. A hex colour gets a
+                        swatch. Offered, never applied behind your back &mdash; everything else passes through byte for
+                        byte.
                     </p>
                 </div>
-                <div class="flex flex-wrap gap-16 md:gap-24">
-                    <div class="flex flex-col gap-6">
-                        <h4
-                            class="font-display text-gold-weathered text-xs font-bold uppercase tracking-[0.2em] border-b border-white/10 pb-2 mb-2">
-                            Platform</h4>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="#">Mac &amp; iOS</a>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="#">Windows &amp; Android</a>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="#">Linux (Beta)</a>
-                    </div>
-                    <div class="flex flex-col gap-6">
-                        <h4
-                            class="font-display text-gold-weathered text-xs font-bold uppercase tracking-[0.2em] border-b border-white/10 pb-2 mb-2">
-                            Company</h4>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="#">Manifesto</a>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="support.html">Contact</a>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="privacy.html">Privacy</a>
-                        <a class="text-sm font-sans text-stone-400 hover:text-white transition-colors uppercase tracking-widest text-[11px]"
-                            href="terms.html">Terms</a>
-                    </div>
+                <div>
+                    <p class="label mb-4">It knows when to shut up</p>
+                    <p class="text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                        Game mode spots a full&#8209;screen app and holds every notification until you are back on the
+                        desktop. No toast over your raid, no popup in the middle of a presentation.
+                    </p>
+                </div>
+                <div>
+                    <p class="label mb-4">It is scoped at the database</p>
+                    <p class="text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                        Row&#8209;level security means your rows are unreachable from another account even if the
+                        application layer got something wrong. The database enforces it, not the app.
+                    </p>
                 </div>
             </div>
-            <div class="flex flex-col md:flex-row justify-between items-center pt-10 border-t border-white/5 gap-6">
-                <p class="text-xs text-stone-600 font-mono tracking-widest uppercase">© 2024 GhostCopy Inc.</p>
-                <div class="flex gap-8">
-                    <a class="text-stone-600 hover:text-gold-weathered transition-colors" href="#"
-                        rel="noopener noreferrer" target="_blank">
-                        <span class="sr-only">Twitter</span>
-                        <span class="material-symbols-outlined text-xl">public</span>
-                    </a>
-                    <a class="text-stone-600 hover:text-gold-weathered transition-colors" href="#"
-                        rel="noopener noreferrer" target="_blank">
-                        <span class="sr-only">GitHub</span>
-                        <span class="material-symbols-outlined text-xl">code</span>
-                    </a>
-                    <a class="text-stone-600 hover:text-gold-weathered transition-colors" href="#"
-                        rel="noopener noreferrer" target="_blank">
-                        <span class="sr-only">Discord</span>
-                        <span class="material-symbols-outlined text-xl">forum</span>
-                    </a>
-                </div>
+        </section>
+
+        <!-- ===================== CLOSING ===================== -->
+        <section class="shell pt-28 sm:pt-40 lg:pt-52">
+            <h2 class="font-bold leading-[1.04] tracking-display text-[34px] sm:text-5xl lg:text-6xl xl:text-[68px] max-w-[900px]">
+                <span class="block text-ink-1">It ships when it is good.</span>
+                <span class="block text-ink-4">Be there when it does.</span>
+            </h2>
+            <div class="mt-10 sm:mt-12 max-w-[470px]">
+                <form data-waitlist data-source="landing-footer" novalidate>
+                        <div class="hp" aria-hidden="true">
+                            <label>Company<input type="text" name="company" tabindex="-1" autocomplete="off" /></label>
+                        </div>
+                    <div class="flex items-end gap-4">
+                        <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"
+                            aria-label="Email address" class="field" />
+                        <button type="submit" class="cta shrink-0 pb-3 border-b-0 hover:border-b-0">
+                            <span data-waitlist-label>Join the beta</span>
+                            <span aria-hidden="true">&rarr;</span>
+                        </button>
+                    </div>
+                    <p data-waitlist-status role="status" class="mt-4 text-sm text-ink-1"></p>
+                    <p data-waitlist-idle class="mt-4 text-sm text-ink-1">
+                        One email when builds are ready. Nothing else, ever.
+                    </p>
+                </form>
             </div>
+        </section>
+    </main>
+
+    <!-- ============================= FOOTER ============================= -->
+    <footer class="shell pt-28 sm:pt-40 pb-14">
+        <div class="rule mb-9"></div>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div class="flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+                    <rect width="32" height="32" rx="9" fill="#6670FF" />
+                    <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                    <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                    <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                </svg>
+                <span class="font-mono text-[11px] tracking-[0.12em] text-ink-1">© 2026 GHOSTCOPY</span>
+            </div>
+            <nav class="flex flex-wrap gap-x-8 gap-y-3">
+                <a href="/download.html" class="label hover:text-ink-4 transition-colors">Download</a>
+                <a href="/faq.html" class="label hover:text-ink-4 transition-colors">FAQ</a>
+                <a href="/privacy.html" class="label hover:text-ink-4 transition-colors">Privacy</a>
+                <a href="/terms.html" class="label hover:text-ink-4 transition-colors">Terms</a>
+            </nav>
         </div>
     </footer>
 
-    <!-- Mobile Menu Overlay -->
-    <div id="mobile-menu"
-        class="fixed inset-0 z-[60] bg-black/95 backdrop-blur-xl transform translate-x-full transition-transform duration-300 md:hidden flex flex-col justify-center items-center gap-8">
-        <button id="close-menu" class="absolute top-6 right-6 text-gold-weathered" aria-label="Close navigation menu">
-            <span class="material-symbols-outlined text-4xl" aria-hidden="true">close</span>
-        </button>
-        <a href="index.html"
-            class="font-display text-2xl font-bold text-white uppercase tracking-[0.2em] mb-4">GhostCopy</a>
-        <a href="#origins"
-            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Origins</a>
-        <a href="download.html"
-            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Artifacts</a>
-        <a href="docs.html"
-            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Codex</a>
-        <a href="support.html"
-            class="font-display text-xl text-stone-400 hover:text-gold-weathered uppercase tracking-widest transition-colors">Access</a>
-    </div>
-
-    <script>
-        // Secure mobile menu with proper null checks and cleanup
-        (function() {
-            const menuIcon = document.querySelector('button[aria-label="Open navigation menu"] .material-symbols-outlined');
-            const menuBtn = menuIcon?.parentElement;
-            const closeBtn = document.getElementById('close-menu');
-            const mobileMenu = document.getElementById('mobile-menu');
-
-            if (!menuBtn || !closeBtn || !mobileMenu) {
-                console.error('Menu elements not found');
-                return;
-            }
-
-            const handleMenuOpen = () => {
-                mobileMenu.classList.remove('translate-x-full');
-            };
-
-            const handleMenuClose = () => {
-                mobileMenu.classList.add('translate-x-full');
-            };
-
-            menuBtn.addEventListener('click', handleMenuOpen);
-            closeBtn.addEventListener('click', handleMenuClose);
-
-            // Cleanup on page unload
-            window.addEventListener('beforeunload', () => {
-                menuBtn.removeEventListener('click', handleMenuOpen);
-                closeBtn.removeEventListener('click', handleMenuClose);
-            });
-        })();
-
-        // Register Service Worker for offline caching
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').catch((err) => {
-                    console.log('Service Worker registration failed:', err);
-                });
-            });
-        }
-    </script>
-    <style>
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @keyframes shimmer {
-            0% {
-                transform: translateX(-100%) skewX(12deg);
-            }
-
-            100% {
-                transform: translateX(200%) skewX(12deg);
-            }
-        }
-    </style>
+    <script src="/waitlist.js" defer></script>
 </body>
 
 </html>

@@ -1,134 +1,217 @@
 <!DOCTYPE html>
-<html class="dark" lang="en">
+<html lang="en" class="bg-bg">
 
 <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="/icons/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest" />
-    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:;">
-    <title>GhostCopy - Privacy Protocol</title>
-    <!-- Preconnect to external domains for faster resource loading -->
-    <link href="https://fonts.googleapis.com" rel="preconnect" />
-    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy policy — GhostCopy</title>
+    <meta name="description"
+        content="What GhostCopy stores, what it cannot read, and who processes it. No cookies, no analytics, no sale of anything." />
+    <meta name="theme-color" content="#0F0F13" />
+    <meta name="robots" content="index, follow" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-        href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@300;400;700;900&amp;family=Noto+Sans:wght@400;500;700&amp;display=swap"
-        rel="stylesheet" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
         rel="stylesheet" />
     <link rel="stylesheet" href="./output.css" />
-    <style>
-        ::-webkit-scrollbar {
-            width: 8px
-        }
 
-        ::-webkit-scrollbar-track {
-            background: #1a1a1d
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #444;
-            border-radius: 4px
-        }
-    </style>
+    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
 </head>
 
-<body class="bg-slate-deep text-[#d6d3d1] font-display antialiased overflow-x-hidden">
-    <div class="relative min-h-screen flex flex-col bg-slate-deep bg-heat-haze">
-        <header class="sticky top-0 z-40 w-full border-b border-[#3a3532] bg-slate-deep/90 backdrop-blur-md">
-            <div class="max-w-[1200px] mx-auto px-6 h-20 flex items-center justify-between">
-                <a href="index.html" class="flex items-center gap-3 group cursor-pointer">
-                    <div class="p-1.5 bg-primary/10 rounded border border-primary/20 text-primary">
-                        <span class="material-symbols-outlined text-2xl">diamond</span>
-                    </div>
-                    <h1 class="text-white text-xl font-black tracking-widest uppercase">GhostCopy</h1>
-                </a>
-                <nav class="hidden md:flex items-center gap-8">
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="index.html">Home</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="index.html#origins">Origins</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="download.html">Artifacts</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="docs.html">Codex</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="support.html">Access</a>
-                </nav>
+<body>
+
+    <header class="shell flex items-center justify-between h-20 sm:h-24">
+        <a href="/" aria-label="GhostCopy home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+        </a>
+        <nav class="flex items-center gap-5 sm:gap-8">
+            <a href="/download.html" class="label hover:text-ink-4 transition-colors hidden sm:inline">Download</a>
+            <a href="/faq.html" class="label hover:text-ink-4 transition-colors">FAQ</a>
+            <a href="/terms.html" class="label hover:text-ink-4 transition-colors">Terms</a>
+        </nav>
+    </header>
+
+    <main>
+
+        <section class="shell pt-16 sm:pt-24 lg:pt-28">
+            <h1 class="font-bold leading-[1.02] tracking-display text-[38px] sm:text-6xl lg:text-7xl xl:text-[76px]">
+                <span class="block text-ink-1">What we hold, and</span>
+                <span class="block text-ink-4">what we cannot.</span>
+            </h1>
+            <p class="label mt-8">Privacy policy · Last updated 14 September 2026</p>
+        </section>
+
+        <!-- summary -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label !text-accent-text shrink-0 lg:w-[180px] lg:pt-2">In short</h2>
+                <p class="text-lg sm:text-xl lg:text-[22px] leading-[1.6] text-ink-3 max-w-[780px]">
+                    We hold the minimum needed to move a clip from one of your devices to another. If you set a
+                    passphrase, the clip is encrypted before it reaches us and we cannot read it. Nothing is sold, and
+                    there is no advertising or analytics SDK in the app or on this site.
+                </p>
             </div>
-        </header>
-        <main class="flex-grow py-20 px-6 font-sans">
-            <div class="max-w-3xl mx-auto">
-                <h1 class="text-4xl md:text-5xl font-black text-white uppercase tracking-tight mb-8 font-display">
-                    Privacy Protocol</h1>
-                <p class="text-[#888] mb-12 text-sm uppercase tracking-widest border-b border-[#333] pb-6">Effective
-                    Date: January 1, 2026</p>
-                <div class="space-y-12 text-[#ccc] leading-relaxed">
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">1. Data Minimization</h2>
-                        <p>GhostCopy adheres to the principle of minimal knowledge. We do not collect, store, or analyze
-                            the content of your clipboard ("Transmissions"). Your data is encrypted locally before
-                            transmission and decrypted only upon receipt by your authorized device.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">2. The Ephemeral Tunnel</h2>
-                        <p>Transmissions pass through our secure relay server ("The Oasis"). This server retains no
-                            memory. Once a transmission is successfully delivered, it is immediately purged from
-                            volatile memory. If delivery fails within 5 minutes, the packet dissolves.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">3. Device Identification</h2>
-                        <p>To facilitate connection, we store a hash of your Device ID and a user-generated Public Key.
-                            We do not store personal identifiers, email addresses (unless provided for Support), or
-                            location data.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">4. Imperial Decree (Compliance)</h2>
-                        <p>We comply with all major data protection regulations (GDPR, CCPA). You have the right to
-                            delete your account keys at any time via the app settings, which irrevocably severs your
-                            connection to the network.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">5. Third-Party Sentries</h2>
-                        <p>We may employ third-party companies and individuals due to the following reasons: to
-                            facilitate our Service;
-                            to provide the Service on our behalf; to perform Service-related services; or to assist us
-                            in analyzing how our Service is used.
-                            These third parties have access to your hidden data only to perform these tasks on our
-                            behalf.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">6. Security Protocols</h2>
-                        <p>The security of your Personal Information is important to us, but remember that no method of
-                            transmission over
-                            the Internet, or method of electronic storage is 100% secure. While we strive to use
-                            commercially acceptable means
-                            to protect your Personal Information, we cannot guarantee its absolute security.</p>
-                    </section>
+        </section>
+
+        <!-- what we collect -->
+        <section class="shell pt-20 sm:pt-28">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">What we collect</h2>
+                <div class="grow max-w-prose-wide space-y-6">
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        An account is created anonymously the first time you open the app, identified by a random ID and
+                        nothing else. You only give us an email address if you choose to upgrade the account, or sign in
+                        with Google &mdash; in which case we receive the address on that Google account.
+                    </p>
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        For each clip you send we store its content, the type of device that sent it, the name you gave
+                        that device, and the time. Where encryption is on, the content field holds ciphertext. We also
+                        store one push notification token per mobile device, which is what lets a clip reach your phone.
+                    </p>
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        This website sets no cookies and runs no analytics. If you join the beta list we store the email
+                        address you typed, the platform you picked if you picked one, and which page you submitted from.
+                        Fonts are served by Google Fonts, which means your browser requests them from Google and Google
+                        sees your IP address in the process.
+                    </p>
                 </div>
             </div>
-        </main>
-        <footer class="border-t border-[#3a3532] bg-[#171514] py-12 relative z-10">
-            <div class="max-w-[960px] mx-auto px-6 text-center">
-                <p class="text-[#444] text-xs font-sans">© 2024 GhostCopy Imperial Archives. All rights reserved.</p>
+        </section>
+
+        <!-- what we never see -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">What we never see</h2>
+                <div class="grow max-w-prose-wide">
+                    <div class="h-px bg-line"></div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 text-base sm:text-[17px] font-semibold text-ink-4">Your
+                            passphrase</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Never transmitted, never backed
+                            up. Moving it to a new device happens directly between your devices by QR code.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 text-base sm:text-[17px] font-semibold text-ink-4">Encrypted
+                            clip contents</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">With a passphrase set,
+                            plaintext never leaves your device in either direction.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 text-base sm:text-[17px] font-semibold text-ink-4">Anything
+                            unsent</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">The desktop app does not watch
+                            your clipboard in the background. Nothing exists until you send it.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 pt-8">
+                        <p class="label !text-warning sm:w-[210px] shrink-0 sm:pt-1">The caveat</p>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">
+                            Without a passphrase, encryption is off and clip content is stored in plain text on our
+                            infrastructure. Row&#8209;level security still restricts it to your account, but we could
+                            technically read it.
+                        </p>
+                    </div>
+                </div>
             </div>
-        </footer>
-    </div>
-    <script>
-        // Register Service Worker for offline caching
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').catch((err) => {
-                    console.log('Service Worker registration failed:', err);
-                });
-            });
-        }
-    </script>
+        </section>
+
+        <!-- processors -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Who processes it</h2>
+                <div class="grow max-w-prose-wide">
+                    <div class="h-px bg-line"></div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">Supabase</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Hosts the database, your
+                            account, and the realtime connection that delivers clips.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">Firebase Cloud Messaging</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Delivers push notifications to
+                            Android and iOS. Receives the notification payload and your device token.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">Cloudflare</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Serves this website. It does
+                            not touch clip data at all.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- retention -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">How long we keep it</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    Clips stay until you delete them or delete your account. Deleting a clip removes the row; there is no
+                    archive copy. Deleting your account removes the account and every clip attached to it. Backups taken
+                    before a deletion roll off on their own schedule and are not queryable by us in the ordinary course.
+                </p>
+            </div>
+        </section>
+
+        <!-- rights -->
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Your rights</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    You can ask for a copy of what is stored against your account, ask us to correct it, or ask us to
+                    delete all of it &mdash; email us from the address on the account. Note the obvious limit: for
+                    encrypted clips an export gives you ciphertext, because that is genuinely all we hold.
+                </p>
+            </div>
+        </section>
+
+        <!-- contact -->
+        <section class="shell pt-24 sm:pt-36">
+            <div class="rule mb-12"></div>
+            <div class="flex flex-col lg:flex-row gap-4 lg:gap-24 lg:items-baseline">
+                <h2 class="label shrink-0 lg:w-[180px]">Questions</h2>
+                <a href="mailto:support@ghostcopy.app"
+                    class="font-mono text-lg sm:text-[22px] text-ink-4 border-b border-accent-border hover:border-ink-4 pb-1.5 break-all transition-colors">support@ghostcopy.app</a>
+            </div>
+        </section>
+    </main>
+
+    <footer class="shell pt-28 sm:pt-40 pb-14">
+        <div class="rule mb-9"></div>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div class="flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+                    <rect width="32" height="32" rx="9" fill="#6670FF" />
+                    <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                    <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                    <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                </svg>
+                <span class="font-mono text-[11px] tracking-[0.12em] text-ink-1">© 2026 GHOSTCOPY</span>
+            </div>
+            <nav class="flex flex-wrap gap-x-8 gap-y-3">
+                <a href="/download.html" class="label hover:text-ink-4 transition-colors">Download</a>
+                <a href="/faq.html" class="label hover:text-ink-4 transition-colors">FAQ</a>
+                <a href="/privacy.html" class="label !text-ink-2">Privacy</a>
+                <a href="/terms.html" class="label hover:text-ink-4 transition-colors">Terms</a>
+            </nav>
+        </div>
+    </footer>
+
 </body>
 
 </html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0F0F13;
+      color: #F5F6FA;
+      font-family: Inter, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #AEB4FF; text-decoration: none; }
+    a:hover { color: #F5F6FA; }
+    .m { font-family: "JetBrains Mono", Menlo, Consolas, monospace; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; background: #0F0F13; overflow: hidden;">
+
+  <!-- ===== HEADER ===== -->
+  <div style="display: flex; align-items: center; justify-content: space-between; height: 100px; padding: 0 88px;">
+    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="9" fill="#6670FF"></rect>
+      <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF"></path>
+      <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+      <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+    </svg>
+    <div style="display: flex; align-items: center; gap: 34px;">
+      <a href="#download" class="m" style="font-size: 11px; letter-spacing: 0.18em; color: #55565F;">DOWNLOAD</a>
+      <a href="#faq" class="m" style="font-size: 11px; letter-spacing: 0.18em; color: #55565F;">FAQ</a>
+      <a href="#waitlist" class="m" style="font-size: 11px; letter-spacing: 0.18em; color: #55565F;">JOIN THE BETA</a>
+    </div>
+  </div>
+
+  <!-- ===== HEADLINE ===== -->
+  <div style="padding: 120px 88px 0;">
+    <h1 style="margin: 0 0 32px; font-size: 76px; line-height: 1.0; font-weight: 700; letter-spacing: -0.05em;">
+      <span style="display: block; color: #55565F;">The deal, in</span>
+      <span style="display: block; color: #F5F6FA;">plain words.</span>
+    </h1>
+    <p class="m" style="margin: 0; font-size: 11px; letter-spacing: 0.14em; color: #55565F;">TERMS OF SERVICE &#183; LAST UPDATED [DATE YOU PUBLISH THIS]</p>
+  </div>
+
+  <!-- ===== AGREEMENT ===== -->
+  <div style="padding: 90px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">THE AGREEMENT</div>
+      <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #8E9099; max-width: 800px;">
+        Using GhostCopy means accepting these terms. If you do not accept them, do not use it. We may update them as the product changes; material changes are announced in the app or by email before they take effect.
+      </p>
+    </div>
+  </div>
+
+  <!-- ===== BETA ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #FFB020; padding-top: 12px;">BETA SOFTWARE</div>
+      <div style="flex-grow: 1; max-width: 800px;">
+        <p style="margin: 0 0 30px; font-size: 17px; line-height: 1.75; color: #8E9099;">
+          GhostCopy is in beta. That is not boilerplate &mdash; it means three specific things you should plan around.
+        </p>
+
+        <div style="height: 1px; background: #23232B;"></div>
+
+        <div style="display: flex; gap: 28px; padding: 24px 0; border-bottom: 1px solid #23232B;">
+          <span class="m" style="width: 30px; flex-shrink: 0; font-size: 12px; color: #55565F;">01</span>
+          <span style="flex-grow: 1; font-size: 16px; line-height: 1.7; color: #8E9099;">Features may change or be removed between builds, and data formats may change with them.</span>
+        </div>
+        <div style="display: flex; gap: 28px; padding: 24px 0; border-bottom: 1px solid #23232B;">
+          <span class="m" style="width: 30px; flex-shrink: 0; font-size: 12px; color: #55565F;">02</span>
+          <span style="flex-grow: 1; font-size: 16px; line-height: 1.7; color: #8E9099;">There is no uptime commitment. Sync can be interrupted, and a clip can fail to arrive.</span>
+        </div>
+        <div style="display: flex; gap: 28px; padding: 24px 0; border-bottom: 1px solid #23232B;">
+          <span class="m" style="width: 30px; flex-shrink: 0; font-size: 12px; color: #55565F;">03</span>
+          <span style="flex-grow: 1; font-size: 16px; line-height: 1.7; color: #8E9099;">There has been no independent security audit. Do not treat GhostCopy as the only copy of anything you cannot lose.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ACCOUNT ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">YOUR ACCOUNT</div>
+      <div style="flex-grow: 1; max-width: 800px;">
+        <p style="margin: 0 0 22px; font-size: 17px; line-height: 1.75; color: #8E9099;">
+          You are responsible for the credentials on your account and for the devices signed into it.
+        </p>
+        <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #B9BBBE;">
+          If you set a passphrase you are the only party who holds it. We cannot reset it, recover it, or decrypt your clips for you &mdash; including if you ask us to, and including if a court asks us to. Keep it somewhere you will still have it.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ACCEPTABLE USE ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">ACCEPTABLE USE</div>
+      <div style="flex-grow: 1; max-width: 800px;">
+        <p style="margin: 0 0 22px; font-size: 17px; line-height: 1.75; color: #8E9099;">
+          Do not use GhostCopy to distribute malware, to store or move material that is unlawful where you are, to infringe someone else&rsquo;s rights, or to attack the service &mdash; including attempting to reach other users&rsquo; data or to overwhelm the infrastructure.
+        </p>
+        <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #8E9099;">
+          We may suspend or close an account that does these things. Because encrypted clip content is unreadable to us, enforcement is necessarily based on reports and service&#8209;level signals rather than on inspecting what you sent.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LICENCE ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">LICENCE</div>
+      <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #8E9099; max-width: 800px;">
+        You get a personal, non&#8209;exclusive, revocable licence to use the applications. The GhostCopy source is published under the MIT licence; those terms govern the code itself, and these terms govern the hosted service you connect it to. What you send through GhostCopy remains yours &mdash; we claim no rights over your content.
+      </p>
+    </div>
+  </div>
+
+  <!-- ===== WARRANTY ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">NO WARRANTY</div>
+      <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #8E9099; max-width: 800px;">
+        GhostCopy is provided as is and as available, without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, and non&#8209;infringement. We do not warrant that it will be uninterrupted, timely, secure, or error free.
+      </p>
+    </div>
+  </div>
+
+  <!-- ===== LIABILITY ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">LIABILITY</div>
+      <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #8E9099; max-width: 800px;">
+        To the fullest extent the law allows, we are not liable for indirect, incidental, special, consequential or punitive damages, or for lost data, lost profits, or lost business, arising from your use of GhostCopy. Nothing here limits liability that cannot lawfully be limited, and where a jurisdiction does not allow these exclusions they apply only as far as that jurisdiction permits.
+      </p>
+    </div>
+  </div>
+
+  <!-- ===== LAW ===== -->
+  <div style="padding: 110px 88px 0;">
+    <div style="display: flex; gap: 96px; align-items: flex-start;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F; padding-top: 12px;">GOVERNING LAW</div>
+      <p style="margin: 0; font-size: 17px; line-height: 1.75; color: #8E9099; max-width: 800px;">
+        These terms are governed by the laws of <span style="color: #FFB020;">[YOUR JURISDICTION]</span>, without regard to its conflict of law rules, and the courts there have exclusive jurisdiction over any dispute arising from them.
+      </p>
+    </div>
+  </div>
+
+  <!-- ===== CONTACT ===== -->
+  <div style="padding: 150px 88px 0;">
+    <div style="height: 1px; background: rgba(255,255,255,0.05); margin-bottom: 56px;"></div>
+    <div style="display: flex; gap: 96px; align-items: baseline;">
+      <div class="m" style="width: 180px; flex-shrink: 0; font-size: 11px; letter-spacing: 0.16em; color: #55565F;">ASK FIRST</div>
+      <div>
+        <a href="mailto:support@ghostcopy.app" class="m" style="font-size: 22px; color: #F5F6FA; border-bottom: 1px solid #555EA6; padding-bottom: 5px;">support@ghostcopy.app</a>
+        <p style="margin: 26px 0 0; font-size: 17px; line-height: 1.7; color: #55565F; max-width: 560px;">
+          If anything here is unclear, ask before agreeing to it.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== FOOTER ===== -->
+  <div style="padding: 160px 88px 64px;">
+    <div style="height: 1px; background: rgba(255,255,255,0.05); margin-bottom: 36px;"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="9" fill="#6670FF"></rect>
+          <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF"></path>
+          <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+          <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF"></ellipse>
+        </svg>
+        <span class="m" style="font-size: 11px; letter-spacing: 0.12em; color: #55565F;">&copy; 2026 GHOSTCOPY</span>
+      </div>
+      <div style="display: flex; gap: 32px;">
+        <a href="#download" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">DOWNLOAD</a>
+        <a href="#faq" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">FAQ</a>
+        <a href="#privacy" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #55565F;">PRIVACY</a>
+        <a href="#terms" class="m" style="font-size: 11px; letter-spacing: 0.14em; color: #989CA9;">TERMS</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

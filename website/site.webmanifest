@@ -4,24 +4,11 @@
   "description": "Real-time cross-platform clipboard synchronization.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0D0D0F",
-  "theme_color": "#0D0D0F",
+  "background_color": "#0F0F13",
+  "theme_color": "#0F0F13",
   "icons": [
-    {
-      "src": "/icons/favicon-32.png",
-      "sizes": "32x32",
-      "type": "image/png"
-    },
-    {
-      "src": "/icons/apple-touch-icon.png",
-      "sizes": "180x180",
-      "type": "image/png"
-    },
-    {
-      "src": "/icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/icons/favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "/icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

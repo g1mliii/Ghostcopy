@@ -1,127 +1,212 @@
 <!DOCTYPE html>
-<html class="dark" lang="en">
+<html lang="en" class="bg-bg">
 
 <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="/icons/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest" />
-    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:;">
-    <title>GhostCopy - Terms of Conquest</title>
-    <!-- Preconnect to external domains for faster resource loading -->
-    <link href="https://fonts.googleapis.com" rel="preconnect" />
-    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Terms of service — GhostCopy</title>
+    <meta name="description"
+        content="The terms that govern using GhostCopy: beta expectations, your account, acceptable use, licence and liability." />
+    <meta name="theme-color" content="#0F0F13" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-        href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@300;400;700;900&amp;family=Noto+Sans:wght@400;500;700&amp;display=swap"
-        rel="stylesheet" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
         rel="stylesheet" />
     <link rel="stylesheet" href="./output.css" />
-    <style>
-        ::-webkit-scrollbar {
-            width: 8px
-        }
 
-        ::-webkit-scrollbar-track {
-            background: #1a1a1d
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #444;
-            border-radius: 4px
-        }
-    </style>
+    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
 </head>
 
-<body class="bg-slate-deep text-[#d6d3d1] font-display antialiased overflow-x-hidden">
-    <div class="relative min-h-screen flex flex-col bg-slate-deep bg-heat-haze">
-        <header class="sticky top-0 z-40 w-full border-b border-[#3a3532] bg-slate-deep/90 backdrop-blur-md">
-            <div class="max-w-[1200px] mx-auto px-6 h-20 flex items-center justify-between">
-                <a href="index.html" class="flex items-center gap-3 group cursor-pointer">
-                    <div class="p-1.5 bg-primary/10 rounded border border-primary/20 text-primary">
-                        <span class="material-symbols-outlined text-2xl">diamond</span>
-                    </div>
-                    <h1 class="text-white text-xl font-black tracking-widest uppercase">GhostCopy</h1>
-                </a>
-                <nav class="hidden md:flex items-center gap-8">
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="index.html">Home</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="index.html#origins">Origins</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="download.html">Artifacts</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="docs.html">Codex</a>
-                    <a class="text-sm font-bold text-[#888] hover:text-primary transition-colors tracking-widest uppercase"
-                        href="support.html">Access</a>
-                </nav>
+<body>
+
+    <header class="shell flex items-center justify-between h-20 sm:h-24">
+        <a href="/" aria-label="GhostCopy home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+        </a>
+        <nav class="flex items-center gap-5 sm:gap-8">
+            <a href="/download.html" class="label hover:text-ink-4 transition-colors hidden sm:inline">Download</a>
+            <a href="/faq.html" class="label hover:text-ink-4 transition-colors">FAQ</a>
+            <a href="/privacy.html" class="label hover:text-ink-4 transition-colors">Privacy</a>
+        </nav>
+    </header>
+
+    <main>
+
+        <section class="shell pt-16 sm:pt-24 lg:pt-28">
+            <h1 class="font-bold leading-[1.02] tracking-display text-[38px] sm:text-6xl lg:text-7xl xl:text-[76px]">
+                <span class="block text-ink-1">The deal, in</span>
+                <span class="block text-ink-4">plain words.</span>
+            </h1>
+            <p class="label mt-8">Terms of service · Last updated 14 September 2026</p>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">The agreement</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    Using GhostCopy means accepting these terms. If you do not accept them, do not use it. We may update
+                    them as the product changes; material changes are announced in the app or by email before they take
+                    effect.
+                </p>
             </div>
-        </header>
-        <main class="flex-grow py-20 px-6 font-sans">
-            <div class="max-w-3xl mx-auto">
-                <h1 class="text-4xl md:text-5xl font-black text-white uppercase tracking-tight mb-8 font-display">Terms
-                    of Service</h1>
-                <p class="text-[#888] mb-12 text-sm uppercase tracking-widest border-b border-[#333] pb-6">Effective
-                    Date: January 1, 2026</p>
-                <div class="space-y-12 text-[#ccc] leading-relaxed">
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">1. Acceptance of Terms</h2>
-                        <p>By accessing or using GhostCopy ("The System"), you agree to be bound by these Terms of
-                            Conquest. If you disagree with any part of the terms, you must not use The System.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">2. License to Use</h2>
-                        <p>We grant you a revocable, non-exclusive, non-transferable, limited license to download,
-                            install, and use the Application strictly in accordance with these Terms.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">3. Prohibited Acts</h2>
-                        <p>You agree not to use the Application to transmit any material that is illegal, offensive, or
-                            infringing on intellectual property rights. You shall not attempt to reverse engineer the
-                            Imperial Code, unauthorized access to the 'Oasis', or distribute malware.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">4. Account Termination</h2>
-                        <p>We invite you to maintain your station with honor. However, we reserve the right to terminate
-                            or suspend your account immediately, without prior notice or liability, for any reason
-                            whatsoever,
-                            including without limitation if you breach the Terms.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">5. Limitation of Liability</h2>
-                        <p>In no event shall GhostCopy Inc. be liable for any indirect, incidental, or consequential
-                            damages arising out of your use of The System. The Empire provides the tools; you wield them
-                            at your own risk.</p>
-                    </section>
-                    <section>
-                        <h2 class="text-xl font-bold text-white mb-4">6. Governing Law</h2>
-                        <p>These Terms shall be governed and construed in accordance with the laws of the digital realm,
-                            without regard to its conflict of law provisions.</p>
-                    </section>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label !text-warning shrink-0 lg:w-[180px] lg:pt-3">Beta software</h2>
+                <div class="grow max-w-prose-wide">
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 mb-8">
+                        GhostCopy is in beta. That is not boilerplate &mdash; it means three specific things you should
+                        plan around.
+                    </p>
+                    <div class="h-px bg-line"></div>
+                    <div class="flex gap-7 py-6 border-b border-line">
+                        <span class="font-mono text-xs text-ink-1 shrink-0 pt-1">01</span>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Features may change or be
+                            removed between builds, and data formats may change with them.</p>
+                    </div>
+                    <div class="flex gap-7 py-6 border-b border-line">
+                        <span class="font-mono text-xs text-ink-1 shrink-0 pt-1">02</span>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">There is no uptime commitment.
+                            Sync can be interrupted, and a clip can fail to arrive.</p>
+                    </div>
+                    <div class="flex gap-7 py-6 border-b border-line">
+                        <span class="font-mono text-xs text-ink-1 shrink-0 pt-1">03</span>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">There has been no independent
+                            security audit. Do not treat GhostCopy as the only copy of anything you cannot lose.</p>
+                    </div>
                 </div>
             </div>
-        </main>
-        <footer class="border-t border-[#3a3532] bg-[#171514] py-12 relative z-10">
-            <div class="max-w-[960px] mx-auto px-6 text-center">
-                <p class="text-[#444] text-xs font-sans">© 2024 GhostCopy Imperial Archives. All rights reserved.</p>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Your account</h2>
+                <div class="grow max-w-prose-wide space-y-6">
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        You are responsible for the credentials on your account and for the devices signed into it.
+                    </p>
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-3">
+                        If you set a passphrase you are the only party who holds it. We cannot reset it, recover it, or
+                        decrypt your clips for you &mdash; including if you ask us to. Keep it somewhere you will still
+                        have it.
+                    </p>
+                </div>
             </div>
-        </footer>
-    </div>
-    <script>
-        // Register Service Worker for offline caching
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').catch((err) => {
-                    console.log('Service Worker registration failed:', err);
-                });
-            });
-        }
-    </script>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Acceptable use</h2>
+                <div class="grow max-w-prose-wide space-y-6">
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        Do not use GhostCopy to distribute malware, to store or move material that is unlawful where you
+                        are, to infringe someone else&rsquo;s rights, or to attack the service &mdash; including
+                        attempting to reach other users&rsquo; data or to overwhelm the infrastructure.
+                    </p>
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        We may suspend or close an account that does these things. Because encrypted clip content is
+                        unreadable to us, enforcement is necessarily based on reports and service&#8209;level signals
+                        rather than on inspecting what you sent.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Licence</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    You get a personal, non&#8209;exclusive, revocable licence to use the applications. The GhostCopy
+                    source is published under the MIT licence; those terms govern the code itself, and these terms govern
+                    the hosted service you connect it to. What you send through GhostCopy remains yours &mdash; we claim
+                    no rights over your content.
+                </p>
+            </div>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">No warranty</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    GhostCopy is provided as is and as available, without warranties of any kind, express or implied,
+                    including merchantability, fitness for a particular purpose, and non&#8209;infringement. We do not
+                    warrant that it will be uninterrupted, timely, secure, or error free.
+                </p>
+            </div>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Liability</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    To the fullest extent the law allows, we are not liable for indirect, incidental, special,
+                    consequential or punitive damages, or for lost data, lost profits, or lost business, arising from
+                    your use of GhostCopy. Nothing here limits liability that cannot lawfully be limited, and where a
+                    jurisdiction does not allow these exclusions they apply only as far as that jurisdiction permits.
+                </p>
+            </div>
+        </section>
+
+        <section class="shell pt-16 sm:pt-24">
+            <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">Governing law</h2>
+                <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
+                    These terms are governed by the laws of the Province of Ontario and the federal laws of Canada
+                    applicable therein, without regard to conflict of law rules. The courts of Ontario have exclusive
+                    jurisdiction over any dispute arising from them, except where the consumer protection law of your
+                    own place of residence gives you a right to bring a claim locally that cannot be contracted out
+                    of.
+                </p>
+            </div>
+        </section>
+
+        <section class="shell pt-24 sm:pt-36">
+            <div class="rule mb-12"></div>
+            <div class="flex flex-col lg:flex-row gap-4 lg:gap-24">
+                <h2 class="label shrink-0 lg:w-[180px] lg:pt-2">Ask first</h2>
+                <div>
+                    <a href="mailto:support@ghostcopy.app"
+                        class="font-mono text-lg sm:text-[22px] text-ink-4 border-b border-accent-border hover:border-ink-4 pb-1.5 break-all transition-colors">support@ghostcopy.app</a>
+                    <p class="mt-7 text-base sm:text-[17px] leading-[1.7] text-ink-1 max-w-[560px]">
+                        If anything here is unclear, ask before agreeing to it.
+                    </p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="shell pt-28 sm:pt-40 pb-14">
+        <div class="rule mb-9"></div>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div class="flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+                    <rect width="32" height="32" rx="9" fill="#6670FF" />
+                    <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                    <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                    <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                </svg>
+                <span class="font-mono text-[11px] tracking-[0.12em] text-ink-1">© 2026 GHOSTCOPY</span>
+            </div>
+            <nav class="flex flex-wrap gap-x-8 gap-y-3">
+                <a href="/download.html" class="label hover:text-ink-4 transition-colors">Download</a>
+                <a href="/faq.html" class="label hover:text-ink-4 transition-colors">FAQ</a>
+                <a href="/privacy.html" class="label hover:text-ink-4 transition-colors">Privacy</a>
+                <a href="/terms.html" class="label !text-ink-2">Terms</a>
+            </nav>
+        </div>
+    </footer>
+
 </body>
 
 </html>
