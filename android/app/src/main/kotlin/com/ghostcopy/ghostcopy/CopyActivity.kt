@@ -72,7 +72,10 @@ class CopyActivity : AppCompatActivity() {
                 putExtra("content_type", contentType)
                 putExtra("rich_text_format", richTextFormat)
                 putExtra("device_type", deviceType)
-                putExtra("from_notification", true)
+                // Proof this hand-off came from inside the app. CopyActivity is
+                // exported="false" and runs in the same process, so it can read
+                // the token; another app reaching MainActivity directly cannot.
+                putExtra(IntentAuth.EXTRA_TOKEN, IntentAuth.token(this@CopyActivity))
             }
             startActivity(intent)
             finish()

@@ -37,6 +37,11 @@ class FirebaseMessagingService : FirebaseMessagingService() {
       Log.d(TAG, "📬 FCM signal: id=$clipboardId, type=$contentType, from=$deviceType")
 
       if (clipboardId.isNotEmpty()) {
+        // Note that a push really did name this clip, so that a notification
+        // tap can later be told apart from a third-party app inventing an id
+        // and sending it to the exported launcher. See PushRegistry.
+        PushRegistry.record(applicationContext, clipboardId)
+
         // Re-reads the authenticated user's clips from the DB and refreshes the
         // widget, so the content never travels through push infrastructure.
         WidgetRefreshWorker.scheduleRefresh(applicationContext)
