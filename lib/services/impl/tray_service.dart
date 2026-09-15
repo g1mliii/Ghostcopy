@@ -21,10 +21,7 @@ class TrayService with TrayListener implements ITrayService {
     // Add listener for tray events
     trayManager.addListener(this);
 
-    await trayManager.setIcon(
-      _getTrayIconPath(),
-      isTemplate: Platform.isMacOS,
-    );
+    await trayManager.setIcon(_getTrayIconPath(), isTemplate: Platform.isMacOS);
 
     // On macOS, the title is usually not shown in tray for icon-only apps,
     // but we can set it if needed. Leaving empty for now for icon-only feel.
