@@ -21,7 +21,10 @@ class TrayService with TrayListener implements ITrayService {
     // Add listener for tray events
     trayManager.addListener(this);
 
-    await trayManager.setIcon(_getTrayIconPath());
+    await trayManager.setIcon(
+      _getTrayIconPath(),
+      isTemplate: Platform.isMacOS,
+    );
 
     // On macOS, the title is usually not shown in tray for icon-only apps,
     // but we can set it if needed. Leaving empty for now for icon-only feel.
@@ -30,7 +33,7 @@ class TrayService with TrayListener implements ITrayService {
   @override
   Future<void> setIcon(String iconPath) async {
     if (!_isDesktop()) return;
-    await trayManager.setIcon(iconPath);
+    await trayManager.setIcon(iconPath, isTemplate: Platform.isMacOS);
   }
 
   @override
@@ -82,9 +85,11 @@ class TrayService with TrayListener implements ITrayService {
   ///
   /// Each platform wants a different asset, so they are no longer shared:
   /// - Windows: .ico containing 16/32/48px frames, picked per DPI.
-  /// - macOS: a 22px black-on-transparent TEMPLATE image. The menu bar tints
-  ///   it automatically, which is what makes it invert correctly in dark mode
-  ///   and when the bar is highlighted. A full-colour icon cannot do that.
+  /// - macOS: a black-on-transparent TEMPLATE image at 44px (the @2x of the
+  ///   22pt menu bar slot). The menu bar tints it automatically, which is what
+  ///   makes it invert correctly in dark mode and when the bar is highlighted.
+  ///   A full-colour icon cannot do that. The tinting only happens when
+  ///   `isTemplate` is passed to setIcon, so the two go together.
   /// - Linux: 24px, the size most panels expect.
   String _getTrayIconPath() {
     if (Platform.isWindows) {

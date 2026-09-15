@@ -59,6 +59,7 @@ import 'ui/theme/app_theme.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
+import 'utils/windows_registry.dart';
 
 // Configuration - These values are safe to be public
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
@@ -310,8 +311,8 @@ Future<void> main(List<String> args) async {
   ]);
 
   // Initialize services that depend on Supabase
-  final authService = AuthService();
   final deviceService = DeviceService();
+  final authService = AuthService(deviceService: deviceService);
 
   locator
     ..registerSingleton<IAuthService>(authService)
@@ -323,8 +324,11 @@ Future<void> main(List<String> args) async {
   // behind. This runs before any UI is created for that reason.
   final sendFileIndex = args.indexOf('--send-file');
   if (sendFileIndex != -1 && sendFileIndex + 1 < args.length) {
-    await _sendFileFromCommandLine(args[sendFileIndex + 1], authService);
-    exit(0);
+    final result = await _sendFileFromCommandLine(
+      args[sendFileIndex + 1],
+      authService,
+    );
+    exit(result);
   }
 
   // PARALLEL GROUP 2: Auth and Device initialization (both depend on Supabase)
@@ -1235,54 +1239,55 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
 ///
 /// Used by the Windows Explorer context menu. Deliberately minimal: no window,
 /// no tray, no hotkey - just auth, upload, done.
-Future<void> _sendFileFromCommandLine(
+Future<int> _sendFileFromCommandLine(
   String path,
   IAuthService authService,
 ) async {
+  var exitCode = 1;
+  late String message;
   try {
     final file = File(path);
     if (!file.existsSync()) {
-      debugPrint('[SendFile] ✗ No such file: $path');
-      return;
-    }
-
-    final bytes = await file.readAsBytes();
-
-    // Matches the 10MB ceiling enforced by the DB CHECK and storage-presign.
-    const maxBytes = ClipboardLimits.maxFileBytes;
-    if (bytes.length > maxBytes) {
-      debugPrint(
-        '[SendFile] ✗ ${file.path} is ${bytes.length} bytes, over the 10MB limit',
+      message = 'The selected file no longer exists.';
+    } else if (await file.length() > ClipboardLimits.maxFileBytes) {
+      // Check the size before allocating a potentially multi-GB file in RAM.
+      message = 'This file is too large. GhostCopy supports files up to 10MB.';
+    } else if (authService.currentUserId == null) {
+      message = 'Open GhostCopy and sign in before sending a file.';
+    } else {
+      await authService.initialize();
+      final bytes = await file.readAsBytes();
+      final filename = file.uri.pathSegments.last;
+      final typeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        filename,
       );
-      return;
+      await ClipboardRepository.instance.insertFile(
+        userId: authService.currentUserId!,
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        deviceName: ClipboardRepository.getCurrentDeviceName(),
+        fileBytes: bytes,
+        mimeType: typeInfo.mimeType,
+        contentType: typeInfo.contentType,
+        originalFilename: filename,
+      );
+      message = 'Sent $filename to your other devices.';
+      exitCode = 0;
     }
-
-    await authService.initialize();
-    final userId = authService.currentUserId;
-    if (userId == null) {
-      debugPrint('[SendFile] ✗ Not signed in');
-      return;
-    }
-
-    final filename = path.split(Platform.pathSeparator).last;
-    // Sniffs magic bytes and falls back to the extension, matching how the
-    // drop/paste paths classify files.
-    final typeInfo = FileTypeService.instance.detectFromBytes(bytes, filename);
-
-    await ClipboardRepository.instance.insertFile(
-      userId: userId,
-      deviceType: ClipboardRepository.getCurrentDeviceType(),
-      deviceName: ClipboardRepository.getCurrentDeviceName(),
-      fileBytes: bytes,
-      mimeType: typeInfo.mimeType,
-      contentType: typeInfo.contentType,
-      originalFilename: filename,
-    );
-
-    debugPrint('[SendFile] ✅ Sent $filename (${bytes.length} bytes)');
-  } on Object catch (e) {
-    debugPrint('[SendFile] ✗ Failed to send $path: $e');
+  } on Exception catch (e) {
+    debugPrint('[SendFile] Failed to send file: $e');
+    message =
+        'The file could not be sent. Check your connection and try again.';
   }
+  debugPrint('[SendFile] $message');
+  if (Platform.isWindows) {
+    // Native feedback works without rendering the main Flutter window, a tray
+    // icon, or a second persistent app instance. It also survives Focus Assist.
+    await const MethodChannel(
+      'com.ghostcopy/send_file',
+    ).invokeMethod<void>('showResult', message);
+  }
+  return exitCode;
 }
 
 /// Add "Send with GhostCopy" to the Explorer right-click menu for all files.
@@ -1295,7 +1300,7 @@ Future<void> _registerWindowsContextMenu() async {
     final exePath = Platform.resolvedExecutable;
     const key = r'HKCU\Software\Classes\*\shell\GhostCopySend';
 
-    await Process.run('reg', [
+    await runWindowsRegistryCommand([
       'add',
       key,
       '/ve',
@@ -1303,7 +1308,7 @@ Future<void> _registerWindowsContextMenu() async {
       'Send with GhostCopy',
       '/f',
     ]);
-    await Process.run('reg', [
+    await runWindowsRegistryCommand([
       'add',
       key,
       '/v',
@@ -1317,7 +1322,7 @@ Future<void> _registerWindowsContextMenu() async {
     // reg rejected it as a key name with no hive. The menu entry was
     // created with its label and icon but no command subkey, so clicking
     // "Send with GhostCopy" did nothing.
-    await Process.run('reg', [
+    await runWindowsRegistryCommand([
       'add',
       '$key\\command',
       '/ve',
@@ -1341,7 +1346,7 @@ Future<void> _registerWindowsUrlScheme() async {
 
     // Register the URL protocol in Windows Registry
     // This allows ghostcopy:// links to open the app
-    await Process.run('reg', [
+    await runWindowsRegistryCommand([
       'add',
       r'HKCU\Software\Classes\ghostcopy',
       '/ve',
@@ -1350,7 +1355,7 @@ Future<void> _registerWindowsUrlScheme() async {
       '/f',
     ]);
 
-    await Process.run('reg', [
+    await runWindowsRegistryCommand([
       'add',
       r'HKCU\Software\Classes\ghostcopy',
       '/v',
@@ -1360,7 +1365,7 @@ Future<void> _registerWindowsUrlScheme() async {
       '/f',
     ]);
 
-    await Process.run('reg', [
+    await runWindowsRegistryCommand([
       'add',
       r'HKCU\Software\Classes\ghostcopy\shell\open\command',
       '/ve',

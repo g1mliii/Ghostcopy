@@ -10,15 +10,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
+import '../device_service.dart';
 import '../widget_service.dart';
 import 'encryption_service.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
 class AuthService implements IAuthService {
-  AuthService({SupabaseClient? client})
+  AuthService({SupabaseClient? client, this._deviceService, this._googleSignIn})
     : _client = client ?? Supabase.instance.client;
 
   final SupabaseClient _client;
+  final IDeviceService? _deviceService;
+  Session? _pendingOAuthSession;
+  String? _pendingOAuthDeviceId;
   StreamSubscription<AuthState>? _authStateSubscription;
   bool _initialized = false;
 
@@ -109,10 +113,12 @@ class AuthService implements IAuthService {
     String? captchaToken,
   }) async {
     try {
-      final response = await _client.auth.signInWithPassword(
-        email: email,
-        password: password,
-        captchaToken: captchaToken,
+      final response = await _switchAccount(
+        () => _client.auth.signInWithPassword(
+          email: email,
+          password: password,
+          captchaToken: captchaToken,
+        ),
       );
       debugPrint('[AuthService] Sign in successful');
       return response;
@@ -126,7 +132,7 @@ class AuthService implements IAuthService {
   Future<bool> signInWithGoogle() async {
     try {
       // Use native Google Sign-In for iOS and Android
-      if (Platform.isIOS || Platform.isAndroid) {
+      if (_googleSignIn != null || Platform.isIOS || Platform.isAndroid) {
         return await _nativeGoogleSignIn();
       }
 
@@ -134,6 +140,23 @@ class AuthService implements IAuthService {
       // Uses custom URL scheme (ghostcopy://) for deep linking
       // macOS: Configured in Info.plist
       // Windows: Handled by app_links package
+      // Launching a browser is not a completed sign-in. Keep the old session
+      // until the SDK reports the actual OAuth callback.
+      _pendingOAuthSession = _client.auth.currentSession;
+      _pendingOAuthDeviceId = _deviceService?.getCurrentDeviceId();
+      _authStateSubscription ??= _client.auth.onAuthStateChange.listen((state) {
+        final previous = _pendingOAuthSession;
+        final next = state.session;
+        if (state.event != AuthChangeEvent.signedIn ||
+            previous == null ||
+            next == null) {
+          return;
+        }
+        final deviceId = _pendingOAuthDeviceId;
+        _pendingOAuthSession = null;
+        _pendingOAuthDeviceId = null;
+        unawaited(_cleanupPreviousSession(previous, next.user.id, deviceId));
+      });
       final response = await _client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
@@ -194,10 +217,12 @@ class AuthService implements IAuthService {
       }
 
       // Sign in to Supabase with Google credentials
-      await _client.auth.signInWithIdToken(
-        provider: OAuthProvider.google,
-        idToken: idToken,
-        accessToken: accessToken,
+      await _switchAccount(
+        () => _client.auth.signInWithIdToken(
+          provider: OAuthProvider.google,
+          idToken: idToken,
+          accessToken: accessToken,
+        ),
       );
 
       debugPrint('[AuthService] ✅ Native Google sign in successful');
@@ -249,7 +274,7 @@ class AuthService implements IAuthService {
 
     try {
       // Use native Google Sign-In for iOS and Android
-      if (Platform.isIOS || Platform.isAndroid) {
+      if (_googleSignIn != null || Platform.isIOS || Platform.isAndroid) {
         return await _nativeLinkGoogleIdentity();
       }
 
@@ -314,9 +339,8 @@ class AuthService implements IAuthService {
         return false;
       }
 
-      // For native Google Sign-In, signInWithIdToken automatically links
-      // to existing anonymous account, preserving user_id and clipboard data
-      await _client.auth.signInWithIdToken(
+      // Link to the current session rather than signing into a different user.
+      await _client.auth.linkIdentityWithIdToken(
         provider: OAuthProvider.google,
         idToken: idToken,
         accessToken: accessToken,
@@ -423,6 +447,19 @@ class AuthService implements IAuthService {
   @override
   Future<void> signOut() async {
     try {
+      _pendingOAuthSession = null;
+      _pendingOAuthDeviceId = null;
+      final deviceId = _deviceService?.getCurrentDeviceId();
+      final userId = currentUserId;
+      if (deviceId != null && userId != null) {
+        // Do not revoke the session until its globally unique push token has
+        // been released. A failed delete leaves sign-out retryable.
+        await _client
+            .from('devices')
+            .delete()
+            .eq('id', deviceId)
+            .eq('user_id', userId);
+      }
       // Reset encryption and repository state before signing out
       EncryptionService.instance.reset();
       ClipboardRepository.instance.reset();
@@ -468,6 +505,67 @@ class AuthService implements IAuthService {
 
   @override
   String? get currentUserId => _client.auth.currentUser?.id;
+
+  @override
+  Future<void> signInWithRefreshToken(String refreshToken) async {
+    await _switchAccount(() => _client.auth.setSession(refreshToken));
+  }
+
+  Future<T> _switchAccount<T>(Future<T> Function() authenticate) async {
+    _pendingOAuthSession = null;
+    _pendingOAuthDeviceId = null;
+    final previous = _client.auth.currentSession;
+    final deviceId = _deviceService?.getCurrentDeviceId();
+    final T result;
+    try {
+      result = await authenticate();
+    } on Exception {
+      // setSession clears SDK state when a refresh token is rejected. Restore
+      // the original session so a bad QR does not also log the user out.
+      if (previous != null && _client.auth.currentSession == null) {
+        try {
+          await _client.auth.recoverSession(jsonEncode(previous.toJson()));
+        } on Exception catch (e) {
+          debugPrint('[AuthService] Could not restore previous session: $e');
+        }
+      }
+      rethrow;
+    }
+    final next = _client.auth.currentSession;
+    if (previous != null && next != null) {
+      await _cleanupPreviousSession(previous, next.user.id, deviceId);
+    }
+    return result;
+  }
+
+  Future<void> _cleanupPreviousSession(
+    Session previous,
+    String nextUserId,
+    String? deviceId,
+  ) async {
+    if (previous.user.id == nextUserId) return;
+    try {
+      // Override only this request's JWT. Mutating the shared client headers
+      // would race requests made by the newly signed-in account.
+      if (previous.user.isAnonymous) {
+        await _client
+            .rpc<void>(
+              'cleanup_user_data',
+              params: {'p_user_id': previous.user.id},
+            )
+            .setHeader('Authorization', 'Bearer ${previous.accessToken}');
+      } else if (deviceId != null) {
+        await _client
+            .from('devices')
+            .delete()
+            .eq('id', deviceId)
+            .eq('user_id', previous.user.id)
+            .setHeader('Authorization', 'Bearer ${previous.accessToken}');
+      }
+    } on Exception catch (e) {
+      debugPrint('[AuthService] Previous account cleanup failed: $e');
+    }
+  }
 
   @override
   Future<void> cleanupOldAccountData(String oldUserId) async {

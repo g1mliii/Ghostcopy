@@ -1,0 +1,11 @@
+{
+  "name": "ghostcopy-backend-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *_test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  }
+}

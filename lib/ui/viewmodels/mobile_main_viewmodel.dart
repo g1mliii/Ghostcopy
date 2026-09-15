@@ -199,6 +199,7 @@ class MobileMainViewModel extends ChangeNotifier {
   // ========== DISPOSAL TRACKING ==========
 
   bool _isDisposed = false;
+  int _accountRevision = 0;
 
   // ========== INITIALIZATION ==========
 
@@ -334,6 +335,7 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Load devices
   Future<void> loadDevices({bool forceRefresh = false}) async {
+    final revision = _accountRevision;
     _devicesLoading = true;
     _deviceError = null;
     notifyListeners();
@@ -342,7 +344,7 @@ class MobileMainViewModel extends ChangeNotifier {
       final devices = await _deviceService.getUserDevices(
         forceRefresh: forceRefresh,
       );
-      if (!_isDisposed) {
+      if (!_isDisposed && revision == _accountRevision) {
         _devices = devices;
         _deviceTypeTargetsCache = null;
         _devicesLoading = false;
@@ -351,7 +353,7 @@ class MobileMainViewModel extends ChangeNotifier {
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to load devices: $e');
-      if (!_isDisposed) {
+      if (!_isDisposed && revision == _accountRevision) {
         _devicesLoading = false;
         _deviceError = 'Failed to load devices. Tap to retry.';
         notifyListeners();
@@ -361,12 +363,13 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Load history (one-shot fetch)
   Future<void> loadHistory() async {
+    final revision = _accountRevision;
     _historyLoading = true;
     notifyListeners();
 
     try {
       final items = await _clipboardRepo.getHistory();
-      if (!_isDisposed) {
+      if (!_isDisposed && revision == _accountRevision) {
         _historyItems = items;
         _filterHistory(_historySearchQuery);
         _historyLoading = false;
@@ -388,7 +391,7 @@ class MobileMainViewModel extends ChangeNotifier {
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to load history: $e');
-      if (!_isDisposed) {
+      if (!_isDisposed && revision == _accountRevision) {
         _historyLoading = false;
         // Only claim failure when there is nothing on screen. Replacing a good
         // list with a full-page error because a refresh failed loses the
@@ -403,6 +406,7 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Subscribe to realtime history updates
   void subscribeToRealtimeUpdates() {
+    final revision = _accountRevision;
     final Stream<List<ClipboardItem>> stream;
     try {
       // watchHistory() throws synchronously when there is no session, which
@@ -417,7 +421,7 @@ class MobileMainViewModel extends ChangeNotifier {
 
     _historySubscription = stream.listen(
       (items) {
-        if (_isDisposed) return;
+        if (_isDisposed || revision != _accountRevision) return;
 
         // The stream is alive again; forget any previous backoff.
         _realtimeRetryCount = 0;
@@ -468,7 +472,7 @@ class MobileMainViewModel extends ChangeNotifier {
       },
       onError: (Object error) {
         debugPrint('[MobileMainVM] Realtime subscription error: $error');
-        if (_isDisposed) return;
+        if (_isDisposed || revision != _accountRevision) return;
 
         _historyLoading = false;
         // Keep whatever is already on screen. Only a cold failure - nothing
@@ -1280,6 +1284,7 @@ class MobileMainViewModel extends ChangeNotifier {
   /// so the previous user's clips stayed on screen until the next load
   /// replaced them - and stayed in memory regardless.
   void clearUserState() {
+    _accountRevision++;
     _decryptedContentCache.clear();
     _detectionCache.clear();
     _historyItems = [];
@@ -1295,6 +1300,19 @@ class MobileMainViewModel extends ChangeNotifier {
     _historyError = null;
     _clipboardContent = null;
     if (!_isDisposed) notifyListeners();
+  }
+
+  /// Replace account-scoped state and subscriptions after authentication changes.
+  Future<void> reloadForCurrentUser() async {
+    clearUserState();
+    _realtimeReconnectTimer?.cancel();
+    _realtimeReconnectTimer = null;
+    _realtimeRetryCount = 0;
+    await _historySubscription?.cancel();
+    _historySubscription = null;
+    if (_isDisposed) return;
+    subscribeToRealtimeUpdates();
+    await Future.wait([loadHistory(), loadDevices(forceRefresh: true)]);
   }
 
   // ========== CACHE MANAGEMENT ==========

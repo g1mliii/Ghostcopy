@@ -31,7 +31,7 @@ SolidCompression=yes
 
 ; Modern UI
 WizardStyle=modern
-SetupIconFile=..\assets\icons\app_icon.ico
+SetupIconFile=ghostcopy.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 ; Privileges
@@ -78,6 +78,10 @@ Filename: "taskkill"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; Ru
 
 ; Remove auto-start registry entry
 Filename: "reg"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v {#MyAppName} /f"; Flags: runhidden; RunOnceId: "RemoveAutoStart"
+
+; Remove Explorer integration and OAuth protocol registered by the app
+Filename: "reg"; Parameters: "delete ""HKCU\Software\Classes\*\shell\GhostCopySend"" /f"; Flags: runhidden; RunOnceId: "RemoveContextMenu"
+Filename: "reg"; Parameters: "delete ""HKCU\Software\Classes\ghostcopy"" /f"; Flags: runhidden; RunOnceId: "RemoveUrlProtocol"
 
 ; Clear Windows Credential Manager entries (Flutter Secure Storage)
 Filename: "powershell"; Parameters: "-ExecutionPolicy Bypass -Command ""& {{ cmdkey /list | Select-String 'flutter_secure_storage' | ForEach-Object {{ $target = ($_ -split ':')[1].Trim(); cmdkey /delete:$target }} }}"""; Flags: runhidden waituntilterminated; RunOnceId: "ClearCredentials"

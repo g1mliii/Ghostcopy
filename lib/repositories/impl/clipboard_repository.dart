@@ -661,7 +661,6 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   @override
-  @override
   Future<ClipboardItem?> getById(String id) async {
     _validateId(id);
 
@@ -693,6 +692,27 @@ class ClipboardRepository implements IClipboardRepository {
       return decrypted.isEmpty ? null : decrypted.first;
     } catch (e) {
       _fail(e, 'get clipboard item');
+    }
+  }
+
+  @override
+  Future<String?> getLatestItemId() async {
+    try {
+      final userId = _client.auth.currentUser?.id;
+      if (userId == null) {
+        throw SecurityException('User must be authenticated to poll clipboard');
+      }
+      final row = await _client
+          .from('clipboard')
+          .select('id')
+          .eq('user_id', userId)
+          .order('created_at', ascending: false)
+          .order('id', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return row?['id'].toString();
+    } catch (e) {
+      _fail(e, 'poll clipboard');
     }
   }
 
@@ -871,31 +891,27 @@ class ClipboardRepository implements IClipboardRepository {
         );
       }
 
-      // Get all items for this user, sorted by created_at descending
-      final allItems = await _client
-          .from('clipboard')
-          .select('id')
-          .eq('user_id', userId)
-          .order('created_at', ascending: false);
-
-      // If we have more than keepCount items, delete the oldest ones
-      if (allItems.length > keepCount) {
-        // Get IDs of items to delete (skip the first keepCount items)
-        final itemsToDelete = allItems
-            .skip(keepCount)
-            .map((item) => item['id'] as Object)
-            .toList();
-
-        // Batch delete all old items in one network request (performance optimization)
+      if (keepCount < 0) {
+        throw ValidationException('keepCount must be non-negative');
+      }
+      // Bound both the response and the DELETE query string. Repeat the same
+      // offset after deletion, because older rows move into that page.
+      const batchSize = 100;
+      while (true) {
+        final batch = await _client
+            .from('clipboard')
+            .select('id')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false)
+            .order('id', ascending: false)
+            .range(keepCount, keepCount + batchSize - 1);
+        if (batch.isEmpty) break;
         await _client
             .from('clipboard')
             .delete()
-            .eq('user_id', userId) // Defense in depth
-            .inFilter('id', itemsToDelete);
-
-        debugPrint(
-          'Cleaned up ${itemsToDelete.length} old clipboard items in one batch',
-        );
+            .eq('user_id', userId)
+            .inFilter('id', batch.map((row) => row['id'] as Object).toList());
+        if (batch.length < batchSize) break;
       }
     } catch (e) {
       _fail(e, 'cleanup old items');

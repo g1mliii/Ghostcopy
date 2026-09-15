@@ -95,11 +95,13 @@ jobs:
   functions:
     name: Deploy edge functions (Supabase)
     runs-on: ubuntu-latest
-    needs: changes
+    needs: [changes, migrations]
     if: >-
+      always() && !cancelled() &&
+      (needs.migrations.result == 'success' || needs.migrations.result == 'skipped') && (
       (github.event_name == 'push' && needs.changes.outputs.functions == 'true') ||
       (github.event_name == 'workflow_dispatch' &&
-       contains(fromJSON('["all","functions"]'), github.event.inputs.target))
+       contains(fromJSON('["all","functions"]'), github.event.inputs.target)))
     environment: production
     timeout-minutes: 15
     env:

@@ -126,7 +126,12 @@ Deno.serve(async (req)=>{
       userId = user.id;
     }
     // SERVER-SIDE RATE LIMITING
-    const rateLimit = await checkRateLimit(userId);
+    // Trigger calls describe inserts already accepted and counted by the DB.
+    // Applying the current insert counter again drops the tenth clip, and
+    // older queued notifications when a later insert fills the window.
+    const rateLimit = isServiceRole
+      ? { allowed: true, remaining: 0 }
+      : await checkRateLimit(userId);
     if (!rateLimit.allowed) {
       console.warn(`[Notification] Rate limit exceeded for user ${userId}`);
       return json({
@@ -246,7 +251,7 @@ Deno.serve(async (req)=>{
     const deviceIds = devices.map((d)=>d.id);
     const lastActiveUpdate = deviceIds.length > 0 ? supabaseClient.from('devices').update({
       last_active: new Date().toISOString()
-    }).in('id', deviceIds) : null;
+    }).in('id', deviceIds).lt('last_active', new Date(Date.now() - 60 * 60 * 1000).toISOString()) : null;
     // ------------------------------------------------------------------
     // SEND FCM NOTIFICATIONS (MODERN HTTP V1 API)
     // ------------------------------------------------------------------

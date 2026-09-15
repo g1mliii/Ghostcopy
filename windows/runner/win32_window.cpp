@@ -84,19 +84,28 @@ class WindowClassRegistrar {
 
 const wchar_t* WindowClassRegistrar::GetWindowClass() {
   if (!class_registered_) {
-    WNDCLASS window_class{};
+    WNDCLASSEX window_class{};
+    window_class.cbSize = sizeof(WNDCLASSEX);
     window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
     window_class.lpszClassName = kWindowClassName;
     window_class.style = CS_HREDRAW | CS_VREDRAW;
     window_class.cbClsExtra = 0;
     window_class.cbWndExtra = 0;
     window_class.hInstance = GetModuleHandle(nullptr);
-    window_class.hIcon =
-        LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    // app_icon.ico carries a frame for every size the shell asks for. LoadIcon
+    // would only ever hand back the large one and let Windows shrink it, which
+    // is what made the title bar and Alt-Tab icons look smeared; LoadImage at
+    // the two system metrics picks the frame drawn for that size instead.
+    window_class.hIcon = static_cast<HICON>(LoadImage(
+        window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0));
+    window_class.hIconSm = static_cast<HICON>(LoadImage(
+        window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     window_class.hbrBackground = 0;
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = Win32Window::WndProc;
-    RegisterClass(&window_class);
+    RegisterClassEx(&window_class);
     class_registered_ = true;
   }
   return kWindowClassName;

@@ -39,6 +39,37 @@ drift, dry-runs, then applies it. That job runs in the `production` GitHub
 Environment — add required reviewers there so schema changes need approval, as
 a bad migration is the one thing here that a re-run cannot undo.
 
+## Pending cleanup and rate-limit migration
+
+`20260915000000_bound_cleanup_and_rate_limits.sql` adds bounded retention,
+an R2 deletion queue, atomic rate limits, and scheduled cleanup of expired
+transient data and empty inactive guest accounts. These changes are local
+until the migration and updated `storage-presign` function are deployed.
+The deploy workflow orders migrations before functions when both change.
+
+Retention visits at most 1,000 users and deletes at most 5,000 rows per minute,
+keeping the newest 20 clips per user. A persistent cursor resumes later work.
+R2 deletion is asynchronous: each worker leases up to 500 queue rows, and only
+successful deletes are acknowledged. Failures become retryable after five
+minutes. A cron invocation dispatches at most ten workers, reading Vault once.
+
+After deployment, check `cron.job_run_details` and
+`public.storage_cleanup_queue` (`queued_at`, `attempts`, `next_attempt_at`). A
+growing oldest queue age indicates a missing secret, failed worker, or demand
+exceeding throughput; a scheduled job alone does not prove file deletion.
+
+Backend regression checks (Node 22.13+):
+
+```bash
+npm ci --prefix test/backend
+npm test --prefix test/backend
+deno check supabase/functions/storage-presign/index.ts
+```
+
+Migration tests execute PostgreSQL through PGlite. They stub Supabase's cron,
+Vault, and HTTP extensions; they do not prove hosted scheduler execution,
+multi-connection concurrency, or live R2 deletion.
+
 ## `schema.sql`
 
 A dump of the live production schema, for reading. Regenerate with:
@@ -102,6 +133,7 @@ Edge functions run in Deno and **cannot read Vault** — they only see
 environment variables. `SUPABASE_URL`, `SUPABASE_ANON_KEY` and
 `SUPABASE_SERVICE_ROLE_KEY` are injected automatically; do not set them.
 
-Note `cleanup_storage_on_clipboard_delete()` silently `RAISE WARNING`s and
-returns if the Vault secrets are missing — deleted R2 objects would then linger
-in a public bucket with no visible error.
+Before the pending queue migration, `cleanup_storage_on_clipboard_delete()`
+warns and drops the cleanup request if Vault secrets are missing. After the
+migration, the deletion remains in the durable queue and the dispatch job
+fails visibly until configuration is repaired.

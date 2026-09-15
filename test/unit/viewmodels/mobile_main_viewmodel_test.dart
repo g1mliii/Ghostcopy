@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ghostcopy/models/clipboard_item.dart';
@@ -64,6 +66,72 @@ void main() {
   tearDown(() {
     viewModel.dispose();
   });
+
+  test(
+    'account switch cancels the old stream and receives new account clips',
+    () async {
+      final oldStream = StreamController<List<ClipboardItem>>();
+      final newStream = StreamController<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.watchHistory(),
+      ).thenAnswer((_) => oldStream.stream);
+      viewModel.subscribeToRealtimeUpdates();
+      expect(oldStream.hasListener, isTrue);
+      when(
+        () => clipboardRepository.watchHistory(),
+      ).thenAnswer((_) => newStream.stream);
+      when(
+        () => deviceService.getUserDevices(forceRefresh: true),
+      ).thenAnswer((_) async => []);
+      await viewModel.reloadForCurrentUser();
+      expect(oldStream.hasListener, isFalse);
+      expect(newStream.hasListener, isTrue);
+      newStream.add([
+        ClipboardItem(
+          id: 'new',
+          userId: 'new-user',
+          content: 'new clip',
+          deviceType: 'android',
+          targetDeviceTypes: ['not-this-platform'],
+          createdAt: DateTime(2026),
+        ),
+      ]);
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.historyItems.single.id, 'new');
+      await oldStream.close();
+      await newStream.close();
+    },
+  );
+
+  test(
+    'an old account history request cannot overwrite the new account',
+    () async {
+      final oldRequest = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) => oldRequest.future);
+      final loadingOld = viewModel.loadHistory();
+      when(
+        () => clipboardRepository.watchHistory(),
+      ).thenAnswer((_) => const Stream.empty());
+      when(
+        () => deviceService.getUserDevices(forceRefresh: true),
+      ).thenAnswer((_) async => []);
+      when(() => clipboardRepository.getHistory()).thenAnswer((_) async => []);
+      await viewModel.reloadForCurrentUser();
+      oldRequest.complete([
+        ClipboardItem(
+          id: 'old',
+          userId: 'old-user',
+          content: 'private',
+          deviceType: 'android',
+          createdAt: DateTime(2026),
+        ),
+      ]);
+      await loadingOld;
+      expect(viewModel.historyItems, isEmpty);
+    },
+  );
 
   test('checkSensitiveData uses async security detection', () async {
     when(

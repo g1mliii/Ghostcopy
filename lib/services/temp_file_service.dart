@@ -11,7 +11,7 @@ abstract class ITempFileService {
   /// Returns the created File object
   Future<File> saveTempFile(Uint8List bytes, String filename);
 
-  /// Clean up old temporary files (older than 1 hour)
+  /// Clean up files older than 1 hour, retaining the active clipboard file.
   ///
   /// Should be called on app start to remove leftover files
   Future<void> cleanupTempFiles();

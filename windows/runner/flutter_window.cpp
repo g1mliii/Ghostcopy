@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <flutter/standard_method_codec.h>
 #include <wtsapi32.h>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -28,6 +29,33 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+
+  feedback_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "com.ghostcopy/send_file",
+          &flutter::StandardMethodCodec::GetInstance());
+  feedback_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() != "showResult") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* text = call.arguments()
+            ? std::get_if<std::string>(call.arguments()) : nullptr;
+        if (!text) {
+          result->Error("invalid_message", "Expected a message string");
+          return;
+        }
+        const int length = MultiByteToWideChar(
+            CP_UTF8, 0, text->data(), static_cast<int>(text->size()), nullptr, 0);
+        std::wstring wide(length, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text->data(),
+                           static_cast<int>(text->size()), wide.data(), length);
+        MessageBoxW(nullptr, wide.c_str(), L"GhostCopy",
+                    MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        result->Success();
+      });
 
   // Initialize power monitor for system sleep/wake/lock events
   power_monitor_ =
@@ -59,6 +87,7 @@ void FlutterWindow::OnDestroy() {
     power_monitor_ = nullptr;
   }
 
+  feedback_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

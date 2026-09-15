@@ -103,12 +103,6 @@ class SpotlightViewModel extends ChangeNotifier {
   Timer? _historyReloadTimer;
   Timer? _errorClearTimer;
 
-  // Track pending temp file cleanups
-  final Set<String> _pendingTempFileCleanups = {};
-
-  // Track temp file cleanup timers for cancellation on disposal
-  final Set<Timer> _tempFileCleanupTimers = {};
-
   // ========== INITIALIZATION ==========
 
   /// Initialize the ViewModel
@@ -447,23 +441,11 @@ class SpotlightViewModel extends ChangeNotifier {
             filename,
           );
           final tempPath = tempFile.path;
-          _pendingTempFileCleanups.add(tempPath);
 
           await clipboardService.writeFilePath(tempPath);
           debugPrint('[SpotlightVM] Copied file path to clipboard: $tempPath');
 
-          // Schedule cleanup after 5 seconds - store timer for cancellation
-          Timer? cleanupTimer;
-          cleanupTimer = Timer(const Duration(seconds: 5), () {
-            if (!_isDisposed) {
-              TempFileService.instance.deleteTempFile(tempPath);
-              _pendingTempFileCleanups.remove(tempPath);
-            }
-            if (cleanupTimer != null) {
-              _tempFileCleanupTimers.remove(cleanupTimer);
-            }
-          });
-          _tempFileCleanupTimers.add(cleanupTimer);
+          // Periodic cleanup retains the file while its URI is on the clipboard.
         }
       } else if (item.isRichText) {
         // Copy rich text with format
@@ -607,12 +589,6 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
 
-    // Cancel all temp file cleanup timers (CRITICAL: prevents memory leak)
-    for (final timer in _tempFileCleanupTimers) {
-      timer.cancel();
-    }
-    _tempFileCleanupTimers.clear();
-
     // Clear Realtime callback
     _syncService.onClipboardReceived = null;
 
@@ -623,9 +599,6 @@ class SpotlightViewModel extends ChangeNotifier {
     // Clear large data to help GC
     _clipboardContent = null;
     _content = '';
-
-    // Clear temp file cleanup list
-    _pendingTempFileCleanups.clear();
 
     debugPrint('[SpotlightVM] Disposed');
     super.dispose();

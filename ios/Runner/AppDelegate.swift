@@ -6,7 +6,7 @@ import WidgetKit
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
-  private let WIDGET_CHANNEL = "com.ghostcopy.ghostcopy/widget"
+  private let WIDGET_CHANNEL = "com.ghostcopy/widget"
   private var blurView: UIVisualEffectView?
 
   override func applicationWillResignActive(_ application: UIApplication) {

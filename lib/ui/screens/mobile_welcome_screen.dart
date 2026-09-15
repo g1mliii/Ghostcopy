@@ -739,25 +739,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
       debugPrint('[QR] ✅ Got session tokens, setting session...');
 
-      // Release this device's rows from the account we are leaving, BEFORE
-      // switching. devices.fcm_token is now globally unique, so a device that
-      // re-links to a second account otherwise collides on
-      // devices_fcm_token_global_unique; DeviceService swallows the 23505 into
-      // a debugPrint and push notifications then silently never arrive. The
-      // email and Google sign-in paths already do this - the QR path did not.
-      final previousUserId = locator<IAuthService>().currentUserId;
-      final wasAnonymous = locator<IAuthService>().isAnonymous;
-      if (wasAnonymous && previousUserId != null) {
-        try {
-          await locator<IAuthService>().cleanupOldAccountData(previousUserId);
-        } on Object catch (e) {
-          debugPrint('[QR] ⚠️ Could not clean up previous account: $e');
-          // Non-fatal: the token conflict is handled in updateFcmToken too.
-        }
-      }
-
-      // Set session in Supabase client using refresh token
-      await supabase.auth.setSession(refreshToken);
+      // Preserve the previous account until the new session is established.
+      await locator<IAuthService>().signInWithRefreshToken(refreshToken);
 
       debugPrint('[QR] ✅ Session set');
 
@@ -802,15 +785,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     try {
       // Mobile doesn't use hCaptcha - simplified auth flow
       if (_isLogin) {
-        // Sign in existing user - check if switching accounts
-        final currentUserId = locator<IAuthService>().currentUserId;
-        final wasAnonymous = locator<IAuthService>().isAnonymous;
-
-        // Clean up anonymous account BEFORE switching
-        if (wasAnonymous && currentUserId != null) {
-          await locator<IAuthService>().cleanupOldAccountData(currentUserId);
-        }
-
         // Sign in with new account (no captcha on mobile)
         await locator<IAuthService>().signInWithEmail(
           _emailController.text,
@@ -882,15 +856,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       final bool success;
 
       if (_isLogin) {
-        // Login mode: Sign in with existing Google account
-        final currentUserId = locator<IAuthService>().currentUserId;
-        final wasAnonymous = locator<IAuthService>().isAnonymous;
-
-        // Clean up anonymous account BEFORE switching
-        if (wasAnonymous && currentUserId != null) {
-          await locator<IAuthService>().cleanupOldAccountData(currentUserId);
-        }
-
         // Sign in with Google
         success = await locator<IAuthService>().signInWithGoogle();
       } else {

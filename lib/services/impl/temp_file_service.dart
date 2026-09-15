@@ -4,15 +4,25 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:super_clipboard/super_clipboard.dart';
 
 import '../temp_file_service.dart';
 
 /// Implementation of temporary file management
 class TempFileService implements ITempFileService {
-  TempFileService._();
+  /// Optional providers allow filesystem and clipboard lifecycle checks in tests.
+  TempFileService({
+    Future<Directory> Function()? temporaryDirectory,
+    Future<Uri?> Function()? clipboardFile,
+  }) : _temporaryDirectory = temporaryDirectory ?? getTemporaryDirectory,
+       _clipboardFile = clipboardFile ?? _readClipboardFile;
+
+  final Future<Directory> Function() _temporaryDirectory;
+  final Future<Uri?> Function() _clipboardFile;
+  int _nextFileId = 0;
 
   /// Singleton instance
-  static final TempFileService instance = TempFileService._();
+  static final TempFileService instance = TempFileService();
 
   static final _unsafePathChars = RegExp(r'[/\\:]');
 
@@ -22,12 +32,16 @@ class TempFileService implements ITempFileService {
   @override
   Future<File> saveTempFile(Uint8List bytes, String filename) async {
     try {
-      final tempDir = await getTemporaryDirectory();
+      final tempDir = await _temporaryDirectory();
 
       // Create safe filename by removing path separators
       final safeFilename = filename.replaceAll(_unsafePathChars, '_');
 
-      final file = File(path.join(tempDir.path, '$_filePrefix$safeFilename'));
+      final uniqueId =
+          '${DateTime.now().microsecondsSinceEpoch}_${_nextFileId++}';
+      final file = File(
+        path.join(tempDir.path, '$_filePrefix${uniqueId}_$safeFilename'),
+      );
 
       await file.writeAsBytes(bytes);
 
@@ -45,13 +59,24 @@ class TempFileService implements ITempFileService {
   @override
   Future<void> cleanupTempFiles() async {
     try {
-      final tempDir = await getTemporaryDirectory();
+      final tempDir = await _temporaryDirectory();
+      // If clipboard access fails, retain the files and try again next time.
+      // Deleting an unknown active URI would break a pending paste operation.
+      final activeUri = await _clipboardFile();
+      final activePath = activeUri?.scheme == 'file'
+          ? activeUri!.toFilePath()
+          : null;
       final cutoffTimestamp = DateTime.now()
           .subtract(const Duration(hours: 1))
           .millisecondsSinceEpoch;
       final deletedCount = await compute(
         _cleanupTempFilesInIsolate,
-        _TempCleanupParams(tempDir.path, _filePrefix, cutoffTimestamp),
+        _TempCleanupParams(
+          tempDir.path,
+          _filePrefix,
+          cutoffTimestamp,
+          activePath,
+        ),
       );
 
       if (deletedCount > 0) {
@@ -65,6 +90,14 @@ class TempFileService implements ITempFileService {
       debugPrint('[TempFileService] ✗ Cleanup failed: $e');
       // Don't throw - cleanup is best effort
     }
+  }
+
+  static Future<Uri?> _readClipboardFile() async {
+    final clipboard = SystemClipboard.instance;
+    if (clipboard == null) throw Exception('Clipboard unavailable');
+    final reader = await clipboard.read();
+    if (!reader.canProvide(Formats.fileUri)) return null;
+    return reader.readValue(Formats.fileUri);
   }
 
   @override
@@ -120,11 +153,13 @@ class _TempCleanupParams {
     this.tempDirPath,
     this.filePrefix,
     this.cutoffEpochMs,
+    this.activePath,
   );
 
   final String tempDirPath;
   final String filePrefix;
   final int cutoffEpochMs;
+  final String? activePath;
 }
 
 int _cleanupTempFilesInIsolate(_TempCleanupParams params) {
@@ -137,6 +172,10 @@ int _cleanupTempFilesInIsolate(_TempCleanupParams params) {
   for (final entity in tempDir.listSync()) {
     if (entity is! File) continue;
     if (!path.basename(entity.path).startsWith(params.filePrefix)) continue;
+    if (params.activePath != null &&
+        path.equals(entity.path, params.activePath!)) {
+      continue;
+    }
 
     try {
       final stat = entity.statSync();

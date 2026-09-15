@@ -111,3 +111,6 @@ supabase/.temp/
 # Seeded Claude Design canvas - a ~2.5MB build artifact of the .dc.html sources
 # beside it, and published as an Artifact. Re-seed it, do not commit it.
 docs/design/website-redesign/ghostcopy-website.html
+
+# Local PostgreSQL/WASM regression test dependency
+test/backend/node_modules/

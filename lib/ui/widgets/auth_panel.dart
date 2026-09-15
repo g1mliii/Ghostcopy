@@ -407,32 +407,6 @@ class _AuthPanelState extends State<AuthPanel> {
       if (_isLogin) {
         // Sign in existing user - check if switching accounts
         final currentUserId = widget.authService.currentUserId;
-        final wasAnonymous = widget.authService.isAnonymous;
-
-        // Warn user if they're about to lose local data when switching accounts
-        if (currentUserId != null) {
-          final clipboardCount = await _clipboardRepository
-              .getClipboardCountForCurrentUser();
-
-          if (clipboardCount > 0) {
-            // Show warning notification for both anonymous and permanent accounts
-            widget.notificationService.showToast(
-              message:
-                  'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
-              type: NotificationType.warning,
-              duration: const Duration(seconds: 4),
-            );
-          }
-        }
-
-        // Clean up anonymous account data BEFORE switching accounts
-        // This way user is still authenticated as the old account
-        if (wasAnonymous && currentUserId != null) {
-          debugPrint(
-            '[AuthPanel] Cleaning up anonymous account before switching',
-          );
-          await widget.authService.cleanupOldAccountData(currentUserId);
-        }
 
         // Sign in with new account
         await widget.authService.signInWithEmail(
@@ -544,31 +518,6 @@ class _AuthPanelState extends State<AuthPanel> {
       if (_isLogin) {
         // Login mode: Sign in with existing Google account - check if switching accounts
         final currentUserId = widget.authService.currentUserId;
-        final wasAnonymous = widget.authService.isAnonymous;
-
-        // Warn user if they're about to lose local data when switching accounts
-        if (currentUserId != null) {
-          final clipboardCount = await _clipboardRepository
-              .getClipboardCountForCurrentUser();
-
-          if (clipboardCount > 0) {
-            // Show warning notification for both anonymous and permanent accounts
-            widget.notificationService.showToast(
-              message:
-                  'Switching accounts will erase $clipboardCount local clipboard item${clipboardCount != 1 ? 's' : ''}',
-              type: NotificationType.warning,
-              duration: const Duration(seconds: 4),
-            );
-          }
-        }
-
-        // Clean up anonymous account data BEFORE switching accounts
-        if (wasAnonymous && currentUserId != null) {
-          debugPrint(
-            '[AuthPanel] Cleaning up anonymous account before switching',
-          );
-          await widget.authService.cleanupOldAccountData(currentUserId);
-        }
 
         // Sign in with Google (app_links handles the callback)
         success = await widget.authService.signInWithGoogle();

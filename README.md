@@ -12,6 +12,16 @@ Real-time cross-platform clipboard synchronization. Copy text on one device, ins
 - Private & Secure - Row-level security ensures only you see your data
 - Zero-CPU Sleep Mode - No performance impact when idle
 
+## Send a file from Windows Explorer
+
+After launching GhostCopy once, right-click a file and choose **Send with
+GhostCopy**. On Windows 11, open **Show more options** first (or press
+**Shift+F10**). GhostCopy uses the classic Explorer menu.
+
+The command reports success or failure in a small dialog and exits when you
+dismiss it. Files must be at most 10MB, and GhostCopy must already have a saved
+sign-in session.
+
 ## Quick Start
 
 ### Prerequisites

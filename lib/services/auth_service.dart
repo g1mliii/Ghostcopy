@@ -37,6 +37,10 @@ abstract class IAuthService {
   /// Returns true if successful, false if cancelled or failed
   Future<bool> signInWithGoogle();
 
+  /// Establish a linked-device session using [refreshToken].
+  /// Cleans up the previous account only after session establishment succeeds.
+  Future<void> signInWithRefreshToken(String refreshToken);
+
   /// Upgrade anonymous user to email/password account
   /// Uses Supabase's updateUser() to preserve user_id and clipboard data
   /// Throws exception if email already exists

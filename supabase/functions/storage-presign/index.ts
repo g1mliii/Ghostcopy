@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.600.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
@@ -9,13 +9,6 @@ const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
 // .trim() guards against accidental whitespace when secrets are set via dashboard copy-paste
 const R2_BUCKET_NAME = (Deno.env.get('R2_BUCKET_NAME') ?? 'ghostcopy-files').trim();
 const DOWNLOAD_URL_TTL_SECONDS = 300;
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const STORAGE_RATE_LIMITS = {
-  upload: 20,
-  download: 120,
-  delete: 30
-};
-const storageRateLimitCache = new Map();
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -25,10 +18,12 @@ const s3Client = new S3Client({
   },
   forcePathStyle: false
 });
-async function authenticate(req) {
+async function authenticate(req: Request): Promise<
+  { userId: string; error: null } | { userId: null; error: Response }
+> {
   const authHeader = req.headers.get('Authorization') ?? '';
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  if (authHeader === `Bearer ${serviceRoleKey}`) {
+  if (serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`) {
     return {
       userId: 'service-role',
       error: null
@@ -53,41 +48,48 @@ async function authenticate(req) {
     error: null
   };
 }
-function checkStorageRateLimit(userId, action) {
-  const nowMs = Date.now();
-  const cacheKey = `${userId}:${action}`;
-  const maxCalls = STORAGE_RATE_LIMITS[action];
-  for (const [key, entry] of storageRateLimitCache.entries()){
-    if (nowMs - entry.windowStartMs > RATE_LIMIT_WINDOW_MS) {
-      storageRateLimitCache.delete(key);
-    }
-  }
-  const current = storageRateLimitCache.get(cacheKey);
-  if (current == null || nowMs - current.windowStartMs > RATE_LIMIT_WINDOW_MS) {
-    storageRateLimitCache.set(cacheKey, {
-      count: 1,
-      windowStartMs: nowMs
-    });
-    return {
-      allowed: true,
-      retryAfterSeconds: 0
-    };
-  }
-  if (current.count >= maxCalls) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((RATE_LIMIT_WINDOW_MS - (nowMs - current.windowStartMs)) / 1000));
-    return {
-      allowed: false,
-      retryAfterSeconds
-    };
-  }
-  storageRateLimitCache.set(cacheKey, {
-    count: current.count + 1,
-    windowStartMs: current.windowStartMs
+function serviceClient() {
+  return createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
+    auth: { persistSession: false, autoRefreshToken: false }
   });
-  return {
-    allowed: true,
-    retryAfterSeconds: 0
-  };
+}
+async function checkStorageRateLimit(userId: string, action: string) {
+  const { data, error } = await serviceClient().rpc('check_storage_rate_limit', {
+    p_user_id: userId, p_action: action
+  });
+  if (error || !data?.[0]) throw new Error('Storage rate limit unavailable');
+  return { allowed: data[0].allowed, retryAfterSeconds: data[0].retry_after_seconds };
+}
+
+interface CleanupRow {
+  id: number;
+  owner_id: string;
+  storage_path: string;
+}
+async function deleteQueuedObjects() {
+  const client = serviceClient();
+  // The database leases at most 500 rows. A failed invocation leaves them
+  // retryable after five minutes, including crashes after R2 accepted a delete.
+  const { data, error } = await client.rpc('claim_storage_cleanup_batch');
+  const rows = data as CleanupRow[] | null;
+  if (error) throw error;
+  if (!rows?.length) return json({ success: true, deleted: 0 });
+  const valid = rows.filter((row) => typeof row.storage_path === 'string' &&
+    row.storage_path.startsWith(`${row.owner_id}/`));
+  if (valid.length !== rows.length) throw new Error('Invalid cleanup owner prefix');
+  const result = await s3Client.send(new DeleteObjectsCommand({
+    Bucket: R2_BUCKET_NAME,
+    Delete: { Objects: valid.map((row) => ({ Key: row.storage_path })), Quiet: false }
+  }));
+  // A batch can return HTTP 200 with individual object errors. Acknowledge
+  // only explicit successes; every other row keeps its retry lease.
+  const deleted = new Set((result.Deleted ?? []).map((item) => item.Key));
+  const ids = valid.filter((row) => deleted.has(row.storage_path)).map((row) => row.id);
+  if (ids.length) {
+    const { error: ackError } = await client.rpc('acknowledge_storage_cleanup', { p_ids: ids });
+    if (ackError) throw ackError;
+  }
+  return json({ success: ids.length === rows.length, deleted: ids.length }, ids.length === rows.length ? 200 : 502);
 }
 Deno.serve(async (req)=>{
   if (req.method === 'OPTIONS') {
@@ -96,6 +98,12 @@ Deno.serve(async (req)=>{
   try {
     const body = await req.json();
     const { action, path } = body;
+    if (action === 'delete_queued') {
+      const { userId, error: authError } = await authenticate(req);
+      if (authError) return authError;
+      if (userId !== 'service-role') return json({ error: 'Forbidden' }, 403);
+      return await deleteQueuedObjects();
+    }
     if (typeof action !== 'string' || typeof path !== 'string' || action.length === 0 || path.length === 0) {
       return json({ error: 'Missing action or path' }, 400);
     }
@@ -118,7 +126,7 @@ Deno.serve(async (req)=>{
     // `action` was already narrowed to exactly the three rate-limited actions
     // above, so there is nothing further to test here.
     if (isUserAction) {
-      const rateLimit = checkStorageRateLimit(userId, action);
+      const rateLimit = await checkStorageRateLimit(userId, action);
       if (!rateLimit.allowed) {
         return json({
           error: 'Rate limit exceeded',
@@ -175,6 +183,7 @@ Deno.serve(async (req)=>{
       console.log(`[storage-presign] Deleted: ${path}`);
       return json({ success: true });
     }
+    return json({ error: 'Invalid action' }, 400);
   } catch (error) {
     console.error('[storage-presign] Error:', error);
     return json({ error: 'Internal server error' }, 500);

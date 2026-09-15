@@ -1,34 +1,49 @@
-# Tray Icon Assets
+# Icon Assets
 
-## Required Files
+Every file here is generated. Do not hand-edit them — edit the mark and re-run
+the generator:
 
-For the system tray to display properly, you need to add the following icon files to this directory:
+```bash
+python tool/generate_desktop_icons.py
+```
 
-### Windows
-- **tray_icon.ico** - Windows tray icon (16x16, 32x32, 48x48 multi-resolution ICO file)
+The mark itself lives in `website/icons/ghost.svg`; the generator restates that
+vector's primitives so it can draw each size natively. If you change the .svg,
+update the constants at the top of `tool/generate_desktop_icons.py` to match.
 
-### macOS
-- **tray_icon.png** - macOS menu bar icon (22x22 PNG, monochrome recommended for native look)
+## What gets generated
 
-### Linux
-- **tray_icon.png** - Linux tray icon (22x22 or 24x24 PNG)
+| File | Used by |
+|------|---------|
+| `../../installer/ghostcopy.ico` | Inno Setup `SetupIconFile` (`installer/ghostcopy.iss`) — kept outside `assets/` so it is not shipped inside the app bundle |
+| `../../windows/runner/resources/app_icon.ico` | The Windows exe, title bar, taskbar and Alt-Tab, via `windows/runner/Runner.rc` |
+| `tray_icon.ico` | Windows system tray (16/20/24/32/48 frames, picked per DPI) |
+| `tray_icon_macos.png` | macOS menu bar |
+| `tray_icon_linux.png` | Linux panels |
+| `tray_icon.png` | Flutter-side previews that want a PNG |
 
-## Icon Design Guidelines
+`app_icon.png`, `logo_dark.png` and `logo_white.png` are the shared 1024px
+brand art used by the Flutter UI and the mobile/msix packaging. They are not
+produced by the generator.
 
-- **Style**: Simple, monochrome ghost icon to match "GhostCopy" branding
-- **Colors**:
-  - Windows: Full color or white on transparent
-  - macOS: Black on transparent (system will invert for dark mode)
-  - Linux: Full color or white on transparent
-- **Padding**: Leave 2-3px padding around the icon for visual breathing room
+## Why the tray icon is not the app icon
 
-## Creating Icons
+The app icon is the white ghost inside its indigo squircle. At the 16px the
+tray actually renders, that container eats most of the canvas and the ghost
+turns to mush, so the tray uses the bare ghost scaled to fill the frame.
 
-You can use tools like:
-- **Figma/Sketch** - Design the icon
-- **ImageMagick** - Convert PNG to ICO: `convert icon.png -define icon:auto-resize=48,32,16 tray_icon.ico`
-- **Online converters** - [icoconvert.com](https://icoconvert.com), [cloudconvert.com](https://cloudconvert.com)
+It is drawn in brand indigo with the eyes knocked through to transparency,
+which keeps it legible on both a dark and a light taskbar. A white silhouette —
+what this used to ship — disappears entirely on a light taskbar.
 
-## Temporary Solution
+## Why macOS is different
 
-Until you add custom icons, the app will attempt to use these paths but may show a default system icon or no icon.
+macOS menu bar icons are *template* images: black on transparent, with the
+system tinting them to suit the menu bar's appearance. That is what makes the
+icon invert in dark mode and when the bar is highlighted; a full-colour icon
+cannot do it.
+
+The tinting only happens if `isTemplate: true` is passed to
+`trayManager.setIcon`, which `lib/services/impl/tray_service.dart` does on
+macOS. The asset and that flag have to travel together — a black template image
+without the flag is an invisible icon on a dark menu bar.

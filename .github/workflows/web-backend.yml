@@ -8,12 +8,16 @@ on:
     paths:
       - 'website/**'
       - 'supabase/functions/**'
+      - 'test/backend/**'
+      - 'supabase/migrations/**'
       - '.github/workflows/web-backend.yml'
   pull_request:
     branches: [main]
     paths:
       - 'website/**'
       - 'supabase/functions/**'
+      - 'test/backend/**'
+      - 'supabase/migrations/**'
       - '.github/workflows/web-backend.yml'
   workflow_dispatch:
 
@@ -65,6 +69,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install backend test dependencies
+        run: npm ci --prefix test/backend
+
+      - name: Test backend handlers and migrations
+        run: npm test --prefix test/backend
 
       - uses: denoland/setup-deno@v2
         with:

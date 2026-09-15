@@ -990,7 +990,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     // until a load replaced them, so drop the whole per-user state instead.
     if (authService.currentUserId != userBefore) {
       debugPrint('[MobileMain] Account changed - clearing user state');
-      _viewModel.clearUserState();
+      await _viewModel.reloadForCurrentUser();
+      return;
     } else {
       // Same account: encryption keys may have changed, so caches are stale.
       _viewModel.clearCaches();
