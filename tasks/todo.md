@@ -24,6 +24,22 @@ Ordered, because each blocks the next:
 Do macOS before iOS: iOS already compiles, macOS does not, and macOS is where
 the unshared code lives.
 
+## Parallel track: Google Play
+
+Play Console account purchased 2026-09-15. Full path:
+[`left_TO_DO/PLAY_STORE_SETUP.md`](../left_TO_DO/PLAY_STORE_SETUP.md)
+
+Front-load this. A new personal account must run a closed test with 20 testers
+for **14 continuous days** before it can apply for production, so the clock
+should start as early as a build allows and run while the macOS work happens.
+
+- [ ] Generate the upload keystore, add `android/key.properties` (Gradle is
+      already wired for it)
+- [ ] Bump `version:` off the default `1.0.0+1` and pick a scheme
+- [ ] `flutter build appbundle --release`, verify it is not debug-signed
+- [ ] Create the app in Console; privacy policy, data safety, content rating
+- [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
+
 ---
 
 ## Completed: Phase 1.2 - MobileMainViewModel Extraction

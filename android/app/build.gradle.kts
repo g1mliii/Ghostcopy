@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -6,6 +9,20 @@ plugins {
     // Add the Google services Gradle plugin for Firebase
     id("com.google.gms.google-services")
 }
+
+// Release signing is driven by android/key.properties, which is gitignored and
+// never committed. Without it the release build falls back to the debug key, so
+// `flutter run --release` still works on a machine that has no keystore - it
+// just produces something Play will refuse, which is the correct outcome.
+//
+// See left_TO_DO/PLAY_STORE_SETUP.md for generating the keystore.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        FileInputStream(keystorePropertiesFile).use { load(it) }
+    }
+}
+val hasReleaseKeystore = keystorePropertiesFile.exists()
 
 android {
     namespace = "com.ghostcopy.ghostcopy"
@@ -46,11 +63,28 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "GhostCopy: android/key.properties not found - signing the release " +
+                    "build with the DEBUG key. Google Play will reject this artifact."
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
