@@ -4,7 +4,12 @@
 /.packages
 .packages
 .pub/
-pubspec.lock
+
+# pubspec.lock IS committed. GhostCopy is an application, not a library, so the
+# lockfile is what makes a build reproducible across machines and CI. It was
+# ignored until 2026-09-15; the cost showed up as CI resolving material_ui
+# 1.3.0 against the pinned Flutter 3.44.8 and failing to compile on every
+# native target, while the same commit built fine locally on 1.2.0.
 
 # IDE
 .idea/
