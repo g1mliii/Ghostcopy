@@ -43,8 +43,12 @@ before(async () => {
       INSERT INTO net.requests VALUES(body); RETURN 1;
     END; $$;
   `);
-  const sql = await readFile(new URL('../../supabase/migrations/20260915000000_bound_cleanup_and_rate_limits.sql', import.meta.url), 'utf8');
-  await db.exec(sql);
+  for (const name of [
+    '20260915000000_bound_cleanup_and_rate_limits.sql',
+    '20260915170000_deny_all_policies_on_service_tables.sql',
+  ]) {
+    await db.exec(await readFile(new URL(`../../supabase/migrations/${name}`, import.meta.url), 'utf8'));
+  }
   await db.exec(`
     CREATE TRIGGER clipboard_rate_limit_check BEFORE INSERT ON public.clipboard
       FOR EACH ROW EXECUTE FUNCTION public.check_clipboard_rate_limit();
@@ -158,4 +162,38 @@ test('cron replaces the nightly job with bounded recurring work', async () => {
   assert.equal(jobs.length, 4);
   assert.equal(jobs.some((j)=>j.jobname==='cleanup-old-clips-daily'), false);
   assert.equal(jobs.find((j)=>j.jobname==='cleanup-old-clips-bounded').schedule, '* * * * *');
+});
+
+test('service-only tables refuse every client role and keep working for service_role', async () => {
+  const tables = ['clipboard_cleanup_cursor', 'storage_rate_limits', 'storage_cleanup_queue'];
+
+  // The linter's complaint was that RLS was on with no policy. Assert the
+  // policy now exists, so the INFO finding cannot come back unnoticed.
+  for (const t of tables) {
+    const { rows } = await db.query(
+      'SELECT policyname, roles, qual FROM pg_policies WHERE schemaname=$1 AND tablename=$2', ['public', t]);
+    assert.equal(rows.length, 1, `${t} should have exactly one policy`);
+    assert.equal(rows[0].qual, 'false', `${t} policy should deny outright`);
+    assert.deepEqual([...rows[0].roles].sort(), ['anon', 'authenticated']);
+  }
+
+  // What actually protects the tables is the missing GRANT, which bites before
+  // RLS is consulted. Prove both client roles are refused outright.
+  for (const role of ['anon', 'authenticated']) {
+    for (const t of tables) {
+      await db.exec(`SET ROLE ${role}`);
+      await assert.rejects(
+        db.query(`SELECT * FROM public.${t}`),
+        /permission denied/i,
+        `${role} should not read ${t}`);
+      await db.exec('RESET ROLE');
+    }
+  }
+
+  // And that the deny-all did not lock out the role the cleanup jobs run as.
+  await db.exec('SET ROLE service_role');
+  for (const t of tables) {
+    await db.query(`SELECT * FROM public.${t}`);
+  }
+  await db.exec('RESET ROLE');
 });
