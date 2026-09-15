@@ -2,7 +2,27 @@
 
 ## Active Task
 
-**Phase 1.2 + 1.3 Complete!** MobileMainViewModel extraction finished.
+**Bringing up macOS** (started 2026-09-15). Development moves to a MacBook.
+
+Full task list: [`left_TO_DO/MACOS_SETUP_VERIFICATION.md`](../left_TO_DO/MACOS_SETUP_VERIFICATION.md)
+
+Ordered, because each blocks the next:
+
+- [ ] Merge PRs #11, #12, #13 — without #12 a fresh clone cannot build at all
+- [ ] Fix macOS signing so `flutter build macos --release` works (the only
+      platform that does not currently build)
+- [ ] Remove the Accessibility prompt from `macos/Runner/AppDelegate.swift` —
+      it asks for a permission the app neither needs nor can hold under the
+      App Sandbox
+- [ ] Verify the tray icon in a **dark** menu bar (the `isTemplate` fix from
+      2026-09-15 is unverified on real hardware)
+- [ ] Verify launch-at-startup survives logout/login under the sandbox —
+      expect this to be broken
+- [ ] Functional pass: hotkey, tray menu, window behaviour, bidirectional sync,
+      sleep/wake
+
+Do macOS before iOS: iOS already compiles, macOS does not, and macOS is where
+the unshared code lives.
 
 ---
 

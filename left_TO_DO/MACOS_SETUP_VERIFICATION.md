@@ -1,372 +1,201 @@
-# macOS Setup Verification
+# macOS: first session on the Mac
 
-**Status**: Most macOS implementation is already complete. This document verifies what's in place and what (if anything) needs to be done.
+**Rewritten 2026-09-15.** The previous version claimed macOS was "nearly
+complete ✅" and listed most features as done. That was written from reading the
+source, not from running it. Nobody has ever launched GhostCopy on a Mac.
 
----
+What is actually known, as of 2026-09-15:
 
-## ✅ Already Implemented
+| | Status | Evidence |
+|---|---|---|
+| Windows | Builds, runs, used daily | Local + CI |
+| Android | Builds, runs | Local + CI |
+| iOS | **Compiles.** Never run. | CI run 34999420416 |
+| macOS | **Does not build.** Never run. | CI run 34999420416 |
 
-### 1. AppDelegate Configuration
-**File**: `macos/Runner/AppDelegate.swift`
-
-✅ **What's Done**:
-- Prevents app from closing when window is hidden (keeps tray running)
-- Requests Accessibility permissions on startup
-- Proper error handling if permissions denied
-
-**Code**:
-```swift
-override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return false  // Keep app running in tray when window closes
-}
-
-checkAccessibilityPermissions()  // Requests permission for global hotkeys
-```
-
-**Status**: ✅ Complete
+So the doc below is a task list, not a verification checklist. Nothing here is
+confirmed working until you confirm it.
 
 ---
 
-### 2. Power Monitoring (Sleep/Wake Events)
-**File**: `macos/Runner/PowerMonitor.swift`
+## 0. Before anything else
 
-✅ **What's Done**:
-- Listens to macOS system power events:
-  - `willSleep` - System is going to sleep
-  - `didWake` - System woke from sleep
-  - `screensDidLock` - Screen lock
-  - `screensDidUnlock` - Screen unlock
-- Method channel bridge to Flutter
-- Proper observer cleanup in deinit
-- Memory leak protection (weak self)
+Merge the open PRs first, or you will clone a repo that cannot build:
 
-**Status**: ✅ Complete
+- **#12** commits `pubspec.lock`. Without it a fresh clone resolves
+  `material_ui 1.3.0`, which needs a newer SDK than the pinned Flutter 3.44.8,
+  and every native target fails with `Undefined name 'awaitNotRequired'`.
+- **#11** is the Supabase RLS migration.
+- **#13** gates deploys on CI being green.
 
-**Integration**: Called from Dart code to trigger lifecycle transitions
+Then:
 
----
-
-### 3. Entitlements Configuration
-**Files**:
-- `macos/Runner/Release.entitlements`
-- `macos/Runner/DebugProfile.entitlements`
-
-✅ **What's Done**:
-- App Sandbox enabled (required for macOS)
-- Network Client enabled (for Supabase sync)
-- Network Server enabled in Debug (for testing)
-- JIT enabled in Debug (for faster development)
-
-**Status**: ✅ Complete
-
-**Note**: Accessibility permissions are requested at runtime, not in entitlements.
-
----
-
-### 4. Desktop Services (Dart)
-**Files**:
-- `lib/services/impl/window_service.dart`
-- `lib/services/impl/hotkey_service.dart`
-- `lib/services/impl/tray_service.dart`
-- `lib/services/impl/lifecycle_controller.dart`
-
-✅ **What's Done**:
-- Window manager (show/hide/center Spotlight)
-- Global hotkey registration (Ctrl+Shift+S)
-- System tray icon with menu
-- Lifecycle management for sleep mode
-- Power event integration
-
-**Status**: ✅ Complete
-
----
-
-## ⏳ What Needs Verification
-
-### 1. Launch at Startup (Potentially Already Done)
-**Services**: `lib/services/impl/auto_start_service.dart`
-
-**Status**: Check if already implemented
-- [ ] Auto-start service exists
-- [ ] Registers app to launch at login on macOS
-- [ ] Setting toggle in Settings UI
-
-**If Not Done**: Already in implementation plan (Phase 10), likely complete.
-
-### 2. System Tray Icon
-**Services**: `lib/services/impl/tray_service.dart`
-
-**Status**: Check implementation
-- [ ] Tray icon displays
-- [ ] Context menu shows
-- [ ] Game Mode toggle works
-- [ ] Settings access works
-- [ ] Quit option works
-
-**Expected**: Should be complete based on main.dart initialization.
-
-### 3. Global Hotkey (Ctrl+Shift+S)
-**Services**: `lib/services/impl/hotkey_service.dart`
-
-**Status**: Check if working
-- [ ] Register hotkey on startup
-- [ ] Show Spotlight window when triggered
-- [ ] Configurable from Settings
-
-**Expected**: Should be complete based on main.dart code.
-
----
-
-## 🔍 How to Test macOS Implementation
-
-### Test 1: App Launches & Runs Hidden
 ```bash
-flutter run -d macos
+git clone https://github.com/g1mliii/Ghostcopy.git
+cd Ghostcopy
+flutter pub get          # honours the committed lockfile - do not run pub upgrade
 ```
 
-**Expected**:
-- ✅ App starts
-- ✅ Window is hidden by default
-- ✅ System tray icon appears
-- ✅ Console shows: `[AppDelegate] ✅ Accessibility permissions granted`
-
-### Test 2: Global Hotkey (Ctrl+Shift+S)
-```
-1. App running with window hidden
-2. Press Ctrl+Shift+S
-3. Spotlight window should appear and focus
-4. Press Escape to hide
-```
-
-**Expected**:
-- ✅ Window appears centered
-- ✅ Text field auto-focused
-- ✅ Escape key hides it
-- ✅ Hotkey works globally
-
-### Test 3: System Tray Menu
-```
-1. Right-click system tray icon
-2. Context menu appears
-3. Try "Settings" option
-4. Try "Game Mode" toggle
-5. Try "Quit"
-```
-
-**Expected**:
-- ✅ Menu shows correctly
-- ✅ Settings opens Spotlight in settings mode
-- ✅ Game Mode toggle switches
-- ✅ Quit closes app
-
-### Test 4: Sleep/Wake Events
-```
-1. App running
-2. Put macOS to sleep (Option+Cmd+Eject)
-3. Wake up
-4. Check console for power events
-```
-
-**Expected Console**:
-```
-[Main] 🔌 Power event: systemSleep
-[Main] 🔌 Power event: systemWake
-```
-
-### Test 5: Window Behavior
-```
-1. Spotlight window open
-2. Hide it (Escape or click outside)
-3. Focus another app
-4. Press Cmd+Tab multiple times
-5. Try to close window (Cmd+W)
-```
-
-**Expected**:
-- ✅ Window hides when pressing Escape
-- ✅ Window hides when clicking outside (not visible in alt+tab)
-- ✅ Cmd+W does NOT close app (app stays running)
-- ✅ Only Cmd+Q or tray menu Quit closes app
-
-### Test 6: Accessibility Permissions
-```
-1. First launch of app
-2. System permission dialog appears
-3. Grant or deny permission
-4. Try Ctrl+Shift+S hotkey
-```
-
-**Expected**:
-- ✅ Permission dialog shows on first launch
-- ✅ With permission: hotkey works
-- ✅ Without permission: hotkey doesn't work
+You also need a `.env` (see the root `README.md`); it is gitignored, so copy it
+across from the Windows machine.
 
 ---
 
-## 📋 macOS Features Checklist
+## 1. Fix the build — this is the actual first task
 
-| Feature | File | Status | Notes |
-|---------|------|--------|-------|
-| Tray mode (app keeps running) | AppDelegate.swift | ✅ Done | Returns false on window close |
-| Accessibility permissions | AppDelegate.swift | ✅ Done | Prompted at startup |
-| Power monitoring | PowerMonitor.swift | ✅ Done | Listens to sleep/wake |
-| Window manager | window_service.dart | ✅ Done | Show/hide/center/focus |
-| Global hotkey | hotkey_service.dart | ✅ Done | Ctrl+Shift+S by default |
-| System tray | tray_service.dart | ✅ Done | Icon + context menu |
-| Launch at startup | auto_start_service.dart | ⏳ ? | Likely complete |
-| Lifecycle controller | lifecycle_controller.dart | ✅ Done | Manages sleep mode |
-| Clipboard sync | clipboard_sync_service.dart | ✅ Done | Realtime subscriptions |
+`flutter build macos --release` currently fails in CI with:
 
----
-
-## ⚠️ Potential Issues on macOS
-
-### Issue 1: Accessibility Permissions Not Granted
-**Symptom**: Hotkey doesn't work
-**Cause**: User denied accessibility permissions
-**Solution**:
-1. System Preferences → Security & Privacy → Accessibility
-2. Find GhostCopy in the list
-3. Check the checkbox next to it
-
-### Issue 2: Multiple Spotlight Windows
-**Symptom**: Multiple window instances when hotkey pressed
-**Cause**: Window service not properly managing window state
-**Solution**:
-1. Check WindowService.showSpotlight() implementation
-2. Ensure window.isVisible check before showing
-3. Rebuild and test
-
-### Issue 3: App Quits When Window Closes
-**Symptom**: App closes when Cmd+W or red close button pressed
-**Cause**: applicationShouldTerminateAfterLastWindowClosed returning true
-**Solution**:
-1. Verify AppDelegate override is in place
-2. Rebuild
-
-### Issue 4: Hotkey Not Working
-**Symptom**: Ctrl+Shift+S doesn't show Spotlight
-**Cause**: One of several possibilities:
-- Accessibility permissions denied
-- Hotkey not registered
-- HotkeyService not initialized
-- Another app using same hotkey
-**Solution**:
-1. Check accessibility permissions granted
-2. Check console for hotkey registration message
-3. Try different hotkey in Settings
-4. Check if another app uses Ctrl+Shift+S
-
-### Issue 5: Tray Icon Not Showing
-**Symptom**: No system tray icon visible
-**Cause**: TrayService not initialized or failed
-**Solution**:
-1. Check main.dart initializes TrayService
-2. Check console for errors
-3. Restart app
-4. Try building for Release instead of Debug
-
----
-
-## 🔧 Xcode Setup for macOS (If Needed)
-
-### 1. Code Signing (if building on different machine)
-1. Open `macos/Runner.xcworkspace`
-2. Select **Runner** target
-3. Go to **Signing & Capabilities**
-4. Select your Team
-
-### 2. Build & Run
-```bash
-flutter run -d macos
+```
+macos/Runner.xcodeproj: error: No profiles for 'com.ghostcopy.ghostcopy' were found:
+Xcode couldn't find any Mac App Development provisioning profiles matching
+'com.ghostcopy.ghostcopy'. Automatic signing is disabled and unable to generate a profile.
 ```
 
-Or in Xcode:
-1. Select **Runner** scheme
-2. Select **Any Mac** device
-3. Press Cmd+R to run
+This is signing, not code. On your own Mac with an Apple ID it should resolve
+by selecting a team:
 
-### 3. Create Release Build
-```bash
-flutter build macos --release
-```
+1. `open macos/Runner.xcworkspace`
+2. Select the **Runner** project → **Runner** target → **Signing & Capabilities**
+3. Tick **Automatically manage signing**, pick your team (a free personal Apple
+   ID works for local development)
 
-App bundle will be at:
-```
-build/macos/Build/Products/Release/ghostcopy.app
-```
+`flutter run -d macos` for development does not need this; only `--release`
+does. Try `flutter run -d macos` first — it may just work.
 
----
-
-## 📊 Comparison: macOS vs iOS
-
-| Feature | macOS | iOS |
-|---------|-------|-----|
-| Tray mode | ✅ (background) | N/A (no tray) |
-| Global hotkey | ✅ Ctrl+Shift+S | N/A |
-| Clipboard auto-copy | ✅ Yes | ❌ Background restricted |
-| Clipboard sync | ✅ Realtime | ✅ FCM + widget |
-| Sleep/wake handling | ✅ PowerMonitor | ✅ Lifecycle |
-| Window management | ✅ Borderless | N/A |
-| Push notifications | N/A | ✅ FCM |
-| Home screen widget | N/A | ✅ Widget Extension |
-| Share intent | ⏳ Partial | ✅ Complete |
+**CI will still fail after you fix it locally**, because the runner has no
+signing identity and there is no `--no-codesign` flag for
+`flutter build macos` the way there is for iOS. Leave it failing, or make the
+CI job build unsigned via `CODE_SIGNING_ALLOWED=NO` in the Release xcconfig.
+The macOS job is `continue-on-error: true`, so it is not blocking anything.
 
 ---
 
-## Summary
+## 2. The Accessibility prompt is wrong — remove it
 
-### macOS Status: **Nearly Complete** ✅
+`macos/Runner/AppDelegate.swift` calls `AXIsProcessTrustedWithOptions` with
+`kAXTrustedCheckOptionPrompt: true` on every launch, commented "needed for
+global hotkeys".
 
-**What's Working**:
-- ✅ Tray mode (app stays running)
-- ✅ Global hotkey (Ctrl+Shift+S)
-- ✅ Accessibility permissions
-- ✅ Power monitoring (sleep/wake)
-- ✅ Window management
-- ✅ System tray menu
-- ✅ Desktop services integration
+**It is not needed, and it cannot work.** Two independent reasons:
 
-**What Needs Testing**:
-- ⏳ Launch at startup toggle
-- ⏳ All menu options (Game Mode, Settings, Quit)
-- ⏳ Complete workflow (hotkey → search → send → sync)
+1. `hotkey_manager` → `hotkey_manager_macos` → the `HotKey` pod (0.2.1, from
+   `macos/Podfile.lock`), which wraps Carbon's `RegisterEventHotKey`. That API
+   has never required Accessibility permission — that requirement applies to
+   `CGEventTap` / `NSEvent.addGlobalMonitorForEvents`, which this app does not
+   use.
+2. `macos/Runner/Release.entitlements` sets
+   `com.apple.security.app-sandbox = true`. A sandboxed app cannot hold
+   Accessibility trust in any useful way.
 
-**What's NOT on macOS** (by design):
-- FCM (desktop doesn't use push notifications)
-- Widget (desktop uses Spotlight instead)
-- Share intent (macOS has different share mechanism)
+Net effect: every user gets a scary system permission dialog on first launch,
+for a permission the app does not use and would not be able to use.
 
----
+**Task:** delete `checkAccessibilityPermissions()` and its call in
+`applicationDidFinishLaunching`. Verify the hotkey still works afterwards — it
+should, unchanged.
 
-## Next Steps
-
-1. **Build on macOS**:
-   ```bash
-   flutter clean
-   flutter pub get
-   flutter run -d macos
-   ```
-
-2. **Test all features** using checklist above
-
-3. **If issues occur**:
-   - Check console output
-   - Verify accessibility permissions
-   - Try clean build
-   - Check system tray menu
-
-4. **When ready for release**:
-   ```bash
-   flutter build macos --release
-   ```
+*(This corrects advice given earlier in the 2026-09-15 session, which said to
+grant Accessibility on first launch. That was wrong for this stack.)*
 
 ---
 
-## Additional Resources
+## 3. Check the tray icon in a dark menu bar
 
-- [Flutter macOS Documentation](https://flutter.dev/docs/development/platform-integration/macos)
-- [macOS Accessibility Permissions](https://support.apple.com/en-us/HT202802)
-- [App Sandbox Guide](https://developer.apple.com/documentation/bundleresources/entitlements)
-- [System Tray on macOS](https://developer.apple.com/documentation/appkit/nsstatusbar)
+The desktop icons were regenerated on 2026-09-15 (`tool/generate_desktop_icons.py`).
+The macOS tray asset is `assets/icons/tray_icon_macos.png`: a 44px black-on-
+transparent **template** image, which AppKit tints to match the menu bar.
 
+That tinting only happens because `lib/services/impl/tray_service.dart` passes
+`isTemplate: Platform.isMacOS` to `trayManager.setIcon`. Before that change the
+flag was never passed, which would have rendered a literally-black icon —
+invisible in a dark menu bar.
+
+**This is the one change from that session that could not be verified on real
+hardware.** Check:
+
+- [ ] Icon is visible in a **light** menu bar (should render dark)
+- [ ] Icon is visible in a **dark** menu bar (should render light) ← the one that was broken
+- [ ] Icon inverts correctly when the menu bar item is clicked/highlighted
+- [ ] Icon is crisp on a Retina display, not blurry (it is drawn at 44px = 22pt @2x)
+
+If it is wrong, regenerate with `python tool/generate_desktop_icons.py` rather
+than editing the PNG; see `assets/icons/README.md`.
+
+---
+
+## 4. Sandbox vs. launch-at-startup
+
+`lib/services/impl/auto_start_service.dart` exists and there is a settings
+toggle, but it has never run on macOS. Sandboxed apps cannot use the older
+login-item APIs; they need `SMAppService` (macOS 13+) or a bundled login-item
+helper.
+
+**Task:** verify the toggle actually survives a logout/login. Expect this to be
+broken. If it is, that is a real piece of work, not a config tweak.
+
+---
+
+## 5. Then the normal functional pass
+
+None of this has been exercised on macOS. Work through it in order — each
+depends on the one before.
+
+- [ ] `flutter run -d macos` launches without crashing
+- [ ] Window starts hidden; app does not appear in the Dock as a normal window
+- [ ] Tray icon appears in the menu bar
+- [ ] Global hotkey shows the Spotlight window, centred and focused
+- [ ] `Esc` hides it; `Cmd+W` does **not** quit the app
+- [ ] Only `Cmd+Q` or the tray Quit actually exits
+- [ ] Right-click tray → menu renders (it is a custom Flutter window, not an
+      `NSMenu`, so this is a real risk on macOS)
+- [ ] Sign in works (Supabase; the app is sandboxed with
+      `com.apple.security.network.client`, which should be sufficient)
+- [ ] Send a clip from macOS → arrives on Windows
+- [ ] Send a clip from Windows → auto-copies on macOS
+- [ ] Sleep the Mac, wake it, confirm sync recovers
+      (`macos/Runner/PowerMonitor.swift` bridges `willSleep`/`didWake`)
+
+---
+
+## Known macOS-specific risks, ranked
+
+1. **The custom tray menu.** `lib/ui/widgets/tray_menu_window.dart` is a
+   borderless Flutter window positioned near the tray icon, not a native
+   `NSMenu`. Window positioning, focus and click-outside-to-dismiss are the
+   things most likely to behave differently from Windows.
+2. **Sandbox restrictions.** Auto-start (above) is the known one. Watch for
+   anything touching paths outside the container —
+   `lib/services/impl/temp_file_service.dart` is worth a look.
+3. **Hotkey conflicts.** macOS reserves more system-wide combinations than
+   Windows. The hotkey is user-configurable
+   (`lib/ui/widgets/hotkey_capture_field.dart`), so this is a support question,
+   not a bug.
+4. **Window level.** The Spotlight window needs to float above other apps.
+   Check it appears over a fullscreen app, which is a separate window-level
+   concept on macOS.
+
+---
+
+## What is genuinely already in place
+
+Verified by reading the source, not by running it:
+
+- `AppDelegate.applicationShouldTerminateAfterLastWindowClosed` returns `false`,
+  so closing the window keeps the app alive in the tray
+- `PowerMonitor.swift` observes `willSleep` / `didWake` /
+  `screensDidLock` / `screensDidUnlock` and bridges them over a method channel
+- `Release.entitlements` has app-sandbox + network-client + a keychain access
+  group
+- The Dock/app icon art is current (updated 2026-09-15 along with everything else)
+- All the Dart services are platform-shared with Windows, which is the tested
+  platform — the business logic is unlikely to be where macOS breaks
+
+---
+
+## macOS vs iOS: do macOS first
+
+iOS already compiles; macOS does not. macOS is also where the unshared work is
+— tray, hotkey, window management — and it needs no device provisioning or
+signing ceremony to iterate on. iOS additionally needs a real device to test
+anything that matters (APNs, clipboard, the home screen widget), so it is a
+bigger setup step for a platform that is currently in better shape.

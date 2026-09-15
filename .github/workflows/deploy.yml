@@ -1,6 +1,13 @@
 # CD for everything that deploys: the Cloudflare Pages site, the Supabase edge
 # functions, and database migrations.
 #
+# Nothing here runs on a pull request. The only automatic trigger is a push to
+# main, so a PR can never reach production - review happens before the merge,
+# and the merge is what deploys.
+#
+# Every automatic deploy also waits for CI to pass on the same commit. See the
+# `ci_green` job.
+#
 # Migrations became safe to automate on 2026-09-14, when the local and remote
 # migration histories were reconciled (89 dashboard-applied migrations were
 # recovered into supabase/migrations/, and 4 hand-written ones were marked
@@ -35,6 +42,52 @@ permissions:
   contents: read
 
 jobs:
+  # Nothing deploys off a commit whose CI is failing.
+  #
+  # ci.yml and deploy.yml both fire on the same push, so neither can `needs:`
+  # the other - GitHub has no cross-workflow dependency. Poll for the CI run on
+  # this exact SHA instead, and refuse to continue unless it succeeded.
+  ci_green:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    # Only the automatic path is gated. A manual dispatch is a deliberate human
+    # action, usually recovering from a bad state, so it is allowed through.
+    if: github.event_name == 'push'
+    timeout-minutes: 30
+    permissions:
+      actions: read
+    steps:
+      - name: Require CI green on ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          query="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=1"
+          fields='.workflow_runs[0] // {} | "\(.status // "none") \(.conclusion // "none")"'
+          for attempt in $(seq 1 60); do
+            info="$(gh api "$query" --jq "$fields")"
+            status="${info%% *}"
+            conclusion="${info##* }"
+            case "$status" in
+              completed)
+                if [ "$conclusion" = "success" ]; then
+                  echo "CI passed on $GITHUB_SHA."
+                  exit 0
+                fi
+                echo "::error::CI concluded '$conclusion' on $GITHUB_SHA. Refusing to deploy."
+                exit 1
+                ;;
+              none)
+                echo "No CI run for $GITHUB_SHA yet (attempt $attempt/60)."
+                ;;
+              *)
+                echo "CI is $status (attempt $attempt/60)."
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Timed out after 20 minutes waiting for CI on $GITHUB_SHA."
+          exit 1
+
   # Which paths changed, so a website-only commit does not redeploy functions
   # or touch the database.
   changes:
@@ -64,11 +117,13 @@ jobs:
   website:
     name: Deploy website (Cloudflare Pages)
     runs-on: ubuntu-latest
-    needs: changes
+    needs: [ci_green, changes]
     if: >-
-      (github.event_name == 'push' && needs.changes.outputs.website == 'true') ||
+      always() && !cancelled() &&
+      (needs.ci_green.result == 'success' || needs.ci_green.result == 'skipped') &&
+      ((github.event_name == 'push' && needs.changes.outputs.website == 'true') ||
       (github.event_name == 'workflow_dispatch' &&
-       contains(fromJSON('["all","website"]'), github.event.inputs.target))
+       contains(fromJSON('["all","website"]'), github.event.inputs.target)))
     environment: production
     timeout-minutes: 15
     steps:
@@ -95,9 +150,10 @@ jobs:
   functions:
     name: Deploy edge functions (Supabase)
     runs-on: ubuntu-latest
-    needs: [changes, migrations]
+    needs: [ci_green, changes, migrations]
     if: >-
       always() && !cancelled() &&
+      (needs.ci_green.result == 'success' || needs.ci_green.result == 'skipped') &&
       (needs.migrations.result == 'success' || needs.migrations.result == 'skipped') && (
       (github.event_name == 'push' && needs.changes.outputs.functions == 'true') ||
       (github.event_name == 'workflow_dispatch' &&
@@ -137,14 +193,17 @@ jobs:
   migrations:
     name: Apply migrations (Supabase)
     runs-on: ubuntu-latest
-    needs: changes
+    needs: [ci_green, changes]
     if: >-
-      (github.event_name == 'push' && needs.changes.outputs.migrations == 'true') ||
+      always() && !cancelled() &&
+      (needs.ci_green.result == 'success' || needs.ci_green.result == 'skipped') &&
+      ((github.event_name == 'push' && needs.changes.outputs.migrations == 'true') ||
       (github.event_name == 'workflow_dispatch' &&
-       contains(fromJSON('["all","migrations"]'), github.event.inputs.target))
-    # DDL is the one thing here that a re-run cannot undo. Add required
-    # reviewers to the `production` environment so a schema change always needs
-    # a human approval before it reaches the database.
+       contains(fromJSON('["all","migrations"]'), github.event.inputs.target)))
+    # DDL is the one thing here that a re-run cannot undo. `ci_green` above
+    # stops a red commit from getting this far, but that is a correctness gate,
+    # not a human one. For an approval step as well, add required reviewers to
+    # the `production` environment in the repo settings - it has none today.
     environment: production
     timeout-minutes: 15
     env:
