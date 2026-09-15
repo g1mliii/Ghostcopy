@@ -171,14 +171,21 @@ test/
 
 ## Environment Setup
 
-Create `.env` file in project root:
-```
-SUPABASE_URL=your-project-url
-SUPABASE_ANON_KEY=your-anon-key
-GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com  # Optional, for Google OAuth
-```
+**There is no `.env` file.** The Supabase URL and anon key are compile-time
+constants at the top of `lib/main.dart`. That is deliberate: an anon key is
+public by design, and the security boundary is Supabase's RLS policies, not
+concealment of the key.
 
-For Google OAuth setup, see `GOOGLE_OAUTH_SETUP.md`.
+Two config files are gitignored and must be copied across (or re-downloaded
+from the Firebase console) when setting up a new machine for mobile work:
+
+- `android/app/google-services.json`
+- `ios/Runner/GoogleService-Info.plist`
+
+Neither is needed for Windows, macOS or Linux - desktop does not use FCM. CI
+builds Android against `.github/ci/google-services.placeholder.json`.
+
+For Google OAuth setup, see `left_TO_DO/GOOGLE_OAUTH_SETUP.md`.
 
 ## MCP Servers
 

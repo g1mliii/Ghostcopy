@@ -36,8 +36,18 @@ cd Ghostcopy
 flutter pub get          # honours the committed lockfile - do not run pub upgrade
 ```
 
-You also need a `.env` (see the root `README.md`); it is gitignored, so copy it
-across from the Windows machine.
+**No `.env` is needed.** The Supabase URL and anon key are compile-time
+constants in `lib/main.dart`; the project has never had a `.env` file. The
+README and CLAUDE.md said otherwise until 2026-09-15 - ignore any older copy.
+
+Two files *are* gitignored and do not come across with the clone:
+
+- `android/app/google-services.json`
+- `ios/Runner/GoogleService-Info.plist`
+
+Both are Firebase configs. **Neither is needed for macOS work** - desktop does
+not use FCM. Copy them from the Windows machine (or re-download from the
+Firebase console) when you start on iOS or Android.
 
 ---
 

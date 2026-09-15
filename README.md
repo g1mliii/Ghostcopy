@@ -47,12 +47,16 @@ sign-in session.
    - Run the SQL schema (see [Database Setup](#database-setup))
    - Enable Realtime on the `clipboard` table
 
-4. **Configure environment**
-   ```bash
-   # Create .env file (don't commit this!)
-   echo "SUPABASE_URL=your-project-url" > .env
-   echo "SUPABASE_ANON_KEY=your-anon-key" >> .env
-   ```
+4. **Point the app at your Supabase project**
+
+   There is no `.env` file. Edit `_supabaseUrl` and `_supabaseAnonKey` at the
+   top of `lib/main.dart`. An anon key is public by design - the security
+   boundary is Supabase's RLS policies, not hiding the key.
+
+   For mobile builds you also need Firebase config, which is gitignored:
+   `android/app/google-services.json` and
+   `ios/Runner/GoogleService-Info.plist`. Desktop does not use FCM and needs
+   neither.
 
 5. **Run the app**
    ```bash
