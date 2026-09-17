@@ -954,7 +954,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  Future<void> _navigateToSettings() async {
+  Future<void> _navigateToSettings({bool openPassphraseRestore = false}) async {
     final authService = locator<IAuthService>();
     final userBefore = authService.currentUserId;
 
@@ -964,6 +964,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           authService: locator(),
           deviceService: locator(),
           settingsService: locator(),
+          openPassphraseRestore: openPassphraseRestore,
         ),
       ),
     );
@@ -1684,7 +1685,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
             child: InkWell(
               borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
-              onTap: _navigateToSettings,
+              // The banner says "Tap to enter your passphrase", so it goes to
+              // the passphrase flow, not to the settings list with the control
+              // somewhere on it.
+              onTap: () => _navigateToSettings(openPassphraseRestore: true),
               child: Padding(
                 padding: const EdgeInsets.all(14),
                 child: Row(

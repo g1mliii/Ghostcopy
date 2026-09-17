@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -54,12 +55,20 @@ class MobileSettingsScreen extends StatefulWidget {
     required this.authService,
     required this.deviceService,
     required this.settingsService,
+    this.openPassphraseRestore = false,
     super.key,
   });
 
   final IAuthService authService;
   final IDeviceService deviceService;
   final ISettingsService settingsService;
+
+  /// Go straight to restoring the passphrase on open.
+  ///
+  /// Set by the "N clips are encrypted" banner, whose own copy says "Tap to
+  /// enter your passphrase" - so dropping the user on the settings list and
+  /// leaving them to find the control was a promise the screen did not keep.
+  final bool openPassphraseRestore;
 
   @override
   State<MobileSettingsScreen> createState() => _MobileSettingsScreenState();
@@ -91,7 +100,16 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeEncryption();
+    _initializeEncryption().then((_) {
+      // Chained rather than fired alongside: _restoreFromBackup needs the
+      // service _initializeEncryption stands up, and that method already makes
+      // its own auto-restore attempt - so if the passphrase came back from the
+      // cloud there is nothing left to ask the user for, and opening a dialog
+      // on top of a screen that has just silently succeeded would be noise.
+      if (!mounted || !widget.openPassphraseRestore) return;
+      if (_encryptionEnabled) return;
+      unawaited(_restoreFromBackup());
+    });
     _loadDevices();
     _loadAppInfo();
     _loadUrlShorteningStatus();
