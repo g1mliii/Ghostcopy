@@ -164,3 +164,28 @@ Each entry should include:
   original bug it addressed only affects a locked phone while the regression
   destroys access to encrypted data outright.
 
+
+
+### 2026-09-17 - Installed a Flutter debug build on device and called it a crash
+
+- **Date**: 2026-09-17
+- **Failure Mode**: Built the app for the physical iPhone with `xcodebuild
+  -configuration Debug` and installed it with `devicectl`, then told the user
+  it was ready to open. Tapping the icon killed it instantly (signal 11). I had
+  assumed iOS Flutter debug builds launch standalone and that only hot reload
+  needed the tooling attached. They do not: since iOS 14 a debug build cannot
+  create a FlutterEngine without `flutter run` or Xcode driving it, because JIT
+  is unavailable to a home-screen launch. The binary was fine; the
+  configuration was wrong for how it was going to be started.
+- **Detection Signal**: `devicectl device process launch --console` printed the
+  engine's own explanation - "Cannot create a FlutterEngine instance in debug
+  mode without Flutter tooling or Xcode ... Alternatively profile and release
+  mode apps can be launched from the home screen" - immediately before
+  "App terminated due to signal 11". The signal alone looks like a native crash
+  in the changed code and sent me looking at the wrong thing first.
+- **Prevention Rule**: Match the build configuration to how the app will be
+  started. Anything the user launches themselves from the home screen must be
+  `--release` (or `--profile`); Debug is only for `flutter run` or Xcode. And
+  for any launch failure on device, run with `--console` before forming a
+  hypothesis - the engine usually says what is wrong in plain English, and a
+  bare signal number invites blaming the most recent diff.
