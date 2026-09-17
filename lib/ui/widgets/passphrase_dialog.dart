@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/exceptions.dart';
 import '../../services/encryption_service.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -123,6 +124,22 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
           _isLoading = false;
         });
       }
+    } on PassphraseStorageException catch (e) {
+      // Not a passphrase problem, so do not send the user back to re-type one.
+      // The device refused to keep it - on iOS usually a Keychain entry left by
+      // a previous install that cannot be read or overwritten - and the only
+      // thing that helps is reinstalling.
+      debugPrint(
+        '[PassphraseDialog] Secure storage refused the passphrase: $e',
+      );
+      if (!mounted) return;
+      setState(() {
+        _errorMessage =
+            'This device could not save your passphrase. Your passphrase is '
+            'fine and your clips are safe - reinstalling GhostCopy should '
+            'clear it.';
+        _isLoading = false;
+      });
     } on Exception catch (e) {
       if (!mounted) return;
 

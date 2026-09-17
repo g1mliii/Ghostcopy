@@ -45,3 +45,19 @@ class SecurityException extends RepositoryException {
   @override
   String toString() => 'SecurityException: $message';
 }
+
+/// The device could not store the encryption passphrase.
+///
+/// Distinct from a passphrase being rejected. iOS keeps Keychain entries when
+/// an app is deleted, so a reinstall can meet an item it cannot read but also
+/// cannot overwrite (errSecDuplicateItem), and any change to how the key is
+/// addressed does the same. Nothing about the passphrase itself is wrong, so
+/// telling the user to check it and retry is both useless and alarming.
+class PassphraseStorageException implements Exception {
+  const PassphraseStorageException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'PassphraseStorageException: $message';
+}

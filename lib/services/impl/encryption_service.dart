@@ -8,6 +8,7 @@ import 'package:encrypt/encrypt.dart' as enc;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../models/exceptions.dart';
 import '../encryption_service.dart';
 import '../passphrase_sync_service.dart';
 import 'passphrase_sync_service.dart';
@@ -215,8 +216,22 @@ class EncryptionService implements IEncryptionService {
     }
 
     try {
-      // Store passphrase in platform secure storage
+      // Store passphrase in platform secure storage.
+      //
+      // Deleted first, because a write is not reliably an upsert. On iOS the
+      // Keychain rejects an add whose item already exists with errSecDuplicateItem
+      // (-25299), and that item can be one this app cannot see: Keychain entries
+      // survive app deletion, so a delete-and-reinstall leaves the old passphrase
+      // behind, and anything that changes how the key is addressed - a plugin
+      // default, an accessibility option, an access group - makes the existing
+      // item invisible to the read while still blocking the write.
+      //
+      // The user-visible cost of getting this wrong is total: setPassphrase
+      // returns false, the dialog reports "failed to restore" as though the
+      // passphrase were wrong, and there is no way out of it from inside the
+      // app. delete() is idempotent and costs one call.
       debugPrint('[EncryptionService] Writing passphrase to secure storage...');
+      await _secureStorage.delete(key: _passphraseKey);
       await _secureStorage.write(key: _passphraseKey, value: passphrase);
 
       // Verify it was written
@@ -229,6 +244,7 @@ class EncryptionService implements IEncryptionService {
       final verificationHash = sha256
           .convert(utf8.encode(passphrase))
           .toString();
+      await _secureStorage.delete(key: _verificationHashKey);
       await _secureStorage.write(
         key: _verificationHashKey,
         value: verificationHash,
@@ -249,7 +265,13 @@ class EncryptionService implements IEncryptionService {
     } on Exception catch (e) {
       debugPrint('[EncryptionService] ❌ Failed to set passphrase: $e');
       debugPrint('[EncryptionService] Stack trace: ${StackTrace.current}');
-      return false;
+      // Rethrown rather than folded into `false`. A false return means "that
+      // passphrase was not accepted", which tells the user to check it and try
+      // again; a secure-storage failure means the device could not keep the
+      // passphrase at all, and retrying the same thing cannot help. Reporting
+      // the second as the first sends people looking for a lost or corrupted
+      // passphrase when nothing is wrong with it.
+      throw PassphraseStorageException(e.toString());
     }
   }
 
@@ -265,9 +287,19 @@ class EncryptionService implements IEncryptionService {
         await _passphraseSync.deleteCloudBackup();
       }
 
-      // Clear from secure storage
-      await _secureStorage.delete(key: _passphraseKey);
-      await _secureStorage.delete(key: _verificationHashKey);
+      // Each delete is attempted independently, and the in-memory key is
+      // dropped whatever happens. Sequential awaits meant one failing delete
+      // skipped the other and rethrew, leaving the passphrase in memory and
+      // half the entries on disk - the worst outcome for something whose whole
+      // job is to make the key unavailable. Failing to erase is worth logging,
+      // never worth abandoning the rest of the teardown for.
+      for (final key in [_passphraseKey, _verificationHashKey]) {
+        try {
+          await _secureStorage.delete(key: key);
+        } on Exception catch (e) {
+          debugPrint('[EncryptionService] Could not delete $key: $e');
+        }
+      }
 
       // Clear from memory
       _setKeyBytes(null);
@@ -275,6 +307,7 @@ class EncryptionService implements IEncryptionService {
       debugPrint('Encryption disabled - passphrase cleared');
     } on Exception catch (e) {
       debugPrint('Failed to clear passphrase: $e');
+      _setKeyBytes(null);
       rethrow;
     }
   }
