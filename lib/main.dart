@@ -1156,12 +1156,16 @@ class _MyAppState extends State<MyApp> {
 /// The shortcut used when the user has never chosen one.
 ///
 /// A global hotkey takes its combination away from every app, so the default
-/// has to be one almost nothing else binds. Ctrl+Shift+S is safe on Windows;
-/// on macOS it is Option+Space, because the obvious Cmd choices are already
-/// spoken for system-wide - Cmd+Shift+S is Save As in most apps, and taking it
-/// globally would break Save As everywhere.
+/// has to be one almost nothing else binds. Ctrl+Shift+S is safe on Windows.
+///
+/// On macOS the default must also not be a key sequence that types a
+/// character, which rules out Option on its own: Option+Space is how macOS
+/// enters a non-breaking space, so claiming it globally would stop that
+/// character being typed in every app. Cmd+Shift+V keeps the clipboard
+/// association, and pairing Cmd with Shift avoids the plain-Cmd shortcuts
+/// that apps already rely on.
 final HotKey defaultHotkey = Platform.isMacOS
-    ? const HotKey(key: 'space', alt: true)
+    ? const HotKey(key: 'v', meta: true, shift: true)
     : const HotKey(key: 's', ctrl: true, shift: true);
 
 /// Invoked when the global hotkey fires.

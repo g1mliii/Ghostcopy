@@ -1153,13 +1153,25 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                     color: GhostColors.textPrimary,
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 // The summary stays visible while collapsed, so the current
                 // targets can be checked without expanding.
-                Text(
-                  _getDeviceText(),
-                  style: GhostTypography.caption.copyWith(
-                    color: GhostColors.primary,
+                //
+                // Expanded rather than a Spacer with a loose Text: the summary
+                // grows with the selection, and three or four explicit targets
+                // read as "Windows, macOS, Android". In a 280px panel that,
+                // plus the icon, title and chevron, exceeds the row and
+                // overflows. Taking the remaining width and ellipsising keeps
+                // the row intact at any panel size.
+                Expanded(
+                  child: Text(
+                    _getDeviceText(),
+                    textAlign: TextAlign.end,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GhostTypography.caption.copyWith(
+                      color: GhostColors.primary,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),

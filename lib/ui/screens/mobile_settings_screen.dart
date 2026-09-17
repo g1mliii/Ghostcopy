@@ -106,9 +106,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   /// Every destination a clip can be sent to.
   ///
-  /// Shared by the chips and by [_toggleDefaultDevice], which has to know what
-  /// "all devices" expands to.
-  static const _allDeviceTypes = ['windows', 'macos', 'android', 'ios'];
+  /// Taken from ClipboardRepository.validDeviceTypes rather than written out
+  /// again. A local copy here had already drifted: it omitted linux, so
+  /// expanding the all-devices sentinel produced an explicit list without it,
+  /// and the first time a user turned off any single destination their Linux
+  /// machines silently stopped receiving auto-sends and shares. Reading the
+  /// canonical list means a platform added there is covered here too.
+  static const _allDeviceTypes = ClipboardRepository.validDeviceTypes;
 
   Future<void> _toggleDefaultDevice(String deviceType) async {
     // An empty set is the all-devices sentinel, and the chips render every

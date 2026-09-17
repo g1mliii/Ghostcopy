@@ -47,9 +47,10 @@ runs, and has been exercised by hand. What was wrong and what was changed:
       toggles, unreadable staleness slider, duplicate delete toasts
 - [x] Default devices now govern auto-send and both context menus, and the
       setting is visible on mobile as well as desktop
-- [x] macOS default hotkey is Option+Space. Ctrl+Shift+S stays on Windows -
-      a global hotkey takes its combination from every app, so Cmd+Shift+S
-      would have broken Save As system-wide
+- [x] macOS default hotkey is Cmd+Shift+V. Ctrl+Shift+S stays on Windows -
+      a global hotkey takes its combination from every app, so the default
+      must avoid both app shortcuts and anything that types a character
+      (Option+Space enters a non-breaking space on macOS)
 
 Measured on the release build: 48MB idle in the tray, ~125MB while the window
 is visible, and no leak - the Dart heap held at 24MB across repeated open and
