@@ -3,198 +3,40 @@ import UIKit
 import UserNotifications
 import WidgetKit
 
+/// Application delegate.
+///
+/// Under the UIScene life cycle (mandatory when building against the iOS 27
+/// SDK) this object no longer owns a window, and no longer sees scene-scoped
+/// events. The privacy blur and deep-link handling moved to SceneDelegate;
+/// what remains here is genuinely app-scoped: plugin registration and
+/// notification handling.
 @main
-@objc class AppDelegate: FlutterAppDelegate {
-  private let SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
-  private let WIDGET_CHANNEL = "com.ghostcopy/widget"
-  private var blurView: UIVisualEffectView?
-
-  override func applicationWillResignActive(_ application: UIApplication) {
-    if let window = window {
-      let blurEffect = UIBlurEffect(style: .systemThinMaterial)
-      blurView = UIVisualEffectView(effect: blurEffect)
-      blurView?.frame = window.bounds
-      blurView?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-      window.addSubview(blurView!)
-    }
-    super.applicationWillResignActive(application)
-  }
-
-  override func applicationDidBecomeActive(_ application: UIApplication) {
-    blurView?.removeFromSuperview()
-    blurView = nil
-    super.applicationDidBecomeActive(application)
-  }
-
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
-
     // Register notification categories with actions
-    registerNotificationCategories()
+    ActionableNotificationManager.shared.registerCategories()
 
     // Set notification delegate for foreground handling
     UNUserNotificationCenter.current().delegate = self
 
-    // Setup method channel for share intent handling
-    setupShareMethodChannel()
-
-    // Setup method channel for widget data updates
-    setupWidgetMethodChannel()
-
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  private func setupShareMethodChannel() {
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
-
-    let shareChannel = FlutterMethodChannel(
-      name: SHARE_CHANNEL,
-      binaryMessenger: controller.binaryMessenger
-    )
-
-    shareChannel.setMethodCallHandler { [weak self] (call, result) in
-      switch call.method {
-      case "shareComplete":
-        // Share was processed, can do cleanup if needed
-        result(nil)
-      default:
-        result(FlutterMethodNotImplemented)
-      }
-    }
+  /// Called once the implicit FlutterEngine exists. This - not
+  /// didFinishLaunchingWithOptions - is where plugins register under the scene
+  /// life cycle, and it is also the earliest point at which a binary messenger
+  /// is available for the app's own channels.
+  func didInitializeImplicitFlutterEngine(_ engineBridge: any FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    FlutterChannelHub.shared.attach(messenger: engineBridge.applicationRegistrar.messenger())
   }
 
-  private func setupWidgetMethodChannel() {
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
+  // MARK: - Notifications
 
-    let widgetChannel = FlutterMethodChannel(
-      name: WIDGET_CHANNEL,
-      binaryMessenger: controller.binaryMessenger
-    )
-
-    widgetChannel.setMethodCallHandler { [weak self] (call, result) in
-      switch call.method {
-      case "updateWidget":
-        // Called from Flutter when clipboard items are updated
-        if let args = call.arguments as? [String: Any],
-           let items = args["items"] as? [[String: Any]] {
-          let dataManager = WidgetDataManager.shared
-          dataManager.saveClipboardItems(items)
-
-          // Reload widget
-          if #available(iOS 14.0, *) {
-            WidgetCenter.shared.reloadAllTimelines()
-          }
-
-          result(["success": true])
-        } else {
-          result(["success": false])
-        }
-
-      case "storeSupabaseCredentials":
-        // Store credentials for widget to use during refresh
-        if let args = call.arguments as? [String: Any],
-           let url = args["url"] as? String,
-           let key = args["anonKey"] as? String {
-          UserDefaults.standard.set(url, forKey: "supabase_url")
-          UserDefaults.standard.set(key, forKey: "supabase_anon_key")
-          UserDefaults.standard.synchronize()
-          result(["success": true])
-        } else {
-          result(["success": false])
-        }
-
-      default:
-        result(FlutterMethodNotImplemented)
-      }
-    }
-  }
-
-  // Handle app opened via share intent or widget deep link
-  override func application(
-    _ application: UIApplication,
-    open url: URL,
-    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
-  ) -> Bool {
-    // Check if opened via share action
-    if url.scheme == "com.ghostcopy.share" {
-      if let sharedText = url.host {
-        notifyFlutterOfSharedContent(sharedText)
-      }
-    }
-
-    // Check if opened via widget tap (ghostcopy://copy/{clipboard_id})
-    if url.scheme == "ghostcopy" && url.host == "copy" {
-      // Extract clipboard ID from path
-      let clipboardId = url.lastPathComponent
-      print("[AppDelegate] 📋 Widget deep link: copy clipboard \(clipboardId)")
-      notifyFlutterOfWidgetAction(clipboardId)
-    }
-
-    // Check if opened via widget share action (ghostcopy://share/{clipboard_id})
-    if url.scheme == "ghostcopy" && url.host == "share" {
-      // Extract clipboard ID from path
-      let clipboardId = url.lastPathComponent
-      print("[AppDelegate] 📤 Widget deep link: share clipboard \(clipboardId)")
-      notifyFlutterOfNotificationAction(clipboardId, action: "share")
-    }
-
-    return super.application(application, open: url, options: options)
-  }
-
-  private func registerNotificationCategories() {
-    ActionableNotificationManager.shared.registerCategories()
-  }
-
-  private func notifyFlutterOfSharedContent(_ content: String) {
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
-
-    let shareChannel = FlutterMethodChannel(
-      name: SHARE_CHANNEL,
-      binaryMessenger: controller.binaryMessenger
-    )
-
-    shareChannel.invokeMethod("handleShareIntent", arguments: ["content": content]) { result in
-      // Share processing complete, close the share extension
-      // The app was launched via share intent and will handle device selection in Flutter
-    }
-  }
-
-  private func notifyFlutterOfWidgetAction(_ clipboardId: String) {
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
-
-    let widgetChannel = FlutterMethodChannel(
-      name: WIDGET_CHANNEL,
-      binaryMessenger: controller.binaryMessenger
-    )
-
-    widgetChannel.invokeMethod("handleWidgetAction", arguments: ["clipboardId": clipboardId]) { [weak self] result in
-      // Widget action handled - app will navigate to clipboard details if needed
-    }
-  }
-
-  private func notifyFlutterOfNotificationAction(_ clipboardId: String, action: String) {
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
-
-    let notificationChannel = FlutterMethodChannel(
-      name: "com.ghostcopy.ghostcopy/notifications",
-      binaryMessenger: controller.binaryMessenger
-    )
-
-    notificationChannel.invokeMethod("handleNotificationAction", arguments: [
-      "clipboardId": clipboardId,
-      "action": action,
-    ]) { [weak self] result in
-      // Notification action handled by Flutter
-      if let error = result as? FlutterError {
-        print("[AppDelegate] ⚠️ Notification action error: \(error.message ?? "unknown")")
-      }
-    }
-  }
-
-  // Handle notification action response (when user taps action button or notification)
+  /// Handle notification action response (action button or notification tap).
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
@@ -219,7 +61,7 @@ import WidgetKit
         print("✅ Copied to clipboard from \(deviceType)")
       } else if !clipboardId.isEmpty {
         // For large content, clipboardId sent, fetch full content in app
-        notifyFlutterOfNotificationAction(clipboardId, action: "copy")
+        FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
       }
     }
 
@@ -231,7 +73,7 @@ import WidgetKit
     // Handle details action
     if notificationManager.isDetailsAction(response.actionIdentifier) {
       if !clipboardId.isEmpty {
-        notifyFlutterOfNotificationAction(clipboardId, action: "details")
+        FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "details")
       }
       print("📖 Opening clipboard item details")
     }
@@ -250,7 +92,7 @@ import WidgetKit
     completionHandler()
   }
 
-  // Handle foreground notifications (when app is active)
+  /// Handle foreground notifications (when app is active).
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
@@ -287,8 +129,8 @@ import WidgetKit
 
   // MARK: - Widget Update Methods
 
-  /// Update widget when FCM notification arrives
-  /// Adds new item to widget storage and reloads widget timeline
+  /// Update widget when FCM notification arrives.
+  /// Adds new item to widget storage and reloads widget timeline.
   private func updateWidgetForFCMNotification(_ userInfo: [AnyHashable: Any]) {
     // Extract item data from FCM payload
     let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
@@ -297,7 +139,6 @@ import WidgetKit
     let clipboardId = (userInfo["clipboard_id"] as? String) ?? UUID().uuidString
     let fileSize = userInfo["file_size"] as? String
     let filename = userInfo["filename"] as? String
-    let mimeType = userInfo["mime_type"] as? String
 
     // Determine if this is a file/image
     let isFile = contentType.hasPrefix("file_")
@@ -329,8 +170,7 @@ import WidgetKit
     ]
 
     // Add to widget storage
-    let dataManager = WidgetDataManager.shared
-    dataManager.addNewClip(item)
+    WidgetDataManager.shared.addNewClip(item)
 
     print("[AppDelegate] ✅ Widget updated with FCM notification (isFile=\(isFile), isImage=\(isImage))")
   }

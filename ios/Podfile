@@ -39,5 +39,15 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # Flutter's own generated podspec declares ios.deployment_target = '13.0'
+    # (flutter_tools/bin/podhelper.rb), and it reaches the Pods project as an
+    # aggregate target named "Flutter". podhelper only *deletes* an
+    # IPHONEOS_DEPLOYMENT_TARGET below 13, so at exactly 13.0 it leaves the
+    # value in place - and Xcode 27 rejects 13.0 outright, supporting 15.0 and
+    # up. Raise anything below the Podfile's own platform.
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
+    end
   end
 end
