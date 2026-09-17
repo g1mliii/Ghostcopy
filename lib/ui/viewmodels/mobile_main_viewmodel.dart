@@ -886,18 +886,32 @@ class MobileMainViewModel extends ChangeNotifier {
           throw Exception('Failed to download file');
         }
 
+        // Same detection as processShareAction(). This used to fall back to
+        // the literal string 'file', with nothing after a dot, so the share
+        // sheet had no extension to identify the type by and drew the icon of
+        // whatever handles unknown data - a text document arriving under
+        // Safari's logo. The notification path was fixed for exactly this and
+        // the in-app tap was left behind.
+        final detected = FileTypeService.instance.detectFromBytes(
+          fileBytes,
+          item.metadata?.originalFilename,
+        );
         final filename =
             item.metadata?.originalFilename ??
             (item.isImage
-                ? 'image.${item.mimeType?.split("/").last ?? "png"}'
-                : 'file');
+                ? 'image.${detected.extension}'
+                : 'file.${detected.extension}');
 
         final tempFile = await ClipboardService.instance.writeTempFile(
           fileBytes,
           filename,
         );
 
-        await _shareFile(tempFile.path, sharePositionOrigin);
+        await _shareFile(
+          tempFile.path,
+          sharePositionOrigin,
+          mimeType: detected.mimeType,
+        );
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
