@@ -121,10 +121,6 @@ final class FlutterChannelHub {
     shareChannel?.invokeMethod("handleShareIntent", arguments: ["content": content])
   }
 
-  func sendWidgetAction(clipboardId: String) {
-    widgetChannel?.invokeMethod("handleWidgetAction", arguments: ["clipboardId": clipboardId])
-  }
-
   func sendNotificationAction(clipboardId: String, action: String) {
     guard let notificationChannel = notificationChannel else {
       // Cold launch from a notification tap: hold it until attach() runs.

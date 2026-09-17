@@ -285,6 +285,19 @@ class WidgetService implements IWidgetService {
     try {
       final dir = await _getWidgetCacheDir();
 
+      // Only Android can use a staged payload. An iOS widget extension cannot
+      // write the general pasteboard on a real device - measured on an iPhone,
+      // the file read back its full contents and the very next read of
+      // UIPasteboard.general.string did not hold them - so its rows open the
+      // app instead, and staging their plaintext would put decrypted clips on
+      // disk for a copy that cannot happen. The simulator does not enforce
+      // this, which is what made it look like it worked.
+      if (!Platform.isAndroid) {
+        return _WidgetStage(
+          thumbnailPath: item.isImage ? await _stageThumbnailOnly(item, dir) : null,
+        );
+      }
+
       // Plain and rich text: the content is already in hand, decrypted.
       if (!item.isImage && !item.isFile) {
         final file = File('$dir/${item.id}.txt');
@@ -382,6 +395,19 @@ class WidgetService implements IWidgetService {
     return stripped.trim();
   }
 
+  /// Thumbnail without staging the full image, for platforms that cannot use
+  /// a staged payload.
+  Future<String?> _stageThumbnailOnly(ClipboardItem item, String dir) async {
+    try {
+      final bytes = await _clipboardRepository?.downloadFile(item);
+      if (bytes == null) return null;
+      return await _writeThumbnail(item, bytes, dir);
+    } on Exception catch (e) {
+      debugPrint('[WidgetService] Thumbnail staging failed for ${item.id}: $e');
+      return null;
+    }
+  }
+
   /// Downsample staged image bytes to the 40px tile the widget row draws.
   ///
   /// Takes the bytes rather than fetching them: the caller has already pulled
@@ -476,17 +502,14 @@ class WidgetService implements IWidgetService {
     }
   }
 
-  /// Get widget thumbnail cache directory
+  /// Directory holding everything the widget reads: 40px thumbnails and the
+  /// staged copy payloads.
   ///
-  /// - Android: `app.cacheDir/widget_thumbnails/`
-  /// - iOS: App Group container `/widget_thumbnails/`
-  ///
-  /// The iOS half is not cosmetic. The widget is a separate process with its
-  /// own sandbox, so a thumbnail under the app's own cache directory - which
-  /// is what this returned on both platforms - is unreadable from the
-  /// extension. `UIImage(contentsOfFile:)` returned nil for every one of them
-  /// and the widget drew a generic icon in place of each image. Only the App
-  /// Group container is visible to both sides.
+  /// On iOS this sits under `Library/Caches` inside the App Group rather than
+  /// at the container root. That is the correct place for regenerable data,
+  /// and it is also the only part of the container `devicectl` will read - at
+  /// the root these files could not be inspected on a real device at all,
+  /// which made diagnosing a bad payload impossible.
   Future<String> _getWidgetCacheDir() async {
     if (_widgetCachePath != null) {
       return _widgetCachePath!;
@@ -494,7 +517,11 @@ class WidgetService implements IWidgetService {
 
     try {
       final base = await _widgetCacheBaseDir();
-      final widgetCache = Directory('$base/widget_thumbnails');
+      final widgetCache = Directory(
+        Platform.isIOS
+            ? '$base/Library/Caches/widget_payloads'
+            : '$base/widget_payloads',
+      );
 
       try {
         await widgetCache.create(recursive: true);

@@ -25,7 +25,6 @@
 		AC0000010000000000000005 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000005 /* GoogleService-Info.plist */; };
 		CF08DCF6C16E2A2131B0C5A0 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B417E465168C3024454557B /* Pods_RunnerTests.framework */; };
 		D09FE34867B78C5BF97257E4 /* ClipboardWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521E8D9AE416EA7585A132CC /* ClipboardWidget.swift */; };
-		D82AB84112DA40486A4DC285 /* RefreshWidgetIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A3C0708C2C215AEF606B7E /* RefreshWidgetIntent.swift */; };
 		F84C423747FF8B06330B6221 /* ClipboardWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39ADB350D73694FF31EA9671 /* ClipboardWidgetView.swift */; };
 		FBBF644F51B051F282D8B864 /* ClipboardWidgetProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78F9ABB255BD58D60A7ACA79 /* ClipboardWidgetProvider.swift */; };
 /* End PBXBuildFile section */
@@ -102,7 +101,6 @@
 		AC0000020000000000000003 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AC0000020000000000000004 /* FlutterChannelHub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlutterChannelHub.swift; sourceTree = "<group>"; };
 		AC0000020000000000000005 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
-		C4A3C0708C2C215AEF606B7E /* RefreshWidgetIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RefreshWidgetIntent.swift; sourceTree = "<group>"; };
 		CA89A8D42E04D4E1B8500884 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		CC28B17747F31ACB7A870250 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		CDF503210B471650C1B3F104 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -217,7 +215,6 @@
 				521E8D9AE416EA7585A132CC /* ClipboardWidget.swift */,
 				78F9ABB255BD58D60A7ACA79 /* ClipboardWidgetProvider.swift */,
 				39ADB350D73694FF31EA9671 /* ClipboardWidgetView.swift */,
-				C4A3C0708C2C215AEF606B7E /* RefreshWidgetIntent.swift */,
 				CDF503210B471650C1B3F104 /* Info.plist */,
 				ABEF7A158AE3B94078DD7EFE /* ClipboardWidget.entitlements */,
 			);
@@ -496,7 +493,6 @@
 				D09FE34867B78C5BF97257E4 /* ClipboardWidget.swift in Sources */,
 				FBBF644F51B051F282D8B864 /* ClipboardWidgetProvider.swift in Sources */,
 				F84C423747FF8B06330B6221 /* ClipboardWidgetView.swift in Sources */,
-				D82AB84112DA40486A4DC285 /* RefreshWidgetIntent.swift in Sources */,
 				597F06464882BAC912900B35 /* WidgetDataManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

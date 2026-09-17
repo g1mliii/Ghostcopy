@@ -23,6 +23,9 @@ class WidgetDataManager {
     private static let lastUpdatedKey = "widget_last_updated"
     static let lastCopiedIdKey = "widget_last_copied_id"
     static let lastCopiedAtKey = "widget_last_copied_at"
+    /// Diagnostic breadcrumb from the last widget tap. Lives in Preferences so
+    /// it can be pulled off a real device, unlike the payload files.
+    static let lastCopyDebugKey = "widget_last_copy_debug"
     static let appGroupSuite = appGroupIdentifier
     private static let maxItems = 5
 

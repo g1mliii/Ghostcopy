@@ -92,15 +92,7 @@ struct ClipboardWidgetView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            if entry.justCopiedId != nil {
-                // Replaces the title rather than sitting beside it: there is no
-                // room for both on a small widget, and for the two seconds it
-                // is up this is the more useful of the two.
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: titleSize, weight: .semibold))
-                Text("Copied")
-                    .font(.system(size: titleSize, weight: .semibold))
-            } else {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("GhostCopy")
                     .font(.system(size: titleSize, weight: .semibold))
                     .foregroundColor(.primary)
@@ -114,7 +106,6 @@ struct ClipboardWidgetView: View {
 
             Spacer(minLength: 0)
         }
-        .foregroundColor(entry.justCopiedId != nil ? accent : .primary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
     }
@@ -155,45 +146,25 @@ struct ClipboardWidgetView: View {
 
     /// Individual clipboard item row.
     ///
-    /// A row the app staged a payload for copies in place: the intent runs
-    /// inside the widget process and writes the pasteboard without GhostCopy
-    /// appearing. That covers text, and images and .txt files whose bytes the
-    /// app pulled down and staged decrypted.
+    /// Always a Link into the app, never an in-widget copy.
     ///
-    /// The rest open the app at `ghostcopy://share/<id>`, which SceneDelegate
-    /// routes to processShareAction() - a zip or an mp4 has no useful paste
-    /// target, and a widget cannot present a share sheet itself: it has no
-    /// window scene, and WidgetKit offers only Button, Toggle and Link.
-    @ViewBuilder
+    /// Copying here was tried and does not work: a widget extension cannot
+    /// write the general pasteboard on a real device. Measured on an iPhone -
+    /// the staged file existed, read back its full 27 characters, and
+    /// `UIPasteboard.general.string` still did not hold the value immediately
+    /// afterwards in the same process. The simulator does not enforce this,
+    /// which is what made it look like it worked.
+    ///
+    /// So the tap opens the app at `ghostcopy://copy/<id>`, and
+    /// processShareAction() decides by content type: text goes to the
+    /// clipboard, files and images to the share sheet.
     private func clipboardItemRow(_ item: ClipboardItemData) -> some View {
-        if let path = item.copyPath, let kind = item.copyKind {
-            Button(
-                intent: CopyToClipboardIntent(
-                    clipboardId: item.id,
-                    copyPath: path,
-                    copyKind: kind
-                )
-            ) {
-                // No .invalidatableContent() here. It is the documented way to
-                // show a row as pending while its intent runs, but applying it
-                // to this Button's label swallowed the tap outright: the intent
-                // never executed and WidgetKit fell through to the widget's
-                // default action, opening the app. Bisected against a bare
-                // Button, which copies correctly. The "Copied" header and the
-                // row tint below already acknowledge the tap, and they survive
-                // because they come back through a timeline reload rather than
-                // from view state.
-                rowContent(item)
-            }
-            .buttonStyle(.plain)
-        } else {
-            Link(destination: URL(string: "ghostcopy://share/\(item.id)")!) {
-                rowContent(item)
-            }
+        Link(destination: URL(string: "ghostcopy://copy/\(item.id)")!) {
+            rowContent(item)
         }
     }
 
-    /// The row's visuals, shared by both tap treatments above.
+    /// The row's visuals.
     private func rowContent(_ item: ClipboardItemData) -> some View {
         HStack(spacing: 8) {
             ZStack {
@@ -249,7 +220,6 @@ struct ClipboardWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, rowPadding)
-        .background(entry.justCopiedId == item.id ? accent.opacity(0.14) : .clear)
         .contentShape(Rectangle())
     }
 
@@ -363,7 +333,6 @@ extension View {
             ],
         ],
         lastUpdated: Date().addingTimeInterval(-300).timeIntervalSince1970,
-        isLoading: false,
-        justCopiedId: nil
+        isLoading: false
     )
 }
