@@ -27,8 +27,18 @@ re-show the macOS commits. Retarget to `main` once #16 merges.
 - [x] Pods deployment target floor for Xcode 27 (`ios/Podfile`)
 - [x] SPM migration (22 packages SPM, 3 CocoaPods), `Package.resolved` committed
 - [x] Supabase credentials + `user_id` moved to the App Group suite
+- [x] **QR scanner crashed the app on iOS.** No `NSCameraUsageDescription` in
+      `Info.plist` - TCC terminates the process rather than denying the
+      permission, so it looked like a crash. The welcome screen opens on the
+      QR tab, so a new user on real hardware would have hit it on first launch
+- [x] QR scanner never initialized on a cold launch: the controller was only
+      created in `_onTabChanged`, but `TabController` starts at index 0 and a
+      listener only fires on a *change*. Shared code - Android had it too.
+      This bug masked the crash above, by never touching the camera
 
-Nothing in `lib/` changed. The Dart side was correct throughout.
+The bring-up itself changed nothing in `lib/` - the Dart side was correct.
+The one later Dart change was the QR scanner initialization, which is shared
+with Android and was not an iOS problem at all.
 
 ### Next
 
