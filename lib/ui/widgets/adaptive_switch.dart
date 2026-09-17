@@ -13,7 +13,11 @@ import '../theme/colors.dart';
 /// Colour comes from AppTheme.switchTheme - call sites should not override the
 /// thumb, or the "on" state ends up a purple thumb on a purple track.
 class AdaptiveSwitch extends StatelessWidget {
-  const AdaptiveSwitch({required this.value, required this.onChanged, super.key});
+  const AdaptiveSwitch({
+    required this.value,
+    required this.onChanged,
+    super.key,
+  });
 
   final bool value;
   final ValueChanged<bool>? onChanged;

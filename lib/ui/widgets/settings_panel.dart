@@ -1183,65 +1183,65 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           // Device checkboxes
           if (_deviceSelectorExpanded)
             Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: devices.map((type) {
-              final isSelected =
-                  _autoSendTargetDevices.isEmpty ||
-                  _autoSendTargetDevices.contains(type);
+              spacing: 8,
+              runSpacing: 8,
+              children: devices.map((type) {
+                final isSelected =
+                    _autoSendTargetDevices.isEmpty ||
+                    _autoSendTargetDevices.contains(type);
 
-              return InkWell(
-                onTap: () => _toggleDevice(type),
-                borderRadius: BorderRadius.circular(6),
-                // Explicit on both branches: a null hover colour falls back to
-                // the theme's white overlay, which flashes on these dark
-                // surfaces.
-                hoverColor: isSelected
-                    ? GhostColors.primaryHover
-                    : GhostColors.surfaceLight,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? GhostColors.primaryAlpha20
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: isSelected
-                          ? GhostColors.primary
-                          : GhostColors.surfaceLight,
+                return InkWell(
+                  onTap: () => _toggleDevice(type),
+                  borderRadius: BorderRadius.circular(6),
+                  // Explicit on both branches: a null hover colour falls back to
+                  // the theme's white overlay, which flashes on these dark
+                  // surfaces.
+                  hoverColor: isSelected
+                      ? GhostColors.primaryHover
+                      : GhostColors.surfaceLight,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
                     ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        iconForDeviceType(type),
-                        size: 14,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? GhostColors.primaryAlpha20
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
                         color: isSelected
                             ? GhostColors.primary
-                            : GhostColors.textMuted,
+                            : GhostColors.surfaceLight,
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        platformLabel(type),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          iconForDeviceType(type),
+                          size: 14,
                           color: isSelected
                               ? GhostColors.primary
                               : GhostColors.textMuted,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Text(
+                          platformLabel(type),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: isSelected
+                                ? GhostColors.primary
+                                : GhostColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            }).toList(),
-          ),
+                );
+              }).toList(),
+            ),
           const SizedBox(height: 8),
           Text(
             'Tap to select specific devices or leave all selected',

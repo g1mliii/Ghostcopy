@@ -1368,7 +1368,8 @@ Future<({bool ok, String message})> _sendSharedFile(
     debugPrint('[SendFile] Failed to send file: $e');
     return (
       ok: false,
-      message: 'The file could not be sent. Check your connection and try '
+      message:
+          'The file could not be sent. Check your connection and try '
           'again.',
     );
   }
@@ -1380,11 +1381,7 @@ Future<int> _sendFileFromCommandLine(
   String path,
   IAuthService authService,
 ) async {
-  final result = await _sendSharedFile(
-    path,
-    authService,
-    initializeAuth: true,
-  );
+  final result = await _sendSharedFile(path, authService, initializeAuth: true);
   final exitCode = result.ok ? 0 : 1;
   final message = result.message;
   debugPrint('[SendFile] $message');

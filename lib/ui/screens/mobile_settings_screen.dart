@@ -991,10 +991,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               const SizedBox(width: 16),
               const Text(
                 'Default devices',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: GhostColors.textPrimary,
-                ),
+                style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
               ),
               const Spacer(),
               Text(

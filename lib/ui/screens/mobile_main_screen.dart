@@ -708,7 +708,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// No picker: the point of sharing from another app is to be done in one
   /// tap, and the Default devices setting already says where clips go. Change
   /// the target in Settings, or send from the app itself to pick per-send.
-  Future<void> _handleSharedFilesWithTargets(List<SharedMediaFile> files) async {
+  Future<void> _handleSharedFilesWithTargets(
+    List<SharedMediaFile> files,
+  ) async {
     final targets = await locator<ISettingsService>()
         .getAutoSendTargetDevices();
     if (!mounted) return;
@@ -757,10 +759,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               children: [
                 const Text(
                   'Select which device types to send to:',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: GhostColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
                 ),
                 if (content.isNotEmpty) ...[
                   const SizedBox(height: 8),
