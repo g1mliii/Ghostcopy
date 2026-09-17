@@ -90,6 +90,26 @@ between accounts, and leaving the product without losing anything.
       signed download is cheaper than doing it synchronously, and sidesteps
       timeouts on large histories
 
+## Later: AI assistant integration via MCP
+
+After the remaining iOS reliability work. Let users ask an assistant to
+"send this to my phone" or send a generated file to another device through
+GhostCopy on macOS and Windows.
+
+Prioritize a local MCP integration for Claude Desktop and ChatGPT/Codex.
+Reuse GhostCopy's sending services, account and encryption. A CLI can follow
+later using the same implementation for scripts and coding agents.
+
+- [ ] Expose tools to list devices, send text or links, and send files
+- [ ] Target a specific device by ID, resolving names such as "my phone"
+- [ ] Make the connection opt-in; keep clipboard-history access a separate
+      permission if added later
+- [ ] Report queued/sent accurately; only report received with a delivery
+      acknowledgement
+- [ ] Provide straightforward setup and verify both desktop platforms
+- [ ] Trial the "send this to my phone" workflow before expanding scope
+- [ ] Consider a CLI after the MCP integration is useful and reliable
+
 ## Parallel track: Google Play
 
 Play Console account purchased 2026-09-15. Full path:
