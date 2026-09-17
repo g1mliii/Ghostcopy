@@ -1023,14 +1023,26 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 'Default devices',
                 style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
               ),
-              const Spacer(),
-              Text(
-                _defaultDevices.isEmpty
-                    ? 'All devices'
-                    : _defaultDevices.map(platformLabel).join(', '),
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: GhostColors.primary,
+              const SizedBox(width: 8),
+              // Expanded rather than a Spacer with a loose Text. The summary
+              // grows with the selection - the first toggle away from "All
+              // devices" already leaves three names - and an unconstrained
+              // Text after a Spacer has no room to give back, so on a 320pt
+              // phone the icon, gap, title and summary together overran the
+              // tile and the row overflowed. Taking the remaining width and
+              // ellipsising keeps the count legible at any width.
+              Expanded(
+                child: Text(
+                  _defaultDevices.isEmpty
+                      ? 'All devices'
+                      : _defaultDevices.map(platformLabel).join(', '),
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: GhostColors.primary,
+                  ),
                 ),
               ),
             ],

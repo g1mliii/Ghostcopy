@@ -266,6 +266,22 @@ class NotificationService implements INotificationService {
     _lastSystemNotificationId = id;
     _lastSystemNotificationMessage = coalesceKey ?? message;
 
+    // Reusing an id means replacing the notification that held it, so any
+    // action mapped to it belongs to something the user can no longer see.
+    //
+    // showClickableToast sets _lastSystemNotificationMessage but not
+    // _lastToastMessage, so a clickable toast can become the tracked system
+    // notification between two ordinary repeats of the same message. The next
+    // repeat then reuses its id, replaced the banner, and left the callback in
+    // _pendingActions - so tapping a toast with no action ran the previous
+    // one's. Clearing first makes the id carry only what the notification
+    // currently on screen actually does.
+    if (replaceId != null) {
+      _pendingActions.remove(replaceId);
+      _actionTimestamps.remove(replaceId);
+      _actionPayloads.remove(replaceId);
+    }
+
     // Store action if provided
     if (onAction != null) {
       _pendingActions[id] = onAction;
