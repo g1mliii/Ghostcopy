@@ -204,7 +204,7 @@ Both tools execute in a secure V8 sandbox isolate with no file system access. Us
 
 **Windows**: Hotkeys and tray work out of the box
 
-**macOS**: Requires Accessibility permissions for global hotkeys. Configure App Sandbox entitlements for network access.
+**macOS**: Global hotkeys use Carbon's `RegisterEventHotKey` (via `hotkey_manager`), which does not require Accessibility permission — do not add an `AXIsProcessTrustedWithOptions` prompt. The app is sandboxed (`com.apple.security.app-sandbox`), so it could not hold Accessibility trust even if it asked. Configure App Sandbox entitlements for network access.
 
 **Mobile (iOS/Android)**:
 - Cannot auto-detect clipboard changes (OS restriction)
