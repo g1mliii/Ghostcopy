@@ -923,10 +923,18 @@ class MobileMainViewModel extends ChangeNotifier {
   /// [sharePositionOrigin] is required on iPad: UIActivityViewController is
   /// presented as a popover there and must be anchored to the widget that
   /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
-  Future<void> _shareFile(String path, Rect? sharePositionOrigin) async {
+  Future<void> _shareFile(
+    String path,
+    Rect? sharePositionOrigin, {
+    String? mimeType,
+  }) async {
     await SharePlus.instance.share(
       ShareParams(
-        files: [XFile(path)],
+        // The mime type is passed as well as the extension. The extension is
+        // what the file itself carries; this tells the share sheet directly,
+        // so it does not have to infer the type to pick an icon and a list of
+        // apps that can take it.
+        files: [XFile(path, mimeType: mimeType)],
         text: 'Shared via GhostCopy',
         sharePositionOrigin: sharePositionOrigin,
       ),
@@ -1159,11 +1167,25 @@ class MobileMainViewModel extends ChangeNotifier {
       if (item.isImage || item.isFile || action == 'share') {
         final fileBytes = await _clipboardRepo.downloadFile(item);
         if (fileBytes != null) {
+          // The share sheet identifies a file by its extension, so the name
+          // has to carry one. The old fallback for a non-image was the literal
+          // string 'file', with nothing after a dot - iOS could not tell what
+          // it was and drew the icon of whatever handles unknown data, which
+          // is why a text document arrived showing Safari's logo.
+          //
+          // The bytes are already in hand, so the type is detected from them
+          // rather than guessed: originalFilename is trusted when present,
+          // otherwise the sniffed extension is used, and image.* stays as a
+          // last resort.
+          final detected = FileTypeService.instance.detectFromBytes(
+            fileBytes,
+            item.metadata?.originalFilename,
+          );
           final filename =
               item.metadata?.originalFilename ??
               (item.isImage
-                  ? 'image.${item.mimeType?.split("/").last ?? "png"}'
-                  : 'file');
+                  ? 'image.${detected.extension}'
+                  : 'file.${detected.extension}');
 
           final tempFile = await ClipboardService.instance.writeTempFile(
             fileBytes,
@@ -1172,7 +1194,7 @@ class MobileMainViewModel extends ChangeNotifier {
 
           // No anchor: this path is driven by an external share intent, so
           // there is no widget to point an iPad popover at.
-          await _shareFile(tempFile.path, null);
+          await _shareFile(tempFile.path, null, mimeType: detected.mimeType);
           debugPrint(
             '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
           );
