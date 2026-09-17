@@ -68,6 +68,16 @@ class MobileMainViewModel extends ChangeNotifier {
   bool _isUploadingImage = false;
   bool get isUploadingImage => _isUploadingImage;
 
+  /// A file is being fetched so the share sheet can be handed something.
+  ///
+  /// Tapping a notification for a file opens the app and then waits on a
+  /// download from storage before the sheet can appear. Nothing is prefetched -
+  /// the background staging this used to rely on was dropped because iOS could
+  /// not be relied on to run it - so the wait is real, and without a sign of it
+  /// the app looks like it opened and did nothing.
+  bool _isPreparingShare = false;
+  bool get isPreparingShare => _isPreparingShare;
+
   String? _sendErrorMessage;
   String? get sendErrorMessage => _sendErrorMessage;
 
@@ -1165,6 +1175,9 @@ class MobileMainViewModel extends ChangeNotifier {
       }
 
       if (item.isImage || item.isFile || action == 'share') {
+        _isPreparingShare = true;
+        notifyListeners();
+
         final fileBytes = await _clipboardRepo.downloadFile(item);
         if (fileBytes != null) {
           // The share sheet identifies a file by its extension, so the name
@@ -1194,11 +1207,19 @@ class MobileMainViewModel extends ChangeNotifier {
 
           // No anchor: this path is driven by an external share intent, so
           // there is no widget to point an iPad popover at.
+          // Cleared before the sheet is presented, not after: share() does not
+          // return until the user dismisses it, and leaving a spinner running
+          // underneath a sheet they are reading is worse than none at all.
+          _isPreparingShare = false;
+          notifyListeners();
+
           await _shareFile(tempFile.path, null, mimeType: detected.mimeType);
           debugPrint(
             '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
           );
         } else {
+          _isPreparingShare = false;
+          notifyListeners();
           debugPrint('[MobileMainVM] Failed to download file for sharing');
           return false;
         }
@@ -1228,6 +1249,12 @@ class MobileMainViewModel extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Error processing share action: $e');
       return false;
+    } finally {
+      // A download that throws must not leave the spinner up forever.
+      if (_isPreparingShare) {
+        _isPreparingShare = false;
+        if (!_isDisposed) notifyListeners();
+      }
     }
   }
 

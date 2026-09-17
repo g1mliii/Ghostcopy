@@ -1109,16 +1109,69 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // they belong next to each other rather than stacked with hundreds of dp
       // of dead margin down each side. See _twoPaneMinAspect for why width
       // alone cannot make this call.
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final w = constraints.maxWidth;
-          final h = constraints.maxHeight;
-          final splits =
-              w >= _twoPaneMinWidth && h > 0 && (w / h) >= _twoPaneMinAspect;
-          return splits
-              ? _buildTwoPaneBody(context)
-              : _buildSingleColumnBody(context);
-        },
+      body: Stack(
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final h = constraints.maxHeight;
+              final splits =
+                  w >= _twoPaneMinWidth &&
+                  h > 0 &&
+                  (w / h) >= _twoPaneMinAspect;
+              return splits
+                  ? _buildTwoPaneBody(context)
+                  : _buildSingleColumnBody(context);
+            },
+          ),
+          if (_viewModel.isPreparingShare) _buildPreparingShareOverlay(),
+        ],
+      ),
+    );
+  }
+
+  /// Shown while a file is fetched for the share sheet.
+  ///
+  /// Tapping a notification for a file opens the app and then waits on a
+  /// download before the sheet can appear. Without this the app looks like it
+  /// opened and did nothing, which on a fast phone reads as a failure rather
+  /// than a wait.
+  ///
+  /// Deliberately blocking: the sheet is about to take over the screen, so
+  /// letting the user start something else in the gap only creates a race
+  /// between their tap and the sheet appearing over it.
+  Widget _buildPreparingShareOverlay() {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: GhostColors.background.withValues(alpha: 0.72),
+        child: Center(
+          child: DecoratedBox(
+            decoration: ShapeDecoration(
+              color: GhostColors.surface,
+              shape: Adaptive.surfaceShape(radius: GhostSpacing.surfaceRadius),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Adaptive.progressIndicator(
+                    size: 24,
+                    color: GhostColors.primary,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Preparing to share…',
+                    style: GhostTypography.body.copyWith(
+                      fontSize: 13,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
