@@ -12,6 +12,7 @@ import 'compression_service.dart';
 /// Interface for widget data management and sync
 abstract class IWidgetService {
   Future<void> initialize();
+  Future<void> clearWidgetData();
   Future<void> updateWidgetData(List<ClipboardItem> items);
   Future<void> refreshWidget();
   void dispose();
@@ -136,6 +137,24 @@ class WidgetService implements IWidgetService {
           message: 'Method ${call.method} not implemented',
         );
     }
+  }
+
+  /// Clear everything the widget holds for the current account.
+  ///
+  /// Sign-out. The rows are plaintext previews, filenames and device names, so
+  /// leaving them shows the previous account's clips to whoever signs in next
+  /// - the same reason the thumbnails are cleared alongside them.
+  @override
+  Future<void> clearWidgetData() async {
+    if (_isMobilePlatform()) {
+      try {
+        await _channel.invokeMethod('clearWidgetData');
+      } on PlatformException catch (e) {
+        debugPrint('[WidgetService] ⚠ Failed to clear widget data: $e');
+      }
+    }
+
+    await clearThumbnailCache();
   }
 
   /// Update widget with latest clipboard data

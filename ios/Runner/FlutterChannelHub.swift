@@ -75,15 +75,12 @@ final class FlutterChannelHub {
         // can actually read them.
         result(WidgetDataManager.shared.appGroupContainerPath())
 
-      case "storeSupabaseCredentials":
-        guard let args = call.arguments as? [String: Any],
-          let url = args["url"] as? String,
-          let key = args["anonKey"] as? String
-        else {
-          result(["success": false])
-          return
-        }
-        WidgetDataManager.shared.storeSupabaseCredentials(url: url, anonKey: key)
+      case "clearWidgetData":
+        // Sign-out. The rows hold plaintext previews, filenames and device
+        // names from the account that is leaving; the widget would keep
+        // showing them to whoever signs in next.
+        WidgetDataManager.shared.clearAllItems()
+        WidgetCenter.shared.reloadAllTimelines()
         result(["success": true])
 
       default:

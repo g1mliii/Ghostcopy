@@ -476,9 +476,11 @@ class AuthService implements IAuthService {
       EncryptionService.instance.reset();
       ClipboardRepository.instance.reset();
 
-      // Widget thumbnails are decrypted renderings written to disk. Leaving
-      // them would show the previous account's clips to whoever signs in next.
-      await WidgetService().clearThumbnailCache();
+      // Widget thumbnails are decrypted renderings written to disk, and the
+      // widget's rows are plaintext previews, filenames and device names held
+      // in the App Group. Leaving either would show the previous account's
+      // clips to whoever signs in next.
+      await WidgetService().clearWidgetData();
 
       // Same for the clip staged for instant-copy by the FCM background
       // isolate: it holds ONE clip's decrypted plaintext, and CopyActivity only

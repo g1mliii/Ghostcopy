@@ -27,9 +27,6 @@ class WidgetDataManager {
     private static let itemsKey = "widget_clipboard_items"
     private static let lastUpdatedKey = "widget_last_updated"
     private static let maxItems = 5
-    private static let supabaseUrlKey = "supabase_url"
-    private static let supabaseAnonKeyKey = "supabase_anon_key"
-    private static let userIdKey = "user_id"
 
     // Lazy-loaded shared UserDefaults
     private lazy var userDefaults =
@@ -104,31 +101,6 @@ class WidgetDataManager {
 
         // Notify widget to reload
         notifyWidgetUpdate()
-    }
-
-    /// Store the Supabase credentials the widget's refresh intent needs.
-    ///
-    /// These used to be written to `UserDefaults.standard` by AppDelegate and
-    /// read back from `UserDefaults.standard` by RefreshWidgetIntent. Those are
-    /// two different containers - the widget runs in its own process - so the
-    /// widget could never find them. They belong in the App Group suite, the
-    /// same place the clipboard items already go.
-    func storeSupabaseCredentials(url: String, anonKey: String) {
-        userDefaults.set(url, forKey: Self.supabaseUrlKey)
-        userDefaults.set(anonKey, forKey: Self.supabaseAnonKeyKey)
-        userDefaults.synchronize()
-    }
-
-    /// Store the signed-in user id, so the widget can scope its refresh query.
-    /// Nothing wrote this key before, which is the other half of why the
-    /// widget's refresh path could not work.
-    func storeUserId(_ userId: String?) {
-        if let userId = userId {
-            userDefaults.set(userId, forKey: Self.userIdKey)
-        } else {
-            userDefaults.removeObject(forKey: Self.userIdKey)
-        }
-        userDefaults.synchronize()
     }
 
     /// Filesystem path of the shared App Group container.
