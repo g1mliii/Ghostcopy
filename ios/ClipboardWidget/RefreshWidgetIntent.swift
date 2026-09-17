@@ -61,9 +61,7 @@ struct RefreshWidgetIntent: AppIntent {
             print("[RefreshWidgetIntent] ✅ Refreshed widget with \(items.count) items")
 
             // Reload all timelines on success
-            if #available(iOS 14.0, *) {
-                WidgetCenter.shared.reloadAllTimelines()
-            }
+            WidgetCenter.shared.reloadAllTimelines()
         } catch {
             print("[RefreshWidgetIntent] ❌ Refresh failed: \(error)")
         }
@@ -98,7 +96,7 @@ struct RefreshWidgetIntent: AppIntent {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
-        request.setValue(anonKey, forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
 
         // Create lightweight URLSession (no background tasks)
         let config = URLSessionConfiguration.default
@@ -151,7 +149,7 @@ struct RefreshWidgetIntent: AppIntent {
                 "contentType": contentType,
                 "contentPreview": item["content_preview"] as? String ?? item["content"] as? String
                     ?? "",
-                "thumbnailPath": item["thumbnail_path"] as? String,
+                "thumbnailPath": item["thumbnail_path"] as? String ?? "",
                 "deviceType": item["device_type"] as? String ?? "Unknown",
                 "createdAt": item["created_at"] as? String ?? Date().toISO8601String(),
                 "isEncrypted": item["is_encrypted"] as? Bool ?? false,
@@ -166,67 +164,44 @@ struct RefreshWidgetIntent: AppIntent {
 @available(iOS 17.0, *)
 struct CopyToClipboardIntent: AppIntent {
     static var title: LocalizedStringResource = "Copy to Clipboard"
-    static var openAppWhenRun = true
 
     @Parameter(title: "Clipboard ID") var clipboardId: String
     @Parameter(title: "Content") var content: String
     @Parameter(title: "Content Type") var contentType: String
     @Parameter(title: "Thumbnail Path") var thumbnailPath: String
-    @Parameter(title: "Action") var action: String?
 
+    init() {}
+
+    init(clipboardId: String, content: String, contentType: String, thumbnailPath: String) {
+        self.clipboardId = clipboardId
+        self.content = content
+        self.contentType = contentType
+        self.thumbnailPath = thumbnailPath
+    }
+
+    /// Copy only. Files and images are not copyable from here - they need the
+    /// app to fetch and decrypt the payload first - so the widget sends those
+    /// rows through a `Link` to `ghostcopy://share/<id>` instead, which
+    /// SceneDelegate already handles.
+    ///
+    /// This used to branch on an `action` parameter and return
+    /// `.result(opensIntent: OpenURLIntent(...))` for the share case. That did
+    /// not compile: the two branches gave `perform()` two different opaque
+    /// return types, and `OpenURLIntent` is iOS 18+ against a target of 17.
     @MainActor
     func perform() async throws -> some IntentResult {
-        let actualAction = action ?? "copy"
-        print(
-            "[CopyToClipboardIntent] 🚀 Performing action: \(actualAction) for type: \(contentType)")
-
-        if actualAction == "share" {
-            // Open main app with share action
-            // The URL scheme opening happens automatically if we used Link, but for AppIntent,
-            // we rely on openAppWhenRun = true and the system launching the app.
-            // Typically we pass data via NSUserActivity or URL, but Widget intents are limited.
-            // HOWEVER, since openAppWhenRun is true, the app WILL launch.
-            // We need to pass the intent details to the app delegate.
-            // Swift AppIntents don't automatically populate launch options with custom keys easily without specific handling.
-            // A better approach for "Share": Use a Link() in SwiftUI instead of a Button(intent:).
-            // But sticking to Intent:
-            // We can use `OpenURLIntent` or similiar, but we need custom logic.
-            // Actually, `openAppWhenRun = true` continues execution in the app?
-            // No, it just brings app to foreground.
-            // Best practice for Widget -> App deep link is using Link(destination: URL(...))
-            // I will update ClipboardWidgetView to use Link for "share" action instead of this Intent!
-            // BUT, I will leave this Intent support here just in case.
-            return .result(
-                opensIntent: OpenURLIntent(URL(string: "ghostcopy://share/\(clipboardId)")!))
-        }
-
-        print(
-            "[CopyToClipboardIntent] 📋 Copying: type=\(contentType), content=\(content.prefix(50))..."
-        )
-
-        // Check if it's an image type
-        if contentType.lowercased().contains("image") && !thumbnailPath.isEmpty {
-            // Copy image from thumbnail file
-            if let image = UIImage(contentsOfFile: thumbnailPath) {
-                UIPasteboard.general.image = image
-                print("[CopyToClipboardIntent] ✅ Copied image to clipboard")
-            } else {
-                // Fallback to text if image fails to load
-                print("[CopyToClipboardIntent] ⚠️ Image failed to load, copying text preview")
-                UIPasteboard.general.string = content
-            }
+        if contentType.lowercased().contains("image"), !thumbnailPath.isEmpty,
+            let image = UIImage(contentsOfFile: thumbnailPath)
+        {
+            UIPasteboard.general.image = image
         } else {
-            // Copy text content for non-images
             UIPasteboard.general.string = content
-            print("[CopyToClipboardIntent] ✅ Copied text to clipboard")
         }
-
-        // Open app so user can see confirmation
-        // (openAppWhenRun = true handles this automatically)
 
         return .result()
     }
 }
+
 enum RefreshError: Error, LocalizedError {
     case invalidResponse
     case invalidJSON

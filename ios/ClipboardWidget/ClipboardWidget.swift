@@ -8,7 +8,6 @@ import SwiftUI
 /// - systemSmall: 2 items (compact view)
 /// - systemMedium: 5 items (primary view)
 /// - systemLarge: 5 items (expanded view with more padding)
-@main
 struct ClipboardWidget: Widget {
     let kind: String = "com.ghostcopy.clipboardwidget"
 

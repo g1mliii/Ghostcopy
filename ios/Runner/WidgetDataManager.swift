@@ -131,6 +131,19 @@ class WidgetDataManager {
         userDefaults.synchronize()
     }
 
+    /// Filesystem path of the shared App Group container.
+    ///
+    /// Widget thumbnails have to live here. The widget runs in its own process
+    /// with its own sandbox, so the app's Caches directory - where these were
+    /// being written - is simply not readable from the extension. Every image
+    /// row silently fell back to a generic icon because
+    /// `UIImage(contentsOfFile:)` could not open a path it had no access to.
+    func appGroupContainerPath() -> String? {
+        return FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupIdentifier)?
+            .path
+    }
+
     /// Clear all clipboard items from widget storage
     func clearAllItems() {
         userDefaults.removeObject(forKey: Self.itemsKey)

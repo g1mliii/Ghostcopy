@@ -438,17 +438,23 @@ class WidgetService implements IWidgetService {
 
   /// Get widget thumbnail cache directory
   ///
-  /// Creates directory if needed:
   /// - Android: `app.cacheDir/widget_thumbnails/`
   /// - iOS: App Group container `/widget_thumbnails/`
+  ///
+  /// The iOS half is not cosmetic. The widget is a separate process with its
+  /// own sandbox, so a thumbnail under the app's own cache directory - which
+  /// is what this returned on both platforms - is unreadable from the
+  /// extension. `UIImage(contentsOfFile:)` returned nil for every one of them
+  /// and the widget drew a generic icon in place of each image. Only the App
+  /// Group container is visible to both sides.
   Future<String> _getWidgetCacheDir() async {
     if (_widgetCachePath != null) {
       return _widgetCachePath!;
     }
 
     try {
-      final cacheDir = await getApplicationCacheDirectory();
-      final widgetCache = Directory('${cacheDir.path}/widget_thumbnails');
+      final base = await _widgetCacheBaseDir();
+      final widgetCache = Directory('$base/widget_thumbnails');
 
       try {
         await widgetCache.create(recursive: true);
@@ -465,6 +471,33 @@ class WidgetService implements IWidgetService {
       debugPrint('[WidgetService] Failed to get cache directory: $e');
       rethrow;
     }
+  }
+
+  /// Root the thumbnail cache is created under.
+  ///
+  /// Falls back to the app's own cache directory if the App Group lookup
+  /// fails: thumbnails stop reaching the widget, which degrades to icons, but
+  /// the rest of the refresh still works rather than throwing.
+  Future<String> _widgetCacheBaseDir() async {
+    if (Platform.isIOS) {
+      try {
+        final containerPath = await _channel.invokeMethod<String>(
+          'getAppGroupContainerPath',
+        );
+        if (containerPath != null && containerPath.isNotEmpty) {
+          return containerPath;
+        }
+        debugPrint(
+          '[WidgetService] ⚠ No App Group container; '
+          'widget image thumbnails will not render',
+        );
+      } on PlatformException catch (e) {
+        debugPrint('[WidgetService] ⚠ App Group lookup failed: $e');
+      }
+    }
+
+    final cacheDir = await getApplicationCacheDirectory();
+    return cacheDir.path;
   }
 
   /// Dispose of widget service and clean up resources

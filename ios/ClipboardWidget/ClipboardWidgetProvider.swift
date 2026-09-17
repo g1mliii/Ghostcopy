@@ -96,35 +96,6 @@ struct ClipboardWidgetEntry: TimelineEntry {
     }
 }
 
-#Preview {
-    ClipboardWidgetEntry(
-        date: Date(),
-        items: [
-            [
-                "id": "1",
-                "contentType": "text",
-                "contentPreview": "Hello, World!",
-                "thumbnailPath": nil,
-                "deviceType": "iPhone",
-                "createdAt": Date().addingTimeInterval(-300).toISO8601String(),
-                "isEncrypted": false,
-            ],
-            [
-                "id": "2",
-                "contentType": "image",
-                "contentPreview": "Image (250KB)",
-                "thumbnailPath": nil,
-                "deviceType": "Mac",
-                "createdAt": Date().addingTimeInterval(-600).toISO8601String(),
-                "isEncrypted": false,
-            ],
-        ],
-        lastUpdated: Date().addingTimeInterval(-300).timeIntervalSince1970,
-        isLoading: false
-    )
-    .widgetBackground(Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.05, green: 0.05, blue: 0.07, alpha: 1) : UIColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1) }))
-}
-
 // MARK: - Helper Extensions
 
 extension Date {

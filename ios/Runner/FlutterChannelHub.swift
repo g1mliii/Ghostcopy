@@ -70,6 +70,11 @@ final class FlutterChannelHub {
         WidgetCenter.shared.reloadAllTimelines()
         result(["success": true])
 
+      case "getAppGroupContainerPath":
+        // Dart needs this to put widget thumbnails somewhere the extension
+        // can actually read them.
+        result(WidgetDataManager.shared.appGroupContainerPath())
+
       case "storeSupabaseCredentials":
         guard let args = call.arguments as? [String: Any],
           let url = args["url"] as? String,
