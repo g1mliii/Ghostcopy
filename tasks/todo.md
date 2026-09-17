@@ -70,6 +70,27 @@ with Android and was not an iOS problem at all.
   Harmless so far; the likely symptom if it bites is the Profile configuration
   failing to link pods
 
+## Later: logo and palette distance from Discord
+
+Raised 2026-09-17. The mark is a rounded two-eyed face on purple, which is
+close enough to Discord's to be worth putting distance between them before the
+app is in front of App Review or a wider audience. The design itself is liked -
+this is about silhouette, not a redesign.
+
+- [ ] Taper the bottom of the ghost into a wavy hem. Silhouette is what people
+      actually recognise; two eyes on purple is common, a rounded blob face on
+      *that* purple is not
+- [ ] `primaryHover` is `0xFF4752C4`, which is Discord's dark blurple exactly.
+      `primary` was already moved to `0xFF6670FF` (Discord's is `#5865F2`), so
+      the hover state is the last literal match
+- [ ] CLAUDE.md still documents `primary: Color(0xFF5865F2)` and annotates it
+      "(Discord-like)". Both wrong and unhelpful - the code has not used that
+      value for a while, and the comment is the sort of thing best not left in
+      a repo if the resemblance is ever argued about
+- [ ] Redo the app icon on every platform once the mark changes: iOS asset
+      catalog, Android mipmaps, macOS iconset, Windows .ico, and the tray icon,
+      which is a separate silhouette-only asset
+
 ## macOS: done 2026-09-16
 
 Nobody had ever launched GhostCopy on a Mac before this session. It now builds,
