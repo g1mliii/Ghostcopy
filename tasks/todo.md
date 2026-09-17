@@ -81,6 +81,20 @@ execution is genuinely more permissive.
 - [ ] Cold launch: swipe the app away, send a clip, tap the notification. This
       is what the deferred-tap handoff exists for
 
+### Later: accessibility pass, both platforms
+
+Never audited. Worth doing as its own piece with a device in hand, not guessed
+at. Ordered by how likely each is to actually bite:
+
+- [ ] **Dynamic Type / textScaler.** Nothing in the app responds to it, and the
+      UI leans on fixed-height containers that will clip at larger text sizes.
+      The biggest real risk, and something App Review looks at
+- [ ] **Touch target sizes** - 44pt on iOS, 48dp on Android. The copy icons in
+      history rows are the obvious suspects
+- [ ] **Screen reader labels.** Icon-only controls - copy, delete, the overflow
+      menu - most likely read as nothing useful
+- [ ] **Contrast ratios**, starting with `textMuted` on `surface`
+
 ### Open
 
 - [ ] **Cmd+Q quits GhostCopy on macOS with no warning.** It is a background
