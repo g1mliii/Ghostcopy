@@ -50,6 +50,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   String? _authError;
 
   // QR scanning state
+  static const int _qrTabIndex = 0;
   bool _qrScanning = false;
   String? _qrError;
 
@@ -58,6 +59,17 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
+
+    // The controller starts on the QR tab, and a TabController listener only
+    // fires on a *change* - so nothing created the scanner on first launch and
+    // the tab sat on its "Switch to this tab to activate scanner" placeholder
+    // until the user switched away and back. Create it for the starting tab.
+    // Assigned directly rather than through setState: build has not run yet.
+    if (_tabController.index == _qrTabIndex) {
+      _scannerController = MobileScannerController(
+        detectionSpeed: DetectionSpeed.noDuplicates,
+      );
+    }
   }
 
   @override
@@ -74,7 +86,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   }
 
   void _onTabChanged() {
-    if (_tabController.index == 0) {
+    if (_tabController.index == _qrTabIndex) {
       // QR tab - initialize scanner if not already initialized (Fix #18)
       // Create controller OUTSIDE setState, then trigger rebuild
       if (_scannerController == null) {

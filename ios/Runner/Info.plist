@@ -91,6 +91,12 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Camera. The QR scanner on the welcome screen is the anonymous
+	     device-linking path, and iOS terminates the app on first camera access
+	     if this key is absent - TCC kills the process rather than returning an
+	     error, so it presents as a crash, not a denied permission. -->
+	<key>NSCameraUsageDescription</key>
+	<string>GhostCopy uses the camera to scan the QR code shown by your desktop app, so the two devices can be linked.</string>
 	<!-- Photo Library Permissions for saving clipboard images -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>GhostCopy needs access to save clipboard images to your photo library.</string>
