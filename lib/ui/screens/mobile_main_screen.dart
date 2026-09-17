@@ -13,6 +13,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
@@ -296,10 +297,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         TextPosition(offset: result.$1.length),
       );
 
-      // Precache image to avoid re-decoding on rebuilds
-      if ((result.$2?.hasImage ?? false) && mounted) {
-        unawaited(precacheImage(MemoryImage(result.$2!.imageBytes!), context));
-      }
+      // Deliberately not precached. A bare MemoryImage decodes at full
+      // resolution - tens of MB for a screenshot - while the preview below
+      // asks for cacheHeight 80*dpr. Those are different cache keys, so the
+      // precache was never read: it allocated a full-size bitmap, missed, and
+      // the widget decoded again at thumbnail size.
     }
     return true;
   }
@@ -682,21 +684,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   void _initializeShareIntentListeners() {
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
-      if (value.isNotEmpty) {
-        _viewModel.handleSharedFiles(
-          value,
-          onSuccess: (msg) {
-            if (mounted) {
-              showGhostToast(
-                context,
-                msg,
-                icon: Icons.upload_file,
-                type: GhostToastType.success,
-              );
-            }
-          },
-        );
-      }
+      if (value.isNotEmpty) unawaited(_handleSharedFilesWithTargets(value));
     });
 
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
@@ -704,19 +692,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         .listen(
           (value) {
             if (value.isNotEmpty) {
-              _viewModel.handleSharedFiles(
-                value,
-                onSuccess: (msg) {
-                  if (mounted) {
-                    showGhostToast(
-                      context,
-                      msg,
-                      icon: Icons.upload_file,
-                      type: GhostToastType.success,
-                    );
-                  }
-                },
-              );
+              unawaited(_handleSharedFilesWithTargets(value));
             }
           },
           onError: (Object err) {
@@ -727,8 +703,39 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     debugPrint('[ShareSheet] Share intent listeners initialized');
   }
 
+  /// Sends shared files straight to the devices in Settings.
+  ///
+  /// No picker: the point of sharing from another app is to be done in one
+  /// tap, and the Default devices setting already says where clips go. Change
+  /// the target in Settings, or send from the app itself to pick per-send.
+  Future<void> _handleSharedFilesWithTargets(List<SharedMediaFile> files) async {
+    final targets = await locator<ISettingsService>()
+        .getAutoSendTargetDevices();
+    if (!mounted) return;
+
+    await _viewModel.handleSharedFiles(
+      files,
+      targetDeviceTypes: targets,
+      onSuccess: (msg) {
+        if (mounted) {
+          showGhostToast(
+            context,
+            msg,
+            icon: Icons.upload_file,
+            type: GhostToastType.success,
+          );
+        }
+      },
+    );
+  }
+
   Future<Set<String>?> _showDeviceSelectorDialog(String content) async {
-    final selectedTypes = <String>{};
+    // Seeded from the "Send to devices" setting, so the usual case is one tap
+    // rather than re-picking the same devices on every share.
+    final selectedTypes = Set<String>.from(
+      await locator<ISettingsService>().getAutoSendTargetDevices(),
+    );
+    if (!mounted) return null;
 
     return showDialog<Set<String>>(
       context: context,
@@ -748,13 +755,27 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Select which device types to send to:',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     color: GhostColors.textMuted,
                   ),
                 ),
+                if (content.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  // Named so a share started from another app shows what is
+                  // about to be sent, rather than an unlabelled device list.
+                  Text(
+                    content,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: GhostColors.textSecondary,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -59,6 +60,7 @@ import 'ui/theme/app_theme.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
+import 'utils/platform_label.dart';
 import 'utils/windows_registry.dart';
 
 // Configuration - These values are safe to be public
@@ -225,6 +227,14 @@ Future<void> _writePendingCopy(ClipboardItem item) async {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
+  // an app that scrolls through photos. This one shows small history
+  // thumbnails and at most one preview, so the default is a ceiling it would
+  // never need but could still reach - decoded clipboard images are large.
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 24 << 20
+    ..maximumSize = 100;
 
   // debugPrint is NOT stripped from release builds - it formats its argument
   // and pushes it through a throttling queue. This app is always resident and
@@ -708,6 +718,7 @@ class _MyAppState extends State<MyApp> {
   bool _servicesDisposed = false;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<PowerEvent>? _powerEventSubscription;
+  StreamSubscription<bool>? _gameModeMenuSub;
 
   // Lazy-initialized mobile services (created once, not on every build)
   // Removed: now registered in main()
@@ -783,6 +794,17 @@ class _MyAppState extends State<MyApp> {
 
       // Set up tray right-click to show custom menu
       (locator<ITrayService>() as TrayService).onRightClick = _showTrayMenu;
+
+      // macOS uses a real NSMenu, which has to be rebuilt whenever Game Mode
+      // changes so its checkmark matches the current state. On Windows this
+      // is a no-op and the custom window is used instead.
+      if (Platform.isMacOS) {
+        unawaited(_refreshNativeTrayMenu());
+        _gameModeMenuSub = locator<IGameModeService>().isActiveStream.listen(
+          (_) => unawaited(_refreshNativeTrayMenu()),
+        );
+        unawaited(_listenForSharedFiles(locator<IAuthService>()));
+      }
 
       // Register the global hotkey the user chose, falling back to the default
       // only when nothing has been saved. This used to always register the
@@ -912,6 +934,8 @@ class _MyAppState extends State<MyApp> {
       // Cancel stream subscription to prevent memory leaks
       _powerEventSubscription?.cancel();
       _powerEventSubscription = null;
+      _gameModeMenuSub?.cancel();
+      _gameModeMenuSub = null;
 
       // Dispose all services to prevent memory leaks
       locator<IAuthService>().dispose();
@@ -972,6 +996,24 @@ class _MyAppState extends State<MyApp> {
     await windowManager.destroy();
   }
 
+  Future<void> _refreshNativeTrayMenu() async {
+    final gameMode = locator<IGameModeService>();
+    await locator<ITrayService>().setContextMenu([
+      TrayMenuItem(
+        label: 'Show Spotlight',
+        onTap: () => locator<IWindowService>().showSpotlight(),
+      ),
+      TrayMenuItem(
+        label: 'Game Mode',
+        isChecked: gameMode.isActive,
+        onTap: gameMode.toggle,
+      ),
+      TrayMenuItem(label: 'Settings', onTap: _openSettingsFromTray),
+      const TrayMenuItem.separator(),
+      TrayMenuItem(label: 'Quit GhostCopy', onTap: _handleQuit),
+    ]);
+  }
+
   Future<void> _showTrayMenu() async {
     // Hide window first to prevent warping during resize
     await windowManager.hide();
@@ -986,7 +1028,8 @@ class _MyAppState extends State<MyApp> {
 
     // Configure window for tray menu
     // Increase size to handling overflow issues on different DPIs
-    await windowManager.setSize(const Size(320, 450));
+    const menuSize = Size(320, 450);
+    await windowManager.setSize(menuSize);
     await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setAsFrameless();
 
@@ -999,10 +1042,22 @@ class _MyAppState extends State<MyApp> {
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     // Position menu based on platform:
-    // - macOS: Top-right (menu bar is at top)
+    // - macOS: directly under the menu bar icon, right edges aligned
     // - Windows: Bottom-right (taskbar is at bottom)
     if (Platform.isMacOS) {
-      await windowManager.setAlignment(Alignment.topRight);
+      // tray_manager and window_manager share the same top-left-origin
+      // coordinate conversion, so these bounds need no remapping.
+      final iconBounds = await locator<ITrayService>().getIconBounds();
+      if (iconBounds != null) {
+        await windowManager.setPosition(
+          Offset(
+            math.max(0, iconBounds.left - TrayMenuWindow.macOSInset.left),
+            iconBounds.bottom - TrayMenuWindow.macOSInset.top,
+          ),
+        );
+      } else {
+        await windowManager.setAlignment(Alignment.topLeft);
+      }
     } else {
       await windowManager.setAlignment(Alignment.bottomRight);
     }
@@ -1099,7 +1154,15 @@ class _MyAppState extends State<MyApp> {
 }
 
 /// The shortcut used when the user has never chosen one.
-const defaultHotkey = HotKey(key: 's', ctrl: true, shift: true);
+///
+/// A global hotkey takes its combination away from every app, so the default
+/// has to be one almost nothing else binds. Ctrl+Shift+S is safe on Windows;
+/// on macOS it is Option+Space, because the obvious Cmd choices are already
+/// spoken for system-wide - Cmd+Shift+S is Save As in most apps, and taking it
+/// globally would break Save As everywhere.
+final HotKey defaultHotkey = Platform.isMacOS
+    ? const HotKey(key: 'space', alt: true)
+    : const HotKey(key: 's', ctrl: true, shift: true);
 
 /// Invoked when the global hotkey fires.
 ///
@@ -1237,48 +1300,93 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
 
 /// Upload a file passed on the command line, then return so main() can exit.
 ///
+/// Uploads the file at [path] to the user's other devices.
+///
+/// Shared by the Windows Explorer context menu and the macOS Services entry,
+/// so both send exactly the same way. [initializeAuth] is for the Windows
+/// path, which runs before the app has initialised anything.
+Future<({bool ok, String message})> _sendSharedFile(
+  String path,
+  IAuthService authService, {
+  bool initializeAuth = false,
+}) async {
+  try {
+    final file = File(path);
+    if (!file.existsSync()) {
+      return (ok: false, message: 'The selected file no longer exists.');
+    }
+    // Check the size before allocating a potentially multi-GB file in RAM.
+    if (await file.length() > ClipboardLimits.maxFileBytes) {
+      return (
+        ok: false,
+        message:
+            'This file is too large. GhostCopy supports files up to '
+            '${ClipboardLimits.maxFileLabel}.',
+      );
+    }
+    if (authService.currentUserId == null) {
+      return (
+        ok: false,
+        message: 'Open GhostCopy and sign in before sending a file.',
+      );
+    }
+
+    if (initializeAuth) await authService.initialize();
+
+    // Honour the "Send to devices" setting, so a context-menu send goes to the
+    // same devices as every other send instead of always going to all of them.
+    // The Windows path runs before the locator is populated, hence the fallback.
+    final ISettingsService settings;
+    if (locator.isRegistered<ISettingsService>()) {
+      settings = locator<ISettingsService>();
+    } else {
+      settings = SettingsService();
+      await settings.initialize();
+    }
+    final targets = await settings.getAutoSendTargetDevices();
+
+    final bytes = await file.readAsBytes();
+    final filename = file.uri.pathSegments.last;
+    final typeInfo = FileTypeService.instance.detectFromBytes(bytes, filename);
+    await ClipboardRepository.instance.insertFile(
+      userId: authService.currentUserId!,
+      deviceType: ClipboardRepository.getCurrentDeviceType(),
+      deviceName: ClipboardRepository.getCurrentDeviceName(),
+      fileBytes: bytes,
+      mimeType: typeInfo.mimeType,
+      contentType: typeInfo.contentType,
+      originalFilename: filename,
+      // null, not an empty list: the repository reads null as "every device".
+      targetDeviceTypes: targets.isEmpty ? null : targets.toList(),
+    );
+
+    final where = targets.isEmpty
+        ? 'your other devices'
+        : targets.map(platformLabel).join(', ');
+    return (ok: true, message: 'Sent $filename to $where.');
+  } on Exception catch (e) {
+    debugPrint('[SendFile] Failed to send file: $e');
+    return (
+      ok: false,
+      message: 'The file could not be sent. Check your connection and try '
+          'again.',
+    );
+  }
+}
+
 /// Used by the Windows Explorer context menu. Deliberately minimal: no window,
 /// no tray, no hotkey - just auth, upload, done.
 Future<int> _sendFileFromCommandLine(
   String path,
   IAuthService authService,
 ) async {
-  var exitCode = 1;
-  late String message;
-  try {
-    final file = File(path);
-    if (!file.existsSync()) {
-      message = 'The selected file no longer exists.';
-    } else if (await file.length() > ClipboardLimits.maxFileBytes) {
-      // Check the size before allocating a potentially multi-GB file in RAM.
-      message = 'This file is too large. GhostCopy supports files up to 10MB.';
-    } else if (authService.currentUserId == null) {
-      message = 'Open GhostCopy and sign in before sending a file.';
-    } else {
-      await authService.initialize();
-      final bytes = await file.readAsBytes();
-      final filename = file.uri.pathSegments.last;
-      final typeInfo = FileTypeService.instance.detectFromBytes(
-        bytes,
-        filename,
-      );
-      await ClipboardRepository.instance.insertFile(
-        userId: authService.currentUserId!,
-        deviceType: ClipboardRepository.getCurrentDeviceType(),
-        deviceName: ClipboardRepository.getCurrentDeviceName(),
-        fileBytes: bytes,
-        mimeType: typeInfo.mimeType,
-        contentType: typeInfo.contentType,
-        originalFilename: filename,
-      );
-      message = 'Sent $filename to your other devices.';
-      exitCode = 0;
-    }
-  } on Exception catch (e) {
-    debugPrint('[SendFile] Failed to send file: $e');
-    message =
-        'The file could not be sent. Check your connection and try again.';
-  }
+  final result = await _sendSharedFile(
+    path,
+    authService,
+    initializeAuth: true,
+  );
+  final exitCode = result.ok ? 0 : 1;
+  final message = result.message;
   debugPrint('[SendFile] $message');
   if (Platform.isWindows) {
     // Native feedback works without rendering the main Flutter window, a tray
@@ -1288,6 +1396,41 @@ Future<int> _sendFileFromCommandLine(
     ).invokeMethod<void>('showResult', message);
   }
   return exitCode;
+}
+
+/// Receives files shared into GhostCopy from Finder's Share menu.
+///
+/// Delivered by the macOS Service, which runs inside this process and hands
+/// over the file paths. Sending matches the Windows context menu: straight to
+/// the default devices, with a notification rather than a staged file waiting
+/// to be sent.
+Future<void> _listenForSharedFiles(IAuthService authService) async {
+  const channel = MethodChannel('com.ghostcopy.app/share');
+
+  Future<void> sendAll(List<String> paths) async {
+    for (final path in paths) {
+      final result = await _sendSharedFile(path, authService);
+      locator<INotificationService>().showToast(
+        message: result.message,
+        type: result.ok ? NotificationType.success : NotificationType.error,
+      );
+    }
+  }
+
+  channel.setMethodCallHandler((call) async {
+    if (call.method == 'sendFiles') {
+      await sendAll(List<String>.from(call.arguments as List));
+    }
+  });
+
+  // Draining on startup covers the case where macOS launched the app purely to
+  // deliver the file, so the service fired before Dart was listening.
+  try {
+    final pending = await channel.invokeListMethod<String>('ready');
+    if (pending != null && pending.isNotEmpty) await sendAll(pending);
+  } on PlatformException catch (e) {
+    debugPrint('[Share] Could not drain pending shared files: $e');
+  }
 }
 
 /// Add "Send with GhostCopy" to the Explorer right-click menu for all files.

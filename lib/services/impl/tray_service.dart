@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:tray_manager/tray_manager.dart';
 import '../tray_service.dart';
@@ -10,6 +12,12 @@ import '../tray_service.dart';
 class TrayService with TrayListener implements ITrayService {
   // Callback for when tray icon is right-clicked
   void Function()? onRightClick;
+
+  /// macOS gets a real NSMenu so the menu matches every other menu bar app -
+  /// vibrancy, keyboard navigation and positioning all come from AppKit. The
+  /// Windows tray menu is still the custom Flutter window, because the native
+  /// one there does not match the app at all.
+  bool get _usesNativeMenu => Platform.isMacOS;
 
   @override
   Future<void> initialize() async {
@@ -35,7 +43,38 @@ class TrayService with TrayListener implements ITrayService {
 
   @override
   Future<void> setContextMenu(List<TrayMenuItem> items) async {
-    // No-op - we use custom window for menu, handled via event
+    // Windows drives the custom Flutter window from the click event instead.
+    if (!_usesNativeMenu) return;
+
+    await trayManager.setContextMenu(
+      Menu(
+        items: items.map((item) {
+          if (item.isSeparator) return MenuItem.separator();
+
+          final checked = item.isChecked;
+          if (checked != null) {
+            // Only a 'checkbox' item gets an NSMenuItem state, which is how a
+            // Mac menu shows an on/off toggle.
+            return MenuItem.checkbox(
+              label: item.label,
+              checked: checked,
+              onClick: (_) => item.onTap?.call(),
+            );
+          }
+
+          return MenuItem(
+            label: item.label,
+            onClick: (_) => item.onTap?.call(),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  @override
+  Future<Rect?> getIconBounds() async {
+    if (!_isDesktop()) return null;
+    return trayManager.getBounds();
   }
 
   @override
@@ -56,16 +95,23 @@ class TrayService with TrayListener implements ITrayService {
 
   @override
   void onTrayIconMouseDown() {
-    // Left click - could show spotlight or toggle window if needed
+    // Status items open their menu on either button, so left-click is routed
+    // to the same handler rather than left dead.
+    _openMenu();
   }
 
   @override
   void onTrayIconRightMouseDown() {
-    // Right click - trigger custom menu
-    onRightClick?.call();
+    _openMenu();
+  }
 
-    // Also support native menu popping up if we set one,
-    // but here we are using custom window callback.
+  void _openMenu() {
+    if (_usesNativeMenu) {
+      // AppKit owns placement, appearance and dismissal from here.
+      unawaited(trayManager.popUpContextMenu());
+    } else {
+      onRightClick?.call();
+    }
   }
 
   @override

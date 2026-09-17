@@ -4,9 +4,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../locator.dart';
 import '../../services/auth_service.dart';
 import '../../services/encryption_service.dart';
+import '../../services/window_service.dart';
 import '../theme/colors.dart';
+
+/// Window height needed to show the pairing dialog without scrolling.
+const double _dialogWindowHeight = 700;
 
 /// Dialog for displaying QR code to link new mobile device
 ///
@@ -140,7 +145,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -236,10 +241,10 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                       data: _qrData!,
                       size: 200,
                       backgroundColor: Colors.white,
-                      eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square),
-                      dataModuleStyle: const QrDataModuleStyle(
-                        dataModuleShape: QrDataModuleShape.square,
-                      ),
+                      // Styles are left at their defaults deliberately. Passing
+                      // a partial style - a shape with no colour - overrides
+                      // the default black with null, and QrPainter force
+                      // unwraps it, so the code paints as a blank white square.
                     ),
                   ),
                 ),
@@ -391,11 +396,21 @@ Future<void> showLinkDeviceDialog(
   IAuthService authService,
   IEncryptionService encryptionService,
 ) async {
-  await showDialog<void>(
-    context: context,
-    builder: (context) => LinkDeviceDialog(
-      authService: authService,
-      encryptionService: encryptionService,
-    ),
-  );
+  // The QR code, PIN and pairing steps need more room than the Spotlight
+  // window has. Growing the window beats shrinking the QR, which has to stay
+  // large enough for a phone camera to read.
+  final windowService = locator<IWindowService>();
+  try {
+    await windowService.growToHeight(_dialogWindowHeight);
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => LinkDeviceDialog(
+        authService: authService,
+        encryptionService: encryptionService,
+      ),
+    );
+  } finally {
+    await windowService.restoreSpotlightSize();
+  }
 }

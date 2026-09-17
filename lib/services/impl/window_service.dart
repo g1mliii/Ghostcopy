@@ -117,6 +117,22 @@ class WindowService implements IWindowService {
   }
 
   @override
+  Future<void> growToHeight(double height) async {
+    if (!_isDesktop()) return;
+    // Resized in place rather than hidden first: the window is already on
+    // screen here, and hiding it would dismiss the dialog that asked to grow.
+    await windowManager.setSize(Size(_windowWidth, height));
+    await windowManager.center();
+  }
+
+  @override
+  Future<void> restoreSpotlightSize() async {
+    if (!_isDesktop()) return;
+    await windowManager.setSize(const Size(_windowWidth, _windowHeight));
+    await windowManager.center();
+  }
+
+  @override
   Future<void> focusWindow() async {
     if (!_isDesktop()) return;
     await windowManager.focus();

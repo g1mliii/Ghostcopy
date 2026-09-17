@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -242,11 +244,33 @@ class _HotkeyCapture extends State<HotkeyCapture> {
 /// Shared rather than private so the two cannot drift into showing the same
 /// binding differently.
 String formatHotkey(HotKey hotkey) {
+  // macOS names these keys differently on the keycaps, and shows symbols
+  // rather than words. "Alt + Space" is not a thing a Mac user can find.
   final parts = <String>[];
+  if (Platform.isMacOS) {
+    if (hotkey.ctrl) parts.add('\u2303');
+    if (hotkey.alt) parts.add('\u2325');
+    if (hotkey.shift) parts.add('\u21e7');
+    if (hotkey.meta) parts.add('\u2318');
+    parts.add(_displayKey(hotkey.key));
+    // Mac modifier symbols are shown without separators, as on the menu bar.
+    return parts.join();
+  }
+
   if (hotkey.ctrl) parts.add('Ctrl');
   if (hotkey.shift) parts.add('Shift');
   if (hotkey.alt) parts.add('Alt');
-  if (hotkey.meta) parts.add('Meta');
-  parts.add(hotkey.key.toUpperCase());
+  if (hotkey.meta) parts.add('Win');
+  parts.add(_displayKey(hotkey.key));
   return parts.join(' + ');
 }
+
+/// Spell out keys whose name is not simply its letter.
+String _displayKey(String key) => switch (key.toLowerCase()) {
+  'space' => 'Space',
+  'escape' => 'Esc',
+  'enter' => 'Enter',
+  'tab' => 'Tab',
+  'backspace' => 'Backspace',
+  _ => key.toUpperCase(),
+};

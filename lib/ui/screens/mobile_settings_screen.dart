@@ -20,6 +20,7 @@ import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
+import '../widgets/adaptive_switch.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
@@ -80,6 +81,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   // URL shortening state
   bool _autoShortenUrls = false;
+  Set<String> _defaultDevices = {};
   bool _urlShortenerLoading = false;
 
   // App info
@@ -93,6 +95,20 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     _loadAppInfo();
     _loadUrlShorteningStatus();
     _loadScreenshotProtection();
+    _loadDefaultDevices();
+  }
+
+  Future<void> _loadDefaultDevices() async {
+    final devices = await locator<ISettingsService>()
+        .getAutoSendTargetDevices();
+    if (mounted) setState(() => _defaultDevices = devices);
+  }
+
+  Future<void> _toggleDefaultDevice(String deviceType) async {
+    final updated = Set<String>.from(_defaultDevices);
+    if (!updated.remove(deviceType)) updated.add(deviceType);
+    await locator<ISettingsService>().setAutoSendTargetDevices(updated);
+    if (mounted) setState(() => _defaultDevices = updated);
   }
 
   @override
@@ -949,6 +965,76 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             value: _autoShortenUrls,
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
+          const Divider(height: 1, color: GhostColors.border),
+          _buildDefaultDevicesTile(),
+        ],
+      ),
+    );
+  }
+
+  /// Where a share from another app goes.
+  ///
+  /// Sharing into GhostCopy sends straight here without asking, so this has to
+  /// be visible and editable on mobile - otherwise the target is set on the
+  /// desktop and invisible on the phone doing the sending.
+  Widget _buildDefaultDevicesTile() {
+    const deviceTypes = ['windows', 'macos', 'android', 'ios'];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.devices, color: GhostColors.primary, size: 20),
+              const SizedBox(width: 16),
+              const Text(
+                'Default devices',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: GhostColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _defaultDevices.isEmpty
+                    ? 'All devices'
+                    : _defaultDevices.map(platformLabel).join(', '),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: GhostColors.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Padding(
+            padding: EdgeInsets.only(left: 36),
+            child: Text(
+              'Where shared files and auto-send go.',
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.only(left: 36),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final type in deviceTypes)
+                  _DefaultDeviceChip(
+                    label: platformLabel(type),
+                    icon: iconForDeviceType(type),
+                    isSelected:
+                        _defaultDevices.isEmpty ||
+                        _defaultDevices.contains(type),
+                    onTap: () => _toggleDefaultDevice(type),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -973,16 +1059,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     required bool value,
     required ValueChanged<bool>? onChanged,
   }) {
-    final control = Switch.adaptive(
-      value: value,
-      onChanged: onChanged,
-      activeTrackColor: GhostColors.primary,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    );
-
-    return Adaptive.isIOS
-        ? control
-        : Transform.scale(scale: 0.8, child: control);
+    return AdaptiveSwitch(value: value, onChanged: onChanged);
   }
 
   /// One switch row, so every toggle in Settings is the same size and colour.
@@ -1151,6 +1228,65 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           color: GhostColors.textMuted,
         ),
         onTap: _openWebsite,
+      ),
+    );
+  }
+}
+
+/// One platform chip in the Default devices row.
+class _DefaultDeviceChip extends StatelessWidget {
+  const _DefaultDeviceChip({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      // Explicit on both branches: a null hover colour falls back to the
+      // theme's white overlay, which flashes on these dark surfaces.
+      hoverColor: isSelected
+          ? GhostColors.primaryHover
+          : GhostColors.surfaceLight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? GhostColors.primary : GhostColors.surfaceLight,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected
+                    ? GhostColors.textPrimary
+                    : GhostColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

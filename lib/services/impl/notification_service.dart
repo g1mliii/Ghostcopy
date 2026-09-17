@@ -38,6 +38,15 @@ class NotificationService implements INotificationService {
       {}; // Track when action was created
   int _notificationIdCounter = 0;
 
+  // Repeated-toast coalescing. Deleting several clips in a row fired one toast
+  // each, which replaced the overlay over and over and stacked a separate
+  // entry per delete in Notification Center.
+  String? _lastToastMessage;
+  DateTime? _lastToastAt;
+  int _toastRepeatCount = 1;
+  int? _lastSystemNotificationId;
+  static const _toastCoalesceWindow = Duration(seconds: 4);
+
   // Timer to periodically clean up stale actions (memory leak prevention)
   Timer? _actionCleanupTimer;
 
@@ -178,6 +187,23 @@ class NotificationService implements INotificationService {
 
     debugPrint('🔔 [NotificationService] showToast: "$message"');
 
+    // Same message again in quick succession: count it rather than showing it
+    // twice. The window is measured from the previous toast, so a steady run
+    // of deletes keeps incrementing instead of resetting.
+    final now = DateTime.now();
+    final isRepeat =
+        message == _lastToastMessage &&
+        _lastToastAt != null &&
+        now.difference(_lastToastAt!) <= _toastCoalesceWindow;
+
+    _toastRepeatCount = isRepeat ? _toastRepeatCount + 1 : 1;
+    _lastToastMessage = message;
+    _lastToastAt = now;
+
+    final displayMessage = _toastRepeatCount > 1
+        ? '$message (x$_toastRepeatCount)'
+        : message;
+
     // Check if Spotlight window is visible
     final isSpotlightVisible = _windowService?.isVisible ?? false;
 
@@ -186,11 +212,17 @@ class NotificationService implements INotificationService {
       debugPrint(
         '🔔 [NotificationService] Using system notification (Spotlight hidden)',
       );
-      _showSystemNotification(message: message, type: type);
+      _showSystemNotification(
+        message: displayMessage,
+        type: type,
+        // Reusing the id updates the existing banner in place instead of
+        // adding one per repeat.
+        replaceId: isRepeat ? _lastSystemNotificationId : null,
+      );
     } else {
       // Use overlay when Spotlight is visible
       debugPrint('🔔 [NotificationService] Using overlay (Spotlight visible)');
-      _showToastInOverlay(message, type, duration);
+      _showToastInOverlay(displayMessage, type, duration);
     }
   }
 
@@ -199,6 +231,7 @@ class NotificationService implements INotificationService {
     NotificationType type = NotificationType.info,
     String? actionLabel,
     VoidCallback? onAction,
+    int? replaceId,
   }) async {
     // Double check Game Mode (in case called directly)
     if (_gameModeService?.isActive ?? false) {
@@ -208,7 +241,8 @@ class NotificationService implements INotificationService {
       return;
     }
 
-    final id = _notificationIdCounter++;
+    final id = replaceId ?? _notificationIdCounter++;
+    _lastSystemNotificationId = id;
 
     // Store action if provided
     if (onAction != null) {

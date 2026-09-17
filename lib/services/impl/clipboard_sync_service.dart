@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
@@ -480,15 +482,47 @@ class ClipboardSyncService implements IClipboardSyncService {
   void stopClipboardMonitoring() {
     _clipboardMonitorTimer?.cancel();
     _clipboardMonitorTimer = null;
-    _lastMonitoredClipboard = '';
+    // The hash is deliberately kept. Monitoring stops and restarts around
+    // screen lock and system sleep, and clearing it made the first tick after
+    // every resume treat the unchanged clipboard as new and send it again.
     _isMonitoring = false;
     debugPrint('[ClipboardSyncService] Clipboard monitoring stopped');
   }
 
   /// Check clipboard and auto-send if changed
+  /// AppKit's pasteboard change counter, or null where it is unavailable.
+  ///
+  /// Reading the clipboard pulls the whole payload - a copied file or image is
+  /// re-read from disk in full - so on macOS this cheap integer gates that
+  /// read. Other platforms fall through and read as before.
+  static const _clipboardChangeChannel = MethodChannel(
+    'com.ghostcopy.app/clipboard_change',
+  );
+  int? _lastClipboardChangeCount;
+
+  Future<int?> _readClipboardChangeCount() async {
+    if (!Platform.isMacOS) return null;
+    try {
+      return await _clipboardChangeChannel.invokeMethod<int>('changeCount');
+    } on PlatformException catch (e) {
+      debugPrint('[ClipboardSyncService] changeCount unavailable: $e');
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   Future<void> _checkClipboardForAutoSend() async {
     if (_clipboardWritesInProgress > 0 || _isDisposed) return;
     try {
+      // Nothing written to the pasteboard since the last tick means the
+      // payload cannot have changed, so the full read is skipped entirely.
+      final changeCount = await _readClipboardChangeCount();
+      if (changeCount != null) {
+        if (changeCount == _lastClipboardChangeCount) return;
+        _lastClipboardChangeCount = changeCount;
+      }
+
       // Read clipboard using ClipboardService (supports all formats)
       final clipboardContent = await _clipboardService.read();
       if (_clipboardWritesInProgress > 0 || _isDisposed) return;

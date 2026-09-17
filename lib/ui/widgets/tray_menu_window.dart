@@ -22,19 +22,22 @@ class TrayMenuWindow extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onQuit;
 
+  /// Space reserved around the menu card on macOS so its drop shadow is not
+  /// clipped by the window edge. The window is offset by this much, so the
+  /// card's visible corner - not the padding - lands on the tray icon.
+  static const EdgeInsets macOSInset = EdgeInsets.only(left: 16, top: 8);
+
   @override
   Widget build(BuildContext context) {
     // Platform-specific positioning:
-    // - macOS: Menu bar is at top, so menu extends downward from top-right
+    // - macOS: menu hangs below the status item, left edges aligned, matching
+    //   how a native NSMenu opens from the menu bar
     // - Windows: Taskbar is at bottom, so menu extends upward from bottom-right
     final alignment = Platform.isMacOS
-        ? Alignment.topRight
+        ? Alignment.topLeft
         : Alignment.bottomRight;
     final padding = Platform.isMacOS
-        ? const EdgeInsets.only(
-            right: 16,
-            top: 8,
-          ) // Top padding for macOS menu bar
+        ? macOSInset
         : const EdgeInsets.only(
             right: 16,
             bottom: 60,

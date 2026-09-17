@@ -16,6 +16,13 @@ class AppTheme {
         brightness: Brightness.dark,
         useMaterial3: true,
 
+        // Ink ripples wash out to near-white against this palette's dark
+        // surfaces, so presses read as a white flash. Hover states carry the
+        // interaction feedback on desktop instead.
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+
         // Color scheme
         colorScheme: ColorScheme.dark(
           primary: GhostColors.primary,

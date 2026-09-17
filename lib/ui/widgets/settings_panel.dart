@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show AuthState;
 
 import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
@@ -18,6 +19,7 @@ import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import 'adaptive_switch.dart';
 import 'device_panel.dart';
 import 'hotkey_capture_field.dart';
 import 'link_device_dialog.dart';
@@ -89,7 +91,15 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   // Cache expensive computations
   String? _cachedDeviceText;
   late final ValueNotifier<int> _staleDurationMinutesNotifier;
-  bool _isDraggingStaleDuration = false;
+
+  /// Collapsed by default: it is set once and then only checked, so the summary
+  /// line is enough most of the time.
+  bool _deviceSelectorExpanded = false;
+
+  /// The account section reads isAnonymous straight from the service, so
+  /// without this the panel kept showing "anonymous" after a sign-in that
+  /// completed while it was open - it only corrected itself when reopened.
+  StreamSubscription<AuthState>? _authStateSub;
 
   // Separate debounce timers per field to prevent data loss
   Timer? _webhookDebounceTimer;
@@ -110,13 +120,20 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _loadUrlShorteningStatus();
     _loadWebhookStatus();
     _loadObsidianStatus();
+
+    _authStateSub = widget.authService.authStateChanges.listen((_) {
+      if (!mounted) return;
+      setState(() {});
+      // Encryption and device state are per-account, so they are stale too.
+      _loadEncryptionStatus();
+      _loadTargetDevices();
+    });
   }
 
   @override
   void didUpdateWidget(covariant SettingsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_isDraggingStaleDuration &&
-        widget.staleDurationMinutes != _staleDurationMinutesNotifier.value) {
+    if (widget.staleDurationMinutes != _staleDurationMinutesNotifier.value) {
       _staleDurationMinutesNotifier.value = widget.staleDurationMinutes;
     }
   }
@@ -132,6 +149,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _webhookDebounceTimer?.cancel();
     _vaultPathDebounceTimer?.cancel();
     _fileNameDebounceTimer?.cancel();
+    unawaited(_authStateSub?.cancel());
 
     // Dispose controllers
     _webhookUrlController.dispose();
@@ -549,11 +567,11 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           },
         ),
         const SizedBox(height: 10),
-        // Auto-send target devices (only show if auto-send is enabled)
-        if (widget.autoSendEnabled) ...[
-          _buildDeviceSelector(),
-          const SizedBox(height: 10),
-        ],
+        // Always shown, not gated on auto-send: these devices are also where
+        // the right-click menu sends, so hiding it with auto-send off would
+        // strand a setting that is still in effect.
+        _buildDeviceSelector(),
+        const SizedBox(height: 10),
         // URL shortening toggle
         _buildSettingToggle(
           title: 'Auto-shorten URLs',
@@ -648,31 +666,18 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         if (widget.autoReceiveBehavior == AutoReceiveBehavior.smart) ...[
           ValueListenableBuilder<int>(
             valueListenable: _staleDurationMinutesNotifier,
-            builder: (context, staleDurationMinutes, _) => _buildSettingSlider(
-              title: 'Clipboard staleness',
-              subtitle: 'Auto-paste after $staleDurationMinutes min',
-              value: staleDurationMinutes.toDouble(),
-              min: 1,
-              max: 60,
-              divisions: 59,
-              onChangeStart: () {
-                _isDraggingStaleDuration = true;
-              },
-              onChanged: (value) {
-                if (_staleDurationMinutesNotifier.value != value) {
-                  _staleDurationMinutesNotifier.value = value;
-                }
-              },
-              onChangeEnd: (value) async {
-                _isDraggingStaleDuration = false;
-                if (widget.staleDurationMinutes != value) {
-                  widget.onStaleDurationChanged(value);
-                }
-                await widget.settingsService.setClipboardStaleDurationMinutes(
-                  value,
-                );
-              },
-            ),
+            builder: (context, staleDurationMinutes, _) =>
+                _buildStaleDurationSelector(
+                  selected: staleDurationMinutes,
+                  onSelected: (value) async {
+                    _staleDurationMinutesNotifier.value = value;
+                    if (widget.staleDurationMinutes != value) {
+                      widget.onStaleDurationChanged(value);
+                    }
+                    await widget.settingsService
+                        .setClipboardStaleDurationMinutes(value);
+                  },
+                ),
           ),
           const SizedBox(height: 10),
         ],
@@ -796,7 +801,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           color: GhostColors.surface,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: SwitchListTile(
+        child: ListTile(
           title: Text(
             title,
             style: GhostTypography.body.copyWith(
@@ -810,10 +815,8 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
               color: GhostColors.textMuted,
             ),
           ),
-          value: value,
-          onChanged: onChanged,
-          activeTrackColor: GhostColors.primary,
-          thumbColor: WidgetStateProperty.all(GhostColors.primary),
+          trailing: AdaptiveSwitch(value: value, onChanged: onChanged),
+          onTap: () => onChanged(!value),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 10,
             vertical: 4,
@@ -901,17 +904,21 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     );
   }
 
-  Widget _buildSettingSlider({
-    required String title,
-    required String subtitle,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required VoidCallback onChangeStart,
-    required ValueChanged<int> onChanged,
-    required ValueChanged<int> onChangeEnd,
+  /// Preset delays, in minutes. A slider here was hard to read at a glance -
+  /// its track sat on a same-coloured card and 59 divisions drew 59 ticks -
+  /// and the exact minute never mattered, only the rough wait.
+  static const _staleDurationPresets = [1, 5, 15, 30, 60];
+
+  Widget _buildStaleDurationSelector({
+    required int selected,
+    required ValueChanged<int> onSelected,
   }) {
+    // A value saved by the old slider will usually not be a preset, so the
+    // nearest one is shown as active rather than leaving nothing selected.
+    final active = _staleDurationPresets.reduce(
+      (a, b) => (a - selected).abs() <= (b - selected).abs() ? a : b,
+    );
+
     return RepaintBoundary(
       child: Container(
         padding: const EdgeInsets.all(10),
@@ -922,30 +929,45 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: GhostTypography.body.copyWith(
-                fontSize: 13,
-                color: GhostColors.textPrimary,
-              ),
+            Row(
+              children: [
+                const Icon(
+                  Icons.timer_outlined,
+                  size: 14,
+                  color: GhostColors.primary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Clipboard staleness',
+                  style: GhostTypography.body.copyWith(
+                    fontSize: 13,
+                    color: GhostColors.textPrimary,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
-              subtitle,
+              'Auto-paste once your clipboard has sat unused this long',
               style: GhostTypography.caption.copyWith(
                 color: GhostColors.textMuted,
               ),
             ),
-            Slider(
-              value: value,
-              min: min,
-              max: max,
-              divisions: divisions,
-              activeColor: GhostColors.primary,
-              inactiveColor: GhostColors.surface,
-              onChangeStart: (_) => onChangeStart(),
-              onChanged: (val) => onChanged(val.toInt()),
-              onChangeEnd: (val) => onChangeEnd(val.toInt()),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                for (final minutes in _staleDurationPresets) ...[
+                  Expanded(
+                    child: _DurationOption(
+                      label: minutes == 60 ? '1 hr' : '$minutes min',
+                      isSelected: minutes == active,
+                      onTap: () => onSelected(minutes),
+                    ),
+                  ),
+                  if (minutes != _staleDurationPresets.last)
+                    const SizedBox(width: 6),
+                ],
+              ],
             ),
           ],
         ),
@@ -1110,29 +1132,57 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.devices, size: 14, color: GhostColors.primary),
-              const SizedBox(width: 6),
-              Text(
-                'Send to devices',
-                style: GhostTypography.body.copyWith(
-                  fontSize: 13,
-                  color: GhostColors.textPrimary,
+          InkWell(
+            onTap: () => setState(
+              () => _deviceSelectorExpanded = !_deviceSelectorExpanded,
+            ),
+            borderRadius: BorderRadius.circular(6),
+            hoverColor: GhostColors.surfaceLight,
+            child: Row(
+              children: [
+                const Icon(Icons.devices, size: 14, color: GhostColors.primary),
+                const SizedBox(width: 6),
+                Text(
+                  'Default devices',
+                  style: GhostTypography.body.copyWith(
+                    fontSize: 13,
+                    color: GhostColors.textPrimary,
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _getDeviceText(),
-            style: GhostTypography.caption.copyWith(
-              color: GhostColors.textMuted,
+                const Spacer(),
+                // The summary stays visible while collapsed, so the current
+                // targets can be checked without expanding.
+                Text(
+                  _getDeviceText(),
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  _deviceSelectorExpanded
+                      ? Icons.expand_less
+                      : Icons.expand_more,
+                  size: 18,
+                  color: GhostColors.textMuted,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
+          if (_deviceSelectorExpanded) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Where auto-send and the right-click menu send to. Picking '
+              'devices in the Spotlight window overrides this for that send.',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           // Device checkboxes
-          Wrap(
+          if (_deviceSelectorExpanded)
+            Wrap(
             spacing: 8,
             runSpacing: 8,
             children: devices.map((type) {
@@ -1143,6 +1193,12 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
               return InkWell(
                 onTap: () => _toggleDevice(type),
                 borderRadius: BorderRadius.circular(6),
+                // Explicit on both branches: a null hover colour falls back to
+                // the theme's white overlay, which flashes on these dark
+                // surfaces.
+                hoverColor: isSelected
+                    ? GhostColors.primaryHover
+                    : GhostColors.surfaceLight,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -1357,6 +1413,54 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 }
 
 /// Auto-receive behavior radio button option
+/// One preset in the clipboard-staleness row.
+class _DurationOption extends StatelessWidget {
+  const _DurationOption({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      // Explicit on both branches: a null hover colour falls back to the
+      // theme's white overlay, which flashes against these dark surfaces.
+      hoverColor: isSelected
+          ? GhostColors.primaryHover
+          : GhostColors.surfaceLight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSelected ? GhostColors.primaryAlpha15 : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? GhostColors.primary : GhostColors.surfaceLight,
+            width: 1.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+            color: isSelected
+                ? GhostColors.textPrimary
+                : GhostColors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AutoReceiveBehaviorOption extends StatelessWidget {
   const _AutoReceiveBehaviorOption({
     required this.behavior,
