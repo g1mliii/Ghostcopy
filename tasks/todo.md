@@ -83,6 +83,14 @@ execution is genuinely more permissive.
 
 ### Open
 
+- [ ] **Cmd+Q quits GhostCopy on macOS with no warning.** It is a background
+      utility - invisible until the hotkey - so quitting it stops clipboard
+      sync silently, and the user finds out when clips stop arriving rather
+      than at the moment they quit. Hit repeatedly by accident in one session,
+      so a real user will too. Menu-bar apps usually intercept Cmd+Q to hide
+      instead, or leave quitting to the tray menu where it is deliberate
+
+
 - [ ] **Per-device names.** Every iOS device registers as "iOS Device" against
       a UNIQUE (user_id, device_type, device_name) index, so a simulator and a
       phone share one row and one FCM token - whichever launched last wins, and
