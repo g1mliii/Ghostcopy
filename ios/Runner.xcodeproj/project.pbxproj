@@ -11,6 +11,7 @@
 		292B79E4F7DB4929854D5602 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DF201E827129766D3F4157BB /* Pods_Runner.framework */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
+		AC0000010000000000000005 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000005 /* GoogleService-Info.plist */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
@@ -70,6 +71,7 @@
 		9F771051747172CA988C1B77 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		AC0000020000000000000001 /* ActionableNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionableNotificationManager.swift; sourceTree = "<group>"; };
 		AC0000020000000000000002 /* WidgetDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetDataManager.swift; sourceTree = "<group>"; };
+		AC0000020000000000000005 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		AC0000020000000000000004 /* FlutterChannelHub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlutterChannelHub.swift; sourceTree = "<group>"; };
 		AC0000020000000000000003 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		CA89A8D42E04D4E1B8500884 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
@@ -160,6 +162,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				AC0000020000000000000001 /* ActionableNotificationManager.swift */,
 				AC0000020000000000000002 /* WidgetDataManager.swift */,
+				AC0000020000000000000005 /* GoogleService-Info.plist */,
 				AC0000020000000000000004 /* FlutterChannelHub.swift */,
 				AC0000020000000000000003 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
@@ -286,6 +289,7 @@
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
+				AC0000010000000000000005 /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -494,6 +498,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
+				DEVELOPMENT_TEAM = R9TKT8U45R;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
@@ -676,6 +682,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 9740EEB21CF90195004384FC /* Debug.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
+				DEVELOPMENT_TEAM = R9TKT8U45R;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
@@ -698,6 +706,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
+				DEVELOPMENT_TEAM = R9TKT8U45R;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
