@@ -152,10 +152,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           Container(
             width: 80,
             height: 80,
-            decoration: BoxDecoration(
+            decoration: ShapeDecoration(
               color: GhostColors.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: GhostColors.glassBorder),
+              shape: Adaptive.surfaceShape(
+                radius: 20,
+                side: BorderSide(color: GhostColors.glassBorder),
+              ),
             ),
             // The real mark, not a generic Material copy glyph. White variant:
             // this sits on GhostColors.surface, which is near-black.
@@ -222,10 +224,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           // Instructions
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
+            decoration: ShapeDecoration(
               color: GhostColors.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: GhostColors.glassBorder),
+              shape: Adaptive.surfaceShape(
+                radius: 12,
+                side: BorderSide(color: GhostColors.glassBorder),
+              ),
             ),
             child: Row(
               children: [
@@ -266,10 +270,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // 320 is roughly the width this had on a phone, so nothing changes there.
       height: 320,
       width: 320,
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder, width: 2),
+        shape: Adaptive.surfaceShape(
+          radius: 12,
+          side: BorderSide(color: GhostColors.glassBorder, width: 2),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: () {
@@ -309,10 +315,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   Widget _buildQRError() {
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: GhostColors.redAlpha10,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.redAlpha30),
+        shape: Adaptive.surfaceShape(
+          radius: 8,
+          side: BorderSide(color: GhostColors.redAlpha30),
+        ),
       ),
       child: Row(
         children: [
@@ -483,10 +491,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     return Container(
       margin: const EdgeInsets.only(top: 16),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: GhostColors.redAlpha10,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.redAlpha30),
+        shape: Adaptive.surfaceShape(
+          radius: 8,
+          side: BorderSide(color: GhostColors.redAlpha30),
+        ),
       ),
       child: Row(
         children: [

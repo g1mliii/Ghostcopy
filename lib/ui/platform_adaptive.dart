@@ -119,6 +119,59 @@ class Adaptive {
     );
   }
 
+  /// The platform's own rounded-corner shape.
+  ///
+  /// Apple does not draw a rounded rectangle. Its corners are a superellipse -
+  /// a "squircle" - where curvature ramps in continuously instead of switching
+  /// from straight to circular arc at a tangent point. It is the most
+  /// recognisable piece of geometry in the system, and since iOS 26 leans on
+  /// it harder than ever it is what makes a surface read as Apple-drawn or
+  /// not. Flutter ships it as RoundedSuperellipseBorder and its own Cupertino
+  /// widgets use it.
+  ///
+  /// Android's own shape genuinely is a rounded rectangle, so this stays
+  /// platform-split rather than becoming the app's house shape.
+  static OutlinedBorder surfaceShape({
+    required double radius,
+    BorderSide? side,
+  }) {
+    final borderRadius = BorderRadius.circular(radius);
+    if (isApple) {
+      return RoundedSuperellipseBorder(
+        borderRadius: borderRadius,
+        side: side ?? BorderSide.none,
+      );
+    }
+    return RoundedRectangleBorder(
+      borderRadius: borderRadius,
+      side: side ?? BorderSide.none,
+    );
+  }
+
+  /// Clips a child to the platform's rounded-corner shape.
+  ///
+  /// The counterpart to [surfaceShape], for the cases that clip content -
+  /// thumbnails, previews - rather than paint a decoration.
+  static Widget clip({
+    required Widget child,
+    double radius = 12,
+    Clip clipBehavior = Clip.antiAlias,
+  }) {
+    final borderRadius = BorderRadius.circular(radius);
+    if (isApple) {
+      return ClipRSuperellipse(
+        borderRadius: borderRadius,
+        clipBehavior: clipBehavior,
+        child: child,
+      );
+    }
+    return ClipRRect(
+      borderRadius: borderRadius,
+      clipBehavior: clipBehavior,
+      child: child,
+    );
+  }
+
   /// A yes/no dialog using each platform's own conventions.
   ///
   /// Only for simple title + message + two buttons. Dialogs with custom bodies

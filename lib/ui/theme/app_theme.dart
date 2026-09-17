@@ -88,9 +88,7 @@ class AppTheme {
         cardTheme: CardThemeData(
           color: GhostColors.surface,
           elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          shape: Adaptive.surfaceShape(radius: 12),
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         ),
 
@@ -101,9 +99,7 @@ class AppTheme {
             foregroundColor: Colors.white,
             elevation: 0,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            shape: Adaptive.surfaceShape(radius: 8),
             textStyle: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
@@ -193,7 +189,7 @@ class AppTheme {
             fontSize: 14,
             fontFamily: GhostTypography.fontFamily,
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: Adaptive.surfaceShape(radius: 8),
           behavior: SnackBarBehavior.floating,
         ),
 
@@ -201,9 +197,7 @@ class AppTheme {
         dialogTheme: DialogThemeData(
           backgroundColor: GhostColors.surface,
           elevation: 8,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          shape: Adaptive.surfaceShape(radius: 12),
           titleTextStyle: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w600,
