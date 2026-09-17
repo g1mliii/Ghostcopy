@@ -2,109 +2,63 @@
 
 ## Active Task
 
-**iOS bring-up** (started 2026-09-16, in progress). macOS is done bar sign-in
-testing.
+**iOS bring-up** (2026-09-16 to 2026-09-17). iOS now builds, launches and
+renders on the simulator for the first time. Committed as `0be7ed8`.
 
 Branch note: `ios/bring-up` is branched off `macos/bring-up`, not `main`,
 because PR #16 is still open and carries the auth/sandbox/sync fixes this
 builds on. **The iOS PR must target `macos/bring-up`**, or its diff will
-re-show all four macOS commits. Retarget to `main` once #16 merges.
+re-show the macOS commits. Retarget to `main` once #16 merges.
 
-### Where it stands
+### Done
 
-iOS builds and launches on the simulator for the first time. It renders a
-blank white screen - that is the next thing to chase.
+- [x] Builds: `flutter build ios --simulator --debug`
+- [x] Launches and renders on an iPhone 17 simulator (iOS 27.0)
+- [x] Welcome screen, tab switching, sign-in form all verified by hand
+- [x] **UIScene life cycle migration.** This was not future-proofing - the iOS
+      27 SDK makes it mandatory, and without it UIKit refuses to launch the app
+      at all. That was the white screen. Flutter's automated migration only
+      fires on a stock AppDelegate, so it was done by hand: scene manifest,
+      `SceneDelegate` subclassing `FlutterSceneDelegate` for the privacy blur
+      and deep links, `AppDelegate` on `FlutterImplicitEngineDelegate`, and
+      `FlutterChannelHub` building the channels once from the engine messenger
+- [x] Removed `NSExtension` from the app `Info.plist` - iOS was treating the
+      whole app as an app extension
+- [x] Pods deployment target floor for Xcode 27 (`ios/Podfile`)
+- [x] SPM migration (22 packages SPM, 3 CocoaPods), `Package.resolved` committed
+- [x] Supabase credentials + `user_id` moved to the App Group suite
 
-- [x] `flutter build ios --simulator --debug` - **passes**
-- [x] Installs and launches on the iPhone 17 simulator (iOS 27.0)
-- [ ] **Blank white screen.** Not a startup crash: the Dart side comes up
-      cleanly - `Supabase init completed`, `DeviceService`, `SettingsService`
-      all initialize, `TempFileService` runs its cleanup. So this is a
-      render/routing problem inside the Flutter app, not native. Start by
-      checking what the mobile route resolves to when `IFcmService` and
-      `IWidgetService` were never registered (Firebase is skipped without
-      `GoogleService-Info.plist`, which is expected on the simulator)
-- [ ] Functional pass: send/receive, history, settings, auth
+Nothing in `lib/` changed. The Dart side was correct throughout.
 
-### Fixed to get this far (uncommitted, in the working tree)
+### Next
 
-- **Pods deployment target.** Xcode 27 rejects `IPHONEOS_DEPLOYMENT_TARGET =
-  13.0` (it supports 15.0+). The 13.0 came from `PBXAggregateTarget "Flutter"`
-  - Flutter's own generated podspec pins `ios.deployment_target = '13.0'` and
-  podhelper only strips values strictly *below* 13. `ios/Podfile` now forces
-  16.0 on every pod target's configurations, mirroring what `macos/Podfile`
-  already did. CI never caught this because CI runs an older Xcode
-- **`NSExtension` removed from the app `Info.plist`.** It made iOS treat the
-  whole app as an app extension - `Dynamic content size update is not
-  supported in app extension` in the log. A live runtime bug, not just an App
-  Store risk, and invisible to `flutter build --no-codesign`. (Removing it did
-  *not* fix the blank screen - that is a separate problem)
-- **SPM migration.** The first build migrated iOS from pure CocoaPods to Swift
-  Package Manager: 22 packages via SPM, 3 still via CocoaPods (Flutter,
-  `irondash_engine_context`, `super_native_extensions`). This was not a choice
-  - SPM is `enabledByDefault: true` on stable, so any machine and CI does the
-  same. macOS was already migrated and committed in PR #16; iOS was the last
-  platform on pure CocoaPods
-- `ios/Flutter/AppFrameworkInfo.plist` lost its stale `MinimumOSVersion 13.0`
-  (Flutter removed it automatically)
-
-Decision: the two non-SPM plugins are **not ours to fix**. Neither ships a
-`Package.swift`; both are upstream (Matej Knopp) and arrive transitively via
-`super_clipboard` / `super_drag_and_drop`. Flutter's "will become an error"
-is a future warning, not a deadline. Leave it; macOS depends on them too.
-
-### Next: UIScene lifecycle migration
-
-Agreed to do this from the ground up while iOS is greenfield. Flutter's
-automated migration (`flutter_tools/lib/src/migrations/uiscene_migration.dart`)
-**only fires if AppDelegate matches a stock template byte-for-byte**, and
-GhostCopy's is 344 lines of custom code, so it silently skips and prints the
-warning. Must be done by hand.
-
-- [ ] `Info.plist`: add `UIApplicationSceneManifest` naming `FlutterSceneDelegate`
-      (the engine ships it - `FlutterSceneDelegate.h`) with `UISceneStoryboardFile: Main`
-- [ ] `AppDelegate`: conform to `FlutterImplicitEngineDelegate`, move
-      `GeneratedPluginRegistrant.register` into
-      `didInitializeImplicitFlutterEngine(_:)`
-- [ ] Replace all five `window?.rootViewController as? FlutterViewController`
-      lookups with `engineBridge.applicationRegistrar.messenger()`, and build
-      the three method channels (share, widget, notifications) **once** as
-      properties instead of reconstructing them per call. Worth doing on its
-      own merits: today those methods `guard let ... else { return }` and
-      silently drop the message if the root VC is not ready - a real failure
-      mode for a notification arriving during launch
-- [ ] Subclass `FlutterSceneDelegate` and move the privacy blur to
-      `sceneWillResignActive` / `sceneDidBecomeActive`. Note: the blur
-      currently fires during launch (`applicationWillResignActive` runs right
-      after `applicationDidBecomeActive`) - check whether that is spurious
-- [ ] Separately, `FLTGoogleSignInPlugin` logs its own UIScene deprecation
-      warning. Plugin-side, not ours
-
-### Still to do: the remaining project-config defects
-
-Deliberately kept out of the bring-up commit as a separate reviewable change.
-
+- [ ] Sign in / sign out / account upgrade on iOS - never exercised
+- [ ] `ios/Runner/GoogleService-Info.plist`. **Copying it in is not enough**:
+      `Runner.xcodeproj` has no reference to it, which is why CI builds green
+      without it and why `Firebase.initializeApp()` currently no-ops. It must
+      be added to the Runner target's Copy Bundle Resources
 - [ ] Wire `CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements` into the
-      Runner target - it is referenced by nothing today, so the app has no
-      `aps-environment` and no App Group
+      Runner target - referenced by nothing today, so no `aps-environment`
+      and no App Group
 - [ ] Set `DEVELOPMENT_TEAM = R9TKT8U45R` (what macOS uses)
-- [ ] Supabase credentials and `user_id` to the App Group suite on both sides:
-      `AppDelegate.storeSupabaseCredentials` writes `UserDefaults.standard`,
-      `RefreshWidgetIntent` reads `UserDefaults.standard`, and nothing writes
-      `user_id` at all
 - [ ] Decide: add a real widget extension target, or delete
-      `ios/ClipboardWidget/`. There is no widget target in the project -
-      those four Swift files have never been in a build.
-      `left_TO_DO/IOS_WIDGET_SETUP.md` documents the manual Xcode steps that
-      were never carried out
+      `ios/ClipboardWidget/`. There is no widget target - those four Swift
+      files have never been in a build. If a target is added,
+      `RefreshWidgetIntent` must read the App Group suite rather than
+      `UserDefaults.standard`
+- [ ] Register a test device, then `flutter run -d ios` on real hardware
+- [ ] APNs end to end, the home screen widget, the share sheet
 
-### Blocked on hardware / config
+### Known, not chased
 
-- [ ] `ios/Runner/GoogleService-Info.plist` (gitignored; from the Firebase
-      console or the Windows machine)
-- [ ] APNs auth key uploaded to Firebase - the entitlement alone is not enough
-- [ ] Register the test device, then `flutter run -d ios` on it
-- [ ] APNs end to end, the widget, the share sheet
+- `FLTGoogleSignInPlugin` logs its own UIScene deprecation warning. Plugin
+  side, upstream
+- `irondash_engine_context` and `super_native_extensions` have no SPM support.
+  Upstream, and macOS depends on them too. Deliberately left alone
+- `pod install` warns that CocoaPods did not set the base configuration
+  because `Flutter/Release.xcconfig` does not include `Pods-Runner.profile.xcconfig`.
+  Harmless so far; the likely symptom if it bites is the Profile configuration
+  failing to link pods
 
 ## macOS: done 2026-09-16
 
