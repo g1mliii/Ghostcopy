@@ -21,6 +21,9 @@ class WidgetDataManager {
     // UserDefaults keys
     private static let itemsKey = "widget_clipboard_items"
     private static let lastUpdatedKey = "widget_last_updated"
+    static let lastCopiedIdKey = "widget_last_copied_id"
+    static let lastCopiedAtKey = "widget_last_copied_at"
+    static let appGroupSuite = appGroupIdentifier
     private static let maxItems = 5
 
     // Lazy-loaded shared UserDefaults
@@ -112,9 +115,9 @@ struct ClipboardItemData: Codable {
     let isImage: Bool
     let displaySize: String?
     let filename: String?
-    /// Full clip text, when short enough to ship. nil for files and images,
-    /// and for text past the size cap - those taps open the app instead.
-    let copyText: String?
+    /// Path to the full clip text in the App Group, read by the widget on tap.
+    /// nil for files and images, whose payload is not on the device at all.
+    let copyTextPath: String?
 
     /// Convert to dictionary for UserDefaults storage
     func toDictionary() -> [String: Any] {
@@ -130,7 +133,7 @@ struct ClipboardItemData: Codable {
             "isImage": isImage,
             "displaySize": displaySize ?? "",
             "filename": filename ?? "",
-            "copyText": copyText ?? "",
+            "copyTextPath": copyTextPath ?? "",
         ]
     }
 
@@ -151,7 +154,7 @@ struct ClipboardItemData: Codable {
         let isImage = dict["isImage"] as? Bool ?? false
         let displaySize = dict["displaySize"] as? String
         let filename = dict["filename"] as? String
-        let copyText = dict["copyText"] as? String
+        let copyTextPath = dict["copyTextPath"] as? String
 
         return ClipboardItemData(
             id: id,
@@ -165,7 +168,7 @@ struct ClipboardItemData: Codable {
             isImage: isImage,
             displaySize: displaySize,
             filename: filename,
-            copyText: copyText?.isEmpty == false ? copyText : nil
+            copyTextPath: copyTextPath?.isEmpty == false ? copyTextPath : nil
         )
     }
 }

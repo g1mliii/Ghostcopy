@@ -19,7 +19,8 @@ struct ClipboardWidgetProvider: TimelineProvider {
             date: Date(),
             items: [],
             lastUpdated: nil,
-            isLoading: true
+            isLoading: true,
+            justCopiedId: nil
         )
     }
 
@@ -34,29 +35,66 @@ struct ClipboardWidgetProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
         let entry = createEntry()
 
-        // Manual refresh only - timeline never changes automatically
-        // Widget updates only via:
-        // 1. User taps refresh button (triggers RefreshWidgetIntent)
-        // 2. App sends data via WidgetDataManager
-        // 3. FCM notification arrives (calls WidgetCenter.reloadAllTimelines)
-        let timeline = Timeline(entries: [entry], policy: .never)
-        completion(timeline)
+        // Manual refresh only - the timeline never changes on its own. The
+        // widget is a view over what the app wrote; it updates when the app
+        // writes, when a notification arrives, or when the refresh button is
+        // tapped.
+        //
+        // The one exception is the "Copied" confirmation. A widget renders
+        // snapshots and cannot animate anything away by itself, so the
+        // acknowledgement is scheduled: show it now, and a second entry a
+        // couple of seconds out renders the same rows without it.
+        if entry.justCopiedId != nil {
+            let cleared = createEntry(
+                date: Date().addingTimeInterval(Self.copiedBannerDuration),
+                showingCopied: false
+            )
+            completion(Timeline(entries: [entry, cleared], policy: .never))
+        } else {
+            completion(Timeline(entries: [entry], policy: .never))
+        }
     }
+
+    /// How long the "Copied" confirmation stays up.
+    private static let copiedBannerDuration: TimeInterval = 2
 
     // MARK: - Private Methods
 
     /// Create widget entry from shared storage
-    private func createEntry() -> ClipboardWidgetEntry {
+    private func createEntry(
+        date: Date = Date(),
+        showingCopied: Bool = true
+    ) -> ClipboardWidgetEntry {
         let dataManager = WidgetDataManager.shared
-        let items = dataManager.getClipboardItems()
-        let lastUpdated = dataManager.getLastUpdated()
 
         return ClipboardWidgetEntry(
-            date: Date(),
-            items: items,
-            lastUpdated: lastUpdated,
-            isLoading: false
+            date: date,
+            items: dataManager.getClipboardItems(),
+            lastUpdated: dataManager.getLastUpdated(),
+            isLoading: false,
+            justCopiedId: showingCopied ? recentlyCopiedId() : nil
         )
+    }
+
+    /// The clip copied within the last couple of seconds, if any.
+    ///
+    /// Time-bounded so a stale marker cannot leave "Copied" pinned to the
+    /// widget after an unrelated reload.
+    private func recentlyCopiedId() -> String? {
+        guard let defaults = UserDefaults(suiteName: WidgetDataManager.appGroupSuite),
+            let id = defaults.string(forKey: WidgetDataManager.lastCopiedIdKey)
+        else {
+            return nil
+        }
+
+        let copiedAt = defaults.double(forKey: WidgetDataManager.lastCopiedAtKey)
+        guard copiedAt > 0,
+            Date().timeIntervalSince1970 - copiedAt < Self.copiedBannerDuration
+        else {
+            return nil
+        }
+
+        return id
     }
 }
 
@@ -66,6 +104,8 @@ struct ClipboardWidgetEntry: TimelineEntry {
     let items: [[String: Any]]
     let lastUpdated: TimeInterval?
     let isLoading: Bool
+    /// Clip copied in the last couple of seconds, shown as a confirmation.
+    let justCopiedId: String?
 
     /// Format last updated timestamp for display
     var formattedLastUpdated: String {

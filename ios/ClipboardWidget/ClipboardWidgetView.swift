@@ -91,15 +91,29 @@ struct ClipboardWidgetView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("GhostCopy")
-                    .font(.system(size: titleSize, weight: .semibold))
-                    .foregroundColor(.primary)
+            if entry.justCopiedId != nil {
+                // Replaces the title rather than sitting beside it: there is no
+                // room for both on a small widget, and for the two seconds it
+                // is up this is the more useful of the two.
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: titleSize, weight: .semibold))
+                    Text("Copied")
+                        .font(.system(size: titleSize, weight: .semibold))
+                }
+                .foregroundColor(accent)
+                .transition(.opacity)
+            } else {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("GhostCopy")
+                        .font(.system(size: titleSize, weight: .semibold))
+                        .foregroundColor(.primary)
 
-                if family != .systemSmall {
-                    Text(entry.formattedLastUpdated)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundColor(.secondary)
+                    if family != .systemSmall {
+                        Text(entry.formattedLastUpdated)
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
 
@@ -155,21 +169,26 @@ struct ClipboardWidgetView: View {
 
     /// Individual clipboard item row.
     ///
-    /// A row the app sent full text for copies in place: the intent runs inside
+    /// A row the app staged text for copies in place: the intent runs inside
     /// the widget process and writes the pasteboard without GhostCopy
     /// appearing.
     ///
     /// Everything else opens the app at `ghostcopy://share/<id>`, which
-    /// SceneDelegate already routes to processShareAction(). That covers files
-    /// and images - the widget holds a filename and a 40px thumbnail, never the
-    /// payload, and the bytes sit encrypted in R2 - and text past the size cap.
-    /// A widget cannot present a share sheet itself: it has no window scene,
-    /// and WidgetKit offers only Button, Toggle and Link.
+    /// SceneDelegate routes to processShareAction(). That is files and images:
+    /// the widget holds a filename and a 40px thumbnail, never the payload,
+    /// and the bytes sit encrypted in R2. A widget also cannot present a share
+    /// sheet itself - it has no window scene, and WidgetKit offers only
+    /// Button, Toggle and Link.
     @ViewBuilder
     private func clipboardItemRow(_ item: ClipboardItemData) -> some View {
-        if let copyText = item.copyText {
-            Button(intent: CopyToClipboardIntent(clipboardId: item.id, content: copyText)) {
+        if let path = item.copyTextPath {
+            Button(
+                intent: CopyToClipboardIntent(clipboardId: item.id, copyTextPath: path)
+            ) {
                 rowContent(item)
+                    // Dims the row while the intent runs, so a tap is visibly
+                    // acknowledged instead of appearing to do nothing.
+                    .invalidatableContent()
             }
             .buttonStyle(.plain)
         } else {
@@ -235,6 +254,7 @@ struct ClipboardWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, rowPadding)
+        .background(entry.justCopiedId == item.id ? accent.opacity(0.14) : .clear)
         .contentShape(Rectangle())
     }
 
@@ -318,6 +338,7 @@ extension View {
                 "contentType": "text",
                 "contentPreview": "Hello, World!",
                 "thumbnailPath": "",
+                "copyTextPath": "",
                 "deviceType": "iPhone",
                 "createdAt": Date().addingTimeInterval(-300).toISO8601String(),
                 "isEncrypted": false,
@@ -327,6 +348,7 @@ extension View {
                 "contentType": "image",
                 "contentPreview": "Image (250KB)",
                 "thumbnailPath": "",
+                "copyTextPath": "",
                 "deviceType": "Mac",
                 "createdAt": Date().addingTimeInterval(-600).toISO8601String(),
                 "isEncrypted": false,
@@ -336,12 +358,14 @@ extension View {
                 "contentType": "json",
                 "contentPreview": "{\"name\": \"John\", \"age\": 30}",
                 "thumbnailPath": "",
+                "copyTextPath": "",
                 "deviceType": "iPad",
                 "createdAt": Date().addingTimeInterval(-1200).toISO8601String(),
                 "isEncrypted": false,
             ],
         ],
         lastUpdated: Date().addingTimeInterval(-300).timeIntervalSince1970,
-        isLoading: false
+        isLoading: false,
+        justCopiedId: nil
     )
 }

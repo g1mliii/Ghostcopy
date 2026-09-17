@@ -51,11 +51,11 @@ class WidgetService implements IWidgetService {
   /// are worth keeping on disk.
   static const int _maxWidgetItems = 5;
 
-  /// Longest clip shipped to the widget in full so it can be copied without
-  /// opening the app. The App Group payload is a plist read by another
-  /// process on every render, so it is kept small; anything longer hands the
-  /// tap to the app instead of copying a truncated string.
-  static const int _maxInlineCopyChars = 8192;
+  /// Preview length. Long enough to fill the widest widget row, after which
+  /// SwiftUI's own lineLimit(1) does the visible truncation - so the text
+  /// ellipsises once, where it actually runs out of room, instead of being cut
+  /// at a fixed 50 characters that had nothing to do with the layout.
+  static const int _previewChars = 160;
 
   // State
   bool _initialized = false;
@@ -258,6 +258,8 @@ class WidgetService implements IWidgetService {
       }),
     );
 
+    final copyTextPaths = await Future.wait(items.map(_stageCopyText));
+
     final widgetItems = <Map<String, dynamic>>[];
 
     for (final (index, item) in items.indexed) {
@@ -267,7 +269,7 @@ class WidgetService implements IWidgetService {
         'id': item.id,
         'contentType': item.contentType.value,
         'contentPreview': _generatePreview(item),
-        'copyText': _copyTextFor(item),
+        'copyTextPath': copyTextPaths[index],
         'thumbnailPath': thumbnailPath,
         'deviceType': item.deviceType,
         'createdAt': item.createdAt.toIso8601String(),
@@ -282,18 +284,29 @@ class WidgetService implements IWidgetService {
     return widgetItems;
   }
 
-  /// Full clip text for the widget's tap-to-copy, or null when the tap has to
-  /// open the app instead.
+  /// Write the full clip text where the widget can read it on tap, and return
+  /// the path.
   ///
-  /// The widget used to copy `contentPreview`, which is truncated to 50
-  /// characters with an ellipsis appended - so tapping any longer clip put a
-  /// mangled string on the pasteboard while appearing to work. Files and
-  /// images are null because the widget holds only a filename and a 40px
-  /// thumbnail; copying either would be the same kind of quiet lie.
-  String? _copyTextFor(ClipboardItem item) {
+  /// It goes in a file rather than the App Group plist because that plist is
+  /// re-read by another process on every render, and clips run to 100KB. A
+  /// file has no such cost, so there is no size cap and no clip that copies
+  /// only part of itself.
+  ///
+  /// Files and images get nothing: the widget holds a filename and a 40px
+  /// thumbnail, never the payload, so copying either would be the same quiet
+  /// lie as the truncated preview it replaced. Those taps open the app.
+  Future<String?> _stageCopyText(ClipboardItem item) async {
     if (item.isImage || item.isFile) return null;
-    if (item.content.length > _maxInlineCopyChars) return null;
-    return item.content;
+
+    try {
+      final dir = await _getWidgetCacheDir();
+      final file = File('$dir/${item.id}.txt');
+      await file.writeAsString(item.content, flush: true);
+      return file.path;
+    } on Exception catch (e) {
+      debugPrint('[WidgetService] Failed to stage copy text for ${item.id}: $e');
+      return null;
+    }
   }
 
   /// Generate widget preview text from clipboard item
@@ -311,8 +324,8 @@ class WidgetService implements IWidgetService {
   /// "🔒 Encrypted content (tap to view)" branch fired on every single clip -
   /// hiding the content the widget exists to show.
   String _generatePreview(ClipboardItem item) {
-    const maxTextLength = 50;
-    const maxRichTextLength = 40;
+    const maxTextLength = _previewChars;
+    const maxRichTextLength = _previewChars;
 
     if (item.isImage) {
       // Image preview shows file size
@@ -331,12 +344,12 @@ class WidgetService implements IWidgetService {
             : item.content,
       );
       return stripped.length > maxRichTextLength
-          ? '${stripped.substring(0, maxRichTextLength)}...'
+          ? stripped.substring(0, maxRichTextLength)
           : stripped;
     } else {
       // Plain text: truncate to 50 chars
       return item.content.length > maxTextLength
-          ? '${item.content.substring(0, maxTextLength)}...'
+          ? item.content.substring(0, maxTextLength)
           : item.content;
     }
   }
@@ -438,13 +451,15 @@ class WidgetService implements IWidgetService {
       final dir = Directory(cacheDir);
       if (!dir.existsSync()) return;
 
-      final keep = visible.map((item) => '${item.id}.jpg').toSet();
+      final keep = <String>{
+        for (final item in visible) ...['${item.id}.jpg', '${item.id}.txt'],
+      };
       var removed = 0;
 
       await for (final entity in dir.list()) {
         if (entity is! File) continue;
         final name = entity.uri.pathSegments.last;
-        if (!name.endsWith('.jpg') || keep.contains(name)) continue;
+        if (keep.contains(name)) continue;
 
         try {
           await entity.delete();

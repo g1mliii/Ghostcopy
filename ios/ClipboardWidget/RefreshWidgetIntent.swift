@@ -45,28 +45,42 @@ struct CopyToClipboardIntent: AppIntent {
     static var title: LocalizedStringResource = "Copy to Clipboard"
 
     @Parameter(title: "Clipboard ID") var clipboardId: String
-    @Parameter(title: "Content") var content: String
+    @Parameter(title: "Copy Text Path") var copyTextPath: String
 
     init() {}
 
-    init(clipboardId: String, content: String) {
+    init(clipboardId: String, copyTextPath: String) {
         self.clipboardId = clipboardId
-        self.content = content
+        self.copyTextPath = copyTextPath
     }
 
     /// Writes the pasteboard from inside the widget process, so a text clip is
     /// copied without GhostCopy ever appearing. UIPasteboard is available to an
-    /// extension - it is presenting UI that a widget cannot do, not copying.
+    /// extension - presenting UI is what a widget cannot do, not copying.
     ///
-    /// `content` is the full clip. It used to be `contentPreview`, which is cut
-    /// to 50 characters with an ellipsis, so every longer clip copied a mangled
-    /// string and looked like it had worked.
-    ///
-    /// Only rows the app sent a copyText for reach this; files and images have
-    /// no payload on the device to copy and open the app instead.
+    /// The text is read from a file in the App Group rather than carried in the
+    /// widget payload. It used to be `contentPreview`, cut to 50 characters
+    /// with an ellipsis, so every longer clip copied a mangled string and
+    /// looked like it had worked. A file also means no size cap: clips run to
+    /// 100KB and the payload plist is re-read on every render.
     @MainActor
     func perform() async throws -> some IntentResult {
-        UIPasteboard.general.string = content
+        guard let text = try? String(contentsOfFile: copyTextPath, encoding: .utf8) else {
+            return .result()
+        }
+
+        UIPasteboard.general.string = text
+
+        // Leave a marker the timeline turns into a "Copied" confirmation. The
+        // widget has no way to show transient feedback on its own - it renders
+        // snapshots, not live views - so the acknowledgement has to come back
+        // round through a reload.
+        if let defaults = UserDefaults(suiteName: WidgetDataManager.appGroupSuite) {
+            defaults.set(clipboardId, forKey: WidgetDataManager.lastCopiedIdKey)
+            defaults.set(Date().timeIntervalSince1970, forKey: WidgetDataManager.lastCopiedAtKey)
+        }
+
+        WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
 }
