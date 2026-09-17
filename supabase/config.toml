@@ -1,0 +1,18 @@
+project_id = "xhbggxftvnlkotvehwmj"
+
+# send-clipboard-notification is called by the notify_mobile_devices_on_clipboard_insert
+# trigger over pg_net, carrying the sb_secret_... key from the fcm_service_role_key
+# vault secret.
+#
+# verify_jwt MUST stay false. Supabase's current API key scheme issues opaque
+# `sb_secret_...` keys rather than JWTs, so the platform's JWT gate cannot
+# validate what the trigger sends and rejects it with a 401 before the function
+# runs at all - no logs, no error surfaced anywhere, push simply stops. This is
+# not a relaxation of auth: the function authenticates its own callers, matching
+# the service-role key exactly for trigger calls and falling back to
+# auth.getUser() plus an ownership check on record.user_id for everyone else.
+#
+# Declared here rather than passed as --no-verify-jwt on the command line so a
+# CI deploy cannot quietly turn it back on.
+[functions.send-clipboard-notification]
+verify_jwt = false
