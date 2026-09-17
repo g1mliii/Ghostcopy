@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/encryption_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 
 /// Dialog for setting up encryption passphrase
@@ -278,10 +279,10 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
         FilledButton(
           onPressed: _isLoading ? null : _setPassphrase,
           child: _isLoading
-              ? const SizedBox(
+              ? SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: Adaptive.progressIndicator(size: 16),
                 )
               : Text(
                   widget.isRestoreMode ? 'Restore Access' : 'Enable Encryption',

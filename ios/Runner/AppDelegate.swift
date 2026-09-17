@@ -123,8 +123,19 @@ import WidgetKit
     // Update widget with new clipboard item
     updateWidgetForFCMNotification(userInfo)
 
-    // Show notification banner and sound (optional)
-    completionHandler([.banner, .badge, .sound])
+    // Foreground presentation, decided by whether anything is left to do.
+    //
+    // Text was just auto-copied above, and the user is already looking at the
+    // app - a system banner over GhostCopy announcing a clip that is already
+    // on the pasteboard is pure noise, and it contradicts the invisible sync
+    // this app is built around (the Android channel disables sound and
+    // vibration for the same reason).
+    //
+    // A file or image is different: it was NOT copied, because it cannot be.
+    // The user has to act on it, so the banner is the only thing telling them
+    // it arrived, and it stays.
+    let autoCopied = !clipboardContent.isEmpty && !isFile && !isImage
+    completionHandler(autoCopied ? [] : [.banner, .badge, .sound])
   }
 
   // MARK: - Widget Update Methods

@@ -9,6 +9,7 @@ import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/clipboard_cache_manager.dart';
 import '../../services/impl/encryption_service.dart';
+import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 
 /// Smart image widget that uses CDN for fast loading with API fallback
@@ -225,11 +226,8 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
           width: widget.width,
           height: widget.height,
           color: GhostColors.surface,
-          child: const Center(
-            child: CircularProgressIndicator(
-              color: GhostColors.primary,
-              strokeWidth: 2,
-            ),
+          child: Center(
+            child: Adaptive.progressIndicator(color: GhostColors.primary),
           ),
         ),
 
@@ -252,11 +250,8 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
             width: widget.width,
             height: widget.height,
             color: GhostColors.surface,
-            child: const Center(
-              child: CircularProgressIndicator(
-                color: GhostColors.primary,
-                strokeWidth: 2,
-              ),
+            child: Center(
+              child: Adaptive.progressIndicator(color: GhostColors.primary),
             ),
           );
         },
@@ -347,11 +342,8 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         color: GhostColors.surface,
         borderRadius: BorderRadius.circular(widget.borderRadius),
       ),
-      child: const Center(
-        child: CircularProgressIndicator(
-          color: GhostColors.primary,
-          strokeWidth: 2,
-        ),
+      child: Center(
+        child: Adaptive.progressIndicator(color: GhostColors.primary),
       ),
     );
   }
