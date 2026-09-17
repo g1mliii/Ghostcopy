@@ -34,16 +34,6 @@
             android:textSize="14sp"
             android:textStyle="bold"
             android:paddingStart="8dp" />
-
-        <!-- Refresh Button -->
-        <ImageButton
-            android:id="@+id/refresh_button"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@android:drawable/ic_popup_sync"
-            android:tint="#5865F2"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/refresh" />
     </LinearLayout>
 
     <!-- Last Updated Text -->

@@ -9,17 +9,16 @@ import android.content.Intent
 import android.util.Log
 import android.widget.RemoteViews
 import com.ghostcopy.ghostcopy.IntentAuth
-import com.ghostcopy.ghostcopy.MainActivity
 import com.ghostcopy.ghostcopy.R
 
 /**
  * App Widget Provider for clipboard synchronization.
  *
  * Displays the 5 most recent clipboard items on home screen.
- * Updates via:
- * - Manual refresh button (WorkManager task)
- * - FCM notifications (triggered by backend)
- * - App lifecycle events (synced by Flutter)
+ * Updates when the app writes new data and when a notification arrives. There
+ * is no refresh button: it scheduled a worker whose callFlutterRefresh() only
+ * logged and returned true, so it re-drew the same rows from SharedPreferences
+ * and nothing else.
  *
  * Memory Management:
  * - Does not hold clipboard data in memory
@@ -54,31 +53,26 @@ class ClipboardWidget : AppWidgetProvider() {
       val intent = Intent(context, ClipboardWidgetService::class.java)
       views.setRemoteAdapter(R.id.widget_list, intent)
 
-      // Set up refresh button click
-      val refreshIntent = Intent(context, ClipboardWidget::class.java).apply {
-        action = ACTION_REFRESH
-      }
-      val refreshPendingIntent = PendingIntent.getBroadcast(
-        context,
-        widgetId, // Use widget ID as request code for uniqueness
-        refreshIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-      )
-      views.setOnClickPendingIntent(R.id.refresh_button, refreshPendingIntent)
-
-      // Set up item click template (will be filled in by RemoteViewsFactory)
-      val itemClickIntent = Intent(context, MainActivity::class.java).apply {
+      // Set up item click template (will be filled in by RemoteViewsFactory).
+      //
+      // A broadcast, not an activity: copying a text clip needs a clipboard
+      // write and nothing else, and routing every tap through MainActivity
+      // dragged the whole app to the foreground to do it.
+      //
+      // FLAG_MUTABLE, not FLAG_IMMUTABLE. A collection template only receives
+      // the per-row extras from setOnClickFillInIntent if it is mutable - an
+      // immutable template drops them, which left clipboardId empty and made
+      // every row tap a no-op. The receiver is not exported and the intent is
+      // explicit, so the launcher can fire this but cannot redirect it.
+      val itemClickIntent = Intent(context, WidgetCopyReceiver::class.java).apply {
         action = ACTION_WIDGET_ITEM_CLICK
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        // Proves the intent originated in this app - MainActivity is exported
-        // and would otherwise accept this action from any installed app.
         putExtra(IntentAuth.EXTRA_TOKEN, IntentAuth.token(context))
       }
-      val itemClickPendingIntent = PendingIntent.getActivity(
+      val itemClickPendingIntent = PendingIntent.getBroadcast(
         context,
         widgetId,
         itemClickIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
       )
       views.setPendingIntentTemplate(R.id.widget_list, itemClickPendingIntent)
 
@@ -98,10 +92,6 @@ class ClipboardWidget : AppWidgetProvider() {
     super.onReceive(context, intent)
 
     when (intent.action) {
-      ACTION_REFRESH -> {
-        Log.d(TAG, "🔄 Refresh button tapped")
-        handleRefreshAction(context)
-      }
       AppWidgetManager.ACTION_APPWIDGET_UPDATE -> {
         Log.d(TAG, "📢 Widget update broadcast received")
         notifyWidgetDataChanged(context)
@@ -109,27 +99,8 @@ class ClipboardWidget : AppWidgetProvider() {
     }
   }
 
-  /**
-   * Handle manual refresh button tap.
-   *
-   * Triggers WorkManager task to fetch latest data from Supabase.
-   */
-  private fun handleRefreshAction(context: Context) {
-    try {
-      // Enqueue WorkManager task to fetch data
-      // This will call Flutter's WidgetService.refreshWidget()
-      WidgetRefreshWorker.scheduleRefresh(context)
-      Log.d(TAG, "✅ Scheduled widget refresh task")
-    } catch (e: Exception) {
-      Log.e(TAG, "❌ Failed to schedule refresh: ${e.message}", e)
-    }
-  }
-
-
-
   companion object {
     private const val TAG = "ClipboardWidget"
-    private const val ACTION_REFRESH = "com.ghostcopy.ghostcopy.WIDGET_REFRESH"
     private const val ACTION_WIDGET_ITEM_CLICK = "com.ghostcopy.ghostcopy.WIDGET_ITEM_CLICK"
 
     /**

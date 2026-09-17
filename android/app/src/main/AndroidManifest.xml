@@ -141,6 +141,13 @@
                 android:resource="@xml/clipboard_widget_info" />
         </receiver>
 
+        <!-- Widget row taps. Not exported: the launcher fires the
+             PendingIntent with this app's identity, so nothing else needs to
+             reach it. -->
+        <receiver
+            android:name=".widget.WidgetCopyReceiver"
+            android:exported="false" />
+
         <!-- Widget ListView Data Service -->
         <service
             android:name=".widget.ClipboardWidgetService"

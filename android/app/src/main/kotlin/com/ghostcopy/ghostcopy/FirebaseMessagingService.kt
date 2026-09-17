@@ -1,7 +1,7 @@
 package com.ghostcopy.ghostcopy
 
 import android.util.Log
-import com.ghostcopy.ghostcopy.widget.WidgetRefreshWorker
+import com.ghostcopy.ghostcopy.widget.ClipboardWidget
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
@@ -42,10 +42,16 @@ class FirebaseMessagingService : FirebaseMessagingService() {
         // and sending it to the exported launcher. See PushRegistry.
         PushRegistry.record(applicationContext, clipboardId)
 
-        // Re-reads the authenticated user's clips from the DB and refreshes the
-        // widget, so the content never travels through push infrastructure.
-        WidgetRefreshWorker.scheduleRefresh(applicationContext)
-        Log.d(TAG, "🔄 Scheduled widget refresh from database")
+        // Re-render the widget from what the app has already stored, so the
+        // content never travels through push infrastructure.
+        //
+        // This used to schedule WidgetRefreshWorker, whose callFlutterRefresh()
+        // only logged and returned true - it re-drew the same rows and never
+        // re-read anything, despite the comment claiming otherwise. New clips
+        // still reach the widget the same way they always did: when the app
+        // next loads history and writes them.
+        ClipboardWidget.notifyWidgetDataChanged(applicationContext)
+        Log.d(TAG, "🔄 Widget re-rendered from stored clips")
       }
     } catch (e: Exception) {
       Log.e(TAG, "❌ Error processing FCM message: ${e.message}", e)

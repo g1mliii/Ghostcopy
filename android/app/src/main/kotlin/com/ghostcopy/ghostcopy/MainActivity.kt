@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -15,7 +14,6 @@ import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import androidx.core.content.FileProvider
 import java.io.File
 
 class MainActivity : FlutterActivity() {
@@ -638,21 +636,20 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Handle widget item click - copy content to device clipboard.
+     * Share a clip the widget could not copy in place.
      *
-     * Supports different content types:
-     * - Text, HTML, Markdown: Copy as plain or rich text
-     * - Images: Copy from cached thumbnail
-     * - Encrypted: Copy encrypted text (user decrypts in app)
+     * Only the share hand-off reaches here now. Copying moved to
+     * WidgetCopyReceiver, which writes the clipboard without bringing the app
+     * to the foreground - every widget tap used to launch this activity, even
+     * a short text clip that needed nothing but a clipboard write.
      */
     private fun handleWidgetItemClick(intent: Intent) {
         // MainActivity is exported (LAUNCHER), so an explicit intent with this
         // action can be sent by any installed app - an <intent-filter> is not
-        // required for explicit delivery. This handler copies an intent-supplied
-        // content_preview to the system clipboard and reads an intent-supplied
-        // thumbnail path from disk, so the caller must be proven to be us.
-        // The widget's own PendingIntent carries the token; an external caller
-        // cannot read it out of app-private SharedPreferences.
+        // required for explicit delivery. This handler downloads and shares a
+        // clip by id, so the caller must be proven to be us. The widget's own
+        // PendingIntent carries the token; an external caller cannot read it
+        // out of app-private SharedPreferences.
         if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
             Log.w(TAG, "⚠️ Rejected WIDGET_ITEM_CLICK from an untrusted caller")
             return
@@ -661,64 +658,14 @@ class MainActivity : FlutterActivity() {
         try {
             val clipboardId = intent.getStringExtra(ClipboardWidgetFactory.KEY_CLIPBOARD_ID) ?: ""
             val contentType = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_TYPE) ?: "text"
-            val copyPath = intent.getStringExtra(ClipboardWidgetFactory.KEY_COPY_PATH) ?: ""
-            val copyKind = intent.getStringExtra(ClipboardWidgetFactory.KEY_COPY_KIND) ?: "text"
-            val action = intent.getStringExtra("action") ?: "copy"
 
-            // If action is share, delegate to Flutter to download and share
-            if (action == "share" && clipboardId.isNotEmpty()) {
-                Log.d(TAG, "📤 Widget share action for $clipboardId")
-                fetchAndCopyClipboardItem(clipboardId, contentType, "Widget")
+            if (clipboardId.isEmpty()) {
+                Log.w(TAG, "⚠️ Widget share with no clipboard id")
                 return
             }
 
-            // The payload comes from the file WidgetService staged, not from
-            // the row's preview text.
-            //
-            // It used to copy KEY_CONTENT_PREVIEW, which _generatePreview()
-            // truncates for the widget row - so every longer clip put a
-            // mangled string on the clipboard and looked like it had worked.
-            // Images had the same bug in another shape: the only image on disk
-            // was the 40px thumbnail, so "copy image" produced a 40px picture.
-            if (copyPath.isEmpty()) {
-                Log.w(TAG, "No staged payload for clipboard item $clipboardId")
-                showToast("Open GhostCopy to sync this clip")
-                return
-            }
-
-            val payload = File(copyPath)
-            if (!payload.exists()) {
-                Log.w(TAG, "⚠️ Staged payload missing: $copyPath")
-                showToast("Open GhostCopy to sync this clip")
-                return
-            }
-
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-
-            if (copyKind == "image") {
-                // A content:// URI through the FileProvider, not Uri.fromFile:
-                // a file:// URI handed to another app trips
-                // FileUriExposedException on Android 7+, so the paste had no
-                // chance of working.
-                val uri = FileProvider.getUriForFile(
-                    this,
-                    "$packageName.fileprovider",
-                    payload
-                )
-                clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "Image", uri))
-                showToast("Image copied")
-            } else {
-                val text = payload.readText()
-                val clip = when (contentType) {
-                    "html" -> ClipData.newHtmlText("HTML", text, text)
-                    "markdown" -> ClipData.newPlainText("Markdown", text)
-                    else -> ClipData.newPlainText("GhostCopy", text)
-                }
-                clipboard.setPrimaryClip(clip)
-                showToast("Copied")
-            }
-
-            Log.d(TAG, "✅ Widget item copied: $contentType")
+            Log.d(TAG, "📤 Widget share action for $clipboardId")
+            fetchAndCopyClipboardItem(clipboardId, contentType, "Widget")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to handle widget item click: ${e.message}", e)
             showToast("Failed to process")

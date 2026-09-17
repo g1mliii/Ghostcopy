@@ -108,9 +108,6 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
       val fillInIntent = Intent().apply {
         putExtra(KEY_CLIPBOARD_ID, item.id)
         putExtra(KEY_CONTENT_TYPE, item.contentType)
-        putExtra(KEY_CONTENT_PREVIEW, item.contentPreview)
-        putExtra(KEY_THUMBNAIL_PATH, item.thumbnailPath)
-        putExtra(KEY_IS_ENCRYPTED, item.isEncrypted)
         putExtra(KEY_COPY_PATH, item.copyPath)
         putExtra(KEY_COPY_KIND, item.copyKind)
 
@@ -148,9 +145,6 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
     // Intent extra keys for item click
     const val KEY_CLIPBOARD_ID = "clipboard_id"
     const val KEY_CONTENT_TYPE = "content_type"
-    const val KEY_CONTENT_PREVIEW = "clipboard_content"
-    const val KEY_THUMBNAIL_PATH = "thumbnail_path"
-    const val KEY_IS_ENCRYPTED = "is_encrypted"
     const val KEY_COPY_PATH = "copy_path"
     const val KEY_COPY_KIND = "copy_kind"
   }
