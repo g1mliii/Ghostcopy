@@ -8,7 +8,19 @@
 // reset-password.html is deliberately never cached. It is a one-shot flow that
 // reads a token out of the URL, and a stale copy of it helps nobody.
 
-const CACHE = 'ghostcopy-v2';
+// Bumped to v3 to evict anything the v2 worker cached.
+//
+// A client still controlled by the previous worker can navigate to
+// /auth-callback once before the new worker takes over, and that worker cached
+// navigations under the full request URL - which for the callback contains the
+// OAuth PKCE code. The bypass added below stops it happening again but cannot
+// remove what is already stored, and activate() only deletes caches whose NAME
+// differs from this constant, so leaving it at v2 kept the entry.
+//
+// Renaming discards every cached asset and forces one re-fetch. That is the
+// right trade for evicting a credential with certainty, rather than purging
+// selected keys and hoping the pattern matched every stored variant.
+const CACHE = 'ghostcopy-v3';
 
 // Extensionless, matching what the pages actually link to. Precaching
 // '/download.html' would have cached a 308 to '/download'.

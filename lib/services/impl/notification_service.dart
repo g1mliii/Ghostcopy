@@ -226,6 +226,7 @@ class NotificationService implements INotificationService {
       );
       _showSystemNotification(
         message: displayMessage,
+        coalesceKey: message,
         type: type,
         // Reusing the id updates the existing banner in place instead of
         // adding one per repeat - but only when the previous showing of THIS
@@ -243,6 +244,11 @@ class NotificationService implements INotificationService {
 
   Future<void> _showSystemNotification({
     required String message,
+    // The message without the "(xN)" counter, used for coalescing. The
+    // displayed text changes on every repeat, so remembering that instead
+    // meant the comparison failed from the third one onward and each further
+    // repeat stacked a new notification rather than replacing the last.
+    String? coalesceKey,
     NotificationType type = NotificationType.info,
     String? actionLabel,
     VoidCallback? onAction,
@@ -258,7 +264,7 @@ class NotificationService implements INotificationService {
 
     final id = replaceId ?? _notificationIdCounter++;
     _lastSystemNotificationId = id;
-    _lastSystemNotificationMessage = message;
+    _lastSystemNotificationMessage = coalesceKey ?? message;
 
     // Store action if provided
     if (onAction != null) {

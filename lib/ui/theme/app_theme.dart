@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../platform_adaptive.dart';
 import 'colors.dart';
 import 'typography.dart';
 
@@ -17,11 +19,25 @@ class AppTheme {
         useMaterial3: true,
 
         // Ink ripples wash out to near-white against this palette's dark
-        // surfaces, so presses read as a white flash. Hover states carry the
-        // interaction feedback on desktop instead.
-        splashFactory: NoSplash.splashFactory,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
+        // surfaces, so presses read as a white flash. On desktop that is worth
+        // removing outright, because hover already shows a control reacting
+        // before it is pressed.
+        //
+        // Touch has no hover. Dropping the splash AND the highlight there left
+        // taps with no feedback whatsoever - a row or chip looked inert until
+        // its action finished, which on a slow network is long enough to make
+        // people tap again. So mobile keeps a press state, in a low-alpha
+        // brand tint rather than the default near-white wash: visible enough
+        // to confirm the tap landed, quiet enough not to flash.
+        splashFactory: Adaptive.isDesktop
+            ? NoSplash.splashFactory
+            : InkRipple.splashFactory,
+        splashColor: Adaptive.isDesktop
+            ? Colors.transparent
+            : GhostColors.primaryAlpha10,
+        highlightColor: Adaptive.isDesktop
+            ? Colors.transparent
+            : GhostColors.primaryAlpha10,
 
         // Color scheme
         colorScheme: ColorScheme.dark(

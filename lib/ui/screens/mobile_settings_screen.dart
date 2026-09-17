@@ -131,8 +131,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ? <String>{}
         : updated;
 
-    await locator<ISettingsService>().setAutoSendTargetDevices(normalized);
+    // Local state first, then persist. Two chips tapped in quick succession
+    // both computed from the same _defaultDevices while the first write was
+    // still in flight, so each removed only its own device and whichever write
+    // landed last discarded the other tap. Updating first means the second tap
+    // builds on the first, and it also makes the chip respond immediately
+    // rather than after a round trip to storage.
     if (mounted) setState(() => _defaultDevices = normalized);
+    await locator<ISettingsService>().setAutoSendTargetDevices(normalized);
   }
 
   @override
