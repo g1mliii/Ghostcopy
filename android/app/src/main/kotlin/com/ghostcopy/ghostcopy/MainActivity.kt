@@ -15,6 +15,7 @@ import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import androidx.core.content.FileProvider
 import java.io.File
 
 class MainActivity : FlutterActivity() {
@@ -660,9 +661,8 @@ class MainActivity : FlutterActivity() {
         try {
             val clipboardId = intent.getStringExtra(ClipboardWidgetFactory.KEY_CLIPBOARD_ID) ?: ""
             val contentType = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_TYPE) ?: "text"
-            val contentPreview = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_PREVIEW) ?: ""
-            val thumbnailPath = intent.getStringExtra(ClipboardWidgetFactory.KEY_THUMBNAIL_PATH)
-            val isEncrypted = intent.getBooleanExtra(ClipboardWidgetFactory.KEY_IS_ENCRYPTED, false)
+            val copyPath = intent.getStringExtra(ClipboardWidgetFactory.KEY_COPY_PATH) ?: ""
+            val copyKind = intent.getStringExtra(ClipboardWidgetFactory.KEY_COPY_KIND) ?: "text"
             val action = intent.getStringExtra("action") ?: "copy"
 
             // If action is share, delegate to Flutter to download and share
@@ -672,73 +672,50 @@ class MainActivity : FlutterActivity() {
                 return
             }
 
-            if (contentPreview.isEmpty() && !action.equals("share")) {
-                Log.w(TAG, "Empty content for clipboard item $clipboardId")
+            // The payload comes from the file WidgetService staged, not from
+            // the row's preview text.
+            //
+            // It used to copy KEY_CONTENT_PREVIEW, which _generatePreview()
+            // truncates for the widget row - so every longer clip put a
+            // mangled string on the clipboard and looked like it had worked.
+            // Images had the same bug in another shape: the only image on disk
+            // was the 40px thumbnail, so "copy image" produced a 40px picture.
+            if (copyPath.isEmpty()) {
+                Log.w(TAG, "No staged payload for clipboard item $clipboardId")
+                showToast("Open GhostCopy to sync this clip")
+                return
+            }
+
+            val payload = File(copyPath)
+            if (!payload.exists()) {
+                Log.w(TAG, "⚠️ Staged payload missing: $copyPath")
+                showToast("Open GhostCopy to sync this clip")
                 return
             }
 
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
-            when {
-                // Copy image from thumbnail (load actual image bytes, not text path)
-                contentType.startsWith("image_") && !thumbnailPath.isNullOrEmpty() -> {
-                    try {
-                        val imageFile = File(thumbnailPath)
-                        if (!imageFile.exists()) {
-                            Log.w(TAG, "⚠️ Thumbnail file not found: $thumbnailPath")
-                            showToast("Image file not found")
-                            return
-                        }
-
-                        // Verify it's a valid image by attempting to decode
-                        val bitmap = BitmapFactory.decodeFile(thumbnailPath)
-                        if (bitmap == null) {
-                            Log.w(TAG, "⚠️ Failed to decode image: $thumbnailPath")
-                            showToast("Invalid image file")
-                            return
-                        }
-
-                        // Recycle bitmap immediately (we only needed it for validation)
-                        bitmap.recycle()
-
-                        // Create content URI for the image file
-                        val imageUri = Uri.fromFile(imageFile)
-
-                        // Copy as image with URI (this allows paste in other apps)
-                        val clip = ClipData.newUri(contentResolver, "Image", imageUri)
-                        clipboard.setPrimaryClip(clip)
-
-                        Log.d(TAG, "✅ Copied image from widget: ${imageFile.length() / 1024}KB")
-                        showToast("Image copied")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "❌ Failed to copy image: ${e.message}", e)
-                        showToast("Failed to copy image")
-                    }
+            if (copyKind == "image") {
+                // A content:// URI through the FileProvider, not Uri.fromFile:
+                // a file:// URI handed to another app trips
+                // FileUriExposedException on Android 7+, so the paste had no
+                // chance of working.
+                val uri = FileProvider.getUriForFile(
+                    this,
+                    "$packageName.fileprovider",
+                    payload
+                )
+                clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "Image", uri))
+                showToast("Image copied")
+            } else {
+                val text = payload.readText()
+                val clip = when (contentType) {
+                    "html" -> ClipData.newHtmlText("HTML", text, text)
+                    "markdown" -> ClipData.newPlainText("Markdown", text)
+                    else -> ClipData.newPlainText("GhostCopy", text)
                 }
-                // Copy HTML content
-                contentType == "html" -> {
-                    val clip = ClipData.newHtmlText("HTML", contentPreview, contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("HTML copied")
-                }
-                // Copy markdown as plain text (iOS limitation - no markdown mime type)
-                contentType == "markdown" -> {
-                    val clip = ClipData.newPlainText("Markdown", contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("Markdown copied")
-                }
-                // Copy encrypted content (will show lock icon in app)
-                isEncrypted -> {
-                    val clip = ClipData.newPlainText("Encrypted", contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("Encrypted content copied")
-                }
-                // Copy plain text (default)
-                else -> {
-                    val clip = ClipData.newPlainText("Text", contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("Copied")
-                }
+                clipboard.setPrimaryClip(clip)
+                showToast("Copied")
             }
 
             Log.d(TAG, "✅ Widget item copied: $contentType")

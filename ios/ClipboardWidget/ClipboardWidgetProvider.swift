@@ -35,12 +35,14 @@ struct ClipboardWidgetProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
         let entry = createEntry()
 
-        // Manual refresh only - the timeline never changes on its own. The
-        // widget is a view over what the app wrote; it updates when the app
-        // writes, when a notification arrives, or when the refresh button is
-        // tapped.
+        // The widget is a view over what the app wrote, and the app and
+        // arriving notifications are what change it. The half-hourly wake is
+        // not polling - nothing is fetched, it re-renders from the App Group -
+        // but without it the relative timestamps freeze, and a row claiming
+        // "5h" a day later is simply wrong. This replaces the refresh button,
+        // which could only ever re-draw the same pixels.
         //
-        // The one exception is the "Copied" confirmation. A widget renders
+        // The other reason to schedule an entry is the "Copied" confirmation. A widget renders
         // snapshots and cannot animate anything away by itself, so the
         // acknowledgement is scheduled: show it now, and a second entry a
         // couple of seconds out renders the same rows without it.
@@ -49,14 +51,18 @@ struct ClipboardWidgetProvider: TimelineProvider {
                 date: Date().addingTimeInterval(Self.copiedBannerDuration),
                 showingCopied: false
             )
-            completion(Timeline(entries: [entry, cleared], policy: .never))
+            completion(Timeline(entries: [entry, cleared], policy: .after(Self.nextRedraw)))
         } else {
-            completion(Timeline(entries: [entry], policy: .never))
+            completion(Timeline(entries: [entry], policy: .after(Self.nextRedraw)))
         }
     }
 
     /// How long the "Copied" confirmation stays up.
     private static let copiedBannerDuration: TimeInterval = 2
+
+    /// Cheap enough for WidgetKit's daily budget, often enough that a
+    /// timestamp is never far wrong.
+    private static var nextRedraw: Date { Date().addingTimeInterval(30 * 60) }
 
     // MARK: - Private Methods
 

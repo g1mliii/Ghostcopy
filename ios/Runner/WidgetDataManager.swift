@@ -115,9 +115,11 @@ struct ClipboardItemData: Codable {
     let isImage: Bool
     let displaySize: String?
     let filename: String?
-    /// Path to the full clip text in the App Group, read by the widget on tap.
-    /// nil for files and images, whose payload is not on the device at all.
-    let copyTextPath: String?
+    /// Staged payload in the App Group, and how to put it on the pasteboard
+    /// ("text" or "image"). Both nil for clips not worth staging - a zip has no
+    /// useful paste target - whose rows open the app to share instead.
+    let copyPath: String?
+    let copyKind: String?
 
     /// Convert to dictionary for UserDefaults storage
     func toDictionary() -> [String: Any] {
@@ -133,7 +135,8 @@ struct ClipboardItemData: Codable {
             "isImage": isImage,
             "displaySize": displaySize ?? "",
             "filename": filename ?? "",
-            "copyTextPath": copyTextPath ?? "",
+            "copyPath": copyPath ?? "",
+            "copyKind": copyKind ?? "",
         ]
     }
 
@@ -154,7 +157,8 @@ struct ClipboardItemData: Codable {
         let isImage = dict["isImage"] as? Bool ?? false
         let displaySize = dict["displaySize"] as? String
         let filename = dict["filename"] as? String
-        let copyTextPath = dict["copyTextPath"] as? String
+        let copyPath = dict["copyPath"] as? String
+        let copyKind = dict["copyKind"] as? String
 
         return ClipboardItemData(
             id: id,
@@ -168,7 +172,8 @@ struct ClipboardItemData: Codable {
             isImage: isImage,
             displaySize: displaySize,
             filename: filename,
-            copyTextPath: copyTextPath?.isEmpty == false ? copyTextPath : nil
+            copyPath: copyPath?.isEmpty == false ? copyPath : nil,
+            copyKind: copyKind?.isEmpty == false ? copyKind : nil
         )
     }
 }

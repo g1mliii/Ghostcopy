@@ -170,4 +170,9 @@ data class ClipboardItemData(
   val isImage: Boolean = false,
   val displaySize: String? = null,
   val filename: String? = null,
+  /// Staged payload written by WidgetService, and how to put it on the
+  /// clipboard ("text" or "image"). Null for clips not worth staging, whose
+  /// rows open the app to share instead.
+  val copyPath: String? = null,
+  val copyKind: String? = null,
 )

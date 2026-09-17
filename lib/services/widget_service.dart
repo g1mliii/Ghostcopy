@@ -239,38 +239,24 @@ class WidgetService implements IWidgetService {
   Future<List<Map<String, dynamic>>> _prepareWidgetData(
     List<ClipboardItem> items,
   ) async {
-    // Thumbnails are fetched together rather than one after another: each miss
-    // is an R2 download plus a compression pass, and awaiting them in sequence
-    // made a five-image widget refresh five serial round-trips on a mobile
-    // connection. Order is preserved because Future.wait preserves it.
-    final thumbnailPaths = await Future.wait(
-      items.map((item) async {
-        if (!item.isImage) return null;
-        try {
-          return await _cacheThumbnailForWidget(item);
-        } on Exception catch (e) {
-          debugPrint(
-            '[WidgetService] Failed to cache thumbnail for ${item.id}: $e',
-          );
-          // Continue without thumbnail - widget will show placeholder
-          return null;
-        }
-      }),
-    );
-
-    final copyTextPaths = await Future.wait(items.map(_stageCopyText));
+    // Staged together rather than one after another: each miss is an R2
+    // download plus a compression pass, and awaiting them in sequence made a
+    // five-image refresh five serial round-trips on a mobile connection.
+    // Order is preserved because Future.wait preserves it.
+    final staged = await Future.wait(items.map(_stageItem));
 
     final widgetItems = <Map<String, dynamic>>[];
 
     for (final (index, item) in items.indexed) {
-      final thumbnailPath = thumbnailPaths[index];
+      final stage = staged[index];
 
       widgetItems.add({
         'id': item.id,
         'contentType': item.contentType.value,
         'contentPreview': _generatePreview(item),
-        'copyTextPath': copyTextPaths[index],
-        'thumbnailPath': thumbnailPath,
+        'copyPath': stage.copyPath,
+        'copyKind': stage.copyKind,
+        'thumbnailPath': stage.thumbnailPath,
         'deviceType': item.deviceType,
         'createdAt': item.createdAt.toIso8601String(),
         'isEncrypted': item.isEncrypted,
@@ -284,28 +270,56 @@ class WidgetService implements IWidgetService {
     return widgetItems;
   }
 
-  /// Write the full clip text where the widget can read it on tap, and return
-  /// the path.
+  /// Put everything the widget needs for this clip where it can reach it, and
+  /// say what kind of thing it is.
   ///
-  /// It goes in a file rather than the App Group plist because that plist is
-  /// re-read by another process on every render, and clips run to 100KB. A
-  /// file has no such cost, so there is no size cap and no clip that copies
-  /// only part of itself.
+  /// The payload goes in files in the App Group rather than the widget's own
+  /// payload, which is a plist another process re-reads on every render. That
+  /// is why there is no size cap: clips run to 100KB and images to 10MB.
   ///
-  /// Files and images get nothing: the widget holds a filename and a 40px
-  /// thumbnail, never the payload, so copying either would be the same quiet
-  /// lie as the truncated preview it replaced. Those taps open the app.
-  Future<String?> _stageCopyText(ClipboardItem item) async {
-    if (item.isImage || item.isFile) return null;
-
+  /// These are written decrypted. They are inside the app's own sandbox group
+  /// - no other app can read them, and Data Protection still applies - and a
+  /// widget whose whole purpose is showing the user their own clips cannot do
+  /// it from ciphertext.
+  Future<_WidgetStage> _stageItem(ClipboardItem item) async {
     try {
       final dir = await _getWidgetCacheDir();
+
+      // Plain and rich text: the content is already in hand, decrypted.
+      if (!item.isImage && !item.isFile) {
+        final file = File('$dir/${item.id}.txt');
+        await file.writeAsString(item.content, flush: true);
+        return _WidgetStage(copyPath: file.path, copyKind: 'text');
+      }
+
+      // Files and images live in R2. Only types worth putting on a pasteboard
+      // are fetched - a zip or an mp4 has no useful paste target, so those
+      // rows open the app to share instead.
+      final wantsBytes =
+          item.isImage || item.contentType == ContentType.fileTxt;
+      if (!wantsBytes) return const _WidgetStage();
+
+      final bytes = await _clipboardRepository?.downloadFile(item);
+      if (bytes == null) return const _WidgetStage();
+
+      if (item.isImage) {
+        final full = File('$dir/${item.id}.img');
+        await full.writeAsBytes(bytes, flush: true);
+
+        return _WidgetStage(
+          copyPath: full.path,
+          copyKind: 'image',
+          thumbnailPath: await _writeThumbnail(item, bytes, dir),
+        );
+      }
+
+      // A .txt file's payload is just text.
       final file = File('$dir/${item.id}.txt');
-      await file.writeAsString(item.content, flush: true);
-      return file.path;
+      await file.writeAsBytes(bytes, flush: true);
+      return _WidgetStage(copyPath: file.path, copyKind: 'text');
     } on Exception catch (e) {
-      debugPrint('[WidgetService] Failed to stage copy text for ${item.id}: $e');
-      return null;
+      debugPrint('[WidgetService] Failed to stage ${item.id}: $e');
+      return const _WidgetStage();
     }
   }
 
@@ -368,52 +382,26 @@ class WidgetService implements IWidgetService {
     return stripped.trim();
   }
 
-  /// Cache image thumbnail for widget
+  /// Downsample staged image bytes to the 40px tile the widget row draws.
   ///
-  /// Downloads image from storage, uses CompressionService to downsample
-  /// to 40x40px JPEG @ 80% quality, and saves to local cache.
-  ///
-  /// Returns local file path or null if caching failed
-  Future<String?> _cacheThumbnailForWidget(ClipboardItem item) async {
-    if (!item.isImage) return null;
-
+  /// Takes the bytes rather than fetching them: the caller has already pulled
+  /// them down to stage the full image, and this used to run its own
+  /// downloadFile() for the same object.
+  Future<String?> _writeThumbnail(
+    ClipboardItem item,
+    Uint8List bytes,
+    String dir,
+  ) async {
     try {
-      final cacheDir = await _getWidgetCacheDir();
-      final thumbnailFile = File('$cacheDir/${item.id}.jpg');
+      final thumbnailFile = File('$dir/${item.id}.jpg');
 
-      // Reuse existing thumbnail for immutable clipboard item IDs.
-      if (thumbnailFile.existsSync()) {
-        final stat = thumbnailFile.statSync();
-        if (stat.size > 0) {
-          debugPrint(
-            '[WidgetService] Reusing cached thumbnail: ${thumbnailFile.path}',
-          );
-          return thumbnailFile.path;
-        }
+      // Clipboard ids are immutable, so an existing tile is still correct.
+      if (thumbnailFile.existsSync() && thumbnailFile.statSync().size > 0) {
+        return thumbnailFile.path;
       }
 
-      // Download image from storage
-      final repo = _clipboardRepository;
-      if (repo == null) {
-        debugPrint('[WidgetService] Repository not initialized for thumbnail');
-        return null;
-      }
-      final bytes = await repo.downloadFile(item);
-      if (bytes == null) {
-        debugPrint('[WidgetService] No image data for ${item.id}');
-        return null;
-      }
-
-      debugPrint(
-        '[WidgetService] Downloaded image ${item.id}: ${bytes.lengthInBytes} bytes',
-      );
-
-      // Use CompressionService for thumbnail generation
       final compression = _compressionService;
-      if (compression == null) {
-        debugPrint('[WidgetService] CompressionService not initialized');
-        return null;
-      }
+      if (compression == null) return null;
 
       final result = await compression.compressImage(
         bytes,
@@ -422,21 +410,10 @@ class WidgetService implements IWidgetService {
         jpegQuality: 80,
       );
 
-      debugPrint(
-        '[WidgetService] Thumbnail compressed: '
-        '${bytes.lengthInBytes} → ${result.compressedSize} bytes',
-      );
-
-      // Save to cache
-      await thumbnailFile.writeAsBytes(result.bytes);
-
-      debugPrint('[WidgetService] Cached thumbnail: ${thumbnailFile.path}');
-
+      await thumbnailFile.writeAsBytes(result.bytes, flush: true);
       return thumbnailFile.path;
     } on Exception catch (e) {
-      debugPrint(
-        '[WidgetService] Failed to cache thumbnail for ${item.id}: $e',
-      );
+      debugPrint('[WidgetService] Thumbnail failed for ${item.id}: $e');
       return null;
     }
   }
@@ -452,7 +429,11 @@ class WidgetService implements IWidgetService {
       if (!dir.existsSync()) return;
 
       final keep = <String>{
-        for (final item in visible) ...['${item.id}.jpg', '${item.id}.txt'],
+        for (final item in visible) ...[
+          '${item.id}.jpg',
+          '${item.id}.txt',
+          '${item.id}.img',
+        ],
       };
       var removed = 0;
 
@@ -595,4 +576,18 @@ class WidgetService implements IWidgetService {
     if (kIsWeb) return false;
     return Platform.isAndroid || Platform.isIOS;
   }
+}
+
+/// What the widget was given for one clip.
+///
+/// [copyKind] is 'text' or 'image', and tells the widget how to put
+/// [copyPath] on the pasteboard. Both are null for clips whose payload is not
+/// worth staging - a zip or an mp4 has no useful paste target - and those rows
+/// open the app to share instead.
+class _WidgetStage {
+  const _WidgetStage({this.copyPath, this.copyKind, this.thumbnailPath});
+
+  final String? copyPath;
+  final String? copyKind;
+  final String? thumbnailPath;
 }

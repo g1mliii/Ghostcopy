@@ -111,9 +111,14 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
         putExtra(KEY_CONTENT_PREVIEW, item.contentPreview)
         putExtra(KEY_THUMBNAIL_PATH, item.thumbnailPath)
         putExtra(KEY_IS_ENCRYPTED, item.isEncrypted)
-        
-        // Use SHARE action for files/images so they open share sheet/view immediately
-        if (item.isFile || item.isImage) {
+        putExtra(KEY_COPY_PATH, item.copyPath)
+        putExtra(KEY_COPY_KIND, item.copyKind)
+
+        // Routed on whether a payload was staged, not on isFile/isImage. A
+        // .txt file is a file but its contents are perfectly copyable, and an
+        // image whose bytes were staged no longer needs the app either. What
+        // is left - a zip, an mp4 - has no useful paste target and shares.
+        if (item.copyPath.isNullOrEmpty()) {
           putExtra("action", "share")
           putExtra("filename", item.filename)
         } else {
@@ -146,5 +151,7 @@ class ClipboardWidgetFactory(private val context: Context) : RemoteViewsService.
     const val KEY_CONTENT_PREVIEW = "clipboard_content"
     const val KEY_THUMBNAIL_PATH = "thumbnail_path"
     const val KEY_IS_ENCRYPTED = "is_encrypted"
+    const val KEY_COPY_PATH = "copy_path"
+    const val KEY_COPY_KIND = "copy_kind"
   }
 }
