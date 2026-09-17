@@ -1158,21 +1158,25 @@ class _MyAppState extends State<MyApp> {
 /// A global hotkey takes its combination away from every app, so the default
 /// has to be one almost nothing else binds. Ctrl+Shift+S is safe on Windows.
 ///
-/// The macOS default has to clear two separate hazards, and the obvious
-/// candidates each fail one of them:
+/// On macOS it is Option+Space, and the two obvious alternatives are worse:
 ///
-///   - It must not be a sequence that types a character. Option+Space is how
-///     macOS enters a non-breaking space, so claiming it globally stopped that
-///     character being typed in every app.
-///   - It must not be a combination applications routinely bind. Cmd+Shift+V
-///     is paste-without-formatting in browsers, editors and chat apps, so
-///     taking it globally would break that command everywhere.
+///   - Cmd+Shift+S is Save As in most apps, and Cmd+Shift+V is
+///     paste-without-formatting in browsers, editors and chat apps. Taking
+///     either globally breaks a command people use constantly.
+///   - Ctrl+Shift+Space types no character and collides with nothing, but
+///     nobody reaches for it, which for a shortcut meant to be pressed dozens
+///     of times a day is its own kind of wrong.
 ///
-/// Ctrl+Shift+Space clears both: Control+Shift produces no character, and the
-/// nearby system bindings are Ctrl+Space and Ctrl+Option+Space (input source
-/// switching), neither of which this collides with.
+/// Option+Space is a deliberate, known tradeoff rather than an oversight:
+/// macOS types a non-breaking space with it, so while GhostCopy is resident
+/// that character cannot be entered. This is accepted because the key is a
+/// launcher convention on this platform - Raycast and Alfred both ship
+/// Option+Space as their default - and because a non-breaking space is a
+/// character most users never type on purpose. Anyone who does need it, or
+/// who already runs a launcher on this combination, can rebind in Settings;
+/// only this fallback is affected.
 final HotKey defaultHotkey = Platform.isMacOS
-    ? const HotKey(key: 'space', ctrl: true, shift: true)
+    ? const HotKey(key: 'space', alt: true)
     : const HotKey(key: 's', ctrl: true, shift: true);
 
 /// Invoked when the global hotkey fires.

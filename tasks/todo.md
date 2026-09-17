@@ -47,11 +47,12 @@ runs, and has been exercised by hand. What was wrong and what was changed:
       toggles, unreadable staleness slider, duplicate delete toasts
 - [x] Default devices now govern auto-send and both context menus, and the
       setting is visible on mobile as well as desktop
-- [x] macOS default hotkey is Ctrl+Shift+Space. Ctrl+Shift+S stays on
-      Windows - a global hotkey takes its combination from every app, so the
-      default must avoid both anything that types a character (Option+Space
-      enters a non-breaking space) and anything apps routinely bind
-      (Cmd+Shift+V is paste-without-formatting)
+- [x] macOS default hotkey is Option+Space, Ctrl+Shift+S on Windows. A
+      global hotkey takes its combination from every app, which rules out
+      Cmd+Shift+S (Save As) and Cmd+Shift+V (paste-without-formatting).
+      Option+Space does suppress the non-breaking space while the app runs -
+      accepted deliberately, since it is the macOS launcher convention
+      (Raycast, Alfred) and the character is one few users type on purpose
 
 Measured on the release build: 48MB idle in the tray, ~125MB while the window
 is visible, and no leak - the Dart heap held at 24MB across repeated open and
