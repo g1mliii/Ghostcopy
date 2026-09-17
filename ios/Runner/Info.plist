@@ -34,15 +34,6 @@
 	     without it the app is refused at launch and shows a white screen.
 	     FlutterSceneDelegate ships in the engine; SceneDelegate subclasses it to
 	     add the privacy blur and deep-link handling. -->
-	<!-- Lets APNs wake the app for a push carrying content-available, which is
-	     what runs the Dart background isolate that prefetches and decrypts the
-	     clip. Without this the flag on the push is ignored, nothing stages
-	     pending_copy.json, and the notification's Copy action has nothing to
-	     put on the pasteboard. -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

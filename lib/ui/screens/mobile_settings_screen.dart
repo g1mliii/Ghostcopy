@@ -501,12 +501,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         setState(() => _encryptionLoading = false);
 
         if (success) {
+          // No toast. The clips that were unreadable a moment ago are now
+          // legible and the encryption row reads as on - the screen has already
+          // said it, and a banner over the top is just something else to
+          // dismiss.
           setState(() => _encryptionEnabled = true);
-          showGhostToast(
-            context,
-            'Passphrase restored',
-            type: GhostToastType.success,
-          );
         } else {
           // 2. Fallback to manual entry
           final userId = widget.authService.currentUserId;
@@ -520,11 +519,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
             if (manualSuccess && mounted) {
               setState(() => _encryptionEnabled = true);
-              showGhostToast(
-                context,
-                'Passphrase restored',
-                type: GhostToastType.success,
-              );
             }
           }
         }

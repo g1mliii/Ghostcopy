@@ -309,24 +309,36 @@ Deno.serve(async (req)=>{
                 channelId: 'ghostcopy_notifications'
               }
             },
-            // APNs configuration for iOS with category for notification actions
+            // APNs configuration for iOS.
+            //
+            // No category, because iOS notifications carry no long-press
+            // actions: the Copy button needed the clip already staged on the
+            // device by a background isolate, and iOS wake-ups are throttled on
+            // battery and usage and refused outright for a swiped-away app, so
+            // it worked only sometimes. Tapping opens the app and copies, for
+            // text and files alike. See AppDelegate.swift.
+            //
+            // No content-available either, for the same reason - waking the app
+            // to prefetch a clip nothing will read is just battery.
+            //
+            // The alert is overridden here because the shared `notification`
+            // above says "Tap to copy", which is true on Android, where the tap
+            // routes to CopyActivity and the app never appears. On iOS the tap
+            // opens GhostCopy, so promising a bare copy would misdescribe what
+            // happens next.
             apns: {
               headers: {
                 'apns-priority': '10'
               },
               payload: {
                 aps: {
-                  // Category must match UNNotificationCategory in AppDelegate.swift
-                  category: 'CLIPBOARD_SYNC',
                   'mutable-content': 1,
-                  // Wakes the Dart background isolate so it can prefetch and
-                  // decrypt the clip before the user acts on the notification -
-                  // the iOS counterpart of what Android gets for free. Without
-                  // this flag onBackgroundMessage never runs on iOS, nothing
-                  // writes pending_copy.json, and the Copy action has nothing
-                  // to put on the pasteboard. The push still carries no
-                  // clipboard value.
-                  'content-available': 1
+                  alert: {
+                    title: notificationTitle,
+                    body: isImage || isFile
+                      ? 'Tap to open in GhostCopy'
+                      : 'Tap to open and copy'
+                  }
                 }
               }
             }

@@ -16,10 +16,21 @@ import WidgetKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Register notification categories with actions
-    ActionableNotificationManager.shared.registerCategories()
-
-    // Set notification delegate for foreground handling
+    // No notification categories are registered, so notifications carry no
+    // long-press actions.
+    //
+    // There used to be a Copy button that wrote the pasteboard without opening
+    // the app. It depended on the clip already being on the device, staged by a
+    // background isolate woken by a content-available push. That worked on
+    // Android, where background execution is permissive, and could not be made
+    // dependable here: iOS throttles background wake-ups on battery, Low Power
+    // Mode and usage, and refuses them outright for an app the user swiped
+    // away. The result was a button that copied instantly sometimes and did
+    // nothing the rest of the time, with no way for the user to tell which -
+    // worse than a tap that always behaves the same way.
+    //
+    // Tapping opens the app and copies, for text and files alike. On a phone
+    // this fast that is a small price for one predictable behaviour.
     UNUserNotificationCenter.current().delegate = self
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
@@ -36,131 +47,49 @@ import WidgetKit
 
   // MARK: - Notifications
 
-  /// Handle notification action response (action button or notification tap).
+  /// Handle a notification being acted on.
+  ///
+  /// There is only one action on iOS: tapping the notification. The long-press
+  /// Copy/Dismiss/Details buttons were removed along with the background
+  /// prefetch that made an instant copy possible - see the note in
+  /// didFinishLaunchingWithOptions.
+  ///
+  /// The tap brings the app forward, which is what gives the Dart side the time
+  /// and the foreground state it needs to fetch the clip, decrypt it, and then
+  /// either write the pasteboard or open the share sheet. Everything that
+  /// decides between those lives in processShareAction() in
+  /// mobile_main_viewmodel.dart, so this hands off and does nothing else.
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let userInfo = response.notification.request.content.userInfo
-    let actionName = ActionableNotificationManager.shared.getActionName(response.actionIdentifier)
-
-    print("[Notification] 📬 Action: \(actionName)")
-
-    // Extract clipboard content from FCM data payload
-    let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
     let clipboardId = userInfo["clipboard_id"] as? String ?? ""
-    let deviceType = userInfo["device_type"] as? String ?? "Another device"
 
-    let notificationManager = ActionableNotificationManager.shared
-
-    // Handle copy action (from action button or long-press menu)
-    if notificationManager.isCopyAction(response.actionIdentifier) {
-      copyClip(userInfoContent: clipboardContent, clipboardId: clipboardId, deviceType: deviceType)
+    if !clipboardId.isEmpty {
+      FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
     }
 
-    // Handle dismiss action
-    if notificationManager.isDismissAction(response.actionIdentifier) {
-      print("👋 Notification dismissed")
-    }
-
-    // Handle details action
-    if notificationManager.isDetailsAction(response.actionIdentifier) {
-      if !clipboardId.isEmpty {
-        FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "details")
-      }
-      print("📖 Opening clipboard item details")
-    }
-
-    // Handle default action (notification tap). The tap foregrounds the app
-    // regardless, so the in-app fallback can finish the job if the prefetch
-    // lost its race - but copying here still saves the user a round trip
-    // through the UI whenever the clip was staged in time.
-    if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-      copyClip(userInfoContent: clipboardContent, clipboardId: clipboardId, deviceType: deviceType)
-    }
-
-    // Update widget with new clipboard item
     updateWidgetForFCMNotification(userInfo)
 
     completionHandler()
   }
 
-  /// Handle foreground notifications (when app is active).
+  /// Handle a notification arriving while the app is on screen.
+  ///
+  /// Nothing is presented. The app is already open and its realtime
+  /// subscription brings the clip into history by itself, so a banner over
+  /// GhostCopy would be announcing something the user can already see - and
+  /// this app is built around sync that stays out of the way. The Android
+  /// notification channel disables sound and vibration for the same reason.
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    let userInfo = notification.request.content.userInfo
-
-    // Extract clipboard content from FCM data payload
-    let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
-    let contentType = userInfo["content_type"] as? String ?? "text"
-    let deviceType = userInfo["device_type"] as? String ?? "Another device"
-
-    print("📱 FCM notification received in foreground from \(deviceType)")
-
-    // Check if this is a file/image
-    let isFile = contentType.hasPrefix("file_")
-    let isImage = contentType.hasPrefix("image_")
-
-    if !clipboardContent.isEmpty && !isFile && !isImage {
-      // Auto-copy text content when app is in foreground
-      // Files/images cannot be auto-copied - user must tap notification
-      UIPasteboard.general.string = clipboardContent
-      print("✅ Auto-copied to clipboard: \(clipboardContent.prefix(50))...")
-    } else if isFile || isImage {
-      print("📎 File/image notification - user must tap to download and share")
-    }
-
-    // Update widget with new clipboard item
-    updateWidgetForFCMNotification(userInfo)
-
-    // Foreground presentation, decided by whether anything is left to do.
-    //
-    // Text was just auto-copied above, and the user is already looking at the
-    // app - a system banner over GhostCopy announcing a clip that is already
-    // on the pasteboard is pure noise, and it contradicts the invisible sync
-    // this app is built around (the Android channel disables sound and
-    // vibration for the same reason).
-    //
-    // A file or image is different: it was NOT copied, because it cannot be.
-    // The user has to act on it, so the banner is the only thing telling them
-    // it arrived, and it stays.
-    let autoCopied = !clipboardContent.isEmpty && !isFile && !isImage
-    completionHandler(autoCopied ? [] : [.banner, .badge, .sound])
-  }
-
-
-  /// Put a clip on the pasteboard, preferring the staged plaintext.
-  ///
-  /// Order matters. The push carries no clipboard value in production - the
-  /// backend sends only an id - so `pending_copy.json`, written by the Dart
-  /// background isolate, is the real source. The userInfo value is still
-  /// honoured first because it costs nothing and covers any caller that does
-  /// inline the content.
-  ///
-  /// Falling through to Flutter is the Android behaviour too: when nothing was
-  /// staged, the app is asked to fetch it. That needs the engine, so it only
-  /// completes for a notification tap, which foregrounds the app anyway.
-  private func copyClip(userInfoContent: String, clipboardId: String, deviceType: String) {
-    if !userInfoContent.isEmpty {
-      UIPasteboard.general.string = userInfoContent
-      print("✅ Copied to clipboard from \(deviceType) (inline)")
-      return
-    }
-
-    if let staged = PendingCopyStore.take(),
-      PendingCopyStore.isCopyableText(staged.contentType) {
-      UIPasteboard.general.string = staged.content
-      print("✅ Copied to clipboard from \(deviceType) (staged clip \(staged.id))")
-      return
-    }
-
-    guard !clipboardId.isEmpty else { return }
-    print("↩️ Nothing staged for \(clipboardId) - handing off to the app")
-    FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
+    updateWidgetForFCMNotification(notification.request.content.userInfo)
+    completionHandler([])
   }
 
   // MARK: - Widget Update Methods
