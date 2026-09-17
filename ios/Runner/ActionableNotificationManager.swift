@@ -32,12 +32,17 @@ class ActionableNotificationManager {
     /// Register notification categories with actions
     /// Called once during app initialization
     func registerCategories() {
-        // Define "Copy to Clipboard" action
-        // Uses .foreground option to bring app to foreground
+        // Define "Copy to Clipboard" action.
+        //
+        // Deliberately NOT .foreground. The whole point of this action is to
+        // get a clip onto the pasteboard without leaving whatever the user is
+        // doing - tapping the notification body already covers the
+        // open-the-app case. With no options the system wakes the app in the
+        // background, runs didReceive, and never shows the UI.
         let copyAction = UNNotificationAction(
             identifier: ActionIdentifier.copy.rawValue,
             title: "Copy",
-            options: [.foreground]
+            options: []
         )
 
         // Define "Dismiss" action (no foreground)

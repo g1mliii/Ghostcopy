@@ -56,13 +56,7 @@ import WidgetKit
 
     // Handle copy action (from action button or long-press menu)
     if notificationManager.isCopyAction(response.actionIdentifier) {
-      if !clipboardContent.isEmpty {
-        UIPasteboard.general.string = clipboardContent
-        print("✅ Copied to clipboard from \(deviceType)")
-      } else if !clipboardId.isEmpty {
-        // For large content, clipboardId sent, fetch full content in app
-        FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
-      }
+      copyClip(userInfoContent: clipboardContent, clipboardId: clipboardId, deviceType: deviceType)
     }
 
     // Handle dismiss action
@@ -78,12 +72,12 @@ import WidgetKit
       print("📖 Opening clipboard item details")
     }
 
-    // Handle default action (notification tap)
+    // Handle default action (notification tap). The tap foregrounds the app
+    // regardless, so the in-app fallback can finish the job if the prefetch
+    // lost its race - but copying here still saves the user a round trip
+    // through the UI whenever the clip was staged in time.
     if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-      if !clipboardContent.isEmpty {
-        UIPasteboard.general.string = clipboardContent
-        print("✅ Copied to clipboard from \(deviceType) (notification tap)")
-      }
+      copyClip(userInfoContent: clipboardContent, clipboardId: clipboardId, deviceType: deviceType)
     }
 
     // Update widget with new clipboard item
@@ -136,6 +130,37 @@ import WidgetKit
     // it arrived, and it stays.
     let autoCopied = !clipboardContent.isEmpty && !isFile && !isImage
     completionHandler(autoCopied ? [] : [.banner, .badge, .sound])
+  }
+
+
+  /// Put a clip on the pasteboard, preferring the staged plaintext.
+  ///
+  /// Order matters. The push carries no clipboard value in production - the
+  /// backend sends only an id - so `pending_copy.json`, written by the Dart
+  /// background isolate, is the real source. The userInfo value is still
+  /// honoured first because it costs nothing and covers any caller that does
+  /// inline the content.
+  ///
+  /// Falling through to Flutter is the Android behaviour too: when nothing was
+  /// staged, the app is asked to fetch it. That needs the engine, so it only
+  /// completes for a notification tap, which foregrounds the app anyway.
+  private func copyClip(userInfoContent: String, clipboardId: String, deviceType: String) {
+    if !userInfoContent.isEmpty {
+      UIPasteboard.general.string = userInfoContent
+      print("✅ Copied to clipboard from \(deviceType) (inline)")
+      return
+    }
+
+    if let staged = PendingCopyStore.take(),
+      PendingCopyStore.isCopyableText(staged.contentType) {
+      UIPasteboard.general.string = staged.content
+      print("✅ Copied to clipboard from \(deviceType) (staged clip \(staged.id))")
+      return
+    }
+
+    guard !clipboardId.isEmpty else { return }
+    print("↩️ Nothing staged for \(clipboardId) - handing off to the app")
+    FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
   }
 
   // MARK: - Widget Update Methods

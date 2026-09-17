@@ -302,7 +302,15 @@ Deno.serve(async (req)=>{
                 aps: {
                   // Category must match UNNotificationCategory in AppDelegate.swift
                   category: 'CLIPBOARD_SYNC',
-                  'mutable-content': 1
+                  'mutable-content': 1,
+                  // Wakes the Dart background isolate so it can prefetch and
+                  // decrypt the clip before the user acts on the notification -
+                  // the iOS counterpart of what Android gets for free. Without
+                  // this flag onBackgroundMessage never runs on iOS, nothing
+                  // writes pending_copy.json, and the Copy action has nothing
+                  // to put on the pasteboard. The push still carries no
+                  // clipboard value.
+                  'content-available': 1
                 }
               }
             }
