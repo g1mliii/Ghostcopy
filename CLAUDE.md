@@ -171,10 +171,19 @@ test/
 
 ## Environment Setup
 
-**There is no `.env` file.** The Supabase URL and anon key are compile-time
-constants at the top of `lib/main.dart`. That is deliberate: an anon key is
-public by design, and the security boundary is Supabase's RLS policies, not
-concealment of the key.
+**There is no `.env` file.** The Supabase URL and publishable key are
+compile-time constants at the top of `lib/main.dart`. That is deliberate: a
+publishable key is public by design, and the security boundary is Supabase's
+RLS policies, not concealment of the key.
+
+It is the `sb_publishable_...` key from Supabase's current API key scheme, not
+the legacy `anon` JWT. Do not disable legacy API keys until every released
+build carries the publishable key - it is compiled in, so an old install keeps
+sending whatever it shipped with. The server-side counterpart is the
+`sb_secret_...` key: `SUPABASE_SERVICE_ROLE_KEY` in an Edge Function now holds
+that, and the `fcm_service_role_key` vault secret the notification trigger
+sends must match it byte for byte or `send-clipboard-notification` returns 401
+and push stops with nothing surfacing the failure.
 
 Two config files are gitignored and must be copied across (or re-downloaded
 from the Firebase console) when setting up a new machine for mobile work:
