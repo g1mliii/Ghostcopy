@@ -26,18 +26,23 @@ class AppTheme {
         // Touch has no hover. Dropping the splash AND the highlight there left
         // taps with no feedback whatsoever - a row or chip looked inert until
         // its action finished, which on a slow network is long enough to make
-        // people tap again. So mobile keeps a press state, in a low-alpha
-        // brand tint rather than the default near-white wash: visible enough
-        // to confirm the tap landed, quiet enough not to flash.
+        // people tap again. So mobile keeps a press state.
+        //
+        // The overlay is BLACK, not a tint. Every surface here is already dark,
+        // so an additive overlay of any colour lightens it - that is the white
+        // flash the default ripple gives and the reason splashes were removed
+        // in the first place, and a brand-coloured one only makes it a purple
+        // flash. Darkening reads as the control being pushed in, and matches
+        // iOS, where a pressed control dims rather than glows.
         splashFactory: Adaptive.isDesktop
             ? NoSplash.splashFactory
             : InkRipple.splashFactory,
         splashColor: Adaptive.isDesktop
             ? Colors.transparent
-            : GhostColors.primaryAlpha10,
+            : GhostColors.blackAlpha18,
         highlightColor: Adaptive.isDesktop
             ? Colors.transparent
-            : GhostColors.primaryAlpha10,
+            : GhostColors.blackAlpha18,
 
         // Color scheme
         colorScheme: ColorScheme.dark(

@@ -97,6 +97,15 @@ class GhostColors {
   static final whiteAlpha20 = Colors.white.withValues(alpha: 0.2);
   static final whiteAlpha60 = Colors.white.withValues(alpha: 0.6);
   static final whiteAlpha70 = Colors.white.withValues(alpha: 0.7);
+
+  /// Pressed-state overlay for touch.
+  ///
+  /// Black, not a tint. Every surface in this app is already dark, so an
+  /// additive overlay of any colour lightens them - which is the white flash
+  /// Material's default ripple produces and the reason splashes were turned
+  /// off here in the first place. Darkening reads as the control being pushed
+  /// in, and matches what iOS does natively, where a pressed control dims.
+  static final blackAlpha18 = Colors.black.withValues(alpha: 0.18);
   static final blackAlpha30 = Colors.black.withValues(alpha: 0.3);
   static final blackAlpha50 = Colors.black.withValues(alpha: 0.5);
   static final redAlpha10 = Colors.red.withValues(alpha: 0.1);
