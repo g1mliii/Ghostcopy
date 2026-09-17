@@ -81,10 +81,37 @@ class EncryptionService implements IEncryptionService {
   EncryptionService._internal({
     FlutterSecureStorage? secureStorage,
     IPassphraseSyncService? passphraseSyncService,
-  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage(),
+  }) : _secureStorage = secureStorage ?? _defaultSecureStorage,
        _passphraseSync = passphraseSyncService;
 
   // Singleton instance
+  /// Keychain access that survives the screen being locked.
+  ///
+  /// The default accessibility is kSecAttrAccessibleWhenUnlocked, so the key
+  /// cannot be read while the phone is locked - and a push-woken background
+  /// isolate routinely runs with the screen off, which is the normal case for
+  /// a notification arriving while the phone is in a pocket. When that read
+  /// fails, canDecrypt is false, _decryptItems drops encrypted text rows,
+  /// getById() returns null, and the FCM prefetch logs "not in history" and
+  /// gives up. Every step is a deliberate silent return, so the only symptom
+  /// would be the notification's Copy action doing nothing.
+  ///
+  /// first_unlock is kSecAttrAccessibleAfterFirstUnlock: readable while
+  /// locked, but not until the device has been unlocked once since boot. That
+  /// is the standard choice for material a background task must reach, and it
+  /// still leaves the key unreadable on a cold-booted phone nobody has opened.
+  ///
+  /// Fixed on inspection rather than from a reproduction: the prefetch failure
+  /// this was found while chasing turned out to have happened on an UNLOCKED
+  /// phone, so something else was responsible for that one. This is a real
+  /// latent bug on the locked path regardless.
+  ///
+  /// iOS only. Android's keystore has different semantics and that path
+  /// already works.
+  static const _defaultSecureStorage = FlutterSecureStorage(
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
   // Singleton instance
   static final EncryptionService instance = EncryptionService._internal(
     passphraseSyncService: PassphraseSyncService(),
