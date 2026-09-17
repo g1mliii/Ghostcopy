@@ -46,12 +46,25 @@ struct CopyToClipboardIntent: AppIntent {
 
         if copyKind == "image", let image = UIImage(contentsOfFile: copyPath) {
             UIPasteboard.general.image = image
-            copied = true
-        } else if let text = try? String(contentsOfFile: copyPath, encoding: .utf8) {
+            // Read back rather than assume. Writing UIPasteboard is IPC to
+            // `pasted`, and a widget's extension process is torn down promptly
+            // after perform() returns - so a write that is only queued can be
+            // lost. Reading forces the round trip to finish while this process
+            // is still alive, and tells us it actually landed.
+            //
+            // No "Allow Paste?" prompt: that appears when reading content
+            // another app wrote. This process owns what it just put there.
+            copied = UIPasteboard.general.hasImages
+        } else if let text = try? String(contentsOfFile: copyPath, encoding: .utf8),
+            !text.isEmpty
+        {
             UIPasteboard.general.string = text
-            copied = true
+            copied = UIPasteboard.general.string == text
         }
 
+        // Only claim success when the pasteboard really holds the clip. The
+        // marker below drives the "Copied" banner, and a banner over a
+        // clipboard that never changed is worse than no banner at all.
         guard copied else { return .result() }
 
         // Leave a marker the timeline turns into a "Copied" confirmation. The
