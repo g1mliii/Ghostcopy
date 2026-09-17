@@ -7,12 +7,14 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
+import '../../services/fcm_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
@@ -1251,6 +1253,45 @@ class MobileMainViewModel extends ChangeNotifier {
     // restores the flow of future events; anything that arrived while the app
     // was backgrounded would never appear until a manual pull-to-refresh.
     unawaited(loadHistory());
+
+    unawaited(_reassertFcmToken());
+  }
+
+  /// When the token was last written back on resume. Resume fires on every
+  /// glance at the app, and this is a network write.
+  DateTime? _lastTokenReassert;
+  static const _tokenReassertInterval = Duration(hours: 1);
+
+  /// Put this device's FCM token back on its row if it has gone missing.
+  ///
+  /// send-clipboard-notification clears `fcm_token` whenever FCM rejects it as
+  /// unregistered, and every send skips devices without one. That is right for
+  /// a genuinely dead token, but the only thing that ever wrote the token back
+  /// was app startup - so a single rejection left the device unreachable by
+  /// push until the user happened to cold start the app, with nothing on
+  /// screen to suggest anything was wrong.
+  ///
+  /// Resuming is the natural moment to repair it: the user is here, the token
+  /// is cheap to read, and registerCurrentDevice upserts. Throttled because
+  /// resume is frequent and this is a write.
+  Future<void> _reassertFcmToken() async {
+    if (!locator.isRegistered<IFcmService>()) return;
+
+    final now = DateTime.now();
+    final last = _lastTokenReassert;
+    if (last != null && now.difference(last) < _tokenReassertInterval) return;
+    _lastTokenReassert = now;
+
+    try {
+      final token = await locator<IFcmService>().getToken();
+      if (token == null || token.isEmpty) return;
+      await _deviceService.registerCurrentDevice(fcmToken: token);
+      debugPrint('[MobileMainVM] FCM token re-asserted on resume');
+    } on Exception catch (e) {
+      // Never surfaced: this is upkeep the user did not ask for, and it runs
+      // again on the next resume.
+      debugPrint('[MobileMainVM] Could not re-assert FCM token: $e');
+    }
   }
 
   /// Called on system memory pressure

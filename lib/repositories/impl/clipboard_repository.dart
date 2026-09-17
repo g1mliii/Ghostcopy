@@ -14,6 +14,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
+import '../../utils/platform_label.dart';
 import '../clipboard_repository.dart';
 
 /// Implementation of ClipboardRepository with security hardening
@@ -1349,8 +1350,20 @@ class ClipboardRepository implements IClipboardRepository {
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
         final hostname = Platform.localHostname;
         _cachedDeviceName = hostname.isNotEmpty ? hostname : null;
+      } else {
+        // Mobile has no hostname to read, and this used to return null - so
+        // every clip sent from a phone landed with device_name NULL and the
+        // history could not say where it came from. DeviceService already
+        // falls back to this exact string when registering the device, so
+        // using it here keeps the clipboard row and the devices row agreeing.
+        //
+        // This is a placeholder, not an identity: two phones on the same
+        // platform both answer "Android Device". See the note on
+        // registerCurrentDevice - the devices table is uniquely keyed on
+        // (user_id, device_type, device_name), so telling them apart needs a
+        // real per-device name, which is a larger change.
+        _cachedDeviceName = '${platformLabel(getCurrentDeviceType())} Device';
       }
-      // For mobile, stays null - can be set by user in settings
     } on Exception {
       // Handle any exceptions when accessing hostname
       _cachedDeviceName = null;
