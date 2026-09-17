@@ -133,3 +133,34 @@ Each entry should include:
   migration had actually worked, and I called it a "second independent bug"
   because I captured the screen before Flutter's first frame landed.
 
+
+### 2026-09-17 - Changing Keychain accessibility orphaned the existing passphrase
+
+- **Date**: 2026-09-17
+- **Failure Mode**: Gave FlutterSecureStorage an explicit
+  `IOSOptions(accessibility: KeychainAccessibility.first_unlock)` so a
+  push-woken background isolate could read the encryption key while the phone
+  was locked. The reasoning was sound and the locked-phone bug is real. What I
+  missed is that accessibility is part of a Keychain item's attributes, so
+  changing it orphans every item already written under the old value: the read
+  no longer matches and returns nothing, and the subsequent write collides with
+  the item that is still there. On a real upgrade that locks a user out of
+  their own encrypted clips permanently - the old passphrase is unreadable and
+  a new one cannot be stored.
+- **Detection Signal**: Two contradictory lines in the same run -
+  `No existing passphrase found` followed by
+  `Failed to set passphrase: ... Code: -25299 ... The specified item already
+  exists in the keychain.` A read miss and a write duplicate for the same key
+  can only both be true when the query attributes changed. Caught on a
+  simulator that looked like a clean install, because simulator Keychain items
+  survive app uninstalls.
+- **Prevention Rule**: Never change the accessibility (or any query attribute)
+  of an existing secure-storage key without a migration: read with the OLD
+  options, delete, then write with the new ones, and ship that migration before
+  or alongside the change. More generally - a storage change that alters how a
+  key is *addressed* is a data migration, not a configuration tweak, and needs
+  to be tested against a device that already holds the old data rather than a
+  fresh one. Reverted rather than fixed forward at the time, because the
+  original bug it addressed only affects a locked phone while the regression
+  destroys access to encrypted data outright.
+
