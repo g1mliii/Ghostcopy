@@ -104,11 +104,35 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     if (mounted) setState(() => _defaultDevices = devices);
   }
 
+  /// Every destination a clip can be sent to.
+  ///
+  /// Shared by the chips and by [_toggleDefaultDevice], which has to know what
+  /// "all devices" expands to.
+  static const _allDeviceTypes = ['windows', 'macos', 'android', 'ios'];
+
   Future<void> _toggleDefaultDevice(String deviceType) async {
-    final updated = Set<String>.from(_defaultDevices);
+    // An empty set is the all-devices sentinel, and the chips render every
+    // destination as selected because of it. Toggling from that state has to
+    // start from the full set, or the first tap adds the one device instead of
+    // removing it - so tapping a chip that looks selected left only that device
+    // enabled and silently disabled every other destination, which is the exact
+    // opposite of what the tap asked for, and routed shares to the device the
+    // user was trying to exclude.
+    final updated = _defaultDevices.isEmpty
+        ? Set<String>.from(_allDeviceTypes)
+        : Set<String>.from(_defaultDevices);
+
     if (!updated.remove(deviceType)) updated.add(deviceType);
-    await locator<ISettingsService>().setAutoSendTargetDevices(updated);
-    if (mounted) setState(() => _defaultDevices = updated);
+
+    // Fold "everything selected" back to the sentinel, so the stored value has
+    // one representation and a device type added in a later release is still
+    // covered by an existing all-devices preference.
+    final normalized = updated.length == _allDeviceTypes.length
+        ? <String>{}
+        : updated;
+
+    await locator<ISettingsService>().setAutoSendTargetDevices(normalized);
+    if (mounted) setState(() => _defaultDevices = normalized);
   }
 
   @override
@@ -978,7 +1002,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// be visible and editable on mobile - otherwise the target is set on the
   /// desktop and invisible on the phone doing the sending.
   Widget _buildDefaultDevicesTile() {
-    const deviceTypes = ['windows', 'macos', 'android', 'ios'];
+    const deviceTypes = _allDeviceTypes;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),

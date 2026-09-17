@@ -45,6 +45,18 @@ class NotificationService implements INotificationService {
   DateTime? _lastToastAt;
   int _toastRepeatCount = 1;
   int? _lastSystemNotificationId;
+
+  /// The message [_lastSystemNotificationId] was created for.
+  ///
+  /// Held alongside the id because a repeat is decided from the message and the
+  /// clock, without regard to which surface showed it. A message displayed as
+  /// an overlay while Spotlight was open counts as a repeat when it recurs
+  /// moments later with Spotlight hidden - but no system notification was ever
+  /// created for it, so the id still belongs to some earlier, unrelated one.
+  /// Reusing it replaced that banner, and if it had been created by
+  /// showClickableToast its pending action was still mapped to the id, so
+  /// tapping the new toast ran the old one's callback.
+  String? _lastSystemNotificationMessage;
   static const _toastCoalesceWindow = Duration(seconds: 4);
 
   // Timer to periodically clean up stale actions (memory leak prevention)
@@ -216,8 +228,11 @@ class NotificationService implements INotificationService {
         message: displayMessage,
         type: type,
         // Reusing the id updates the existing banner in place instead of
-        // adding one per repeat.
-        replaceId: isRepeat ? _lastSystemNotificationId : null,
+        // adding one per repeat - but only when the previous showing of THIS
+        // message was itself a system notification.
+        replaceId: isRepeat && _lastSystemNotificationMessage == message
+            ? _lastSystemNotificationId
+            : null,
       );
     } else {
       // Use overlay when Spotlight is visible
@@ -243,6 +258,7 @@ class NotificationService implements INotificationService {
 
     final id = replaceId ?? _notificationIdCounter++;
     _lastSystemNotificationId = id;
+    _lastSystemNotificationMessage = message;
 
     // Store action if provided
     if (onAction != null) {

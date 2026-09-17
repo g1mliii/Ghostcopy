@@ -52,8 +52,19 @@ self.addEventListener('fetch', (event) => {
     // Same-origin only. Fonts and the Supabase API go straight to the network.
     if (url.origin !== self.location.origin) return;
 
-    // Never involve the cache in the password reset flow.
-    if (url.pathname.startsWith('/reset-password')) return;
+    // Never involve the cache in a flow whose URL carries a credential.
+    //
+    // /auth-callback receives the OAuth PKCE code in its query string, and the
+    // navigate handler below caches every navigation response keyed by its full
+    // request URL. A no-store header does not help: the service worker calls
+    // cache.put() itself, so the code would sit in Cache Storage under a key
+    // containing it, outliving the page scrubbing its own history.
+    if (
+        url.pathname.startsWith('/reset-password') ||
+        url.pathname.startsWith('/auth-callback')
+    ) {
+        return;
+    }
 
     // Pages: network first, falling back to whatever we last saw.
     if (request.mode === 'navigate') {

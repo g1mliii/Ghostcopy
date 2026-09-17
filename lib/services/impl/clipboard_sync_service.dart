@@ -518,18 +518,26 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Nothing written to the pasteboard since the last tick means the
       // payload cannot have changed, so the full read is skipped entirely.
       final changeCount = await _readClipboardChangeCount();
-      if (changeCount != null) {
-        if (changeCount == _lastClipboardChangeCount) return;
-        _lastClipboardChangeCount = changeCount;
+      if (changeCount != null && changeCount == _lastClipboardChangeCount) {
+        return;
       }
 
       // Read clipboard using ClipboardService (supports all formats)
       final clipboardContent = await _clipboardService.read();
       if (_clipboardWritesInProgress > 0 || _isDisposed) return;
 
-      // Skip if empty
+      // The counter is committed only once the read has actually produced
+      // something. read() catches its own failures and returns empty - a
+      // provider that is briefly unavailable, an image callback that throws -
+      // and recording the counter before that point retired the tick anyway:
+      // every later tick saw the same counter, skipped the read, and that copy
+      // was never auto-sent unless the user copied something else. Leaving the
+      // counter alone keeps a failed read retryable on the next tick.
       if (clipboardContent.isEmpty) {
         return;
+      }
+      if (changeCount != null) {
+        _lastClipboardChangeCount = changeCount;
       }
 
       // Calculate hash for deduplication (works for text and images)

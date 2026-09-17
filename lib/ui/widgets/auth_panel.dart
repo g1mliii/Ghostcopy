@@ -423,21 +423,9 @@ class _AuthPanelState extends State<AuthPanel> {
       // Note: hCaptcha disabled for mobile compatibility
       // Can be re-enabled on desktop if needed
       if (_isLogin) {
-        // Signing into an existing account changes user_id, and clips belong to
-        // the id that made them. An anonymous user's clips would stay on the
-        // server under an id nothing can reach again - not lost, but invisible
-        // for good. Ask first rather than discovering it afterwards.
-        if (widget.authService.isAnonymous) {
-          final orphanCount = await _clipboardRepository
-              .getClipboardCountForCurrentUser();
-          if (orphanCount > 0) {
-            if (!mounted) return;
-            final proceed = await _confirmLeavingClipsBehind(orphanCount);
-            if (!proceed) {
-              if (mounted) setState(() => _authLoading = false);
-              return;
-            }
-          }
+        if (!await _confirmGuestClipsBeforeSignIn()) {
+          if (mounted) setState(() => _authLoading = false);
+          return;
         }
 
         // Sign in existing user - check if switching accounts
@@ -551,6 +539,16 @@ class _AuthPanelState extends State<AuthPanel> {
       bool success;
 
       if (_isLogin) {
+        // Same guard as the email path. Without it, Continue with Google
+        // switched accounts directly and AuthService._cleanupPreviousSession
+        // then ran cleanup_user_data against the anonymous account, deleting
+        // its clipboard rows outright - so the Google button destroyed clips
+        // that the email button stops to ask about.
+        if (!await _confirmGuestClipsBeforeSignIn()) {
+          if (mounted) setState(() => _authLoading = false);
+          return;
+        }
+
         // Login mode: Sign in with existing Google account - check if switching accounts
         final currentUserId = widget.authService.currentUserId;
 
@@ -687,6 +685,26 @@ class _AuthPanelState extends State<AuthPanel> {
   /// Returns true to go ahead. Deliberately names the alternative, because the
   /// user almost always wants Create Account - that keeps the same id and the
   /// clips with it.
+  /// Ask before signing into a different account while holding guest clips.
+  ///
+  /// Signing in changes user_id, and clips belong to the id that made them.
+  /// For the email path the anonymous account's clips merely become
+  /// unreachable; for Google, AuthService._cleanupPreviousSession runs
+  /// cleanup_user_data and deletes them. Either way it cannot be undone, so
+  /// both paths ask.
+  ///
+  /// Returns true when there is nothing to lose or the user accepted losing it.
+  Future<bool> _confirmGuestClipsBeforeSignIn() async {
+    if (!widget.authService.isAnonymous) return true;
+
+    final orphanCount = await _clipboardRepository
+        .getClipboardCountForCurrentUser();
+    if (orphanCount == 0) return true;
+    if (!mounted) return false;
+
+    return _confirmLeavingClipsBehind(orphanCount);
+  }
+
   Future<bool> _confirmLeavingClipsBehind(int count) async {
     final clips = count == 1 ? '1 clip' : '$count clips';
     final result = await showDialog<bool>(

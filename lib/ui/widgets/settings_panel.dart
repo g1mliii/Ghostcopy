@@ -913,11 +913,16 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     required int selected,
     required ValueChanged<int> onSelected,
   }) {
-    // A value saved by the old slider will usually not be a preset, so the
-    // nearest one is shown as active rather than leaving nothing selected.
-    final active = _staleDurationPresets.reduce(
-      (a, b) => (a - selected).abs() <= (b - selected).abs() ? a : b,
-    );
+    // A value saved by the old 1-60 minute slider will usually not be a preset.
+    // Rounding it to the nearest one for display made Settings misreport the
+    // app: a saved 10 minutes is still what auto-receive waits, while the panel
+    // highlighted "5 min", and the two only agreed once the user happened to
+    // tap something. The saved value is shown as its own option instead, so the
+    // highlighted chip is always the delay actually in force. It disappears as
+    // soon as a preset is chosen.
+    final options = _staleDurationPresets.contains(selected)
+        ? _staleDurationPresets
+        : ([..._staleDurationPresets, selected]..sort());
 
     return RepaintBoundary(
       child: Container(
@@ -956,16 +961,15 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
             const SizedBox(height: 10),
             Row(
               children: [
-                for (final minutes in _staleDurationPresets) ...[
+                for (final minutes in options) ...[
                   Expanded(
                     child: _DurationOption(
                       label: minutes == 60 ? '1 hr' : '$minutes min',
-                      isSelected: minutes == active,
+                      isSelected: minutes == selected,
                       onTap: () => onSelected(minutes),
                     ),
                   ),
-                  if (minutes != _staleDurationPresets.last)
-                    const SizedBox(width: 6),
+                  if (minutes != options.last) const SizedBox(width: 6),
                 ],
               ],
             ),
