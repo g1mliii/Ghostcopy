@@ -2,73 +2,107 @@
 
 ## Active Task
 
-**iOS bring-up** (2026-09-16 to 2026-09-17). iOS now builds, launches and
-renders on the simulator for the first time. Committed as `0be7ed8`.
+**iOS bring-up** (2026-09-16 to 2026-09-17). iOS runs on real hardware.
 
-Branch note: `ios/bring-up` is branched off `macos/bring-up`, not `main`,
-because PR #16 is still open and carries the auth/sandbox/sync fixes this
-builds on. **The iOS PR must target `macos/bring-up`**, or its diff will
-re-show the macOS commits. Retarget to `main` once #16 merges.
+Branch note: `ios/bring-up` sits on `macos/bring-up` (PR #16), rebased onto it
+after the Codex review fixes landed there. **The iOS PR must target
+`macos/bring-up`**, or its diff re-shows the macOS work.
 
 ### Done
 
-- [x] Builds: `flutter build ios --simulator --debug`
-- [x] Launches and renders on an iPhone 17 simulator (iOS 27.0)
-- [x] Welcome screen, tab switching, sign-in form all verified by hand
-- [x] **UIScene life cycle migration.** This was not future-proofing - the iOS
-      27 SDK makes it mandatory, and without it UIKit refuses to launch the app
-      at all. That was the white screen. Flutter's automated migration only
-      fires on a stock AppDelegate, so it was done by hand: scene manifest,
-      `SceneDelegate` subclassing `FlutterSceneDelegate` for the privacy blur
-      and deep links, `AppDelegate` on `FlutterImplicitEngineDelegate`, and
-      `FlutterChannelHub` building the channels once from the engine messenger
-- [x] Removed `NSExtension` from the app `Info.plist` - iOS was treating the
-      whole app as an app extension
-- [x] Pods deployment target floor for Xcode 27 (`ios/Podfile`)
-- [x] SPM migration (22 packages SPM, 3 CocoaPods), `Package.resolved` committed
-- [x] Supabase credentials + `user_id` moved to the App Group suite
-- [x] **QR scanner crashed the app on iOS.** No `NSCameraUsageDescription` in
-      `Info.plist` - TCC terminates the process rather than denying the
-      permission, so it looked like a crash. The welcome screen opens on the
-      QR tab, so a new user on real hardware would have hit it on first launch
-- [x] QR scanner never initialized on a cold launch: the controller was only
-      created in `_onTabChanged`, but `TabController` starts at index 0 and a
-      listener only fires on a *change*. Shared code - Android had it too.
-      This bug masked the crash above, by never touching the camera
+- [x] Builds, signs and runs on an iPhone 15 Pro, and on the simulator
+- [x] Google sign-in, sync, history, encryption all working on device
+- [x] **UIScene migration.** Mandatory on the iOS 27 SDK - without it UIKit
+      refuses to launch the app at all. That was the white screen
+- [x] `NSExtension` removed from the app Info.plist - iOS was treating the whole
+      app as an app extension
+- [x] Camera crash fixed (`NSCameraUsageDescription`) - would have killed
+      onboarding on first launch, since the welcome screen opens on the QR tab
+- [x] QR scanner never initialised on a cold launch (shared with Android)
+- [x] Entitlements, App Group and `DEVELOPMENT_TEAM` wired into the target
+- [x] `GoogleService-Info.plist` added to Copy Bundle Resources - copying the
+      file in was never enough, nothing referenced it
+- [x] Squircles on Apple platforms (`Adaptive.surfaceShape`), iOS spinner on the
+      four mobile paths that still drew Material's
+- [x] Notification flow simplified: tap opens the app and copies, or opens the
+      share sheet for files. No long-press actions
+- [x] Cold-launch notification taps no longer lost (native parks, Dart collects)
+- [x] Passphrase storage hardened - see below
 
-The bring-up itself changed nothing in `lib/` - the Dart side was correct.
-The one later Dart change was the QR scanner initialization, which is shared
-with Android and was not an iOS problem at all.
+### Push: was dead for a day, and it was not iOS
 
-### Next
+`send-clipboard-notification` returned 401 on every invocation from
+2026-09-16 18:32Z. Supabase migrated the project to its current API key scheme,
+so `SUPABASE_SERVICE_ROLE_KEY` became a 41-character `sb_secret_...` key while
+the `fcm_service_role_key` vault secret stayed the 219-character legacy JWT.
+The function compares them byte for byte to recognise its own trigger, so every
+call fell through to `auth.getUser()`, 403'd, and returned 401 before reading
+the body. Nothing surfaced it: the trigger fired, the client saw a successful
+send, the clip synced, and only the notification silently never arrived.
 
-- [ ] Sign in / sign out / account upgrade on iOS - never exercised
-- [ ] `ios/Runner/GoogleService-Info.plist`. **Copying it in is not enough**:
-      `Runner.xcodeproj` has no reference to it, which is why CI builds green
-      without it and why `Firebase.initializeApp()` currently no-ops. It must
-      be added to the Runner target's Copy Bundle Resources
-- [ ] Wire `CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements` into the
-      Runner target - referenced by nothing today, so no `aps-environment`
-      and no App Group
-- [ ] Set `DEVELOPMENT_TEAM = R9TKT8U45R` (what macOS uses)
-- [ ] Decide: add a real widget extension target, or delete
-      `ios/ClipboardWidget/`. There is no widget target - those four Swift
-      files have never been in a build. If a target is added,
-      `RefreshWidgetIntent` must read the App Group suite rather than
-      `UserDefaults.standard`
-- [ ] Register a test device, then `flutter run -d ios` on real hardware
-- [ ] APNs end to end, the home screen widget, the share sheet
+The same key change broke a second thing one layer deeper: the devices query
+ran through a client built from the anon key with the caller's Authorization
+header forwarded, which worked while that header was a JWT PostgREST could
+decode. Opaque keys have nothing to decode, so the query ran as anon against an
+RLS-protected table and 500'd.
 
-### Known, not chased
+Fixed by updating the vault secret (server state, not in this repo), reading
+devices through `supabaseAdmin` on the trigger path, and pinning
+`verify_jwt = false` in `supabase/config.toml` - `deploy.yml` deploys with no
+flags on every push to main, so without that file the next merge silently turns
+the platform JWT gate back on and breaks push again.
 
-- `FLTGoogleSignInPlugin` logs its own UIScene deprecation warning. Plugin
-  side, upstream
-- `irondash_engine_context` and `super_native_extensions` have no SPM support.
-  Upstream, and macOS depends on them too. Deliberately left alone
-- `pod install` warns that CocoaPods did not set the base configuration
-  because `Flutter/Release.xcconfig` does not include `Pods-Runner.profile.xcconfig`.
-  Harmless so far; the likely symptom if it bites is the Profile configuration
-  failing to link pods
+**Diagnosing this from the client was impossible** and cost most of the night.
+The app was healthy at every step because it was never the problem. What found
+it was a temporary diagnostic returning key lengths in the 401 body, read back
+out of `net._http_response` - pg_net records every response, and the dashboard
+logs do not carry console output.
+
+### Why the notification Copy action is gone
+
+The long-press Copy button needed the clip staged on the device by a background
+isolate woken by a `content-available` push. On a real iPhone the isolate woke
+and wrote `pending_push.json` but never staged the clip, and the fallback needs
+a network round trip a background action does not reliably get time for.
+
+Dropped rather than chased, because it could not be made dependable: iOS
+throttles background wake-ups on battery, Low Power Mode and usage, and refuses
+them outright for an app the user swiped away. A button that copies instantly
+sometimes and silently does nothing the rest of the time is worse than a tap
+that always behaves the same way. Android keeps the fast path - its background
+execution is genuinely more permissive.
+
+### Still to test on the phone
+
+- [ ] Text clip: notification says "Tap to open and copy" -> tap -> app opens,
+      clipboard holds the clip
+- [ ] File or image: tap -> app opens -> **share sheet opens automatically**.
+      Never run on iOS. Same `processShareAction` code Android uses
+- [ ] Cold launch: swipe the app away, send a clip, tap the notification. This
+      is what the deferred-tap handoff exists for
+
+### Open
+
+- [ ] **Per-device names.** Every iOS device registers as "iOS Device" against
+      a UNIQUE (user_id, device_type, device_name) index, so a simulator and a
+      phone share one row and one FCM token - whichever launched last wins, and
+      the other silently stops receiving push. Same for two Androids. Needs
+      `device_info_plus` as a direct dependency, async resolution (the getter is
+      synchronous and read on every send), and a decision about existing rows.
+      Note iOS gives only the model name without an Apple entitlement
+- [ ] **Keychain accessibility, properly.** The encryption key is written with
+      the default `kSecAttrAccessibleWhenUnlocked`, so a background isolate
+      cannot read it while the phone is locked. Changing it is a **data
+      migration**, not a config tweak - read with the old options, delete,
+      rewrite with the new. Attempting it as a one-liner orphaned the stored
+      passphrase and locked this machine out; see tasks/lessons.md
+- [ ] Widget extension target, or delete `ios/ClipboardWidget/`. Still no target
+- [ ] iOS share sheet **into** the app (receiving shares) - no extension target
+- [ ] `flutter logs` returns nothing from a profile build on device. The
+      background isolate is only observable by writing files to the app
+      container and reading them with `devicectl device info files`
+- [ ] Publishable key migration is done in the app; **do not disable legacy API
+      keys** until every released build carries it
 
 ## Later: logo and palette distance from Discord
 
