@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -1340,6 +1341,71 @@ class ClipboardRepository implements IClipboardRepository {
   /// is read on every send and on every realtime callback.
   static String? _cachedDeviceName;
   static bool _deviceNameResolved = false;
+
+  /// Resolve the device name once, before anything reads it.
+  ///
+  /// [getCurrentDeviceName] is synchronous and read on every send and every
+  /// realtime callback, but a phone's model name only comes back
+  /// asynchronously. Called from main() so the answer is cached before the
+  /// first send; if it is skipped the synchronous getter still returns a
+  /// usable fallback, just a generic one.
+  static Future<void> initializeDeviceName() async {
+    if (_deviceNameResolved) return;
+
+    // Desktop has a hostname, which is already specific to the machine and is
+    // what the user calls it.
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      getCurrentDeviceName();
+      return;
+    }
+
+    try {
+      final info = DeviceInfoPlugin();
+      String? name;
+
+      if (Platform.isAndroid) {
+        final android = await info.androidInfo;
+        // "Pixel 8" rather than "sdk_gphone64_arm64": model is what the user
+        // would call it, and brand disambiguates identical model numbers
+        // across manufacturers.
+        final model = android.model.trim();
+        final brand = android.brand.trim();
+        if (model.isNotEmpty) {
+          name = model.toLowerCase().startsWith(brand.toLowerCase())
+              ? model
+              : '${_capitalize(brand)} $model'.trim();
+        }
+      } else if (Platform.isIOS) {
+        final ios = await info.iosInfo;
+        // Since iOS 16 `name` returns the model, not what the user called the
+        // phone - that needs an Apple-granted entitlement. So "iPhone 15 Pro"
+        // rather than "Subai's iPhone". Still enough to tell a phone from an
+        // iPad or a simulator, which is what the unique index needs.
+        final model = ios.utsname.machine.trim();
+        final readable = ios.name.trim();
+        name = readable.isNotEmpty
+            ? readable
+            : (model.isNotEmpty ? model : null);
+      }
+
+      if (name != null && name.isNotEmpty) {
+        _cachedDeviceName = name;
+        _deviceNameResolved = true;
+        debugPrint('[Repository] Device name resolved: $name');
+        return;
+      }
+    } on Object catch (e) {
+      // Never fatal: a generic name still works, it just collides with another
+      // device of the same platform.
+      debugPrint('[Repository] Could not read device info: $e');
+    }
+
+    // Fall through to the platform-label fallback.
+    getCurrentDeviceName();
+  }
+
+  static String _capitalize(String value) =>
+      value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
 
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;

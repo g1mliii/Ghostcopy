@@ -511,6 +511,13 @@ Future<void> main(List<String> args) async {
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
     StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
 
+    // Before anything registers this device or sends a clip. The name is read
+    // synchronously from then on, and resolving a phone's model is async - so
+    // without this every send and every registration would use the generic
+    // fallback, and `devices` is uniquely indexed on
+    // (user_id, device_type, device_name).
+    await ClipboardRepository.initializeDeviceName();
+
     // Initialize Settings Service (needed for clipboard auto-clear and other settings)
     final settingsService = SettingsService();
     await settingsService.initialize();

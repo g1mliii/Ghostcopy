@@ -36,6 +36,11 @@ dependencies:
   crypto: ^3.0.3
   cryptography: ^2.7.0
 
+  # Gives each device a readable name of its own. Without it every phone
+  # registers as "<Platform> Device", and `devices` is uniquely indexed on
+  # (user_id, device_type, device_name) - so a second device of the same
+  # platform overwrites the first's row and takes its FCM token with it.
+  device_info_plus: ^11.5.0
   encrypt: ^5.0.3
   file_picker: ^11.0.3
   firebase_core: ^4.3.0

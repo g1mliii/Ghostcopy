@@ -18,6 +18,10 @@ import WidgetKit
 
 @available(iOS 17.0, *)
 struct RefreshWidgetIntent: AppIntent {
+    /// Must match the App Group in both targets' entitlements, and the one
+    /// WidgetDataManager writes the clipboard rows to.
+    static let appGroupIdentifier = "group.com.ghostcopy.app"
+
     static var title: LocalizedStringResource = "Refresh Clipboard Widget"
     static var description = IntentDescription("Refresh the clipboard widget with the latest items")
 
@@ -28,9 +32,17 @@ struct RefreshWidgetIntent: AppIntent {
         print("[RefreshWidgetIntent] 🔄 Widget refresh triggered")
 
         do {
-            // Get stored Supabase credentials from UserDefaults
-            guard let supabaseUrl = UserDefaults.standard.string(forKey: "supabase_url"),
-                let anonKey = UserDefaults.standard.string(forKey: "supabase_anon_key")
+            // Credentials come from the App Group suite, not UserDefaults.standard.
+            //
+            // A widget extension is a separate process with its own container,
+            // so `.standard` here is not the `.standard` the app writes to -
+            // the two never meet. WidgetDataManager already uses the shared
+            // suite for the clipboard rows; these were reading the one place
+            // the app could never have put them, so this refresh path could
+            // not have worked at all.
+            guard let defaults = UserDefaults(suiteName: Self.appGroupIdentifier),
+                let supabaseUrl = defaults.string(forKey: "supabase_url"),
+                let anonKey = defaults.string(forKey: "supabase_anon_key")
             else {
                 print("[RefreshWidgetIntent] ❌ Missing Supabase credentials")
                 return .result()
@@ -71,8 +83,10 @@ struct RefreshWidgetIntent: AppIntent {
         from url: String,
         anonKey: String
     ) async throws -> [[String: Any]] {
-        // Build REST API URL (assumes user_id is stored)
-        guard let userId = UserDefaults.standard.string(forKey: "user_id") else {
+        // Same suite as the credentials above, for the same reason.
+        guard let defaults = UserDefaults(suiteName: Self.appGroupIdentifier),
+            let userId = defaults.string(forKey: "user_id")
+        else {
             print("[RefreshWidgetIntent] ⚠️ No user_id found, using empty list")
             return []
         }
