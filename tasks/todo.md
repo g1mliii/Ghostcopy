@@ -81,6 +81,28 @@ execution is genuinely more permissive.
 - [ ] Cold launch: swipe the app away, send a clip, tap the notification. This
       is what the deferred-tap handoff exists for
 
+### Later: request the iOS device-name entitlement
+
+`com.apple.developer.device-information.user-assigned-device-name`, requested
+from Apple rather than enabled in the portal - developer.apple.com, Contact ->
+Request. Since iOS 16 `UIDevice.name` returns the model, so a phone reports
+"iPhone" instead of "Subai's iPhone"; the entitlement restores the real name.
+
+Not a blocker and not a fix for anything broken. The device-row collision is
+already solved by using distinct model names, so this only makes the name
+nicer. Apple is selective and turnaround is slow, so it is worth requesting in
+the background rather than waiting on.
+
+The justification that fits: users manage several devices, the settings screen
+lists them, and clips are labelled by which device sent them - so identifying a
+device by the name its owner gave it is the point rather than a convenience.
+
+No code change if granted. `initializeDeviceName()` already reads `ios.name`
+first and only falls back to the model identifier when it comes back empty.
+
+- [ ] Submit the request
+- [ ] If granted, add the key to `ios/Runner/Runner.entitlements`
+
 ### Later: accessibility pass, both platforms
 
 Never audited. Worth doing as its own piece with a device in hand, not guessed
