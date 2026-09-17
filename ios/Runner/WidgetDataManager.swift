@@ -1,10 +1,8 @@
 /// Manages clipboard data shared between main app and widget extension via App Groups
 /// Uses UserDefaults with App Group suite for inter-process communication
 ///
-/// Memory Management:
-/// - Weak references for delegates (prevents retain cycles)
-/// - Single shared instance (singleton)
-/// - Properly cleans up UserDefaults observers on deinit
+/// Single shared instance. The app is the only writer; the widget process
+/// only ever reads.
 
 import Foundation
 
@@ -12,9 +10,6 @@ import Foundation
 
 /// Clipboard item data structure for widget display
 
-// MARK: - Delegate Protocol
-
-/// Delegate for widget update notifications
 import WidgetKit
 
 class WidgetDataManager {
@@ -32,20 +27,11 @@ class WidgetDataManager {
     private lazy var userDefaults =
         UserDefaults(suiteName: Self.appGroupIdentifier) ?? UserDefaults.standard
 
-    // Keep track of changes for widget reload
-    private weak var widgetUpdateDelegate: WidgetUpdateDelegate?
-
     init() {
         // Private initializer for singleton
     }
 
     // MARK: - Public Methods
-
-    /// Set delegate for widget update notifications
-    /// Uses weak reference to prevent retain cycles
-    func setWidgetUpdateDelegate(_ delegate: WidgetUpdateDelegate?) {
-        self.widgetUpdateDelegate = delegate
-    }
 
     /// Save clipboard items to shared storage
     /// - Parameter items: Array of clipboard items (max 5)
@@ -91,18 +77,6 @@ class WidgetDataManager {
         return timestamp > 0 ? timestamp : nil
     }
 
-    /// Add new clipboard item at the beginning of the list
-    /// Used when FCM notification arrives or app receives new clipboard item
-    /// - Parameter item: Clipboard item dictionary
-    func addNewClip(_ item: [String: Any]) {
-        var items = getClipboardItems()
-        items.insert(item, at: 0)
-        saveClipboardItems(items)
-
-        // Notify widget to reload
-        notifyWidgetUpdate()
-    }
-
     /// Filesystem path of the shared App Group container.
     ///
     /// Widget thumbnails have to live here. The widget runs in its own process
@@ -124,22 +98,8 @@ class WidgetDataManager {
 
         print("[WidgetDataManager] ✅ Cleared all widget items")
     }
-
-    // MARK: - Private Methods
-
-    /// Notify widget to reload data
-    /// This triggers the widget's TimelineProvider to refresh
-    private func notifyWidgetUpdate() {
-        widgetUpdateDelegate?.onWidgetDataUpdated()
-
-        #if !targetEnvironment(simulator)
-            // On physical device, request widget refresh from system
-            if #available(iOS 14.0, *) {
-                WidgetCenter.shared.reloadAllTimelines()
-            }
-        #endif
-    }
 }
+
 struct ClipboardItemData: Codable {
     let id: String
     let contentType: String
@@ -202,7 +162,4 @@ struct ClipboardItemData: Codable {
             filename: filename
         )
     }
-}
-protocol WidgetUpdateDelegate: AnyObject {
-    func onWidgetDataUpdated()
 }

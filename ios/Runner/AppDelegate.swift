@@ -71,7 +71,7 @@ import WidgetKit
       FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
     }
 
-    updateWidgetForFCMNotification(userInfo)
+    reloadWidget()
 
     completionHandler()
   }
@@ -88,56 +88,29 @@ import WidgetKit
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    updateWidgetForFCMNotification(notification.request.content.userInfo)
+    reloadWidget()
     completionHandler([])
   }
 
   // MARK: - Widget Update Methods
 
-  /// Update widget when FCM notification arrives.
-  /// Adds new item to widget storage and reloads widget timeline.
-  private func updateWidgetForFCMNotification(_ userInfo: [AnyHashable: Any]) {
-    // Extract item data from FCM payload
-    let clipboardContent = userInfo["clipboard_content"] as? String ?? ""
-    let contentType = (userInfo["content_type"] as? String) ?? "text"
-    let deviceType = (userInfo["device_type"] as? String) ?? "Another device"
-    let clipboardId = (userInfo["clipboard_id"] as? String) ?? UUID().uuidString
-    let fileSize = userInfo["file_size"] as? String
-    let filename = userInfo["filename"] as? String
-
-    // Determine if this is a file/image
-    let isFile = contentType.hasPrefix("file_")
-    let isImage = contentType.hasPrefix("image_")
-
-    // Generate appropriate preview
-    var contentPreview: String
-    if isFile, let fname = filename {
-      contentPreview = fname
-    } else if isImage, let size = fileSize {
-      contentPreview = "Image (\(size))"
-    } else {
-      contentPreview = clipboardContent.isEmpty ? "Content" : String(clipboardContent.prefix(100))
-    }
-
-    // Create item dictionary for widget
-    let item: [String: Any] = [
-      "id": clipboardId,
-      "contentType": contentType,
-      "contentPreview": contentPreview,
-      "thumbnailPath": userInfo["thumbnail_path"] ?? "",
-      "deviceType": deviceType,
-      "createdAt": Date().toISO8601String(),
-      "isEncrypted": (userInfo["is_encrypted"] as? Bool) ?? false,
-      "isFile": isFile,
-      "isImage": isImage,
-      "displaySize": fileSize ?? "",
-      "filename": filename ?? "",
-    ]
-
-    // Add to widget storage
-    WidgetDataManager.shared.addNewClip(item)
-
-    print("[AppDelegate] ✅ Widget updated with FCM notification (isFile=\(isFile), isImage=\(isImage))")
+  /// Re-render the widget when a notification arrives.
+  ///
+  /// This used to build a row out of the push and prepend it. The push does
+  /// not carry a clip: the edge function sends `clipboard_id`, `device_type`
+  /// and `content_type`, and nothing else. Every other key this read -
+  /// `clipboard_content`, `file_size`, `filename`, `thumbnail_path`,
+  /// `is_encrypted` - was always absent, so the row it added had the literal
+  /// fallback preview "Content", no size and no filename, and sat at the top
+  /// of the widget until the app next opened and rewrote the list.
+  ///
+  /// Nothing here can do better. Only the app holds the key, and the widget is
+  /// a view over what the app last wrote; a fabricated row is worse than a
+  /// slightly stale accurate one. Reloading still earns its keep - it
+  /// re-renders the relative timestamps, which the `.never` timeline policy
+  /// otherwise freezes.
+  private func reloadWidget() {
+    WidgetCenter.shared.reloadAllTimelines()
   }
 }
 

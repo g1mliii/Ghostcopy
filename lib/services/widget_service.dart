@@ -281,7 +281,14 @@ class WidgetService implements IWidgetService {
   /// - Text: First 50 chars + "..." if truncated
   /// - Image: "Image (250KB)" with no preview text
   /// - Rich text (HTML/Markdown): Strip tags, first 40 chars
-  /// - Encrypted: "🔒 Encrypted content (tap to view)"
+  ///
+  /// Nothing special for encrypted clips. `isEncrypted` describes how the row
+  /// is STORED, not whether this content is readable: getHistory() runs every
+  /// item through _decryptItems() first, and a text row that could not be
+  /// decrypted is dropped there rather than handed on. So by the time an item
+  /// reaches here its content is plaintext, and the old
+  /// "🔒 Encrypted content (tap to view)" branch fired on every single clip -
+  /// hiding the content the widget exists to show.
   String _generatePreview(ClipboardItem item) {
     const maxTextLength = 50;
     const maxRichTextLength = 40;
@@ -292,9 +299,6 @@ class WidgetService implements IWidgetService {
     } else if (item.isFile) {
       // File preview shows filename
       return item.metadata?.originalFilename ?? 'File (${item.displaySize})';
-    } else if (item.isEncrypted) {
-      // Encrypted content shows lock icon
-      return '🔒 Encrypted content (tap to view)';
     } else if (item.isRichText) {
       // Strip HTML/Markdown tags and truncate
       // Strip only the head of the clip. Content runs to 100KB and only

@@ -189,11 +189,11 @@ struct ClipboardWidgetView: View {
             ZStack {
                 tileColor
 
-                if item.isEncrypted {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(accent)
-                } else if let thumbnailPath = item.thumbnailPath, item.isImage,
+                // No lock branch. `isEncrypted` is true for essentially every
+                // row - it describes storage, not readability - so drawing a
+                // lock for it replaced the content-type icon on all of them
+                // and told the user nothing.
+                if let thumbnailPath = item.thumbnailPath, item.isImage,
                     let uiImage = UIImage(contentsOfFile: thumbnailPath)
                 {
                     Image(uiImage: uiImage)
