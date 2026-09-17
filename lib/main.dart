@@ -1158,14 +1158,21 @@ class _MyAppState extends State<MyApp> {
 /// A global hotkey takes its combination away from every app, so the default
 /// has to be one almost nothing else binds. Ctrl+Shift+S is safe on Windows.
 ///
-/// On macOS the default must also not be a key sequence that types a
-/// character, which rules out Option on its own: Option+Space is how macOS
-/// enters a non-breaking space, so claiming it globally would stop that
-/// character being typed in every app. Cmd+Shift+V keeps the clipboard
-/// association, and pairing Cmd with Shift avoids the plain-Cmd shortcuts
-/// that apps already rely on.
+/// The macOS default has to clear two separate hazards, and the obvious
+/// candidates each fail one of them:
+///
+///   - It must not be a sequence that types a character. Option+Space is how
+///     macOS enters a non-breaking space, so claiming it globally stopped that
+///     character being typed in every app.
+///   - It must not be a combination applications routinely bind. Cmd+Shift+V
+///     is paste-without-formatting in browsers, editors and chat apps, so
+///     taking it globally would break that command everywhere.
+///
+/// Ctrl+Shift+Space clears both: Control+Shift produces no character, and the
+/// nearby system bindings are Ctrl+Space and Ctrl+Option+Space (input source
+/// switching), neither of which this collides with.
 final HotKey defaultHotkey = Platform.isMacOS
-    ? const HotKey(key: 'v', meta: true, shift: true)
+    ? const HotKey(key: 'space', ctrl: true, shift: true)
     : const HotKey(key: 's', ctrl: true, shift: true);
 
 /// Invoked when the global hotkey fires.
@@ -1315,6 +1322,17 @@ Future<({bool ok, String message})> _sendSharedFile(
   bool initializeAuth = false,
 }) async {
   try {
+    // Directories are rejected by name rather than falling through to the
+    // existsSync check below, which is false for a directory and would report
+    // a folder that is plainly there as missing. The macOS service is declared
+    // for public.data so Finder should not offer it on folders at all, but the
+    // Windows path shares this function and a bundle is a directory too.
+    if (FileSystemEntity.isDirectorySync(path)) {
+      return (
+        ok: false,
+        message: 'Folders cannot be sent. Select a file instead.',
+      );
+    }
     final file = File(path);
     if (!file.existsSync()) {
       return (ok: false, message: 'The selected file no longer exists.');

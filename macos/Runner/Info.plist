@@ -54,9 +54,15 @@
 			<string>GhostCopy</string>
 			<key>NSRequiredContext</key>
 			<dict/>
+			<!-- public.data, not public.item: folders and bundles conform to
+			     public.item too, so that advertised the service on directories
+			     the send path cannot handle - right-clicking a folder offered
+			     the action only to fail with "no longer exists". public.data is
+			     the base type for byte streams, which is exactly the regular
+			     files this can send. -->
 			<key>NSSendFileTypes</key>
 			<array>
-				<string>public.item</string>
+				<string>public.data</string>
 			</array>
 		</dict>
 	</array>

@@ -220,20 +220,31 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   }
 
   Future<void> _loadEncryptionStatus() async {
-    if (widget.encryptionService == null) return;
+    final encryptionService = widget.encryptionService;
+    if (encryptionService == null) return;
 
-    var enabled = await widget.encryptionService!.isEnabled();
+    final user = widget.authService.currentUser;
+
+    // Re-key for whoever is signed in NOW, before reading any state off the
+    // service. isEnabled() only reports whether a key is loaded in memory, so
+    // asking first answers for the PREVIOUS account: when this panel stayed
+    // open while an encryption-enabled user was replaced by another, the auth
+    // callback read enabled=true from the outgoing user's key, skipped the
+    // branch below that does the initialize, and left the panel telling the
+    // new account encryption was on when it had no key at all. initialize()
+    // returns immediately when it is already set up for this user, so calling
+    // it every time costs nothing.
+    if (user != null) {
+      await encryptionService.initialize(user.id);
+    }
+
+    var enabled = await encryptionService.isEnabled();
 
     // Check for backup if encryption is disabled
     var hasBackup = false;
 
-    if (!enabled && widget.authService.currentUser != null) {
-      // Ensure service is initialized with user ID
-      await widget.encryptionService!.initialize(
-        widget.authService.currentUser!.id,
-      );
-
-      hasBackup = await widget.encryptionService!.hasCloudBackup();
+    if (!enabled && user != null) {
+      hasBackup = await encryptionService.hasCloudBackup();
 
       // If we have a backup, try to auto-restore immediately (user convenience)
       if (hasBackup) {
@@ -241,8 +252,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           '[SettingsPanel] Backup found, attempting auto-restore on load...',
         );
         try {
-          final restored = await widget.encryptionService!
-              .autoRestoreFromCloud();
+          final restored = await encryptionService.autoRestoreFromCloud();
           if (restored) {
             // If restored successfully, we are now enabled!
             enabled = true;
