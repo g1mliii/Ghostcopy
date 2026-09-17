@@ -46,37 +46,27 @@ struct CopyToClipboardIntent: AppIntent {
 
     @Parameter(title: "Clipboard ID") var clipboardId: String
     @Parameter(title: "Content") var content: String
-    @Parameter(title: "Content Type") var contentType: String
-    @Parameter(title: "Thumbnail Path") var thumbnailPath: String
 
     init() {}
 
-    init(clipboardId: String, content: String, contentType: String, thumbnailPath: String) {
+    init(clipboardId: String, content: String) {
         self.clipboardId = clipboardId
         self.content = content
-        self.contentType = contentType
-        self.thumbnailPath = thumbnailPath
     }
 
-    /// Copy only. Files and images are not copyable from here - they need the
-    /// app to fetch and decrypt the payload first - so the widget sends those
-    /// rows through a `Link` to `ghostcopy://share/<id>` instead, which
-    /// SceneDelegate already handles.
+    /// Writes the pasteboard from inside the widget process, so a text clip is
+    /// copied without GhostCopy ever appearing. UIPasteboard is available to an
+    /// extension - it is presenting UI that a widget cannot do, not copying.
     ///
-    /// This used to branch on an `action` parameter and return
-    /// `.result(opensIntent: OpenURLIntent(...))` for the share case. That did
-    /// not compile: the two branches gave `perform()` two different opaque
-    /// return types, and `OpenURLIntent` is iOS 18+ against a target of 17.
+    /// `content` is the full clip. It used to be `contentPreview`, which is cut
+    /// to 50 characters with an ellipsis, so every longer clip copied a mangled
+    /// string and looked like it had worked.
+    ///
+    /// Only rows the app sent a copyText for reach this; files and images have
+    /// no payload on the device to copy and open the app instead.
     @MainActor
     func perform() async throws -> some IntentResult {
-        if contentType.lowercased().contains("image"), !thumbnailPath.isEmpty,
-            let image = UIImage(contentsOfFile: thumbnailPath)
-        {
-            UIPasteboard.general.image = image
-        } else {
-            UIPasteboard.general.string = content
-        }
-
+        UIPasteboard.general.string = content
         return .result()
     }
 }

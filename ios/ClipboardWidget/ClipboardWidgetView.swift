@@ -155,31 +155,27 @@ struct ClipboardWidgetView: View {
 
     /// Individual clipboard item row.
     ///
-    /// Text copies in place, without leaving the home screen: the intent runs
-    /// inside the widget process and writes the pasteboard directly.
+    /// A row the app sent full text for copies in place: the intent runs inside
+    /// the widget process and writes the pasteboard without GhostCopy
+    /// appearing.
     ///
-    /// Files and images cannot do that - the widget only holds a preview and a
-    /// small thumbnail, not the payload, and an encrypted clip still needs the
-    /// key. Those rows open the app at `ghostcopy://share/<id>`, which
-    /// SceneDelegate already routes to processShareAction().
+    /// Everything else opens the app at `ghostcopy://share/<id>`, which
+    /// SceneDelegate already routes to processShareAction(). That covers files
+    /// and images - the widget holds a filename and a 40px thumbnail, never the
+    /// payload, and the bytes sit encrypted in R2 - and text past the size cap.
+    /// A widget cannot present a share sheet itself: it has no window scene,
+    /// and WidgetKit offers only Button, Toggle and Link.
     @ViewBuilder
     private func clipboardItemRow(_ item: ClipboardItemData) -> some View {
-        if item.isFile || item.isImage {
-            Link(destination: URL(string: "ghostcopy://share/\(item.id)")!) {
-                rowContent(item)
-            }
-        } else {
-            Button(
-                intent: CopyToClipboardIntent(
-                    clipboardId: item.id,
-                    content: item.contentPreview,
-                    contentType: item.contentType,
-                    thumbnailPath: item.thumbnailPath ?? ""
-                )
-            ) {
+        if let copyText = item.copyText {
+            Button(intent: CopyToClipboardIntent(clipboardId: item.id, content: copyText)) {
                 rowContent(item)
             }
             .buttonStyle(.plain)
+        } else {
+            Link(destination: URL(string: "ghostcopy://share/\(item.id)")!) {
+                rowContent(item)
+            }
         }
     }
 

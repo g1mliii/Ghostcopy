@@ -112,6 +112,9 @@ struct ClipboardItemData: Codable {
     let isImage: Bool
     let displaySize: String?
     let filename: String?
+    /// Full clip text, when short enough to ship. nil for files and images,
+    /// and for text past the size cap - those taps open the app instead.
+    let copyText: String?
 
     /// Convert to dictionary for UserDefaults storage
     func toDictionary() -> [String: Any] {
@@ -127,6 +130,7 @@ struct ClipboardItemData: Codable {
             "isImage": isImage,
             "displaySize": displaySize ?? "",
             "filename": filename ?? "",
+            "copyText": copyText ?? "",
         ]
     }
 
@@ -147,6 +151,7 @@ struct ClipboardItemData: Codable {
         let isImage = dict["isImage"] as? Bool ?? false
         let displaySize = dict["displaySize"] as? String
         let filename = dict["filename"] as? String
+        let copyText = dict["copyText"] as? String
 
         return ClipboardItemData(
             id: id,
@@ -159,7 +164,8 @@ struct ClipboardItemData: Codable {
             isFile: isFile,
             isImage: isImage,
             displaySize: displaySize,
-            filename: filename
+            filename: filename,
+            copyText: copyText?.isEmpty == false ? copyText : nil
         )
     }
 }

@@ -51,6 +51,12 @@ class WidgetService implements IWidgetService {
   /// are worth keeping on disk.
   static const int _maxWidgetItems = 5;
 
+  /// Longest clip shipped to the widget in full so it can be copied without
+  /// opening the app. The App Group payload is a plist read by another
+  /// process on every render, so it is kept small; anything longer hands the
+  /// tap to the app instead of copying a truncated string.
+  static const int _maxInlineCopyChars = 8192;
+
   // State
   bool _initialized = false;
   bool _disposed = false;
@@ -261,6 +267,7 @@ class WidgetService implements IWidgetService {
         'id': item.id,
         'contentType': item.contentType.value,
         'contentPreview': _generatePreview(item),
+        'copyText': _copyTextFor(item),
         'thumbnailPath': thumbnailPath,
         'deviceType': item.deviceType,
         'createdAt': item.createdAt.toIso8601String(),
@@ -273,6 +280,20 @@ class WidgetService implements IWidgetService {
     }
 
     return widgetItems;
+  }
+
+  /// Full clip text for the widget's tap-to-copy, or null when the tap has to
+  /// open the app instead.
+  ///
+  /// The widget used to copy `contentPreview`, which is truncated to 50
+  /// characters with an ellipsis appended - so tapping any longer clip put a
+  /// mangled string on the pasteboard while appearing to work. Files and
+  /// images are null because the widget holds only a filename and a 40px
+  /// thumbnail; copying either would be the same kind of quiet lie.
+  String? _copyTextFor(ClipboardItem item) {
+    if (item.isImage || item.isFile) return null;
+    if (item.content.length > _maxInlineCopyChars) return null;
+    return item.content;
   }
 
   /// Generate widget preview text from clipboard item
