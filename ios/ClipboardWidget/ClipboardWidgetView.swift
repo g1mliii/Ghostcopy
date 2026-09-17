@@ -5,6 +5,7 @@
 /// - No expensive layout operations
 /// - Images loaded from local cache only
 /// - Lightweight preview text generation
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -173,10 +174,16 @@ struct ClipboardWidgetView: View {
                     copyKind: kind
                 )
             ) {
+                // No .invalidatableContent() here. It is the documented way to
+                // show a row as pending while its intent runs, but applying it
+                // to this Button's label swallowed the tap outright: the intent
+                // never executed and WidgetKit fell through to the widget's
+                // default action, opening the app. Bisected against a bare
+                // Button, which copies correctly. The "Copied" header and the
+                // row tint below already acknowledge the tap, and they survive
+                // because they come back through a timeline reload rather than
+                // from view state.
                 rowContent(item)
-                    // Dims the row while the intent runs, so a tap is visibly
-                    // acknowledged instead of appearing to do nothing.
-                    .invalidatableContent()
             }
             .buttonStyle(.plain)
         } else {
