@@ -322,8 +322,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     if (!_showSettings) {
       setState(() => _activePanel = SpotlightPanel.settings);
       await _settingsSlideController.forward();
-      widget.onSettingsOpened?.call();
     }
+    // Consume every tray request, including one for an already-open panel,
+    // so the next request can trigger another false-to-true transition.
+    if (mounted) widget.onSettingsOpened?.call();
   }
 
   // _viewModel.refreshHistory and _debouncedLoadHistory removed - now in ViewModel

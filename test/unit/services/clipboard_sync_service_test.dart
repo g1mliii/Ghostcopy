@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
@@ -31,6 +32,7 @@ void main() {
   late _Settings settings;
   late _Clipboard clipboard;
   late _TempFiles tempFiles;
+  late _Auth auth;
   late ClipboardSyncService service;
   late ClipboardContent clipboardValue;
 
@@ -61,7 +63,7 @@ void main() {
     clipboard = _Clipboard();
     tempFiles = _TempFiles();
     final client = _Supabase();
-    final auth = _Auth();
+    auth = _Auth();
     when(() => client.auth).thenReturn(auth);
     when(() => auth.currentUser).thenReturn(
       User(
@@ -92,6 +94,41 @@ void main() {
   });
 
   tearDown(() => service.dispose());
+
+  testWidgets(
+    'account reinitialization invalidates the macOS pasteboard counter',
+    (tester) async {
+      const channel = MethodChannel('com.ghostcopy.app/clipboard_change');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => 42,
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        );
+      });
+      // Exercise the account reset without opening a realtime connection.
+      when(() => auth.currentUser).thenReturn(null);
+      clipboardValue = ClipboardContent.image(
+        Uint8List.fromList([1, 2, 3]),
+        'image/png',
+      );
+      service.startClipboardMonitoring();
+      await tester.pump(const Duration(seconds: 5));
+      verify(clipboard.read).called(1);
+
+      await tester.pump(const Duration(seconds: 5));
+      verifyNever(clipboard.read);
+
+      service.reinitializeForUser();
+      await tester.pump(const Duration(seconds: 5));
+      verify(clipboard.read).called(1);
+      service.stopClipboardMonitoring();
+    },
+    skip: !Platform.isMacOS,
+  );
 
   testWidgets('copies the identified row even if another clip becomes newest', (
     tester,

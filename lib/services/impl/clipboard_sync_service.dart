@@ -948,6 +948,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _pendingAutoReceiveRecord = null;
     _lastPolledItemId = null;
     _lastMonitoredClipboard = '';
+    _lastClipboardChangeCount = null;
     _lastSentContentHash = '';
 
     // Subscribe with new user ID (no need to disconnect - auth token updates automatically)
