@@ -901,8 +901,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
@@ -915,8 +916,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         await clipboardService.writeText(finalContent);
@@ -1228,8 +1230,9 @@ class MobileMainViewModel extends ChangeNotifier {
 
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final content = item.content;
 
         switch (item.contentType) {
@@ -1497,8 +1500,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
@@ -1513,8 +1517,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = item.content;
 
         await clipboardService.writeText(finalContent);
