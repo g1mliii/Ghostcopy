@@ -19,6 +19,18 @@ class AuthService implements IAuthService {
   AuthService({SupabaseClient? client, this._deviceService, this._googleSignIn})
     : _client = client ?? Supabase.instance.client;
 
+  /// Where Supabase sends the browser back to after Google sign-in.
+  ///
+  /// A web page rather than `ghostcopy://` directly: the OS takes a custom
+  /// scheme without navigating the tab, so the browser was left spinning on
+  /// Supabase's interstitial forever even though the app had signed in. The
+  /// page forwards the PKCE code to `ghostcopy://auth-callback` and tells the
+  /// user they can close it. Recovery already works this way.
+  ///
+  /// Must stay in Supabase's redirect allowlist, or the provider refuses the
+  /// redirect and sign-in fails outright.
+  static const _oauthRedirect = 'https://ghostcopy.app/auth-callback';
+
   final SupabaseClient _client;
   final IDeviceService? _deviceService;
   Session? _pendingOAuthSession;
@@ -159,7 +171,7 @@ class AuthService implements IAuthService {
       });
       final response = await _client.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
+        redirectTo: kIsWeb ? null : _oauthRedirect,
         authScreenLaunchMode: kIsWeb
             ? LaunchMode.platformDefault
             : LaunchMode.externalApplication,
@@ -284,7 +296,7 @@ class AuthService implements IAuthService {
       // Uses custom URL scheme (ghostcopy://) for deep linking
       final response = await _client.auth.linkIdentity(
         OAuthProvider.google,
-        redirectTo: kIsWeb ? null : 'ghostcopy://auth-callback',
+        redirectTo: kIsWeb ? null : _oauthRedirect,
         authScreenLaunchMode: kIsWeb
             ? LaunchMode.platformDefault
             : LaunchMode.externalApplication,

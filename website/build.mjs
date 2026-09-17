@@ -20,7 +20,7 @@ const dist = path.join(root, 'dist');
 const FILES = ['_headers', '_redirects', 'site.webmanifest', 'robots.txt', 'sitemap.xml'];
 
 // Content-hashed into /assets, cached forever.
-const HASHED = ['output.css', 'waitlist.js', 'reset-password.js'];
+const HASHED = ['output.css', 'waitlist.js', 'reset-password.js', 'auth-callback.js'];
 
 // Rewritten (so it points at the hashed names) but served from the root, which
 // a service worker must be to control the whole origin.
