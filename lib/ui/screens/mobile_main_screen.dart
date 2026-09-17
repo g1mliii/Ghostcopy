@@ -681,6 +681,40 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           return false;
       }
     });
+
+    // Ask for anything that arrived before this handler existed.
+    //
+    // Tapping a notification for an app the user swiped away cold-launches it,
+    // and the native side sees that tap long before Dart is running - let alone
+    // before this screen is built. A push from native would land on nobody and
+    // be lost, so the native side holds it and Dart collects it here, once it
+    // is actually able to answer. Pulling is the only ordering that does not
+    // depend on guessing how long a cold start takes.
+    unawaited(_drainPendingNotificationAction());
+  }
+
+  /// Collect a notification tap the native side parked during a cold launch.
+  Future<void> _drainPendingNotificationAction() async {
+    try {
+      final pending = await _notificationChannel
+          .invokeMapMethod<String, dynamic>('takePendingNotificationAction');
+      if (pending == null || !mounted) return;
+
+      final clipboardId = pending['clipboardId'] as String?;
+      final action = pending['action'] as String?;
+      if (clipboardId == null || clipboardId.isEmpty) return;
+
+      debugPrint(
+        '[MobileMain] Draining deferred notification tap: $clipboardId',
+      );
+      await _viewModel.handleNotificationAction(
+        clipboardId: clipboardId,
+        action: action,
+      );
+    } on PlatformException catch (e) {
+      // Nothing parked, or an older build without the native side of this.
+      debugPrint('[MobileMain] No deferred notification action: ${e.message}');
+    }
   }
 
   void _initializeShareIntentListeners() {
