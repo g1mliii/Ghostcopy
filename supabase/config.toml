@@ -22,3 +22,37 @@ project_id = "xhbggxftvnlkotvehwmj"
 # silently turn JWT verification back on and break push again.
 [functions.send-clipboard-notification]
 verify_jwt = false
+
+# Auth email templates, deployed by `supabase config push` in
+# .github/workflows/deploy.yml. Before this, supabase/email-templates/ was only
+# a version-controlled copy of what someone had pasted into the dashboard, and
+# the two drifted the moment anyone forgot.
+#
+# Only these three blocks are declared here, and that is deliberate. `config
+# push` writes exactly what the file declares and leaves everything else alone,
+# so the 27 settings this project configures in the dashboard - anonymous
+# sign-ins, Google OAuth, the Resend SMTP credentials, site_url, the
+# ghostcopy:// redirect allow-list - stay untouched precisely because they are
+# absent. Do not paste a fuller config in here: `supabase config pull` would
+# write all of them, and a partial [auth.email.smtp] block (one missing `pass`)
+# invalidates SMTP and silently stops every auth email.
+#
+# The subjects must match what the dashboard already had, or a push rewrites
+# them as a side effect of shipping a template. `supabase config diff` prints
+# the remote value of each, which is where these came from.
+#
+# Note that diff compares subjects only - it cannot show a change to the HTML
+# body, so a template edit always appears as "no differences". That is expected;
+# the push still uploads the file at content_path.
+
+[auth.email.template.confirmation]
+subject = "Confirm your GhostCopy account"
+content_path = "./email-templates/confirm-signup.html"
+
+[auth.email.template.recovery]
+subject = "Reset your GhostCopy password"
+content_path = "./email-templates/reset-password.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new GhostCopy email"
+content_path = "./email-templates/change-email.html"
