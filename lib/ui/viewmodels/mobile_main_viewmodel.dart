@@ -903,6 +903,7 @@ class MobileMainViewModel extends ChangeNotifier {
           tempFile.path,
           sharePositionOrigin,
           mimeType: detected.mimeType,
+          filename: filename,
         );
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
@@ -945,6 +946,7 @@ class MobileMainViewModel extends ChangeNotifier {
     String path,
     Rect? sharePositionOrigin, {
     String? mimeType,
+    String? filename,
   }) async {
     await SharePlus.instance.share(
       ShareParams(
@@ -959,6 +961,17 @@ class MobileMainViewModel extends ChangeNotifier {
         // instead of the file's own - a PDF came up under Safari's logo - and
         // pasted that sentence into whatever received it.
         files: [XFile(path, mimeType: mimeType)],
+        // The sheet's header title, which is where the filename shows up.
+        // Without it iOS has nothing to title the item with and falls back to
+        // type and size alone - "PDF - 223 KB" for a document the user knows
+        // by name.
+        //
+        // `title`, not `fileNameOverrides`: that one is documented as
+        // supported wherever `files` is, but is only read by the web
+        // implementation, so it does nothing here. `title` is what
+        // FPPSharePlusPlugin turns into LPLinkMetadata.title, and it is
+        // preferred over `subject`, which is meant for email.
+        title: filename,
         sharePositionOrigin: sharePositionOrigin,
       ),
     );
@@ -1194,7 +1207,12 @@ class MobileMainViewModel extends ChangeNotifier {
           _isPreparingShare = false;
           notifyListeners();
 
-          await _shareFile(tempFile.path, null, mimeType: detected.mimeType);
+          await _shareFile(
+            tempFile.path,
+            null,
+            mimeType: detected.mimeType,
+            filename: filename,
+          );
           debugPrint(
             '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
           );
