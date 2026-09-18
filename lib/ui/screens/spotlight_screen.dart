@@ -903,6 +903,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Widget _buildSettingsButton() {
     return _HoverableIconButton(
       icon: Icons.settings,
+      tooltip: 'Settings',
       isActive: _showSettings,
       onTap: () {
         if (_showSettings) {
@@ -919,6 +920,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Widget _buildHistoryButton() {
     return _HoverableIconButton(
       icon: Icons.history,
+      tooltip: 'Clipboard history',
       isActive: _showHistory,
       onTap: () {
         if (_showHistory) {
@@ -1654,6 +1656,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
                     color: GhostColors.textSecondary,
+                    tooltip: 'Close panel',
                     onPressed: _closeActivePanel,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -2141,6 +2144,7 @@ class _HistorySearchBarState extends State<_HistorySearchBar> {
               ? IconButton(
                   icon: const Icon(Icons.clear, size: 16),
                   color: GhostColors.textMuted,
+                  tooltip: 'Clear search',
                   onPressed: () {
                     widget.controller.clear();
                     widget.onChanged('');
@@ -2571,11 +2575,19 @@ class _HoverableIconButton extends StatefulWidget {
     required this.icon,
     required this.isActive,
     required this.onTap,
+    required this.tooltip,
   });
 
   final IconData icon;
   final bool isActive;
   final VoidCallback onTap;
+
+  /// Required, not optional. This is an icon with no text beside it, so
+  /// without a label it reads as nothing at all to a screen reader - and on
+  /// desktop, where the whole window is icons in a row, there was no hover
+  /// tooltip either. Making it required means a new one cannot be added
+  /// without saying what it does.
+  final String tooltip;
 
   @override
   State<_HoverableIconButton> createState() => _HoverableIconButtonState();
@@ -2600,23 +2612,26 @@ class _HoverableIconButtonState extends State<_HoverableIconButton> {
         valueListenable: _isHovered,
         builder: (context, isHovered, _) {
           final isHighlighted = widget.isActive || isHovered;
-          return InkWell(
-            onTap: widget.onTap,
-            borderRadius: _borderRadius,
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isHighlighted
-                    ? GhostColors.primaryAlpha10
-                    : Colors.transparent,
-                borderRadius: _borderRadius,
-              ),
-              child: Icon(
-                widget.icon,
-                size: 22,
-                color: isHighlighted
-                    ? GhostColors.primary
-                    : GhostColors.textSecondary,
+          return Tooltip(
+            message: widget.tooltip,
+            child: InkWell(
+              onTap: widget.onTap,
+              borderRadius: _borderRadius,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isHighlighted
+                      ? GhostColors.primaryAlpha10
+                      : Colors.transparent,
+                  borderRadius: _borderRadius,
+                ),
+                child: Icon(
+                  widget.icon,
+                  size: 22,
+                  color: isHighlighted
+                      ? GhostColors.primary
+                      : GhostColors.textSecondary,
+                ),
               ),
             ),
           );

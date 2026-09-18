@@ -602,6 +602,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
+          tooltip: 'Back',
           color: GhostColors.textPrimary,
         ),
         title: Text(
@@ -915,6 +916,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                               color: Colors.red.shade400,
                               size: 20,
                             ),
+                            tooltip: 'Remove device',
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                             // The actual culprit behind the dead space under the
