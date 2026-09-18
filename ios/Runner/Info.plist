@@ -26,6 +26,10 @@
 	     the share extension. CUSTOM_GROUP_ID is set on both targets. -->
 	<key>AppGroupId</key>
 	<string>$(CUSTOM_GROUP_ID)</string>
+	<!-- The app ships one theme (AppTheme.darkTheme, no light variant), so
+	     following the system only meant light system chrome behind a dark UI. -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	

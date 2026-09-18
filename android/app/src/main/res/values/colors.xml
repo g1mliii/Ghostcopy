@@ -6,4 +6,9 @@
         Color(0xFF5865F2) used by the Flutter theme.
     -->
     <color name="notification_accent">#FF5865F2</color>
+
+    <!-- GhostColors.background. The splash and the window behind the Flutter
+         UI both use it, so there is no lighter frame on either side of the
+         first frame. -->
+    <color name="ghost_background">#FF0D0D0F</color>
 </resources>
