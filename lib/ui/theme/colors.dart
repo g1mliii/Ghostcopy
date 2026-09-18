@@ -25,7 +25,17 @@ class GhostColors {
 
   // Accent colors
   static const primary = Color(0xFF6670FF); // Purple-blue accent
-  static const primaryHover = Color(0xFF4752C4);
+
+  /// Hover fill for an already-selected control, and the fill of the auth
+  /// panel's primary button.
+  ///
+  /// Was 0xFF4752C4 - Discord's dark blurple, exactly - and the last literal
+  /// match left after `primary` moved off 0xFF5865F2. This is the same darker
+  /// primary that [accentDisabled] is built from, so the palette carries one
+  /// dark accent rather than two that differ by three per channel. White on it
+  /// is 5.56:1, comfortably past AA, and darker than [primary] as a hover of a
+  /// selected control should be.
+  static const primaryHover = Color(0xFF555CCB);
   static const success = Color(0xFF3BA55C); // Green for confirmations
 
   /// Fill for a SELECTED control (chips, toggles). A tint rather than the full

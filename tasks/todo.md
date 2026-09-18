@@ -103,31 +103,41 @@ first and only falls back to the model identifier when it comes back empty.
 - [ ] Submit the request
 - [ ] If granted, add the key to `ios/Runner/Runner.entitlements`
 
-### Later: accessibility pass, both platforms
+### Accessibility pass, both platforms - done 2026-09-18
 
-Never audited. Worth doing as its own piece with a device in hand, not guessed
-at. Ordered by how likely each is to actually bite:
+Audited at the top content size on a device, not guessed at. Screenshots were
+the only reliable oracle: a red-pixel counter and a log grep for the overflow
+banner both reported clean while the screenshots plainly showed "BOTTOM
+OVERFLOWED BY 16 PIXELS".
 
-- [ ] **Dynamic Type / textScaler.** Nothing in the app responds to it, and the
-      UI leans on fixed-height containers that will clip at larger text sizes.
-      The biggest real risk, and something App Review looks at
-- [ ] **Touch target sizes** - 44pt on iOS, 48dp on Android. The copy icons in
-      history rows are the obvious suspects
-- [ ] **Screen reader labels.** Icon-only controls - copy, delete, the overflow
-      menu - most likely read as nothing useful
-- [ ] **Contrast ratios**, starting with `textMuted` on `surface`
+- [x] **Dynamic Type / textScaler.** Welcome screen, settings, spotlight and
+      the device chips all reflow now. The device-selector chips needed the
+      `SizedBox` around the horizontal `ListView` loosened, not just the chip -
+      fixing the chip alone left the labels as glyph fragments
+- [x] **Touch target sizes** - one deliberate exception: Settings' delete
+      button is 40dp, sized that way to fix a dead-space bug. Revisit if it
+      ever reads as hard to hit
+- [x] **Screen reader labels** on the icon-only controls
+- [x] **Contrast ratios.** `textMuted` on `surface` measures 6.4:1 and was
+      never the problem
+
+- [ ] **`primary` as a foreground is 4.44:1 on `surface`**, just under AA. Not
+      part of the pass above because it is a palette decision, not a fix: it is
+      used as a foreground in ~104 places, so either the token moves or those
+      call sites move to `accentText` (8.98:1) one at a time. The email
+      templates already took the second route
 
 ### Open
 
-- [ ] **Cmd+Q quits GhostCopy on macOS with no warning.** It is a background
-      utility - invisible until the hotkey - so quitting it stops clipboard
-      sync silently, and the user finds out when clips stop arriving rather
-      than at the moment they quit. Hit repeatedly by accident in one session,
-      so a real user will too. Menu-bar apps usually intercept Cmd+Q to hide
-      instead, or leave quitting to the tray menu where it is deliberate
+- [x] **Cmd+Q on macOS - decided against 2026-09-18, will not do.** The
+      original entry argued it should intercept Cmd+Q and hide instead, the way
+      menu-bar apps often do. Rejected on the owner's call: Cmd+Q means quit,
+      and an app that keeps syncing the clipboard after the user quit it is the
+      worse surprise. Leaving it alone.
 
 
-- [ ] **Per-device names.** Every iOS device registers as "iOS Device" against
+- [x] **Per-device names - done.** Every iOS device used to register as "iOS
+      Device" against
       a UNIQUE (user_id, device_type, device_name) index, so a simulator and a
       phone share one row and one FCM token - whichever launched last wins, and
       the other silently stops receiving push. Same for two Androids. Needs
@@ -144,7 +154,10 @@ at. Ordered by how likely each is to actually bite:
       cannot write the general pasteboard on a real device, so a tap could only
       open the app; not worth maintaining for that, and the Android half alone
       did not justify it either.
-- [ ] iOS share sheet **into** the app (receiving shares) - no extension target
+- [x] iOS share sheet **into** the app - done. ios/ShareExtension now exists
+      and the plugin owns the share sheet on both platforms; the hand-rolled
+      Android path that ran alongside it is gone. Shares auto-send to the
+      "Send to devices" targets
 - [ ] `flutter logs` returns nothing from a profile build on device. The
       background isolate is only observable by writing files to the app
       container and reading them with `devicectl device info files`
@@ -153,24 +166,30 @@ at. Ordered by how likely each is to actually bite:
 
 ## Later: logo and palette distance from Discord
 
-Raised 2026-09-17. The mark is a rounded two-eyed face on purple, which is
-close enough to Discord's to be worth putting distance between them before the
-app is in front of App Review or a wider audience. The design itself is liked -
-this is about silhouette, not a redesign.
+Raised 2026-09-17, resolved 2026-09-18. The mark was a rounded two-eyed face on
+purple, close enough to Discord's to be worth distance before App Review or a
+wider audience.
 
-- [ ] Taper the bottom of the ghost into a wavy hem. Silhouette is what people
-      actually recognise; two eyes on purple is common, a rounded blob face on
-      *that* purple is not
-- [ ] `primaryHover` is `0xFF4752C4`, which is Discord's dark blurple exactly.
-      `primary` was already moved to `0xFF6670FF` (Discord's is `#5865F2`), so
-      the hover state is the last literal match
-- [ ] CLAUDE.md still documents `primary: Color(0xFF5865F2)` and annotates it
-      "(Discord-like)". Both wrong and unhelpful - the code has not used that
-      value for a while, and the comment is the sort of thing best not left in
-      a repo if the resemblance is ever argued about
-- [ ] Redo the app icon on every platform once the mark changes: iOS asset
-      catalog, Android mipmaps, macOS iconset, Windows .ico, and the tray icon,
-      which is a separate silhouette-only asset
+- [x] Superseded: the mark was replaced outright rather than tapered. The
+      original entry proposed a wavy hem, on the reasoning that silhouette is
+      what people recognise and a rounded blob face on *that* purple reads as
+      derivative. The new mark is a clipboard/speech-bubble with a folded
+      corner and a tail, which carries its own silhouette and says what the app
+      does - so the hem is moot. Worth one more look with fresh eyes before
+      submission, since this is a judgement call rather than a measurement
+- [x] `primaryHover` was `0xFF4752C4` - Discord's dark blurple exactly, and the
+      last literal match. Now `0xFF555CCB`, the darker primary `accentDisabled`
+      is already built from, so the palette carries one dark accent instead of
+      two that differ by three per channel
+- [x] CLAUDE.md documented `primary: Color(0xFF5865F2)` annotated
+      "(Discord-like)". Fixed, and the stale block is why two launch screens
+      were built against the wrong background - it is now pointed at
+      `colors.dart` as the source of truth
+- [x] Redo the app icon on every platform. All 78 assets now generate from one
+      master SVG via `tool/generate_brand_assets.py`, covering the iOS asset
+      catalog, Android mipmaps and adaptive/themed icons, macOS iconset,
+      Windows .ico, the silhouette-only tray icon, the website and favicons,
+      and the hosted logo the auth emails point at
 
 ## macOS: done 2026-09-16
 
