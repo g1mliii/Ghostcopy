@@ -987,6 +987,7 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Handle shared files from share intent
   Future<void> handleSharedFiles(
     List<dynamic> files, {
+    Set<String> targetDeviceTypes = const {},
     void Function(String message)? onSuccess,
   }) async {
     for (final file in files) {
@@ -1013,6 +1014,11 @@ class MobileMainViewModel extends ChangeNotifier {
           originalFilename: filename,
           contentType: fileTypeInfo.contentType,
           mimeType: fileTypeInfo.mimeType,
+          // null, not an empty list: the repository reads null as "every
+          // device".
+          targetDeviceTypes: targetDeviceTypes.isEmpty
+              ? null
+              : targetDeviceTypes.toList(),
         );
 
         onSuccess?.call('Shared file uploaded: $filename');

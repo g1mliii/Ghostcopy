@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../repositories/impl/clipboard_repository.dart';
 import '../hotkey_service.dart';
 import '../settings_service.dart';
 
@@ -118,8 +119,11 @@ class SettingsService implements ISettingsService {
   Future<void> setAutoSendTargetDevices(Set<String> devices) async {
     _ensureInitialized();
 
-    // Validate device types
-    const validDevices = {'windows', 'macos', 'android', 'ios'};
+    // Validate against the canonical list rather than a copy. A hand-written
+    // set here omitted linux while the selectors offered it, so choosing a
+    // Linux destination threw and the choice was silently never persisted -
+    // the UI showed it selected until the screen was reopened.
+    const validDevices = ClipboardRepository.validDeviceTypes;
     final invalidDevices = devices.where((d) => !validDevices.contains(d));
     if (invalidDevices.isNotEmpty) {
       throw ArgumentError('Invalid device types: ${invalidDevices.join(", ")}');

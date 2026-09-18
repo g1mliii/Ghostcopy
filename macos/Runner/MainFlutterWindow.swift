@@ -4,6 +4,8 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   // Keep strong reference to prevent deallocation
   private var powerMonitor: PowerMonitor?
+  private var shareService: ShareService?
+  private var clipboardChangeCount: ClipboardChangeCount?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -21,6 +23,12 @@ class MainFlutterWindow: NSWindow {
 
     // Initialize power monitor for system sleep/wake/lock events
     powerMonitor = PowerMonitor(messenger: flutterViewController.engine.binaryMessenger)
+
+    // Backs the Finder Services entry ("Send with GhostCopy")
+    shareService = ShareService(messenger: flutterViewController.engine.binaryMessenger)
+
+    // Lets the auto-send monitor skip reading an unchanged clipboard
+    clipboardChangeCount = ClipboardChangeCount(messenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
     

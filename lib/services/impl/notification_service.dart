@@ -38,6 +38,27 @@ class NotificationService implements INotificationService {
       {}; // Track when action was created
   int _notificationIdCounter = 0;
 
+  // Repeated-toast coalescing. Deleting several clips in a row fired one toast
+  // each, which replaced the overlay over and over and stacked a separate
+  // entry per delete in Notification Center.
+  String? _lastToastMessage;
+  DateTime? _lastToastAt;
+  int _toastRepeatCount = 1;
+  int? _lastSystemNotificationId;
+
+  /// The message [_lastSystemNotificationId] was created for.
+  ///
+  /// Held alongside the id because a repeat is decided from the message and the
+  /// clock, without regard to which surface showed it. A message displayed as
+  /// an overlay while Spotlight was open counts as a repeat when it recurs
+  /// moments later with Spotlight hidden - but no system notification was ever
+  /// created for it, so the id still belongs to some earlier, unrelated one.
+  /// Reusing it replaced that banner, and if it had been created by
+  /// showClickableToast its pending action was still mapped to the id, so
+  /// tapping the new toast ran the old one's callback.
+  String? _lastSystemNotificationMessage;
+  static const _toastCoalesceWindow = Duration(seconds: 4);
+
   // Timer to periodically clean up stale actions (memory leak prevention)
   Timer? _actionCleanupTimer;
 
@@ -178,6 +199,23 @@ class NotificationService implements INotificationService {
 
     debugPrint('🔔 [NotificationService] showToast: "$message"');
 
+    // Same message again in quick succession: count it rather than showing it
+    // twice. The window is measured from the previous toast, so a steady run
+    // of deletes keeps incrementing instead of resetting.
+    final now = DateTime.now();
+    final isRepeat =
+        message == _lastToastMessage &&
+        _lastToastAt != null &&
+        now.difference(_lastToastAt!) <= _toastCoalesceWindow;
+
+    _toastRepeatCount = isRepeat ? _toastRepeatCount + 1 : 1;
+    _lastToastMessage = message;
+    _lastToastAt = now;
+
+    final displayMessage = _toastRepeatCount > 1
+        ? '$message (x$_toastRepeatCount)'
+        : message;
+
     // Check if Spotlight window is visible
     final isSpotlightVisible = _windowService?.isVisible ?? false;
 
@@ -186,19 +224,35 @@ class NotificationService implements INotificationService {
       debugPrint(
         '🔔 [NotificationService] Using system notification (Spotlight hidden)',
       );
-      _showSystemNotification(message: message, type: type);
+      _showSystemNotification(
+        message: displayMessage,
+        coalesceKey: message,
+        type: type,
+        // Reusing the id updates the existing banner in place instead of
+        // adding one per repeat - but only when the previous showing of THIS
+        // message was itself a system notification.
+        replaceId: isRepeat && _lastSystemNotificationMessage == message
+            ? _lastSystemNotificationId
+            : null,
+      );
     } else {
       // Use overlay when Spotlight is visible
       debugPrint('🔔 [NotificationService] Using overlay (Spotlight visible)');
-      _showToastInOverlay(message, type, duration);
+      _showToastInOverlay(displayMessage, type, duration);
     }
   }
 
   Future<void> _showSystemNotification({
     required String message,
+    // The message without the "(xN)" counter, used for coalescing. The
+    // displayed text changes on every repeat, so remembering that instead
+    // meant the comparison failed from the third one onward and each further
+    // repeat stacked a new notification rather than replacing the last.
+    String? coalesceKey,
     NotificationType type = NotificationType.info,
     String? actionLabel,
     VoidCallback? onAction,
+    int? replaceId,
   }) async {
     // Double check Game Mode (in case called directly)
     if (_gameModeService?.isActive ?? false) {
@@ -208,7 +262,25 @@ class NotificationService implements INotificationService {
       return;
     }
 
-    final id = _notificationIdCounter++;
+    final id = replaceId ?? _notificationIdCounter++;
+    _lastSystemNotificationId = id;
+    _lastSystemNotificationMessage = coalesceKey ?? message;
+
+    // Reusing an id means replacing the notification that held it, so any
+    // action mapped to it belongs to something the user can no longer see.
+    //
+    // showClickableToast sets _lastSystemNotificationMessage but not
+    // _lastToastMessage, so a clickable toast can become the tracked system
+    // notification between two ordinary repeats of the same message. The next
+    // repeat then reuses its id, replaced the banner, and left the callback in
+    // _pendingActions - so tapping a toast with no action ran the previous
+    // one's. Clearing first makes the id carry only what the notification
+    // currently on screen actually does.
+    if (replaceId != null) {
+      _pendingActions.remove(replaceId);
+      _actionTimestamps.remove(replaceId);
+      _actionPayloads.remove(replaceId);
+    }
 
     // Store action if provided
     if (onAction != null) {

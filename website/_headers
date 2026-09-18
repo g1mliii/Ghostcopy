@@ -42,7 +42,24 @@
   Cache-Control: public, max-age=0, must-revalidate
 
 # No token should ever be written to a shared cache, and the page scrubs the
-# URL as soon as it reads one.
+# URL as soon as it reads one. Same for the OAuth landing page, which arrives
+# carrying a PKCE code.
+#
+# Both spellings are listed because these rules match the REQUEST path, not the
+# file. Recovery emails link to the extensionless /reset-password, so the
+# .html-only rule never applied to the URL anyone actually opens.
+/reset-password
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
 /reset-password.html
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/auth-callback
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/auth-callback.html
   Cache-Control: no-store
   Referrer-Policy: no-referrer

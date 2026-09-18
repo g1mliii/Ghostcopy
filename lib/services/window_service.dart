@@ -12,6 +12,14 @@ abstract class IWindowService {
   /// Center the window on the screen
   Future<void> centerWindow();
 
+  /// Grow the window to [height] for content that does not fit the Spotlight
+  /// window, such as the link-device QR code. Call [restoreSpotlightSize] when
+  /// that content closes.
+  Future<void> growToHeight(double height);
+
+  /// Return the window to the standard Spotlight size.
+  Future<void> restoreSpotlightSize();
+
   /// Focus the window
   Future<void> focusWindow();
 

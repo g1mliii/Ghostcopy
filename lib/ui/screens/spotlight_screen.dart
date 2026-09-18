@@ -322,8 +322,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     if (!_showSettings) {
       setState(() => _activePanel = SpotlightPanel.settings);
       await _settingsSlideController.forward();
-      widget.onSettingsOpened?.call();
     }
+    // Consume every tray request, including one for an already-open panel,
+    // so the next request can trigger another false-to-true transition.
+    if (mounted) widget.onSettingsOpened?.call();
   }
 
   // _viewModel.refreshHistory and _debouncedLoadHistory removed - now in ViewModel
@@ -597,10 +599,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// string, the toast - and the copies had already diverged: only the picker
   /// asked for confirmation above the warning threshold, so dragging in an 8MB
   /// file skipped the prompt that picking the same file showed.
+  ///
+  /// [successMessage] is optional: a drop needs no toast, because the staged
+  /// file is already named in the text field.
   Future<bool> _stageFile(
     File fileObj,
     String filename, {
-    required String successMessage,
+    String? successMessage,
   }) async {
     // Checked before reading, so a huge file is rejected without ever being
     // pulled into memory.
@@ -645,10 +650,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
     _textController.text = displayText;
 
-    _notificationService.showToast(
-      message: successMessage,
-      type: NotificationType.success,
-    );
+    if (successMessage != null) {
+      _notificationService.showToast(
+        message: successMessage,
+        type: NotificationType.success,
+      );
+    }
 
     debugPrint('[Spotlight] File staged: $filename (${bytes.length} bytes)');
     return true;
@@ -712,7 +719,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       if (!fileObj.existsSync()) return;
 
       final filename = path.split(Platform.pathSeparator).last;
-      await _stageFile(fileObj, filename, successMessage: 'Dropped: $filename');
+      await _stageFile(fileObj, filename);
     } on Object catch (e) {
       debugPrint('[Spotlight] Failed to stage dropped file: $e');
       if (mounted) {
@@ -1779,7 +1786,12 @@ class _PlatformChip extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: _borderRadius,
-        hoverColor: isSelected ? null : GhostColors.surfaceLight,
+        // Never null: InkWell would fall back to the theme's hover colour,
+        // which is a white overlay on a dark theme and reads as the selected
+        // chip flashing white under the cursor.
+        hoverColor: isSelected
+            ? GhostColors.primaryHover
+            : GhostColors.surfaceLight,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-bg">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signing you in — GhostCopy</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#0F0F13" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="./output.css" />
+
+    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico" />
+</head>
+
+<body class="min-h-screen flex flex-col">
+
+    <header class="shell flex items-center h-20 sm:h-24">
+        <a href="/" aria-label="GhostCopy home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+        </a>
+    </header>
+
+    <main class="shell grow flex items-center py-16 sm:py-24">
+        <div class="w-full max-w-[460px]">
+
+            <!-- ---------- handing off ---------- -->
+            <section id="state-working">
+                <h1 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-[40px]">
+                    <span class="block text-ink-0">Signing you</span>
+                    <span class="block text-ink-1">in.</span>
+                </h1>
+                <p class="label mt-6 !text-ink-0">Opening GhostCopy</p>
+            </section>
+
+            <!-- ---------- done ---------- -->
+            <section id="state-done" hidden>
+                <h1 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-[40px]">
+                    <span class="block text-ink-1">You're signed</span>
+                    <span class="block text-ink-4">in.</span>
+                </h1>
+                <p class="mt-7 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                    GhostCopy has your account. You can close this tab.
+                </p>
+                <div class="h-px bg-line my-7"></div>
+                <p class="text-sm text-ink-1">
+                    Nothing happened? <a id="retry" class="text-accent underline" href="#">Open GhostCopy</a>
+                </p>
+            </section>
+
+            <!-- ---------- error ---------- -->
+            <section id="state-error" hidden>
+                <h1 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-[40px]">
+                    <span class="block text-ink-1">That didn't</span>
+                    <span class="block text-ink-4">work.</span>
+                </h1>
+                <p id="error-detail" class="mt-7 text-base sm:text-[17px] leading-[1.7] text-ink-2"></p>
+                <div class="h-px bg-line my-7"></div>
+                <p class="text-sm text-ink-1">Open GhostCopy and try signing in again.</p>
+            </section>
+
+        </div>
+    </main>
+
+    <footer class="shell pb-12">
+        <div class="rule mb-8"></div>
+        <div class="flex items-center gap-3">
+            <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="#6670FF" />
+                <path d="M6 15 a10 10 0 0 1 20 0 v8 a5 5 0 0 1 -10 0 a5 5 0 0 1 -10 0 z" fill="#FFFFFF" />
+                <ellipse cx="12.4" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+                <ellipse cx="19.6" cy="15.6" rx="2.1" ry="2.7" fill="#6670FF" />
+            </svg>
+            <span class="font-mono text-[11px] tracking-[0.12em] text-ink-1">© 2026 GHOSTCOPY</span>
+        </div>
+    </footer>
+
+    <script src="/auth-callback.js" defer></script>
+
+</body>
+
+</html>

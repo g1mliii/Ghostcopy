@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/clipboard_item.dart';
+import '../models/exceptions.dart';
 
 export 'impl/clipboard_repository.dart';
 
@@ -101,7 +102,8 @@ abstract class IClipboardRepository {
   /// Clean up old clipboard items, keeping only the most recent [keepCount] items
   Future<void> cleanupOldItems({int keepCount = 15});
 
-  /// Get clipboard count for the current authenticated user
+  /// Get clipboard count for the current authenticated user.
+  /// Throws [RepositoryException] if the count cannot be retrieved.
   Future<int> getClipboardCountForCurrentUser();
 
   /// Reset repository state for user switch or sign out

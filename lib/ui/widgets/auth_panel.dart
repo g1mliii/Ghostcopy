@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
+import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -125,9 +126,9 @@ class _AuthPanelState extends State<AuthPanel> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: GhostColors.primaryHover,
                   foregroundColor: GhostColors.textPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
                 ),
-                child: const Text('Sign In with Different Account'),
+                child: const Text('Switch Account'),
               ),
             ),
             const SizedBox(height: 8),
@@ -138,7 +139,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: GhostColors.surface,
                   foregroundColor: GhostColors.textPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
                 ),
                 child: const Text('Sign Out'),
               ),
@@ -151,29 +152,43 @@ class _AuthPanelState extends State<AuthPanel> {
     // Anonymous user - show login/signup form
     return SingleChildScrollView(
       physics: Adaptive.scrollPhysics,
-      padding: const EdgeInsets.all(16),
+      // Tight enough that login and Google sign-in are both visible without
+      // scrolling in the 400px-tall Spotlight window - a sign-in the user has
+      // to scroll to find is one they may not find.
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Login/Signup toggle
           _buildLoginSignupToggle(),
-          const SizedBox(height: 24),
+          if (widget.authService.isAnonymous) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Create Account keeps the clips already on this device. '
+              'Signing into an existing account leaves them behind.',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textMuted,
+                height: 1.35,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
           // Email field
           RepaintBoundary(child: _buildEmailField()),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           // Password field
           RepaintBoundary(child: _buildPasswordField()),
           // Forgot password link (only show in login mode)
           if (_isLogin) _buildForgotPasswordLink(),
           // Error message
           if (_authError != null) _buildErrorMessage(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           // Submit button
           RepaintBoundary(child: _buildSubmitButton()),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           // Divider
           _buildDivider(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           // Google sign in
           RepaintBoundary(child: _buildGoogleSignInButton()),
         ],
@@ -196,7 +211,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 left: Radius.circular(8),
               ),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: _isLogin ? GhostColors.primary : Colors.transparent,
                   borderRadius: const BorderRadius.horizontal(
@@ -205,7 +220,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 ),
                 alignment: Alignment.center,
                 child: Text(
-                  'Login',
+                  'Sign In',
                   style: GhostTypography.body.copyWith(
                     fontWeight: FontWeight.w600,
                     color: _isLogin ? Colors.white : GhostColors.textSecondary,
@@ -221,7 +236,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 right: Radius.circular(8),
               ),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: !_isLogin ? GhostColors.primary : Colors.transparent,
                   borderRadius: const BorderRadius.horizontal(
@@ -230,7 +245,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 ),
                 alignment: Alignment.center,
                 child: Text(
-                  'Sign Up',
+                  'Create Account',
                   style: GhostTypography.body.copyWith(
                     fontWeight: FontWeight.w600,
                     color: !_isLogin ? Colors.white : GhostColors.textSecondary,
@@ -249,6 +264,8 @@ class _AuthPanelState extends State<AuthPanel> {
       controller: _emailController,
       decoration: const InputDecoration(
         labelText: 'Email',
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         filled: true,
         fillColor: GhostColors.surface,
         border: OutlineInputBorder(
@@ -270,6 +287,8 @@ class _AuthPanelState extends State<AuthPanel> {
       controller: _passwordController,
       decoration: const InputDecoration(
         labelText: 'Password',
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         filled: true,
         fillColor: GhostColors.surface,
         border: OutlineInputBorder(
@@ -347,7 +366,7 @@ class _AuthPanelState extends State<AuthPanel> {
         onPressed: _authLoading ? null : _handleEmailAuth,
         style: ElevatedButton.styleFrom(
           backgroundColor: GhostColors.primary,
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 10),
         ),
         child: _authLoading
             ? const SizedBox(
@@ -358,7 +377,7 @@ class _AuthPanelState extends State<AuthPanel> {
                   color: Colors.white,
                 ),
               )
-            : Text(_isLogin ? 'Login' : 'Sign Up'),
+            : Text(_isLogin ? 'Sign In' : 'Create Account'),
       ),
     );
   }
@@ -387,7 +406,7 @@ class _AuthPanelState extends State<AuthPanel> {
       icon: const Icon(Icons.login, size: 18),
       label: const Text('Continue with Google'),
       style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         side: const BorderSide(color: GhostColors.surface),
         foregroundColor: GhostColors.textPrimary,
       ),
@@ -405,6 +424,17 @@ class _AuthPanelState extends State<AuthPanel> {
       // Note: hCaptcha disabled for mobile compatibility
       // Can be re-enabled on desktop if needed
       if (_isLogin) {
+        // Orphaned rather than deleted on this path - see the doc comment.
+        if (!await confirmGuestClipsBeforeSignIn(
+          context,
+          authService: widget.authService,
+          clipboardRepository: _clipboardRepository,
+          deletesClips: false,
+        )) {
+          if (mounted) setState(() => _authLoading = false);
+          return;
+        }
+
         // Sign in existing user - check if switching accounts
         final currentUserId = widget.authService.currentUserId;
 
@@ -516,6 +546,23 @@ class _AuthPanelState extends State<AuthPanel> {
       bool success;
 
       if (_isLogin) {
+        // Same guard as the email path. Without it, Continue with Google
+        // switched accounts directly and AuthService._cleanupPreviousSession
+        // then ran cleanup_user_data against the anonymous account, deleting
+        // its clipboard rows outright - so the Google button destroyed clips
+        // that the email button stops to ask about.
+        // deletesClips: this path really does destroy them, so the dialog
+        // says so rather than offering the gentler "left behind" wording.
+        if (!await confirmGuestClipsBeforeSignIn(
+          context,
+          authService: widget.authService,
+          clipboardRepository: _clipboardRepository,
+          deletesClips: true,
+        )) {
+          if (mounted) setState(() => _authLoading = false);
+          return;
+        }
+
         // Login mode: Sign in with existing Google account - check if switching accounts
         final currentUserId = widget.authService.currentUserId;
 

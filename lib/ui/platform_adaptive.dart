@@ -19,6 +19,14 @@ class Adaptive {
 
   static bool get isIOS => !kIsWeb && Platform.isIOS;
 
+  /// Desktop has a pointer, and therefore hover.
+  ///
+  /// The distinction that matters for feedback is not which OS but whether
+  /// there is a cursor: hover can show a control reacting before it is
+  /// pressed, and touch cannot.
+  static bool get isDesktop =>
+      !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+
   /// iOS and macOS share Apple's scroll and typography conventions.
   static bool get isApple => !kIsWeb && (Platform.isIOS || Platform.isMacOS);
 

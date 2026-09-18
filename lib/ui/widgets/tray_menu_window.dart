@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import '../../services/game_mode_service.dart';
 import '../../services/window_service.dart';
@@ -24,21 +22,12 @@ class TrayMenuWindow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Platform-specific positioning:
-    // - macOS: Menu bar is at top, so menu extends downward from top-right
-    // - Windows: Taskbar is at bottom, so menu extends upward from bottom-right
-    final alignment = Platform.isMacOS
-        ? Alignment.topRight
-        : Alignment.bottomRight;
-    final padding = Platform.isMacOS
-        ? const EdgeInsets.only(
-            right: 16,
-            top: 8,
-          ) // Top padding for macOS menu bar
-        : const EdgeInsets.only(
-            right: 16,
-            bottom: 60,
-          ); // Bottom padding for Windows taskbar
+    // Windows only: macOS pops a native NSMenu from TrayService and never
+    // renders this widget, so a macOS branch here could only ever be dead
+    // code that looked like the place to fix macOS placement.
+    // The taskbar is at the bottom, so the menu extends upward from there.
+    const alignment = Alignment.bottomRight;
+    const padding = EdgeInsets.only(right: 16, bottom: 60);
 
     return Material(
       type: MaterialType.transparency,

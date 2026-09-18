@@ -5,6 +5,10 @@ include: package:flutter_lints/flutter.yaml
 
 analyzer:
   exclude:
+    # Generated build output. The macOS Swift Package Manager integration
+    # checks plugin sources out under build/, and analysing those reports
+    # hundreds of errors from third-party test files.
+    - "build/**"
     - "**/*.g.dart"
     - "**/*.freezed.dart"
     - "test/property/game_mode_service_property_test.dart"

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/storage_service.dart';
@@ -20,9 +21,11 @@ void main() {
   late _Encryption encryption;
   late List<http.Request> requests;
   late List<int> rows;
+  late bool failCount;
 
   setUp(() async {
     requests = [];
+    failCount = false;
     rows = List.generate(265, (index) => 265 - index);
     client = SupabaseClient(
       'https://example.com',
@@ -30,6 +33,13 @@ void main() {
       authOptions: const AuthClientOptions(autoRefreshToken: false),
       httpClient: MockClient((request) async {
         requests.add(request);
+        if (failCount) {
+          return http.Response(
+            jsonEncode({'message': 'Count unavailable', 'code': '42501'}),
+            403,
+            request: request,
+          );
+        }
         final query = request.url.queryParameters;
         if (request.method == 'DELETE') {
           final ids = query['id']!
@@ -48,6 +58,11 @@ void main() {
             rows.skip(offset).take(limit).map((id) => {'id': id}).toList(),
           ),
           200,
+          headers: {
+            'content-range': rows.isEmpty
+                ? '*/0'
+                : '0-${rows.length - 1}/${rows.length}',
+          },
           request: request,
         );
       }),
@@ -86,6 +101,26 @@ void main() {
     repository.dispose();
     await client.dispose();
   });
+
+  test(
+    'clipboard count failures cannot be mistaken for an empty account',
+    () async {
+      failCount = true;
+      await expectLater(
+        repository.getClipboardCountForCurrentUser(),
+        throwsA(isA<RepositoryException>()),
+      );
+    },
+  );
+
+  test(
+    'clipboard count reports saved clips and genuinely empty accounts',
+    () async {
+      expect(await repository.getClipboardCountForCurrentUser(), 265);
+      rows.clear();
+      expect(await repository.getClipboardCountForCurrentUser(), 0);
+    },
+  );
 
   test(
     'idle polling selects only one ID and never initializes encryption',

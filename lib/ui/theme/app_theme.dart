@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../platform_adaptive.dart';
 import 'colors.dart';
 import 'typography.dart';
 
@@ -15,6 +17,32 @@ class AppTheme {
         // Base theme
         brightness: Brightness.dark,
         useMaterial3: true,
+
+        // Ink ripples wash out to near-white against this palette's dark
+        // surfaces, so presses read as a white flash. On desktop that is worth
+        // removing outright, because hover already shows a control reacting
+        // before it is pressed.
+        //
+        // Touch has no hover. Dropping the splash AND the highlight there left
+        // taps with no feedback whatsoever - a row or chip looked inert until
+        // its action finished, which on a slow network is long enough to make
+        // people tap again. So mobile keeps a press state.
+        //
+        // The overlay is BLACK, not a tint. Every surface here is already dark,
+        // so an additive overlay of any colour lightens it - that is the white
+        // flash the default ripple gives and the reason splashes were removed
+        // in the first place, and a brand-coloured one only makes it a purple
+        // flash. Darkening reads as the control being pushed in, and matches
+        // iOS, where a pressed control dims rather than glows.
+        splashFactory: Adaptive.isDesktop
+            ? NoSplash.splashFactory
+            : InkRipple.splashFactory,
+        splashColor: Adaptive.isDesktop
+            ? Colors.transparent
+            : GhostColors.blackAlpha18,
+        highlightColor: Adaptive.isDesktop
+            ? Colors.transparent
+            : GhostColors.blackAlpha18,
 
         // Color scheme
         colorScheme: ColorScheme.dark(

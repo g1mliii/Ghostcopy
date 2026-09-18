@@ -1284,9 +1284,14 @@ class ClipboardRepository implements IClipboardRepository {
 
       // The count method returns a PostgrestQueryResponse with count property
       return response.count;
-    } on Object catch (e) {
+    } on RepositoryException {
+      rethrow;
+    } on Exception catch (e) {
       debugPrint('[ClipboardRepository] Error getting clipboard count: $e');
-      return 0;
+      // An unknown count must never authorize leaving a guest account.
+      throw RepositoryException(
+        'Unable to check your saved clips. Please try signing in again.',
+      );
     }
   }
 

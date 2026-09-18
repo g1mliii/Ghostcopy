@@ -13,7 +13,9 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
+import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
@@ -296,10 +298,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         TextPosition(offset: result.$1.length),
       );
 
-      // Precache image to avoid re-decoding on rebuilds
-      if ((result.$2?.hasImage ?? false) && mounted) {
-        unawaited(precacheImage(MemoryImage(result.$2!.imageBytes!), context));
-      }
+      // Deliberately not precached. A bare MemoryImage decodes at full
+      // resolution - tens of MB for a screenshot - while the preview below
+      // asks for cacheHeight 80*dpr. Those are different cache keys, so the
+      // precache was never read: it allocated a full-size bitmap, missed, and
+      // the widget decoded again at thumbnail size.
     }
     return true;
   }
@@ -682,21 +685,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   void _initializeShareIntentListeners() {
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
-      if (value.isNotEmpty) {
-        _viewModel.handleSharedFiles(
-          value,
-          onSuccess: (msg) {
-            if (mounted) {
-              showGhostToast(
-                context,
-                msg,
-                icon: Icons.upload_file,
-                type: GhostToastType.success,
-              );
-            }
-          },
-        );
-      }
+      if (value.isNotEmpty) unawaited(_handleSharedFilesWithTargets(value));
     });
 
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
@@ -704,19 +693,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         .listen(
           (value) {
             if (value.isNotEmpty) {
-              _viewModel.handleSharedFiles(
-                value,
-                onSuccess: (msg) {
-                  if (mounted) {
-                    showGhostToast(
-                      context,
-                      msg,
-                      icon: Icons.upload_file,
-                      type: GhostToastType.success,
-                    );
-                  }
-                },
-              );
+              unawaited(_handleSharedFilesWithTargets(value));
             }
           },
           onError: (Object err) {
@@ -727,8 +704,41 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     debugPrint('[ShareSheet] Share intent listeners initialized');
   }
 
+  /// Sends shared files straight to the devices in Settings.
+  ///
+  /// No picker: the point of sharing from another app is to be done in one
+  /// tap, and the Default devices setting already says where clips go. Change
+  /// the target in Settings, or send from the app itself to pick per-send.
+  Future<void> _handleSharedFilesWithTargets(
+    List<SharedMediaFile> files,
+  ) async {
+    final targets = await locator<ISettingsService>()
+        .getAutoSendTargetDevices();
+    if (!mounted) return;
+
+    await _viewModel.handleSharedFiles(
+      files,
+      targetDeviceTypes: targets,
+      onSuccess: (msg) {
+        if (mounted) {
+          showGhostToast(
+            context,
+            msg,
+            icon: Icons.upload_file,
+            type: GhostToastType.success,
+          );
+        }
+      },
+    );
+  }
+
   Future<Set<String>?> _showDeviceSelectorDialog(String content) async {
-    final selectedTypes = <String>{};
+    // Seeded from the "Send to devices" setting, so the usual case is one tap
+    // rather than re-picking the same devices on every share.
+    final selectedTypes = Set<String>.from(
+      await locator<ISettingsService>().getAutoSendTargetDevices(),
+    );
+    if (!mounted) return null;
 
     return showDialog<Set<String>>(
       context: context,
@@ -748,70 +758,45 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Select which device types to send to:',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: GhostColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
                 ),
+                if (content.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  // Named so a share started from another app shows what is
+                  // about to be sent, rather than an unlabelled device list.
+                  Text(
+                    content,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: GhostColors.textSecondary,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
+                // Generated from the canonical device list rather than
+                // written out chip by chip. The hand-written version listed
+                // four platforms and omitted linux, while the setting that
+                // seeds selectedTypes can contain it - so a Linux target
+                // arrived selected with no chip to show or clear it, and Send
+                // routed the clip to a destination the dialog never displayed.
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _buildDeviceChip(
-                      'windows',
-                      Icons.laptop_windows,
-                      'Windows',
-                      selectedTypes.contains('windows'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('windows')) {
-                          selectedTypes.remove('windows');
-                        } else {
-                          selectedTypes.add('windows');
-                        }
-                      }),
-                    ),
-                    _buildDeviceChip(
-                      'macos',
-                      Icons.laptop_mac,
-                      'macOS',
-                      selectedTypes.contains('macos'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('macos')) {
-                          selectedTypes.remove('macos');
-                        } else {
-                          selectedTypes.add('macos');
-                        }
-                      }),
-                    ),
-                    _buildDeviceChip(
-                      'android',
-                      Icons.phone_android,
-                      'Android',
-                      selectedTypes.contains('android'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('android')) {
-                          selectedTypes.remove('android');
-                        } else {
-                          selectedTypes.add('android');
-                        }
-                      }),
-                    ),
-                    _buildDeviceChip(
-                      'ios',
-                      Icons.phone_iphone,
-                      'iOS',
-                      selectedTypes.contains('ios'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('ios')) {
-                          selectedTypes.remove('ios');
-                        } else {
-                          selectedTypes.add('ios');
-                        }
-                      }),
-                    ),
+                    for (final type in ClipboardRepository.validDeviceTypes)
+                      _buildDeviceChip(
+                        type,
+                        selectedTypes.contains(type),
+                        () => setDialogState(() {
+                          if (!selectedTypes.remove(type)) {
+                            selectedTypes.add(type);
+                          }
+                        }),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -849,13 +834,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  Widget _buildDeviceChip(
-    String deviceType,
-    IconData icon,
-    String label,
-    bool isSelected,
-    VoidCallback onTap,
-  ) {
+  /// Icon and label are derived from [type] rather than passed in: they were
+  /// three positional arguments computed from it at the call site, and the
+  /// first was not read at all.
+  Widget _buildDeviceChip(String type, bool isSelected, VoidCallback onTap) {
+    final icon = iconForDeviceType(type);
+    final label = platformLabel(type);
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),

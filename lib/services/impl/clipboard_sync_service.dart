@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
@@ -480,22 +482,75 @@ class ClipboardSyncService implements IClipboardSyncService {
   void stopClipboardMonitoring() {
     _clipboardMonitorTimer?.cancel();
     _clipboardMonitorTimer = null;
-    _lastMonitoredClipboard = '';
+    // The hash is deliberately kept. Monitoring stops and restarts around
+    // screen lock and system sleep, and clearing it made the first tick after
+    // every resume treat the unchanged clipboard as new and send it again.
     _isMonitoring = false;
     debugPrint('[ClipboardSyncService] Clipboard monitoring stopped');
   }
 
   /// Check clipboard and auto-send if changed
+  /// AppKit's pasteboard change counter, or null where it is unavailable.
+  ///
+  /// Reading the clipboard pulls the whole payload - a copied file or image is
+  /// re-read from disk in full - so on macOS this cheap integer gates that
+  /// read. Other platforms fall through and read as before.
+  static const _clipboardChangeChannel = MethodChannel(
+    'com.ghostcopy.app/clipboard_change',
+  );
+  int? _lastClipboardChangeCount;
+
+  /// The counter value whose read came back empty, so that exact pasteboard
+  /// state is not read again while it is still there.
+  int? _lastEmptyChangeCount;
+
+  Future<int?> _readClipboardChangeCount() async {
+    if (!Platform.isMacOS) return null;
+    try {
+      return await _clipboardChangeChannel.invokeMethod<int>('changeCount');
+    } on PlatformException catch (e) {
+      debugPrint('[ClipboardSyncService] changeCount unavailable: $e');
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   Future<void> _checkClipboardForAutoSend() async {
     if (_clipboardWritesInProgress > 0 || _isDisposed) return;
     try {
+      // Nothing written to the pasteboard since the last tick means the
+      // payload cannot have changed, so the full read is skipped entirely.
+      final changeCount = await _readClipboardChangeCount();
+      if (changeCount != null &&
+          (changeCount == _lastClipboardChangeCount ||
+              changeCount == _lastEmptyChangeCount)) {
+        return;
+      }
+
       // Read clipboard using ClipboardService (supports all formats)
       final clipboardContent = await _clipboardService.read();
       if (_clipboardWritesInProgress > 0 || _isDisposed) return;
 
-      // Skip if empty
+      // The counter is committed only once the read has actually produced
+      // something. read() catches its own failures and returns empty - a
+      // provider that is briefly unavailable, an image callback that throws -
+      // and recording the counter before that point retired the tick anyway:
+      // every later tick saw the same counter, skipped the read, and that copy
+      // was never auto-sent unless the user copied something else. Leaving the
+      // counter alone keeps a failed read retryable on the next tick.
       if (clipboardContent.isEmpty) {
+        // Remembered separately so an empty read is retried once per NEW
+        // counter value rather than never or forever. Leaving the counter
+        // untouched kept a genuinely undecodable clipboard item - a flavour
+        // read() cannot handle - doing the full pasteboard read, which for a
+        // copied file means re-reading it from disk, on every 5-second tick
+        // for as long as it stayed on the pasteboard.
+        _lastEmptyChangeCount = changeCount;
         return;
+      }
+      if (changeCount != null) {
+        _lastClipboardChangeCount = changeCount;
       }
 
       // Calculate hash for deduplication (works for text and images)
@@ -906,6 +961,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     _pendingAutoReceiveRecord = null;
     _lastPolledItemId = null;
     _lastMonitoredClipboard = '';
+    _lastClipboardChangeCount = null;
+    _lastEmptyChangeCount = null;
     _lastSentContentHash = '';
 
     // Subscribe with new user ID (no need to disconnect - auth token updates automatically)

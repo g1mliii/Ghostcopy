@@ -14,12 +14,14 @@ import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
+import '../widgets/adaptive_switch.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
@@ -80,6 +82,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   // URL shortening state
   bool _autoShortenUrls = false;
+  Set<String> _defaultDevices = {};
   bool _urlShortenerLoading = false;
 
   // App info
@@ -93,6 +96,42 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     _loadAppInfo();
     _loadUrlShorteningStatus();
     _loadScreenshotProtection();
+    _loadDefaultDevices();
+  }
+
+  Future<void> _loadDefaultDevices() async {
+    final devices = await locator<ISettingsService>()
+        .getAutoSendTargetDevices();
+    if (mounted) setState(() => _defaultDevices = devices);
+  }
+
+  /// Every destination a clip can be sent to.
+  ///
+  /// Taken from ClipboardRepository.validDeviceTypes rather than written out
+  /// again. A local copy here had already drifted: it omitted linux, so
+  /// expanding the all-devices sentinel produced an explicit list without it,
+  /// and the first time a user turned off any single destination their Linux
+  /// machines silently stopped receiving auto-sends and shares. Reading the
+  /// canonical list means a platform added there is covered here too.
+  static const _allDeviceTypes = ClipboardRepository.validDeviceTypes;
+
+  Future<void> _toggleDefaultDevice(String deviceType) async {
+    final normalized = nextDeviceSelection(
+      current: _defaultDevices,
+      allDeviceTypes: _allDeviceTypes,
+      toggled: deviceType,
+    );
+    // Null means the toggle would have emptied the set, which reads as "all".
+    if (normalized == null) return;
+
+    // Local state first, then persist. Two chips tapped in quick succession
+    // both computed from the same _defaultDevices while the first write was
+    // still in flight, so each removed only its own device and whichever write
+    // landed last discarded the other tap. Updating first means the second tap
+    // builds on the first, and it also makes the chip respond immediately
+    // rather than after a round trip to storage.
+    if (mounted) setState(() => _defaultDevices = normalized);
+    await locator<ISettingsService>().setAutoSendTargetDevices(normalized);
   }
 
   @override
@@ -949,6 +988,85 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             value: _autoShortenUrls,
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
+          const Divider(height: 1, color: GhostColors.border),
+          _buildDefaultDevicesTile(),
+        ],
+      ),
+    );
+  }
+
+  /// Where a share from another app goes.
+  ///
+  /// Sharing into GhostCopy sends straight here without asking, so this has to
+  /// be visible and editable on mobile - otherwise the target is set on the
+  /// desktop and invisible on the phone doing the sending.
+  Widget _buildDefaultDevicesTile() {
+    const deviceTypes = _allDeviceTypes;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.devices, color: GhostColors.primary, size: 20),
+              const SizedBox(width: 16),
+              const Text(
+                'Default devices',
+                style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+              ),
+              const SizedBox(width: 8),
+              // Expanded rather than a Spacer with a loose Text. The summary
+              // grows with the selection - the first toggle away from "All
+              // devices" already leaves three names - and an unconstrained
+              // Text after a Spacer has no room to give back, so on a 320pt
+              // phone the icon, gap, title and summary together overran the
+              // tile and the row overflowed. Taking the remaining width and
+              // ellipsising keeps the count legible at any width.
+              Expanded(
+                child: Text(
+                  _defaultDevices.isEmpty
+                      ? 'All devices'
+                      : _defaultDevices.map(platformLabel).join(', '),
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: GhostColors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Padding(
+            padding: EdgeInsets.only(left: 36),
+            child: Text(
+              'Where shared files and auto-send go.',
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.only(left: 36),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final type in deviceTypes)
+                  _DefaultDeviceChip(
+                    label: platformLabel(type),
+                    icon: iconForDeviceType(type),
+                    isSelected:
+                        _defaultDevices.isEmpty ||
+                        _defaultDevices.contains(type),
+                    onTap: () => _toggleDefaultDevice(type),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -969,21 +1087,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// Only Android is scaled down. Material 3's switch is 52x32 and overweight
   /// beside 14px type; CupertinoSwitch is already the size iOS users know, and
   /// shrinking it would make it the odd one out on its own platform.
-  Widget _adaptiveSwitch({
-    required bool value,
-    required ValueChanged<bool>? onChanged,
-  }) {
-    final control = Switch.adaptive(
-      value: value,
-      onChanged: onChanged,
-      activeTrackColor: GhostColors.primary,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    );
-
-    return Adaptive.isIOS
-        ? control
-        : Transform.scale(scale: 0.8, child: control);
-  }
 
   /// One switch row, so every toggle in Settings is the same size and colour.
   ///
@@ -1010,7 +1113,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         subtitle,
         style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
       ),
-      trailing: _adaptiveSwitch(value: value, onChanged: onChanged),
+      trailing: AdaptiveSwitch(value: value, onChanged: onChanged),
       // The whole row toggles, which SwitchListTile gave for free.
       onTap: onChanged == null ? null : () => onChanged(!value),
     );
@@ -1151,6 +1254,65 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           color: GhostColors.textMuted,
         ),
         onTap: _openWebsite,
+      ),
+    );
+  }
+}
+
+/// One platform chip in the Default devices row.
+class _DefaultDeviceChip extends StatelessWidget {
+  const _DefaultDeviceChip({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      // Explicit on both branches: a null hover colour falls back to the
+      // theme's white overlay, which flashes on these dark surfaces.
+      hoverColor: isSelected
+          ? GhostColors.primaryHover
+          : GhostColors.surfaceLight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? GhostColors.primary : GhostColors.surfaceLight,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected
+                    ? GhostColors.textPrimary
+                    : GhostColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

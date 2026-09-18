@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'dart:ui';
 
 /// Represents a menu item in the system tray
 class TrayMenuItem {
@@ -6,7 +6,7 @@ class TrayMenuItem {
     required this.label,
     this.onTap,
     this.isSeparator = false,
-    this.isChecked = false,
+    this.isChecked,
   });
 
   /// Create a separator menu item
@@ -14,12 +14,16 @@ class TrayMenuItem {
     : label = '',
       onTap = null,
       isSeparator = true,
-      isChecked = false;
+      isChecked = null;
 
   final String label;
   final VoidCallback? onTap;
   final bool isSeparator;
-  final bool isChecked;
+
+  /// Null for a plain item. Set it - to either value - to make the item
+  /// checkable, so an unchecked toggle stays distinguishable from an item
+  /// that has no state at all.
+  final bool? isChecked;
 }
 
 /// Abstract interface for system tray management

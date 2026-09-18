@@ -59,6 +59,9 @@ dependencies:
   path_provider: ^2.1.1
   qr_flutter: ^4.1.0
   receive_sharing_intent: ^1.8.0
+  # Already in the tree via window_manager; declared directly so
+  # growToHeight can read the display work area to clamp the window.
+  screen_retriever: ^0.2.0
   share_plus: ^12.0.1
   shared_preferences: ^2.2.2
   supabase_flutter: ^2.8.0
