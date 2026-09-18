@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ---
 ## Project Overview
 
-GhostCopy is a cross-platform clipboard synchronization tool built with Flutter. Desktop (Windows/macOS) runs as an invisible background utility with a "Spotlight-style" popup triggered by global hotkey. Mobile (iOS/Android) serves as a receiver with push notifications and home screen widgets.
+GhostCopy is a cross-platform clipboard synchronization tool built with Flutter. Desktop (Windows/macOS) runs as an invisible background utility with a "Spotlight-style" popup triggered by global hotkey. Mobile (iOS/Android) serves as a receiver with push notifications.
 
 ## Build & Development Commands
 
@@ -146,7 +146,7 @@ test/
 - Use `const` widgets where possible to reduce rebuilds
 
 ### Mobile-Specific Testing
-- **Memory Profiling**: Test widget updates, notification listeners, and app backgrounding/foregrounding scenarios
+- **Memory Profiling**: Test notification listeners and app backgrounding/foregrounding scenarios
 - **Security Review Checklist**:
   - FCM token storage and handling
   - Clipboard data clearing after auto-copy
@@ -167,7 +167,6 @@ test/
 | `glados` | Property-based testing |
 | `flutter_local_notifications` | Notification channels (mobile) |
 | `firebase_messaging` | FCM push notifications (mobile) |
-| `home_widget` | Home screen widget (mobile) |
 
 ## Environment Setup
 
@@ -221,8 +220,14 @@ Both tools execute in a secure V8 sandbox isolate with no file system access. Us
 - **Push Notifications**: FCM for Android, APNs for iOS via Firebase Cloud Messaging
   - FCM tokens stored in Supabase user table
   - Supabase Edge Function or database trigger sends notifications on new clipboard items
-  - Notification tap opens app and auto-copies content
-- **Home Screen Widget**: Displays 5 most recent clips in scrollable list, auto-updates via `home_widget` package
+  - Notification tap opens app and auto-copies content (Android copies silently
+    via CopyActivity when the background isolate staged the clip)
+- **No home screen widget.** One existed and was removed: an iOS widget
+  extension cannot write the general pasteboard on a real device (measured -
+  the staged file read back fine and `UIPasteboard.general.string` did not hold
+  the value microseconds later, in-process), so tapping a clip could only open
+  the app. That is barely more than the notification tap already does, and the
+  Android half was not worth maintaining alone.
 - **UI Design**: Glassmorphism cards, dark theme, staggered animations consistent with desktop
 
 ## Database Schema

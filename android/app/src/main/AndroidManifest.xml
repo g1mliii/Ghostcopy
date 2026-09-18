@@ -128,32 +128,6 @@
             </intent-filter>
         </service>
 
-        <!-- Clipboard Widget Provider -->
-        <receiver
-            android:name=".widget.ClipboardWidget"
-            android:exported="true"
-            android:label="GhostCopy">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/clipboard_widget_info" />
-        </receiver>
-
-        <!-- Widget row taps. Not exported: the launcher fires the
-             PendingIntent with this app's identity, so nothing else needs to
-             reach it. -->
-        <receiver
-            android:name=".widget.WidgetCopyReceiver"
-            android:exported="false" />
-
-        <!-- Widget ListView Data Service -->
-        <service
-            android:name=".widget.ClipboardWidgetService"
-            android:permission="android.permission.BIND_REMOTEVIEWS"
-            android:exported="false" />
-
         <!-- FileProvider for sharing files securely -->
         <provider
             android:name="androidx.core.content.FileProvider"

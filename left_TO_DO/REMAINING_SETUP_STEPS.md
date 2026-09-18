@@ -89,20 +89,13 @@ Check troubleshooting in `MACOS_SETUP_VERIFICATION.md`
 ### Quick Checklist:
 - [ ] Open `ios/Runner.xcworkspace` in Xcode
 - [ ] Set signing team for **Runner** target
-- [ ] Set signing team for **ClipboardWidget** target
 - [ ] Add **App Groups** capability to both targets: `group.com.ghostcopy.app`
 - [ ] Add **Push Notifications** capability to **Runner** target
 - [ ] Verify bundle IDs:
   - Runner: `com.ghostcopy.ghostcopy`
-  - Widget: `com.ghostcopy.ghostcopy.ClipboardWidget`
-- [ ] Create **Widget Extension** target:
-  - File → New → Target → Widget Extension
-  - Product Name: `ClipboardWidget`
-- [ ] Copy 4 Swift files to widget target
 - [ ] Add **GoogleService-Info.plist** to Runner target
 - [ ] Clean build: **Cmd+Shift+K** then **Cmd+B**
 - [ ] Test on simulator: **Cmd+R**
-
 
 ## Phase 4: Set Up Firebase Project & FCM
 
@@ -172,7 +165,6 @@ Check troubleshooting in `MACOS_SETUP_VERIFICATION.md`
 8. Add FCM token
 9. Click **Test**
 
-
 ## Phase 5: Configure Backend (Supabase Edge Function)
 
 **Where**: Supabase Edge Functions
@@ -213,7 +205,6 @@ See `FIREBASE_FCM_SETUP.md` - Section "Step 6: Backend Integration"
 - Python example
 - Node.js example
 
-
 #### Testing Phase:
 - [ ] **macOS Test** (30 min)
   - Run `flutter run -d macos`
@@ -231,7 +222,6 @@ See `FIREBASE_FCM_SETUP.md` - Section "Step 6: Backend Integration"
 - [ ] Set signing teams
 - [ ] Add App Groups capability (both targets)
 - [ ] Add Push Notifications capability
-- [ ] Create Widget Extension target
 - [ ] Add GoogleService-Info.plist
 - [ ] Build and test on simulator
 
@@ -305,12 +295,9 @@ See `FIREBASE_FCM_SETUP.md` - Section "Step 6: Backend Integration"
 When complete, you should be able to:
 - ✅ Run desktop app on Mac with hotkey/tray
 - ✅ Run iOS app in Xcode simulator
-- ✅ Add widget to home screen
-- ✅ Tap widget item to copy clipboard
 - ✅ Send test FCM notification
 - ✅ Receive notification with action buttons
 - ✅ Tap "Copy" action to write to clipboard
-- ✅ Widget updates automatically
 - ✅ No memory leaks or crashes
 
 ---

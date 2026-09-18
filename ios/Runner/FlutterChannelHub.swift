@@ -1,6 +1,5 @@
 import Flutter
 import Foundation
-import WidgetKit
 
 /// Owns the app's platform channels.
 ///
@@ -18,11 +17,9 @@ final class FlutterChannelHub {
   static let shared = FlutterChannelHub()
 
   private static let shareChannelName = "com.ghostcopy.ghostcopy/share"
-  private static let widgetChannelName = "com.ghostcopy/widget"
   private static let notificationChannelName = "com.ghostcopy.ghostcopy/notifications"
 
   private var shareChannel: FlutterMethodChannel?
-  private var widgetChannel: FlutterMethodChannel?
   private var notificationChannel: FlutterMethodChannel?
 
   /// A notification action that arrived before Flutter was ready.
@@ -55,39 +52,6 @@ final class FlutterChannelHub {
       }
     }
     shareChannel = share
-
-    let widget = FlutterMethodChannel(name: Self.widgetChannelName, binaryMessenger: messenger)
-    widget.setMethodCallHandler { (call, result) in
-      switch call.method {
-      case "updateWidget":
-        guard let args = call.arguments as? [String: Any],
-          let items = args["items"] as? [[String: Any]]
-        else {
-          result(["success": false])
-          return
-        }
-        WidgetDataManager.shared.saveClipboardItems(items)
-        WidgetCenter.shared.reloadAllTimelines()
-        result(["success": true])
-
-      case "getAppGroupContainerPath":
-        // Dart needs this to put widget thumbnails somewhere the extension
-        // can actually read them.
-        result(WidgetDataManager.shared.appGroupContainerPath())
-
-      case "clearWidgetData":
-        // Sign-out. The rows hold plaintext previews, filenames and device
-        // names from the account that is leaving; the widget would keep
-        // showing them to whoever signs in next.
-        WidgetDataManager.shared.clearAllItems()
-        WidgetCenter.shared.reloadAllTimelines()
-        result(["success": true])
-
-      default:
-        result(FlutterMethodNotImplemented)
-      }
-    }
-    widgetChannel = widget
 
     let notifications = FlutterMethodChannel(
       name: Self.notificationChannelName,

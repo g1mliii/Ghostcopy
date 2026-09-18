@@ -108,10 +108,8 @@ GhostCopy is a universal clipboard synchronization tool that enables seamless, r
 1. WHEN a new clipboard item is synced from another device THEN the GhostCopy System SHALL send a push notification to the user's mobile devices
 2. WHEN a user taps the push notification THEN the GhostCopy System SHALL open the app and automatically copy the item to the local clipboard
 3. WHEN the item is auto-copied THEN the GhostCopy System SHALL display a "Copied!" toast and minimize the application
-4. WHEN user has the widget on device THEN the GhostCopy System SHALL display the 5 most recent clips in a scrollable list
-5. WHEN a new clip is received THEN the GhostCopy System SHALL update both the app and the home screen widget
-6. WHEN a user pastes content into the mobile app send field THEN the GhostCopy System SHALL display a Send button to upload the content
-7. WHEN a user taps the Send button THEN the GhostCopy System SHALL send the pasted content to Supabase with device_type as "android" or "ios"
+4. WHEN a user pastes content into the mobile app send field THEN the GhostCopy System SHALL display a Send button to upload the content
+5. WHEN a user taps the Send button THEN the GhostCopy System SHALL send the pasted content to Supabase with device_type as "android" or "ios"
 8. WHEN the mobile app opens THEN the GhostCopy System SHALL display a prominent paste area for quick sending
 
 ### Requirement 11: Desktop Auto-Receive

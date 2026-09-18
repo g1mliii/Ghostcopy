@@ -1,7 +1,6 @@
 package com.ghostcopy.ghostcopy
 
 import android.util.Log
-import com.ghostcopy.ghostcopy.widget.ClipboardWidget
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
@@ -10,8 +9,8 @@ import com.google.firebase.messaging.RemoteMessage
  *
  * The push payload carries NO clipboard content by design - only
  * clipboard_id, device_type and content_type. This service therefore does not
- * copy anything or build widget rows from the message; it schedules a widget
- * refresh that re-reads the row from the database as the authenticated user.
+ * copy anything from the message; it only records that a push named this clip,
+ * so a later notification tap can be trusted.
  */
 class FirebaseMessagingService : FirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -22,13 +21,11 @@ class FirebaseMessagingService : FirebaseMessagingService() {
       // content_type - "Push infrastructure and OS notification history must
       // never receive a clipboard value, preview, filename, or size". This
       // handler used to read clipboard_content, file_size, filename, mime_type
-      // and is_encrypted, none of which are sent any more:
-      //   * clipboard_content was always "", so auto-copy never ran, and
-      //   * updateWidgetWithNewClip was still called with that empty string,
-      //     inserting a BLANK row into the home-screen widget on every push and
-      //     pushing real entries out of the 5-item list.
-      // So: do not copy, do not fabricate a widget row. Ask the widget to
-      // re-read from the database, where the row actually is.
+      // and is_encrypted, none of which are sent any more; clipboard_content
+      // was always "", so nothing built from it could be anything but empty.
+      // So: do not copy and do not fabricate anything from the push. The clip
+      // is fetched from the database, where it actually is, when the user
+      // taps.
       val data = remoteMessage.data
       val clipboardId = data["clipboard_id"] ?: ""
       val deviceType = data["device_type"] ?: "Another device"
@@ -41,17 +38,6 @@ class FirebaseMessagingService : FirebaseMessagingService() {
         // tap can later be told apart from a third-party app inventing an id
         // and sending it to the exported launcher. See PushRegistry.
         PushRegistry.record(applicationContext, clipboardId)
-
-        // Re-render the widget from what the app has already stored, so the
-        // content never travels through push infrastructure.
-        //
-        // This used to schedule WidgetRefreshWorker, whose callFlutterRefresh()
-        // only logged and returned true - it re-drew the same rows and never
-        // re-read anything, despite the comment claiming otherwise. New clips
-        // still reach the widget the same way they always did: when the app
-        // next loads history and writes them.
-        ClipboardWidget.notifyWidgetDataChanged(applicationContext)
-        Log.d(TAG, "🔄 Widget re-rendered from stored clips")
       }
     } catch (e: Exception) {
       Log.e(TAG, "❌ Error processing FCM message: ${e.message}", e)

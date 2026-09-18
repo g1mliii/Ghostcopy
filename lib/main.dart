@@ -49,7 +49,6 @@ import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
 import 'services/url_shortener_service.dart';
 import 'services/webhook_service.dart';
-import 'services/widget_service.dart';
 import 'services/window_service.dart';
 import 'ui/platform_adaptive.dart';
 import 'ui/screens/mobile_main_screen.dart';
@@ -542,13 +541,7 @@ Future<void> main(List<String> args) async {
       fcmService = FcmService();
       await fcmService.initialize();
 
-      // Initialize widget service (singleton) for home screen widgets
-      final widgetService = WidgetService();
-      await widgetService.initialize();
-      debugPrint('[App] ✅ Widget service initialized');
-      locator
-        ..registerSingleton<IFcmService>(fcmService)
-        ..registerSingleton<IWidgetService>(widgetService);
+      locator.registerSingleton<IFcmService>(fcmService);
 
       // Configure Android notification channel for clipboard sync
       if (Platform.isAndroid) {
@@ -995,9 +988,6 @@ class _MyAppState extends State<MyApp> {
       }
 
       // Dispose widget service (singleton) to clean up method channel
-      if (locator.isRegistered<IWidgetService>()) {
-        locator<IWidgetService>().dispose();
-      }
     }
 
     // Stop temp file cleanup timer (cross-platform)

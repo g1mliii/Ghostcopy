@@ -1,5 +1,9 @@
 # Complete Xcode Setup Guide for GhostCopy iOS
 
+> The home screen widget was removed from both platforms - an iOS widget
+> extension cannot write the general pasteboard on a real device, so a tap
+> could only open the app. Its setup steps are gone with it; Part 9 (share
+> extension) is the part still to do.
 
 ## Part 1: Code Signing & Team Configuration
 
@@ -25,20 +29,9 @@
    - Version: `1.0.0` (or your preferred)
    - Build: `1`
 
-### 1.3 Do Same for Widget Target
-
-1. Select **ClipboardWidget** target (after creating it)
-2. Go to **Signing & Capabilities** tab
-3. Select same team
-4. Verify **Bundle Identifier**:
-   - Should be: `com.ghostcopy.ghostcopy.ClipboardWidget`
-   - Automatically set to app bundle + extension name
-
----
-
 ## Part 2: App Groups Entitlements
 
-App Groups allow the main app and widget to share data via UserDefaults.
+App Groups let the main app and an extension share data via UserDefaults and a shared container. The share extension in Part 9 needs one.
 
 ### 2.1 Add to Runner Target
 
@@ -55,18 +48,6 @@ App Groups allow the main app and widget to share data via UserDefaults.
    └─ group.com.ghostcopy.app
    ```
 
-### 2.2 Add to ClipboardWidget Target
-
-1. Select **ClipboardWidget** target
-2. Go to **Signing & Capabilities** tab
-3. Click **+ Capability**
-4. Search for "App Groups"
-5. Click to add
-6. Enter: `group.com.ghostcopy.app` (same as main app)
-
-**Result**: Both targets should now have identical App Group identifiers.
-
-
 ## Part 3: Push Notifications Capability
 
 For FCM to work, enable push notifications.
@@ -81,125 +62,6 @@ For FCM to work, enable push notifications.
 6. Should show: `☑️ Push Notifications`
 
 **Note**: You'll see a warning about APNs certificate. This is normal - the certificate will be added once you upload APNs to Firebase.
-
-### 3.2 Do NOT add to Widget Target
-
-Widget extensions cannot receive push notifications directly. The main app receives notifications and updates the widget.
-
-
-## Part 4: Create Widget Extension Target
-
-### 4.1 Create New Target
-
-1. In Xcode, select **Runner** project
-2. Go to **File** → **New** → **Target**
-3. Choose **Widget Extension** template
-4. Configure:
-   - **Product Name**: `ClipboardWidget`
-   - **Organization**: GhostCopy
-   - **Language**: Swift
-   - ☐ **Include configuration intent** (leave unchecked)
-5. Click **Finish**
-
-Xcode will ask "Add ClipboardWidget to scheme?" → Click **Yes**.
-
-### 4.2 Copy Swift Files to Widget Target
-
-Once the target is created:
-
-1. **Delete** all template files Xcode created in `ios/ClipboardWidget/`
-   - Delete `ClipboardWidget.swift` (template)
-   - Delete `ClipboardWidgetBundle.swift` if present
-   - Delete `ClipboardWidget.intentdefinition` if present
-
-2. **Add our Swift files** to the widget target:
-   - `ios/ClipboardWidget/ClipboardWidget.swift`
-   - `ios/ClipboardWidget/ClipboardWidgetProvider.swift`
-   - `ios/ClipboardWidget/ClipboardWidgetView.swift`
-   - `ios/ClipboardWidget/RefreshWidgetIntent.swift`
-
-3. In Xcode, right-click `ios/ClipboardWidget` folder
-4. Select **Add Files to ClipboardWidget**
-5. Select the 4 files above
-6. ☑️ Check **Copy items if needed**
-7. ☑️ Check **ClipboardWidget** target (NOT Runner)
-8. Click **Add**
-
-### 4.3 Configure ClipboardWidget Build Settings
-
-1. Select **ClipboardWidget** target
-2. Go to **Build Settings** tab
-3. Search for "Entitlements"
-4. Set **Code Signing Entitlements** to:
-   ```
-   ios/ClipboardWidget/ClipboardWidget.entitlements
-   ```
-
-5. Search for "Bundle Identifier"
-6. Verify it's set to:
-   ```
-   $(PRODUCT_BUNDLE_IDENTIFIER).ClipboardWidget
-   ```
-   This automatically appends `.ClipboardWidget` to main app bundle ID.
-
-### 4.4 Create Info.plist for Widget Target
-
-1. Right-click `ios/ClipboardWidget` folder
-2. Select **New** → **File**
-3. Choose **Property List**
-4. Name it: `Info.plist`
-5. Content (paste into editor):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
-	<key>CFBundleDisplayName</key>
-	<string>ClipboardWidget</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>$(FLUTTER_BUILD_NAME)</string>
-	<key>CFBundleVersion</key>
-	<string>$(FLUTTER_BUILD_NUMBER)</string>
-	<key>MinimumOSVersion</key>
-	<string>15.0</string>
-	<key>NSExtension</key>
-	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.widgetkit-extension</string>
-	</dict>
-</dict>
-</plist>
-```
-
-### 4.5 Verify Build Phases
-
-1. Select **ClipboardWidget** target
-2. Go to **Build Phases** tab
-3. Expand **Compile Sources**
-4. Verify all 4 Swift files are listed:
-   - `ClipboardWidget.swift`
-   - `ClipboardWidgetProvider.swift`
-   - `ClipboardWidgetView.swift`
-   - `RefreshWidgetIntent.swift`
-5. Expand **Copy Bundle Resources**
-6. Verify both entitlements files are there:
-   - `ClipboardWidget.entitlements`
-   - `Runner.entitlements`
-
----
 
 ## Part 5: GoogleService-Info.plist Integration
 
@@ -219,7 +81,7 @@ This file enables Firebase Cloud Messaging (FCM).
 2. Select **Add Files to Runner**
 3. Select the downloaded `GoogleService-Info.plist`
 4. ☑️ Check **Copy items if needed**
-5. ☑️ Check **Runner** target ONLY (not widget)
+5. ☑️ Check **Runner** target ONLY
 6. Click **Add**
 
 ### 5.3 Verify in Build Phases
@@ -228,7 +90,6 @@ This file enables Firebase Cloud Messaging (FCM).
 2. Go to **Build Phases** tab
 3. Expand **Copy Bundle Resources**
 4. Verify `GoogleService-Info.plist` is listed
-5. Should be in **Runner** target only (not ClipboardWidget)
 
 ---
 
@@ -239,7 +100,6 @@ This file enables Firebase Cloud Messaging (FCM).
 1. Top of Xcode, click scheme selector
 2. You should see two schemes:
    - **Runner** (main app)
-   - **ClipboardWidget** (widget extension)
 3. Select **Runner** for main app testing
 
 ### 6.2 Select Device
@@ -267,20 +127,6 @@ This file enables Firebase Cloud Messaging (FCM).
 2. Select simulator device
 3. Press **Cmd+R** to run
 4. Wait for app to launch
-
-### 7.3 Test Widget
-
-1. Long-press home screen
-2. Tap **Edit Home Screen** (bottom left)
-3. Tap **+ Add Widgets** (top left)
-4. Search for "Clipboard"
-5. Select **ClipboardWidget**
-6. Choose size (small/medium/large)
-7. Tap **Add Widget**
-8. Long-press widget → tap clipboard item
-9. Verify it copies to clipboard
-
----
 
 ## Part 8: Run on Physical Device (Optional)
 
@@ -320,15 +166,6 @@ FCM only works on physical devices, not simulator:
 
 ## Troubleshooting
 
-### "Cannot find WidgetDataManager in scope"
-
-**Cause**: WidgetDataManager is in Runner target but AppDelegate tries to use it
-**Solution**:
-1. Select **Runner** target
-2. Go to **Build Phases** → **Compile Sources**
-3. Verify `ios/Runner/WidgetDataManager.swift` is listed
-4. If not, click **+** and add it
-
 ### "Missing Push Notifications capability"
 
 **Solution**:
@@ -336,33 +173,6 @@ FCM only works on physical devices, not simulator:
 2. Go to **Signing & Capabilities**
 3. Click **+ Capability**
 4. Add **Push Notifications**
-
-### "App Groups not syncing"
-
-**Causes & Solutions**:
-1. Different App Group identifier:
-   - Runner: `group.com.ghostcopy.app`
-   - ClipboardWidget: `group.com.ghostcopy.app`
-   - Both must be IDENTICAL
-
-2. Entitlements file not signed:
-   - Delete both targets' entitlements
-   - Re-add from Signing & Capabilities tab
-   - Don't edit `.entitlements` files manually
-
-3. Code Signing Entitlements not set:
-   - Runner target: Set to `ios/Runner/Runner.entitlements`
-   - ClipboardWidget: Set to `ios/ClipboardWidget/ClipboardWidget.entitlements`
-
-### "Widget not appearing on home screen"
-
-**Solutions**:
-1. Verify widget target built successfully
-2. Delete app from simulator
-3. Clean build folder: **Cmd+Shift+K**
-4. Rebuild: **Cmd+B**
-5. Run: **Cmd+R**
-6. Try again
 
 ### "Action buttons not showing on notification"
 
@@ -378,22 +188,12 @@ FCM only works on physical devices, not simulator:
 
 ### Code Signing:
 - [ ] Select signing team for Runner target
-- [ ] Select signing team for ClipboardWidget target
 - [ ] Bundle ID is `com.ghostcopy.ghostcopy`
-- [ ] Widget bundle ID is `com.ghostcopy.ghostcopy.ClipboardWidget`
 
 ### Entitlements:
 - [ ] Runner has App Groups: `group.com.ghostcopy.app`
-- [ ] ClipboardWidget has App Groups: `group.com.ghostcopy.app`
 - [ ] Runner has Push Notifications capability
 - [ ] Runner has Code Signing Entitlements: `ios/Runner/Runner.entitlements`
-- [ ] ClipboardWidget has Code Signing Entitlements: `ios/ClipboardWidget/ClipboardWidget.entitlements`
-
-### Widget Target:
-- [ ] Widget Extension target created
-- [ ] 4 Swift files in ClipboardWidget target Compile Sources
-- [ ] Info.plist created with NSExtension configuration
-- [ ] Build settings configured
 
 ### Firebase:
 - [ ] GoogleService-Info.plist downloaded
@@ -403,22 +203,16 @@ FCM only works on physical devices, not simulator:
 ### Build & Test:
 - [ ] Clean build passes: **Cmd+Shift+K** → **Cmd+B**
 - [ ] App runs on simulator: **Cmd+R**
-- [ ] Widget appears on home screen
-- [ ] Widget refresh button works
-- [ ] Tap widget copies to clipboard
 
 ---
 
 ## Additional Notes
 
 ### iOS Versions Supported:
-- Minimum: iOS 14 (for WidgetKit)
-- Recommended: iOS 15+ (better widget support)
+- Deployment target: iOS 16
 - Tested on: iOS 15, 16, 17
 
 ### Performance:
-- Widget updates: Manual refresh only (zero polling)
-- Memory: <5MB per widget lifecycle
 - Battery: Zero background drain
 
 ### Security:
@@ -431,7 +225,6 @@ FCM only works on physical devices, not simulator:
 ## Next Steps After Xcode Setup
 
 1. **Test on Simulator**:
-   - Widget appears ✓
    - Refresh works ✓
    - Copy to clipboard ✓
 
@@ -535,7 +328,6 @@ Share Extension runs in a **separate process** from the main app. To share data,
 
 **Critical**: All three targets must use the SAME App Group:
 - ✓ Runner: `group.com.ghostcopy.app`
-- ✓ ClipboardWidget: `group.com.ghostcopy.app`
 - ✓ ShareExtension: `group.com.ghostcopy.app`
 
 ---
@@ -944,11 +736,10 @@ private func processSharedContent() {
 
 ---
 
-## Summary: Three Extensions for GhostCopy iOS
+## Summary: Extensions for GhostCopy iOS
 
 | Extension | Purpose | Status |
 |-----------|---------|--------|
-| **ClipboardWidget** | Home screen widget showing recent clips | ✅ Implemented |
 | **ShareExtension** | Receive shares from other apps | 📝 Documented (not yet implemented) |
 | **NotificationServiceExtension** | (Future) Modify FCM notifications before display | ❌ Not planned |
 

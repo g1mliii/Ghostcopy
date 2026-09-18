@@ -207,5 +207,5 @@ Verified by reading the source, not by running it:
 iOS already compiles; macOS does not. macOS is also where the unshared work is
 — tray, hotkey, window management — and it needs no device provisioning or
 signing ceremony to iterate on. iOS additionally needs a real device to test
-anything that matters (APNs, clipboard, the home screen widget), so it is a
+anything that matters (APNs, clipboard, the share sheet), so it is a
 bigger setup step for a platform that is currently in better shape.

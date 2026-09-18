@@ -20,7 +20,6 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
-import '../../services/widget_service.dart';
 
 /// ViewModel for MobileMainScreen - handles business logic and state
 ///
@@ -393,13 +392,6 @@ class MobileMainViewModel extends ChangeNotifier {
         _historyError = null;
         _cleanupCache();
         notifyListeners();
-
-        // Update widget with latest clipboard data (non-blocking)
-        unawaited(
-          WidgetService().updateWidgetData(items).catchError((Object e) {
-            debugPrint('[MobileMainVM] Failed to update widget: $e');
-          }),
-        );
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to load history: $e');

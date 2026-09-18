@@ -2,7 +2,7 @@
 
 ## Overview
 
-GhostCopy is a Flutter-based cross-platform clipboard synchronization application. The desktop version (Windows/macOS) operates as an invisible background utility with a "Spotlight-style" popup interface, while mobile versions (iOS/Android) serve as receivers with push notifications and home screen widgets.
+GhostCopy is a Flutter-based cross-platform clipboard synchronization application. The desktop version (Windows/macOS) operates as an invisible background utility with a "Spotlight-style" popup interface, while mobile versions (iOS/Android) serve as receivers with push notifications.
 
 The architecture follows a client-server model where Supabase provides the backend infrastructure (PostgreSQL database, Realtime subscriptions, and authentication). All clients connect to the same Supabase instance, enabling real-time synchronization without custom server code.
 

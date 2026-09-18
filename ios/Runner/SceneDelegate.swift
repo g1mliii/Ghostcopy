@@ -72,30 +72,8 @@ import UIKit
 
     guard url.scheme == "ghostcopy" else { return }
 
-    // Widget tap: ghostcopy://copy/<clipboard_id>
-    //
-    // Sent through the notification channel, not the widget one. It used to
-    // call sendWidgetAction(), which invokes "handleWidgetAction" - a method
-    // no Dart code has ever implemented, so the tap reached the engine and was
-    // thrown away. This path also parks the action when the engine is not up
-    // yet, which a widget tap needs more than anything: tapping a row on a
-    // swiped-away app cold-launches it, and the deep link arrives long before
-    // Flutter can answer.
-    //
-    // "copy" rather than "share" so processShareAction() decides by content
-    // type - text to the clipboard, files and images to the share sheet.
-    if url.host == "copy" {
-      let clipboardId = url.lastPathComponent
-      print("[SceneDelegate] 📋 Widget deep link: copy clipboard \(clipboardId)")
-      channels.sendNotificationAction(clipboardId: clipboardId, action: "copy")
-      return
-    }
-
-    // Widget share: ghostcopy://share/<clipboard_id>
-    if url.host == "share" {
-      let clipboardId = url.lastPathComponent
-      print("[SceneDelegate] 📤 Widget deep link: share clipboard \(clipboardId)")
-      channels.sendNotificationAction(clipboardId: clipboardId, action: "share")
-    }
+    // ghostcopy://copy/<id> and ghostcopy://share/<id> were the home screen
+    // widget's two taps and went with it. The scheme itself stays - Supabase
+    // uses it for OAuth and password reset.
   }
 }

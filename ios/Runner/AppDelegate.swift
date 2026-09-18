@@ -1,7 +1,6 @@
 import Flutter
 import UIKit
 import UserNotifications
-import WidgetKit
 
 /// Application delegate.
 ///
@@ -71,7 +70,6 @@ import WidgetKit
       FlutterChannelHub.shared.sendNotificationAction(clipboardId: clipboardId, action: "copy")
     }
 
-    reloadWidget()
 
     completionHandler()
   }
@@ -88,30 +86,9 @@ import WidgetKit
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    reloadWidget()
     completionHandler([])
   }
 
-  // MARK: - Widget Update Methods
-
-  /// Re-render the widget when a notification arrives.
-  ///
-  /// This used to build a row out of the push and prepend it. The push does
-  /// not carry a clip: the edge function sends `clipboard_id`, `device_type`
-  /// and `content_type`, and nothing else. Every other key this read -
-  /// `clipboard_content`, `file_size`, `filename`, `thumbnail_path`,
-  /// `is_encrypted` - was always absent, so the row it added had the literal
-  /// fallback preview "Content", no size and no filename, and sat at the top
-  /// of the widget until the app next opened and rewrote the list.
-  ///
-  /// Nothing here can do better. Only the app holds the key, and the widget is
-  /// a view over what the app last wrote; a fabricated row is worse than a
-  /// slightly stale accurate one. Reloading still earns its keep - it
-  /// re-renders the relative timestamps, which the `.never` timeline policy
-  /// otherwise freezes.
-  private func reloadWidget() {
-    WidgetCenter.shared.reloadAllTimelines()
-  }
 }
 
 extension Date {

@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
-import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -29,7 +28,6 @@ class MainActivity : FlutterActivity() {
          */
         private const val MAX_SHARE_BYTES = 10 * 1024 * 1024
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
-        private const val WIDGET_CHANNEL = "com.ghostcopy/widget"
 
         // Must match the manifest's default_notification_channel_id, the
         // channelId the edge function sets on the push, and the channel
@@ -42,7 +40,6 @@ class MainActivity : FlutterActivity() {
 
     // Method channels (stored to prevent memory leaks)
     private var shareChannel: MethodChannel? = null
-    private var widgetChannel: MethodChannel? = null
 
     // Guards against re-copying the same clip every time the activity resumes
     // while a notification-launched intent is still attached.
@@ -125,39 +122,6 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
-
-        // Method channel for widget updates
-        widgetChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            WIDGET_CHANNEL
-        )
-        widgetChannel?.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "updateWidget" -> {
-                    try {
-                        val items = call.argument<List<Map<String, Any>>>("items")
-                        val lastUpdated = call.argument<Long>("lastUpdated")
-
-                        if (items != null && lastUpdated != null) {
-                            com.ghostcopy.ghostcopy.widget.WidgetDataManager.getInstance(applicationContext)
-                                .updateFromFlutter(items, lastUpdated)
-
-                            // Notify widget to refresh
-                            com.ghostcopy.ghostcopy.widget.ClipboardWidget.notifyWidgetDataChanged(applicationContext)
-
-                            Log.d(TAG, "✅ Widget updated with ${items.size} items")
-                            result.success(true)
-                        } else {
-                            result.error("INVALID_ARGS", "Missing items or lastUpdated", null)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "❌ Failed to update widget: ${e.message}", e)
-                        result.error("UPDATE_ERROR", e.message, null)
-                    }
-                }
-                else -> result.notImplemented()
-            }
-        }
     }
 
     override fun onResume() {
@@ -224,9 +188,6 @@ class MainActivity : FlutterActivity() {
         } else if (intent.action == "com.ghostcopy.ghostcopy.COPY_ACTION") {
             // Handle notification tap while app is running
             handleCopyAction(intent)
-        } else if (intent.action == "com.ghostcopy.ghostcopy.WIDGET_ITEM_CLICK") {
-            // Handle widget item tap (copy to clipboard)
-            handleWidgetItemClick(intent)
         }
     }
 
@@ -636,51 +597,12 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Share a clip the widget could not copy in place.
-     *
-     * Only the share hand-off reaches here now. Copying moved to
-     * WidgetCopyReceiver, which writes the clipboard without bringing the app
-     * to the foreground - every widget tap used to launch this activity, even
-     * a short text clip that needed nothing but a clipboard write.
-     */
-    private fun handleWidgetItemClick(intent: Intent) {
-        // MainActivity is exported (LAUNCHER), so an explicit intent with this
-        // action can be sent by any installed app - an <intent-filter> is not
-        // required for explicit delivery. This handler downloads and shares a
-        // clip by id, so the caller must be proven to be us. The widget's own
-        // PendingIntent carries the token; an external caller cannot read it
-        // out of app-private SharedPreferences.
-        if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
-            Log.w(TAG, "⚠️ Rejected WIDGET_ITEM_CLICK from an untrusted caller")
-            return
-        }
-
-        try {
-            val clipboardId = intent.getStringExtra(ClipboardWidgetFactory.KEY_CLIPBOARD_ID) ?: ""
-            val contentType = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_TYPE) ?: "text"
-
-            if (clipboardId.isEmpty()) {
-                Log.w(TAG, "⚠️ Widget share with no clipboard id")
-                return
-            }
-
-            Log.d(TAG, "📤 Widget share action for $clipboardId")
-            fetchAndCopyClipboardItem(clipboardId, contentType, "Widget")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to handle widget item click: ${e.message}", e)
-            showToast("Failed to process")
-        }
-    }
-
-    /**
      * Clean up method channels to prevent memory leaks.
      */
     override fun onDestroy() {
         // Remove method channel handlers
         shareChannel?.setMethodCallHandler(null)
-        widgetChannel?.setMethodCallHandler(null)
         shareChannel = null
-        widgetChannel = null
 
         super.onDestroy()
     }

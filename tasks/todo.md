@@ -140,7 +140,10 @@ at. Ordered by how likely each is to actually bite:
       migration**, not a config tweak - read with the old options, delete,
       rewrite with the new. Attempting it as a one-liner orphaned the stored
       passphrase and locked this machine out; see tasks/lessons.md
-- [ ] Widget extension target, or delete `ios/ClipboardWidget/`. Still no target
+- [x] Home screen widget - REMOVED on both platforms. An iOS widget extension
+      cannot write the general pasteboard on a real device, so a tap could only
+      open the app; not worth maintaining for that, and the Android half alone
+      did not justify it either.
 - [ ] iOS share sheet **into** the app (receiving shares) - no extension target
 - [ ] `flutter logs` returns nothing from a profile build on device. The
       background isolate is only observable by writing files to the app
@@ -312,7 +315,7 @@ should start as early as a build allows and run while the macOS work happens.
 - [x] Memory: All timers cancelled, subscriptions cancelled, caches cleared in dispose()
 - [x] Memory: _isDisposed flag prevents notifyListeners() after disposal
 - [x] Performance: Services remain singletons (injected from locator)
-- [x] Performance: WidgetService() uses factory constructor returning singleton
+- [x] Performance: services use factory constructors returning singletons
 - [x] Security: Fixed _autoCopyToClipboard to check item.isEncrypted before decrypting
 - [x] Security: Clipboard auto-clear still works on app background
 - [x] Security: Sensitive data detection still checked before send
