@@ -16,10 +16,8 @@ import Foundation
 final class FlutterChannelHub {
   static let shared = FlutterChannelHub()
 
-  private static let shareChannelName = "com.ghostcopy.ghostcopy/share"
   private static let notificationChannelName = "com.ghostcopy.ghostcopy/notifications"
 
-  private var shareChannel: FlutterMethodChannel?
   private var notificationChannel: FlutterMethodChannel?
 
   /// A notification action that arrived before Flutter was ready.
@@ -41,18 +39,6 @@ final class FlutterChannelHub {
   /// Builds the channels against the engine's messenger. Called once, from
   /// AppDelegate's `didInitializeImplicitFlutterEngine`.
   func attach(messenger: FlutterBinaryMessenger) {
-    let share = FlutterMethodChannel(name: Self.shareChannelName, binaryMessenger: messenger)
-    share.setMethodCallHandler { (call, result) in
-      switch call.method {
-      case "shareComplete":
-        // Share was processed; nothing to clean up on the native side.
-        result(nil)
-      default:
-        result(FlutterMethodNotImplemented)
-      }
-    }
-    shareChannel = share
-
     let notifications = FlutterMethodChannel(
       name: Self.notificationChannelName,
       binaryMessenger: messenger
@@ -80,10 +66,6 @@ final class FlutterChannelHub {
   }
 
   // MARK: - Outbound
-
-  func sendSharedContent(_ content: String) {
-    shareChannel?.invokeMethod("handleShareIntent", arguments: ["content": content])
-  }
 
   func sendNotificationAction(clipboardId: String, action: String) {
     guard let notificationChannel = notificationChannel else {

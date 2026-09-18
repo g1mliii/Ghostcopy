@@ -62,14 +62,9 @@ import UIKit
   }
 
   private func handle(url: URL) {
-    let channels = FlutterChannelHub.shared
-
-    // Share action: com.ghostcopy.share://<text>
-    if url.scheme == "com.ghostcopy.share", let sharedText = url.host {
-      channels.sendSharedContent(sharedText)
-      return
-    }
-
+    // com.ghostcopy.share://<text> is gone with the hand-rolled share path;
+    // receive_sharing_intent's extension owns the share sheet now and calls
+    // back on ShareMedia-<bundle id>, which the plugin handles itself.
     guard url.scheme == "ghostcopy" else { return }
 
     // ghostcopy://copy/<id> and ghostcopy://share/<id> were the home screen

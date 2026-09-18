@@ -2,13 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Shared with the share extension: it writes the shared attachments
-	     into this container and the app reads them back out. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.ghostcopy.app</string>
 	</array>
-	<key>aps-environment</key>
-	<string>development</string>
 </dict>
 </plist>

@@ -5,8 +5,8 @@ import 'dart:ui' show Rect;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
-
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
@@ -1013,48 +1013,99 @@ class MobileMainViewModel extends ChangeNotifier {
   }
 
   /// Handle shared files from share intent
+  /// Send everything the share sheet handed over, straight to the devices in
+  /// Settings.
+  ///
+  /// No picker and no preview: "Send to devices" already says where clips go,
+  /// and the point of sharing from another app is to be done without stopping
+  /// to answer a dialog.
+  ///
+  /// Routed by [SharedMediaFile.type], because `path` is not always a path -
+  /// the package documents it as "file path, url or the text", and carries
+  /// text and URLs in that same field. Every item used to go straight to
+  /// `File(path).readAsBytes()`, so sharing a paragraph or a link threw
+  /// FileSystemException, got swallowed by the catch below, and silently did
+  /// nothing. That is the main thing anyone shares to a clipboard app.
   Future<void> handleSharedFiles(
-    List<dynamic> files, {
+    List<SharedMediaFile> files, {
     Set<String> targetDeviceTypes = const {},
     void Function(String message)? onSuccess,
+    void Function(String message)? onError,
   }) async {
     for (final file in files) {
       try {
-        // file is SharedMediaFile from receive_sharing_intent
-        final path = (file as dynamic).path as String;
-        if (path.isEmpty) continue;
+        if (file.path.isEmpty) continue;
 
-        final bytes = await File(path).readAsBytes();
-        final filename = path.split(Platform.pathSeparator).last;
+        switch (file.type) {
+          case SharedMediaType.text:
+          case SharedMediaType.url:
+            await saveSharedContent(
+              file.path,
+              targetDeviceTypes,
+              onSuccess: (msg) => onSuccess?.call(msg),
+              onError: onError,
+            );
 
-        final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-          bytes,
-          filename,
-        );
-
-        final deviceType = ClipboardRepository.getCurrentDeviceType();
-
-        await _clipboardRepo.insertFile(
-          userId: _authService.currentUserId!,
-          deviceType: deviceType,
-          deviceName: null,
-          fileBytes: bytes,
-          originalFilename: filename,
-          contentType: fileTypeInfo.contentType,
-          mimeType: fileTypeInfo.mimeType,
-          // null, not an empty list: the repository reads null as "every
-          // device".
-          targetDeviceTypes: targetDeviceTypes.isEmpty
-              ? null
-              : targetDeviceTypes.toList(),
-        );
-
-        onSuccess?.call('Shared file uploaded: $filename');
+          case SharedMediaType.image:
+          case SharedMediaType.video:
+          case SharedMediaType.file:
+            await _sendSharedFile(
+              file,
+              targetDeviceTypes: targetDeviceTypes,
+              onSuccess: onSuccess,
+              onError: onError,
+            );
+        }
       } on Exception catch (e) {
-        debugPrint('Error handling shared file: $e');
+        debugPrint('[ShareSheet] Failed to send shared item: $e');
+        onError?.call('Could not send that item');
       }
     }
     unawaited(loadHistory());
+  }
+
+  /// Upload one shared file, which really is on disk.
+  ///
+  /// Enforces the same ceiling as every other entry point. The share path used
+  /// to skip this check, so an oversized file uploaded in full and was
+  /// rejected by the server's CHECK constraint afterwards - the user waited
+  /// through the whole transfer to be told no.
+  Future<void> _sendSharedFile(
+    SharedMediaFile file, {
+    required Set<String> targetDeviceTypes,
+    void Function(String message)? onSuccess,
+    void Function(String message)? onError,
+  }) async {
+    final bytes = await File(file.path).readAsBytes();
+    final filename = file.path.split(Platform.pathSeparator).last;
+
+    if (bytes.length > ClipboardLimits.maxFileBytes) {
+      onError?.call(
+        '$filename is too large (max ${ClipboardLimits.maxFileLabel})',
+      );
+      return;
+    }
+
+    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+      bytes,
+      filename,
+    );
+
+    await _clipboardRepo.insertFile(
+      userId: _authService.currentUserId!,
+      deviceType: ClipboardRepository.getCurrentDeviceType(),
+      deviceName: null,
+      fileBytes: bytes,
+      originalFilename: filename,
+      contentType: fileTypeInfo.contentType,
+      mimeType: fileTypeInfo.mimeType,
+      // null, not an empty list: the repository reads null as "every device".
+      targetDeviceTypes: targetDeviceTypes.isEmpty
+          ? null
+          : targetDeviceTypes.toList(),
+    );
+
+    onSuccess?.call('Sent $filename');
   }
 
   /// Save shared text content
@@ -1086,89 +1137,6 @@ class MobileMainViewModel extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('[ShareSheet] Error saving shared content: $e');
       onError?.call('Failed to share content');
-    }
-  }
-
-  /// Save shared image
-  Future<void> saveSharedImage(
-    Uint8List imageBytes,
-    String mimeType,
-    Set<String> selectedDeviceTypes, {
-    void Function(String message)? onSuccess,
-    void Function(String message)? onError,
-  }) async {
-    try {
-      final contentType = ContentType.fromMimeType(mimeType);
-      if (contentType == null || !contentType.isImage) {
-        onError?.call('Unsupported image type: $mimeType');
-        return;
-      }
-
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
-
-      await _clipboardRepo.insertImage(
-        userId: _authService.currentUserId!,
-        deviceType: deviceType,
-        deviceName: null,
-        imageBytes: imageBytes,
-        mimeType: mimeType,
-        contentType: contentType,
-        targetDeviceTypes: selectedDeviceTypes.isEmpty
-            ? null
-            : selectedDeviceTypes.toList(),
-      );
-
-      final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
-      final message = selectedDeviceTypes.isEmpty
-          ? 'Shared image ($sizeKB KB) to all devices'
-          : 'Shared image ($sizeKB KB) to ${selectedDeviceTypes.join(", ")}';
-      onSuccess?.call(message);
-      debugPrint('[ShareSheet] Image saved: $sizeKB KB');
-    } on Exception catch (e) {
-      debugPrint('[ShareSheet] Error saving shared image: $e');
-      onError?.call('Failed to share image');
-    }
-  }
-
-  /// Save shared file
-  Future<void> saveSharedFile(
-    Uint8List fileBytes,
-    String mimeType,
-    String filename,
-    Set<String> selectedDeviceTypes, {
-    void Function(String message)? onSuccess,
-    void Function(String message)? onError,
-  }) async {
-    try {
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        fileBytes,
-        filename,
-      );
-
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
-
-      await _clipboardRepo.insertFile(
-        userId: _authService.currentUserId!,
-        deviceType: deviceType,
-        deviceName: null,
-        fileBytes: fileBytes,
-        mimeType: mimeType,
-        contentType: fileTypeInfo.contentType,
-        originalFilename: filename,
-        targetDeviceTypes: selectedDeviceTypes.isEmpty
-            ? null
-            : selectedDeviceTypes.toList(),
-      );
-
-      final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
-      final message = selectedDeviceTypes.isEmpty
-          ? 'Shared $filename ($sizeKB KB) to all devices'
-          : 'Shared $filename ($sizeKB KB) to ${selectedDeviceTypes.join(", ")}';
-      onSuccess?.call(message);
-      debugPrint('[ShareSheet] File saved: $filename ($sizeKB KB)');
-    } on Exception catch (e) {
-      debugPrint('[ShareSheet] Error saving shared file: $e');
-      onError?.call('Failed to share file');
     }
   }
 

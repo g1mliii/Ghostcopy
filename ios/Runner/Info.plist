@@ -22,6 +22,10 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- Read by receive_sharing_intent to find the container it shares with
+	     the share extension. CUSTOM_GROUP_ID is set on both targets. -->
+	<key>AppGroupId</key>
+	<string>$(CUSTOM_GROUP_ID)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	
@@ -88,6 +92,9 @@
 				<string>ghostcopy</string>
 				<!-- Google Sign-In REVERSED_CLIENT_ID -->
 				<string>com.googleusercontent.apps.415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti</string>
+				<!-- How the share extension hands off: it writes the
+				     attachments into the App Group and opens this. -->
+				<string>ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			</array>
 		</dict>
 	</array>

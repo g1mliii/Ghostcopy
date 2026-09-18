@@ -6,19 +6,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.io.File
 
 class MainActivity : FlutterActivity() {
     private companion object {
         private const val TAG = "MainActivity"
-        private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
 
         /**
          * Largest shared payload accepted, in bytes.
@@ -26,7 +22,6 @@ class MainActivity : FlutterActivity() {
          * Mirrors ClipboardLimits.maxFileBytes on the Dart side and the CHECK
          * constraint in supabase/schema.sql. Change all three together.
          */
-        private const val MAX_SHARE_BYTES = 10 * 1024 * 1024
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
 
         // Must match the manifest's default_notification_channel_id, the
@@ -39,7 +34,6 @@ class MainActivity : FlutterActivity() {
     }
 
     // Method channels (stored to prevent memory leaks)
-    private var shareChannel: MethodChannel? = null
 
     // Guards against re-copying the same clip every time the activity resumes
     // while a notification-launched intent is still attached.
@@ -58,22 +52,6 @@ class MainActivity : FlutterActivity() {
         ensureNotificationChannel()
 
         applyScreenshotProtection()
-
-        // Method channel for share sheet operations
-        shareChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            SHARE_CHANNEL
-        )
-        shareChannel?.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "shareComplete" -> {
-                    // Share was processed, close the activity
-                    finish()
-                    result.success(null)
-                }
-                else -> result.notImplemented()
-            }
-        }
 
         // Native toast channel. Flutter's in-app toast is a custom overlay that
         // does not look like the platform, so short confirmations ("Copied to
@@ -182,218 +160,14 @@ class MainActivity : FlutterActivity() {
         // A notification tapped while the app is already running arrives here.
         handleFcmLaunchIntent(intent)
 
-        // Handle share intent from another app
-        if (intent.action == Intent.ACTION_SEND) {
-            handleShareIntent(intent)
-        } else if (intent.action == "com.ghostcopy.ghostcopy.COPY_ACTION") {
+        // ACTION_SEND is not handled here. receive_sharing_intent owns the
+        // share sheet on both platforms; this used to catch it as well, so a
+        // single share ran two paths - this one popping a device-picker dialog
+        // and calling finish() out from under it, the plugin's sending the same
+        // item again.
+        if (intent.action == "com.ghostcopy.ghostcopy.COPY_ACTION") {
             // Handle notification tap while app is running
             handleCopyAction(intent)
-        }
-    }
-
-    /**
-     * Typed EXTRA_STREAM lookup.
-     *
-     * The single-argument getParcelableExtra has been deprecated since API 33;
-     * the typed overload is also the safe one, because it will not hand back an
-     * object of an unexpected class from an intent any installed app can send.
-     */
-    @Suppress("DEPRECATION")
-    private fun streamExtra(intent: Intent): Uri? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-        } else {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
-        }
-    }
-
-    private fun handleShareIntent(intent: Intent) {
-        when {
-            intent.type?.startsWith("text/") == true -> {
-                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
-                if (sharedText.isNotEmpty()) {
-                    saveSharedContentFast(sharedText)
-                }
-            }
-            intent.type?.startsWith("image/") == true -> {
-                val imageUri = streamExtra(intent)
-                if (imageUri != null) {
-                    saveSharedImageFast(imageUri)
-                }
-            }
-            // Handle all other file types (PDFs, DOCs, ZIPs, etc.)
-            else -> {
-                val fileUri = streamExtra(intent)
-                if (fileUri != null) {
-                    saveSharedFileFast(fileUri)
-                }
-            }
-        }
-    }
-
-    private fun saveSharedContentFast(content: String) {
-        val channel = MethodChannel(
-            flutterEngine!!.dartExecutor.binaryMessenger,
-            SHARE_CHANNEL
-        )
-
-        // Show device selector dialog and start save in background
-        channel.invokeMethod("handleShareIntent", mapOf("content" to content))
-        // Save started in background, close activity immediately
-        // Don't wait for save to complete
-        finish()
-    }
-
-    /**
-     * Size of the content behind [uri], or null when it cannot be determined.
-     *
-     * Checked BEFORE reading. readBytes() pulls the whole stream into memory,
-     * so validating the size afterwards meant sharing a multi-gigabyte video
-     * allocated all of it just to reject it - an OOM kill rather than a toast.
-     */
-    private fun contentSize(uri: Uri): Long? {
-        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
-            ?.use { cursor ->
-                val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                    return cursor.getLong(index)
-                }
-            }
-
-        return try {
-            contentResolver.openAssetFileDescriptor(uri, "r")?.use { fd ->
-                fd.length.takeIf { it != android.content.res.AssetFileDescriptor.UNKNOWN_LENGTH }
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /**
-     * Read at most [limit] bytes, or null if the stream is longer.
-     *
-     * The bound matters even when [contentSize] answered: a provider can report
-     * one size and then serve more.
-     */
-    private fun readBounded(uri: Uri, limit: Int): ByteArray? {
-        return contentResolver.openInputStream(uri)?.use { stream ->
-            val buffer = java.io.ByteArrayOutputStream()
-            val chunk = ByteArray(64 * 1024)
-            var total = 0
-            while (true) {
-                val read = stream.read(chunk)
-                if (read <= 0) break
-                total += read
-                if (total > limit) return null
-                buffer.write(chunk, 0, read)
-            }
-            buffer.toByteArray()
-        }
-    }
-
-    /**
-     * Read a shared URI, enforcing the size ceiling and reporting failures.
-     *
-     * Both share paths need exactly this: a declared-size pre-check, a bounded
-     * read, an empty check, and a toast plus finish() on each failure. They
-     * carried their own copies, differing only in the noun in the messages.
-     *
-     * Returns null when the share cannot proceed, having already told the user
-     * and closed the activity.
-     */
-    private fun readSharedBytes(uri: Uri, noun: String): ByteArray? {
-        // Size first, then a bounded read - never readBytes() on untrusted
-        // content of unknown length.
-        val declaredSize = contentSize(uri)
-        if (declaredSize != null && declaredSize > MAX_SHARE_BYTES) {
-            Log.e(TAG, "❌ $noun too large: $declaredSize bytes (max: $MAX_SHARE_BYTES)")
-            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
-            return null
-        }
-
-        val bytes = readBounded(uri, MAX_SHARE_BYTES)
-        if (bytes == null) {
-            Log.e(TAG, "❌ $noun exceeded $MAX_SHARE_BYTES bytes while reading")
-            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
-            return null
-        }
-
-        if (bytes.isEmpty()) {
-            Log.e(TAG, "❌ Failed to read $noun from URI: $uri")
-            failShare("Failed to read ${noun.lowercase()}")
-            return null
-        }
-
-        return bytes
-    }
-
-    /** Tell the user the share failed, then close. */
-    private fun failShare(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        finish()
-    }
-
-    /** The channel Flutter listens on for shared payloads. */
-    private fun shareChannel() = MethodChannel(
-        flutterEngine!!.dartExecutor.binaryMessenger,
-        SHARE_CHANNEL
-    )
-
-    private fun saveSharedImageFast(imageUri: Uri) {
-        try {
-            val bytes = readSharedBytes(imageUri, "Image") ?: return
-
-            val mimeType = contentResolver.getType(imageUri) ?: "image/*"
-
-            // Pass raw bytes directly to Flutter (MethodChannel supports
-            // ByteArray -> Uint8List). No base64 encoding needed - saves 33%
-            // memory overhead.
-            shareChannel().invokeMethod("handleShareImage", mapOf(
-                "imageBytes" to bytes,
-                "mimeType" to mimeType
-            ))
-            // Save started in background, close activity
-            finish()
-
-            Log.d(TAG, "✅ Shared image: $mimeType, ${bytes.size / 1024}KB")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error reading shared image: ${e.message}", e)
-            failShare("Failed to share image")
-        }
-    }
-
-    private fun saveSharedFileFast(fileUri: Uri) {
-        try {
-            val bytes = readSharedBytes(fileUri, "File") ?: return
-
-            val mimeType = contentResolver.getType(fileUri) ?: "application/octet-stream"
-
-            // Get original filename from URI.
-            // getColumnIndex returns -1 for a provider that does not expose
-            // DISPLAY_NAME, and moveToFirst is false for an empty cursor -
-            // getString() then threw and the whole share failed with "Failed to
-            // share file" for a file that was perfectly shareable.
-            val filename = contentResolver.query(fileUri, null, null, null, null)?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex >= 0 && cursor.moveToFirst()) {
-                    cursor.getString(nameIndex)
-                } else {
-                    null
-                }
-            } ?: "file"
-
-            shareChannel().invokeMethod("handleShareFile", mapOf(
-                "fileBytes" to bytes,
-                "mimeType" to mimeType,
-                "filename" to filename
-            ))
-            // Save started in background, close activity
-            finish()
-
-            Log.d(TAG, "✅ Shared file: $filename ($mimeType), ${bytes.size / 1024}KB")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error reading shared file: ${e.message}", e)
-            failShare("Failed to share file")
         }
     }
 
@@ -601,8 +375,6 @@ class MainActivity : FlutterActivity() {
      */
     override fun onDestroy() {
         // Remove method channel handlers
-        shareChannel?.setMethodCallHandler(null)
-        shareChannel = null
 
         super.onDestroy()
     }

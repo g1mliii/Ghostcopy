@@ -8,7 +8,6 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
-import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/file_type_service.dart';
@@ -56,7 +55,6 @@ const double _twoPaneMinAspect = 0.85;
 /// history list does. So the compose side is pinned and history takes the rest.
 const double _composePaneWidth = 400;
 
-const _shareChannel = MethodChannel('com.ghostcopy.ghostcopy/share');
 const _notificationChannel = MethodChannel(
   'com.ghostcopy.ghostcopy/notifications',
 );
@@ -254,7 +252,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _linkSubscription?.cancel();
 
     // Remove method channel handlers to prevent memory leaks
-    _shareChannel.setMethodCallHandler(null);
     _notificationChannel.setMethodCallHandler(null);
 
     super.dispose();
@@ -540,131 +537,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// These were three identical pairs of inline closures, one per share type,
   /// each rebuilding the same SnackBar - and they used SnackBar while the rest
   /// of this screen uses the app's own toast.
-  void _shareSucceeded(String message) {
-    if (!mounted) return;
-    showGhostToast(context, message, type: GhostToastType.success);
-  }
-
-  void _shareFailed(String message) {
-    if (!mounted) return;
-    showGhostToast(context, message, type: GhostToastType.error);
-  }
-
   void _setupMethodChannels() {
-    _shareChannel.setMethodCallHandler((call) async {
-      switch (call.method) {
-        case 'handleShareIntent':
-          // ignore: avoid_dynamic_calls
-          final content = call.arguments['content'] as String?;
-          if (content != null && content.isNotEmpty) {
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(
-              content,
-            );
-
-            if (selectedDeviceTypes != null) {
-              unawaited(
-                _viewModel.saveSharedContent(
-                  content,
-                  selectedDeviceTypes,
-                  onSuccess: _shareSucceeded,
-                  onError: _shareFailed,
-                ),
-              );
-            }
-            return true;
-          }
-          return false;
-
-        case 'handleShareImage':
-          // ignore: avoid_dynamic_calls
-          final imageBytes = call.arguments['imageBytes'] as Uint8List?;
-          // ignore: avoid_dynamic_calls
-          final mimeType = call.arguments['mimeType'] as String?;
-
-          if (imageBytes != null && imageBytes.isNotEmpty) {
-            if (imageBytes.length > ClipboardLimits.maxFileBytes) {
-              debugPrint(
-                '[MobileMain] Image too large: ${imageBytes.length} bytes',
-              );
-              showGhostToast(
-                context,
-                'Image too large (max 10MB)',
-                icon: Icons.error_outline,
-                type: GhostToastType.error,
-              );
-              return false;
-            }
-
-            final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
-
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(
-              'Image ($sizeKB KB)',
-            );
-
-            if (selectedDeviceTypes != null) {
-              unawaited(
-                _viewModel.saveSharedImage(
-                  imageBytes,
-                  mimeType!,
-                  selectedDeviceTypes,
-                  onSuccess: _shareSucceeded,
-                  onError: _shareFailed,
-                ),
-              );
-            }
-            return true;
-          }
-          return false;
-
-        case 'handleShareFile':
-          // ignore: avoid_dynamic_calls
-          final fileBytes = call.arguments['fileBytes'] as Uint8List?;
-          // ignore: avoid_dynamic_calls
-          final mimeType = call.arguments['mimeType'] as String?;
-          // ignore: avoid_dynamic_calls
-          final filename = call.arguments['filename'] as String?;
-
-          if (fileBytes != null && fileBytes.isNotEmpty && filename != null) {
-            if (fileBytes.length > ClipboardLimits.maxFileBytes) {
-              debugPrint(
-                '[MobileMain] File too large: ${fileBytes.length} bytes',
-              );
-              showGhostToast(
-                context,
-                'File too large (max 10MB)',
-                icon: Icons.error_outline,
-                type: GhostToastType.error,
-              );
-              return false;
-            }
-
-            final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
-
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(
-              '$filename ($sizeKB KB)',
-            );
-
-            if (selectedDeviceTypes != null) {
-              unawaited(
-                _viewModel.saveSharedFile(
-                  fileBytes,
-                  mimeType!,
-                  filename,
-                  selectedDeviceTypes,
-                  onSuccess: _shareSucceeded,
-                  onError: _shareFailed,
-                ),
-              );
-            }
-            return true;
-          }
-          return false;
-
-        default:
-          return false;
-      }
-    });
-
     _notificationChannel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'handleNotificationAction':
@@ -719,7 +592,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   void _initializeShareIntentListeners() {
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
-      if (value.isNotEmpty) unawaited(_handleSharedFilesWithTargets(value));
+      if (value.isNotEmpty) unawaited(_handleSharedFiles(value));
     });
 
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
@@ -727,7 +600,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         .listen(
           (value) {
             if (value.isNotEmpty) {
-              unawaited(_handleSharedFilesWithTargets(value));
+              unawaited(_handleSharedFiles(value));
             }
           },
           onError: (Object err) {
@@ -738,14 +611,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     debugPrint('[ShareSheet] Share intent listeners initialized');
   }
 
-  /// Sends shared files straight to the devices in Settings.
+  /// Sends a shared item to the devices in Settings.
   ///
-  /// No picker: the point of sharing from another app is to be done in one
-  /// tap, and the Default devices setting already says where clips go. Change
-  /// the target in Settings, or send from the app itself to pick per-send.
-  Future<void> _handleSharedFilesWithTargets(
-    List<SharedMediaFile> files,
-  ) async {
+  /// One path for both platforms, the share plugin's. Android used to run a
+  /// second, native one alongside it - MainActivity caught ACTION_SEND, popped
+  /// a device-picker dialog and called finish() immediately, closing the
+  /// activity out from under the dialog it had just asked for - while this
+  /// path ran too. Both fired on the same share.
+  Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
     final targets = await locator<ISettingsService>()
         .getAutoSendTargetDevices();
     if (!mounted) return;
@@ -754,162 +627,23 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       files,
       targetDeviceTypes: targets,
       onSuccess: (msg) {
-        if (mounted) {
-          showGhostToast(
-            context,
-            msg,
-            icon: Icons.upload_file,
-            type: GhostToastType.success,
-          );
-        }
+        if (!mounted) return;
+        showGhostToast(
+          context,
+          msg,
+          icon: Icons.upload_file,
+          type: GhostToastType.success,
+        );
       },
-    );
-  }
-
-  Future<Set<String>?> _showDeviceSelectorDialog(String content) async {
-    // Seeded from the "Send to devices" setting, so the usual case is one tap
-    // rather than re-picking the same devices on every share.
-    final selectedTypes = Set<String>.from(
-      await locator<ISettingsService>().getAutoSendTargetDevices(),
-    );
-    if (!mounted) return null;
-
-    return showDialog<Set<String>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            backgroundColor: GhostColors.surface,
-            title: const Text(
-              'Share to Devices',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: GhostColors.textPrimary,
-              ),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Select which device types to send to:',
-                  style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
-                ),
-                if (content.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  // Named so a share started from another app shows what is
-                  // about to be sent, rather than an unlabelled device list.
-                  Text(
-                    content,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.textSecondary,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                // Generated from the canonical device list rather than
-                // written out chip by chip. The hand-written version listed
-                // four platforms and omitted linux, while the setting that
-                // seeds selectedTypes can contain it - so a Linux target
-                // arrived selected with no chip to show or clear it, and Send
-                // routed the clip to a destination the dialog never displayed.
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final type in ClipboardRepository.validDeviceTypes)
-                      _buildDeviceChip(
-                        type,
-                        selectedTypes.contains(type),
-                        () => setDialogState(() {
-                          if (!selectedTypes.remove(type)) {
-                            selectedTypes.add(type);
-                          }
-                        }),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  selectedTypes.isEmpty
-                      ? 'Empty = All devices'
-                      : '${selectedTypes.length} type(s) selected',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: GhostColors.textMuted,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(color: Colors.grey.shade400),
-                ),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(selectedTypes),
-                child: const Text(
-                  'Send',
-                  style: TextStyle(color: GhostColors.primary),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  /// Icon and label are derived from [type] rather than passed in: they were
-  /// three positional arguments computed from it at the call site, and the
-  /// first was not read at all.
-  Widget _buildDeviceChip(String type, bool isSelected, VoidCallback onTap) {
-    final icon = iconForDeviceType(type);
-    final label = platformLabel(type);
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? GhostColors.primaryAlpha20
-              : GhostColors.background,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? GhostColors.primary : GhostColors.glassBorder,
-            width: 1.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: isSelected ? GhostColors.primary : GhostColors.textMuted,
-              ),
-            ),
-          ],
-        ),
-      ),
+      onError: (msg) {
+        if (!mounted) return;
+        showGhostToast(
+          context,
+          msg,
+          icon: Icons.error_outline,
+          type: GhostToastType.error,
+        );
+      },
     );
   }
 
