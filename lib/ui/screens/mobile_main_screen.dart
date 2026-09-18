@@ -14,6 +14,7 @@ import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
+import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
@@ -1486,7 +1487,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     final selected = _viewModel.selectedDeviceTypes;
     if (selected.isEmpty) return 'Send to all devices';
     if (selected.length == 1) {
-      return 'Send to ${DeviceTypeTarget.platformLabel(selected.first)}';
+      return 'Send to ${platformLabel(selected.first)}';
     }
     return 'Send to ${selected.length} platforms';
   }
@@ -2171,7 +2172,7 @@ class _HistoryRowState extends State<_HistoryRow> {
           color: GhostColors.textMuted,
         ),
         Text(
-          DeviceTypeTarget.platformLabel(item.deviceType),
+          platformLabel(item.deviceType),
           style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         const Text(
@@ -2221,10 +2222,10 @@ class _HistoryRowState extends State<_HistoryRow> {
   static String _targetLabel(List<String>? targets) {
     if (targets == null || targets.isEmpty) return 'All devices';
     if (targets.length == 1) {
-      return DeviceTypeTarget.platformLabel(targets.first);
+      return platformLabel(targets.first);
     }
     if (targets.length == 2) {
-      return targets.map(DeviceTypeTarget.platformLabel).join(', ');
+      return targets.map(platformLabel).join(', ');
     }
     return '${targets.length} devices';
   }

@@ -20,6 +20,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
+import '../../utils/platform_label.dart';
 
 /// ViewModel for MobileMainScreen - handles business logic and state
 ///
@@ -1579,19 +1580,4 @@ class DeviceTypeTarget {
 
   /// Names of every device this chip delivers to, for the tooltip.
   String get deviceNames => devices.map((d) => d.displayName).join(', ');
-
-  /// Proper platform names, shared by the chips, the send button and the clip
-  /// footer. Capitalising the first letter produced "Macos" and "Ios", which
-  /// read as typos rather than products.
-  static String platformLabel(String deviceType) => switch (deviceType) {
-    'windows' => 'Windows',
-    'macos' => 'macOS',
-    'linux' => 'Linux',
-    'android' => 'Android',
-    'ios' => 'iOS',
-    _ =>
-      deviceType.isEmpty
-          ? deviceType
-          : deviceType[0].toUpperCase() + deviceType.substring(1),
-  };
 }

@@ -9,6 +9,7 @@ import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/viewmodels/mobile_main_viewmodel.dart';
+import 'package:ghostcopy/utils/platform_label.dart';
 import 'package:mocktail/mocktail.dart';
 
 class _MockAuthService extends Mock implements IAuthService {}
@@ -336,10 +337,23 @@ void main() {
 
     test('platformLabel spells product names properly', () {
       // Capitalising the first letter gave "Macos" and "Ios".
-      expect(DeviceTypeTarget.platformLabel('macos'), 'macOS');
-      expect(DeviceTypeTarget.platformLabel('ios'), 'iOS');
-      expect(DeviceTypeTarget.platformLabel('windows'), 'Windows');
-      expect(DeviceTypeTarget.platformLabel('android'), 'Android');
+      expect(platformLabel('macos'), 'macOS');
+      expect(platformLabel('ios'), 'iOS');
+      expect(platformLabel('windows'), 'Windows');
+      expect(platformLabel('android'), 'Android');
+      // linux is in device_type_enum and in validDeviceTypes, so a chip can be
+      // built for it; the assertions above happened to skip the one platform a
+      // hand-written list had previously omitted.
+      expect(platformLabel('linux'), 'Linux');
+    });
+
+    test('platformLabel does not care about case', () {
+      // device_type is a Postgres enum, so real rows are always lowercase.
+      // This is the safety net that let DeviceTypeTarget's own copy of this
+      // mapping - which switched on the raw string - be deleted rather than
+      // kept for the one case it handled differently.
+      expect(platformLabel('MacOS'), 'macOS');
+      expect(platformLabel('IOS'), 'iOS');
     });
   });
 
