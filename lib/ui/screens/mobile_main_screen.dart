@@ -14,7 +14,6 @@ import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
-import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
