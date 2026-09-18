@@ -99,13 +99,18 @@ All features are implemented as services with abstract interfaces for testabilit
 
 ## UI Design System
 
-**Theme**: Dark + glassmorphism, inspired by Discord and Blip
+**Theme**: Dark + glassmorphism
+
+These are the real values from `lib/ui/theme/colors.dart` - check there first.
+This block was stale for a while and read #5865F2, which is Discord's Blurple
+verbatim; the launch screens were built against the old background from here
+and ended up a shade off the app they hand over to.
 
 **Colors** (see `lib/ui/theme/colors.dart`):
 ```dart
-background: Color(0xFF0D0D0F)    // Deep black
-surface: Color(0xFF1A1A1D)       // Card surfaces
-primary: Color(0xFF5865F2)       // Purple-blue accent (Discord-like)
+background: Color(0xFF0F0F13)    // Deep black
+surface: Color(0xFF19191F)       // Card surfaces
+primary: Color(0xFF6670FF)       // Purple-blue accent
 success: Color(0xFF3BA55C)       // Green confirmations
 ```
 

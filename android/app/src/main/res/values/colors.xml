@@ -2,10 +2,13 @@
 <resources>
     <!--
         Tint applied behind the (alpha-only) status bar icon and to the app name
-        in the notification shade. Matches GhostCopy's primary accent, the same
-        Color(0xFF5865F2) used by the Flutter theme.
+        in the notification shade. Matches GhostColors.primary.
+
+        This was #5865F2 - Discord's Blurple, which the accent used to be a
+        copy of. The Flutter theme moved off it; this did not, so every
+        notification was still tinted with it.
     -->
-    <color name="notification_accent">#FF5865F2</color>
+    <color name="notification_accent">#FF6670FF</color>
 
     <!-- GhostColors.background. The splash and the window behind the Flutter
          UI both use it, so there is no lighter frame on either side of the
