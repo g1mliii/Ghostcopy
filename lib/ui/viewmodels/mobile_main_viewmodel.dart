@@ -952,8 +952,13 @@ class MobileMainViewModel extends ChangeNotifier {
         // what the file itself carries; this tells the share sheet directly,
         // so it does not have to infer the type to pick an icon and a list of
         // apps that can take it.
+        //
+        // No `text`. It used to carry "Shared via GhostCopy", which is a
+        // second item in the share, not a caption: the sheet read the payload
+        // as plain text AND a document, fell back to a generic handler icon
+        // instead of the file's own - a PDF came up under Safari's logo - and
+        // pasted that sentence into whatever received it.
         files: [XFile(path, mimeType: mimeType)],
-        text: 'Shared via GhostCopy',
         sharePositionOrigin: sharePositionOrigin,
       ),
     );
