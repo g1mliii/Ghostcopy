@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../models/exceptions.dart';
 import '../encryption_service.dart';
 import '../passphrase_sync_service.dart';
+import 'keychain_accessibility.dart';
 import 'passphrase_sync_service.dart';
 
 /// Payload for a crypto operation running on a background isolate.
@@ -82,7 +84,13 @@ class EncryptionService implements IEncryptionService {
   EncryptionService._internal({
     FlutterSecureStorage? secureStorage,
     IPassphraseSyncService? passphraseSyncService,
-  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage(),
+  }) : // Set on the instance rather than at each call site: every read, write
+       // and delete has to agree on how the item is addressed, and nine
+       // annotations is nine chances to miss one. Tests inject their own
+       // storage and are unaffected.
+       _secureStorage =
+           secureStorage ??
+           const FlutterSecureStorage(iOptions: passphraseIosOptions),
        _passphraseSync = passphraseSyncService;
 
   // Singleton instance
@@ -166,6 +174,17 @@ class EncryptionService implements IEncryptionService {
     _initFuture = completer.future;
 
     try {
+      // Before the first read, because the keys are user-scoped and the old
+      // items are invisible to a read under the new options. On a locked phone
+      // this finds nothing and does nothing; the move happens on the next
+      // foreground launch, which is the first moment it could.
+      if (Platform.isIOS) {
+        await migrateKeychainAccessibility(
+          storage: _secureStorage,
+          keys: [_passphraseKey, _verificationHashKey],
+        );
+      }
+
       // Try to load and initialize with existing passphrase
       final passphrase = await _secureStorage.read(key: _passphraseKey);
       if (passphrase != null && passphrase.isNotEmpty) {

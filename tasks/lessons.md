@@ -163,6 +163,12 @@ Each entry should include:
   fresh one. Reverted rather than fixed forward at the time, because the
   original bug it addressed only affects a locked phone while the regression
   destroys access to encrypted data outright.
+- **Resolved 2026-09-18**: fixed forward, as a migration this time -
+  `lib/services/impl/keychain_accessibility.dart`, with tests that model the two
+  Keychain behaviours that caused this (an item is identified by service and
+  account, so old and new cannot coexist and an add collides; a read filters on
+  accessibility, so the old item is invisible). The rule above stands: what made
+  it safe was the migration, not the constant.
 
 
 

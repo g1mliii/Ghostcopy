@@ -144,12 +144,29 @@ OVERFLOWED BY 16 PIXELS".
       `device_info_plus` as a direct dependency, async resolution (the getter is
       synchronous and read on every send), and a decision about existing rows.
       Note iOS gives only the model name without an Apple entitlement
-- [ ] **Keychain accessibility, properly.** The encryption key is written with
-      the default `kSecAttrAccessibleWhenUnlocked`, so a background isolate
-      cannot read it while the phone is locked. Changing it is a **data
-      migration**, not a config tweak - read with the old options, delete,
-      rewrite with the new. Attempting it as a one-liner orphaned the stored
-      passphrase and locked this machine out; see tasks/lessons.md
+- [x] **Keychain accessibility - done 2026-09-18.** The passphrase and its
+      verification hash now live under `first_unlock`
+      (`kSecAttrAccessibleAfterFirstUnlock`) instead of the default
+      `kSecAttrAccessibleWhenUnlocked`, so the push-woken isolate can decrypt on
+      a locked phone. Done as the migration it always was, in
+      `lib/services/impl/keychain_accessibility.dart`: read under the old
+      options, delete, write under the new, read back, and restore under the old
+      options if any of that fails. The delete-before-write window is
+      unavoidable - SecItemAdd matches on service and account alone, so the new
+      item cannot be added while the old one is there - which is why the restore
+      exists rather than a rethrow. Runs on iOS only, on every launch, and is a
+      no-op once nothing is left under the old options.
+
+      Takes effect after one *unlocked* launch. On a locked phone the old item
+      cannot be read, so the migration finds nothing and correctly does nothing;
+      that push falls back to opening the app, as it does today. Not applied to
+      macOS - same Keychain mechanics, but nothing wakes on a locked Mac, so it
+      would be a second migration bought for nothing.
+
+      Still to confirm on the device, and it cannot be checked on a fresh
+      install: it needs one that already holds a passphrase written by an older
+      build. Note simulator Keychain items survive app uninstalls, which is what
+      disguised this last time.
 - [x] Home screen widget - REMOVED on both platforms. An iOS widget extension
       cannot write the general pasteboard on a real device, so a tap could only
       open the app; not worth maintaining for that, and the Android half alone
