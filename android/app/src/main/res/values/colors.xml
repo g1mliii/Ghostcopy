@@ -10,5 +10,5 @@
     <!-- GhostColors.background. The splash and the window behind the Flutter
          UI both use it, so there is no lighter frame on either side of the
          first frame. -->
-    <color name="ghost_background">#FF0D0D0F</color>
+    <color name="ghost_background">#FF0F0F13</color>
 </resources>
