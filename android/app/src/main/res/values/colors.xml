@@ -14,4 +14,9 @@
          UI both use it, so there is no lighter frame on either side of the
          first frame. -->
     <color name="ghost_background">#FF0F0F13</color>
+
+    <!-- Adaptive icon background layer. GhostColors.primary: the launcher
+         masks this to its own shape, so it is a flat fill rather than a tile
+         with corners of its own. -->
+    <color name="ghost_icon_background">#FF6670FF</color>
 </resources>
