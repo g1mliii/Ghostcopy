@@ -19,10 +19,32 @@ import UIKit
 
   // MARK: - Privacy blur
 
+  /// Whether the user wants the app switcher preview hidden.
+  ///
+  /// The same "screenshot_protection" preference Android reads for FLAG_SECURE.
+  /// shared_preferences namespaces its keys with "flutter." and writes them to
+  /// NSUserDefaults, so the value is readable here without a channel call.
+  ///
+  /// Defaults to true, matching SettingsService.getScreenshotProtection(): a
+  /// clipboard history is worth covering by default, so opting out is the
+  /// deliberate act.
+  private var hidesAppSwitcherPreview: Bool {
+    let defaults = UserDefaults.standard
+    guard defaults.object(forKey: "flutter.screenshot_protection") != nil else {
+      return true
+    }
+    return defaults.bool(forKey: "flutter.screenshot_protection")
+  }
+
   /// Cover the window while the app is off-screen, so the task switcher
   /// snapshot does not leak clipboard contents.
+  ///
+  /// Only when the user asks for it. This used to be unconditional, and the
+  /// toggle that turns it off was shown on Android only - so an iOS user had
+  /// a blurred card in the app switcher, unlike almost everything else on the
+  /// phone, and no way to change it.
   override func sceneWillResignActive(_ scene: UIScene) {
-    if let window = window, blurView == nil {
+    if hidesAppSwitcherPreview, let window = window, blurView == nil {
       let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
       blur.frame = window.bounds
       blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
