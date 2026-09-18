@@ -14,6 +14,7 @@ import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
@@ -115,25 +116,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   static const _allDeviceTypes = ClipboardRepository.validDeviceTypes;
 
   Future<void> _toggleDefaultDevice(String deviceType) async {
-    // An empty set is the all-devices sentinel, and the chips render every
-    // destination as selected because of it. Toggling from that state has to
-    // start from the full set, or the first tap adds the one device instead of
-    // removing it - so tapping a chip that looks selected left only that device
-    // enabled and silently disabled every other destination, which is the exact
-    // opposite of what the tap asked for, and routed shares to the device the
-    // user was trying to exclude.
-    final updated = _defaultDevices.isEmpty
-        ? Set<String>.from(_allDeviceTypes)
-        : Set<String>.from(_defaultDevices);
-
-    if (!updated.remove(deviceType)) updated.add(deviceType);
-
-    // Fold "everything selected" back to the sentinel, so the stored value has
-    // one representation and a device type added in a later release is still
-    // covered by an existing all-devices preference.
-    final normalized = updated.length == _allDeviceTypes.length
-        ? <String>{}
-        : updated;
+    final normalized = nextDeviceSelection(
+      current: _defaultDevices,
+      allDeviceTypes: _allDeviceTypes,
+      toggled: deviceType,
+    );
+    // Null means the toggle would have emptied the set, which reads as "all".
+    if (normalized == null) return;
 
     // Local state first, then persist. Two chips tapped in quick succession
     // both computed from the same _defaultDevices while the first write was

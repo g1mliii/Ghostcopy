@@ -23,9 +23,12 @@ class TrayMenuWindow extends StatelessWidget {
   final VoidCallback onQuit;
 
   /// Space reserved around the menu card on macOS so its drop shadow is not
-  /// clipped by the window edge. The window is offset by this much, so the
-  /// card's visible corner - not the padding - lands on the tray icon.
-  static const EdgeInsets macOSInset = EdgeInsets.only(left: 16, top: 8);
+  /// clipped by the window edge.
+  ///
+  /// Private again: it was exposed so main.dart could offset the window by it,
+  /// but macOS pops a native NSMenu and never shows this widget, so that call
+  /// site was unreachable and has been removed.
+  static const EdgeInsets _macOSInset = EdgeInsets.only(left: 16, top: 8);
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +40,7 @@ class TrayMenuWindow extends StatelessWidget {
         ? Alignment.topLeft
         : Alignment.bottomRight;
     final padding = Platform.isMacOS
-        ? macOSInset
+        ? _macOSInset
         : const EdgeInsets.only(
             right: 16,
             bottom: 60,

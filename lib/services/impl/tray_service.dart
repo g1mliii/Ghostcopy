@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:tray_manager/tray_manager.dart';
 import '../tray_service.dart';
@@ -72,12 +71,6 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   @override
-  Future<Rect?> getIconBounds() async {
-    if (!_isDesktop()) return null;
-    return trayManager.getBounds();
-  }
-
-  @override
   Future<void> dispose() async {
     if (!_isDesktop()) return;
 
@@ -95,9 +88,14 @@ class TrayService with TrayListener implements ITrayService {
 
   @override
   void onTrayIconMouseDown() {
-    // Status items open their menu on either button, so left-click is routed
-    // to the same handler rather than left dead.
-    _openMenu();
+    // macOS status items open their menu on either button, so left-click is
+    // routed to the same handler there rather than left dead.
+    //
+    // Guarded rather than unconditional: on Windows this used to do nothing,
+    // and routing it through _openMenu made a left-click hide the main window
+    // and repurpose it as the menu - a behaviour change to Windows that only
+    // macOS reasoning asked for.
+    if (_usesNativeMenu) _openMenu();
   }
 
   @override

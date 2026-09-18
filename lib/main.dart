@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -1041,26 +1040,12 @@ class _MyAppState extends State<MyApp> {
     // Wait for resize to complete
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    // Position menu based on platform:
-    // - macOS: directly under the menu bar icon, right edges aligned
-    // - Windows: Bottom-right (taskbar is at bottom)
-    if (Platform.isMacOS) {
-      // tray_manager and window_manager share the same top-left-origin
-      // coordinate conversion, so these bounds need no remapping.
-      final iconBounds = await locator<ITrayService>().getIconBounds();
-      if (iconBounds != null) {
-        await windowManager.setPosition(
-          Offset(
-            math.max(0, iconBounds.left - TrayMenuWindow.macOSInset.left),
-            iconBounds.bottom - TrayMenuWindow.macOSInset.top,
-          ),
-        );
-      } else {
-        await windowManager.setAlignment(Alignment.topLeft);
-      }
-    } else {
-      await windowManager.setAlignment(Alignment.bottomRight);
-    }
+    // Bottom-right, because the taskbar is at the bottom.
+    //
+    // No macOS branch: macOS pops a real NSMenu from TrayService instead and
+    // never reaches this window, so a branch here could only ever be dead
+    // code that looked like the place to fix macOS placement.
+    await windowManager.setAlignment(Alignment.bottomRight);
 
     // Show with correct size and content
     await windowManager.show();

@@ -13,6 +13,7 @@ import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/hotkey_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
@@ -519,21 +520,33 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     }
   }
 
-  Future<void> _toggleDevice(String deviceType) async {
-    final newDevices = Set<String>.from(_autoSendTargetDevices);
-    if (newDevices.contains(deviceType)) {
-      newDevices.remove(deviceType);
-    } else {
-      newDevices.add(deviceType);
-    }
+  /// Every destination a clip can be sent to.
+  ///
+  /// Read from the canonical list rather than written out again, so a platform
+  /// added there is offered here too. The copy this replaced omitted linux.
+  static const _allDeviceTypes = ClipboardRepository.validDeviceTypes;
 
-    await widget.settingsService.setAutoSendTargetDevices(newDevices);
+  Future<void> _toggleDevice(String deviceType) async {
+    final normalized = nextDeviceSelection(
+      current: _autoSendTargetDevices,
+      allDeviceTypes: _allDeviceTypes,
+      toggled: deviceType,
+    );
+    // Null means the toggle would have emptied the set, which reads as "all".
+    if (normalized == null) return;
+
+    // Local state first, then persist. Two chips clicked in quick succession
+    // both computed from the same _autoSendTargetDevices while the first write
+    // was still in flight, so each removed only its own device and whichever
+    // write landed last discarded the other click.
     if (mounted) {
       setState(() {
-        _autoSendTargetDevices = newDevices;
+        _autoSendTargetDevices = normalized;
         _cachedDeviceText = null; // Reset cache
       });
     }
+
+    await widget.settingsService.setAutoSendTargetDevices(normalized);
   }
 
   /// Cache expensive string operation
@@ -1135,7 +1148,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Widget _buildDeviceSelector() {
     // Icon and label come from the shared helpers, so a platform cannot show
     // one icon here and a different one on the clip it produced.
-    const devices = ['windows', 'macos', 'android', 'ios'];
+    const devices = _allDeviceTypes;
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -1268,15 +1281,19 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                 );
               }).toList(),
             ),
-          const SizedBox(height: 8),
-          Text(
-            'Tap to select specific devices or leave all selected',
-            style: const TextStyle(
-              fontSize: 10,
-              color: GhostColors.textMuted,
-              fontStyle: FontStyle.italic,
+          // Inside the guard: it describes the chips, so while they are
+          // collapsed it told the user to tap something not on screen.
+          if (_deviceSelectorExpanded) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Tap to select specific devices or leave all selected',
+              style: TextStyle(
+                fontSize: 10,
+                color: GhostColors.textMuted,
+                fontStyle: FontStyle.italic,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1438,7 +1455,6 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   }
 }
 
-/// Auto-receive behavior radio button option
 /// One preset in the clipboard-staleness row.
 class _DurationOption extends StatelessWidget {
   const _DurationOption({
@@ -1487,6 +1503,7 @@ class _DurationOption extends StatelessWidget {
   }
 }
 
+/// Auto-receive behavior radio button option.
 class _AutoReceiveBehaviorOption extends StatelessWidget {
   const _AutoReceiveBehaviorOption({
     required this.behavior,

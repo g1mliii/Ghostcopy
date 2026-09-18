@@ -37,11 +37,6 @@ abstract class ITrayService {
   /// Set the context menu items
   Future<void> setContextMenu(List<TrayMenuItem> items);
 
-  /// Screen bounds of the tray icon, in the same top-left-origin coordinate
-  /// space `window_manager` uses for window positions. Null when the platform
-  /// cannot report them.
-  Future<Rect?> getIconBounds();
-
   /// Dispose of the service and clean up resources
   Future<void> dispose();
 }
