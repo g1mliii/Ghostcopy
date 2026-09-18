@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../ui/theme/colors.dart';
 
@@ -34,6 +36,10 @@ class WindowService implements IWindowService {
   // Spotlight window dimensions from CLAUDE.md
   static const double _windowWidth = 500;
   static const double _windowHeight = 400;
+
+  /// Breathing room left around a grown window, so it does not sit flush
+  /// against the edges of the work area.
+  static const double _workAreaMargin = 40;
 
   @override
   bool get isVisible => _isVisible;
@@ -121,8 +127,78 @@ class WindowService implements IWindowService {
     if (!_isDesktop()) return;
     // Resized in place rather than hidden first: the window is already on
     // screen here, and hiding it would dismiss the dialog that asked to grow.
-    await windowManager.setSize(Size(_windowWidth, height));
+    await windowManager.setSize(
+      Size(_windowWidth, await _clampToWorkArea(height)),
+    );
     await windowManager.center();
+  }
+
+  /// The tallest window that still fits on the display the window is on.
+  ///
+  /// A caller asks for the height its content wants, which on a short display
+  /// is taller than the screen. Centring a window taller than the work area
+  /// pushes its top and bottom off both edges, and the content cannot be
+  /// scrolled back into view: the dialog lays out against the window it was
+  /// given, so from its point of view everything fits and its scroll view
+  /// never gets anything to scroll. Clamping here means the window stays on
+  /// screen and the content becomes genuinely scrollable.
+  ///
+  /// Uses the work area rather than the full display, so the result excludes
+  /// the Windows taskbar and the macOS menu bar and Dock.
+  Future<double> _clampToWorkArea(double height) async {
+    try {
+      final displays = await screenRetriever.getAllDisplays();
+      final bounds = await windowManager.getBounds();
+      final display =
+          displayContaining(displays, bounds.center) ??
+          await screenRetriever.getPrimaryDisplay();
+
+      return clampHeightToDisplay(height, display);
+    } on Object catch (e) {
+      // Never let a display query stop the resize - an unclamped window is a
+      // cosmetic problem, a dialog that refuses to open is not.
+      debugPrint('[WindowService] Could not read work area: $e');
+      return height;
+    }
+  }
+
+  /// The display [point] falls on, or null if none of them contain it.
+  ///
+  /// Matters on multi-monitor setups, where clamping to the primary display
+  /// would size the window for a screen it is not on. Returns null rather than
+  /// guessing when the point is outside every display - a window straddling
+  /// two screens, or a platform that does not report display positions - so
+  /// the caller can fall back to the primary display.
+  @visibleForTesting
+  static Display? displayContaining(List<Display> displays, Offset point) {
+    for (final display in displays) {
+      final origin = display.visiblePosition ?? Offset.zero;
+      final size = display.visibleSize ?? display.size;
+      final rect = Rect.fromLTWH(origin.dx, origin.dy, size.width, size.height);
+      if (rect.contains(point)) return display;
+    }
+    return null;
+  }
+
+  /// [height], reduced to what actually fits on [display].
+  ///
+  /// Reads visibleSize - the work area - in preference to the full display
+  /// size, so the result excludes the Windows taskbar and the macOS menu bar
+  /// and Dock. Falls back to the full size where the platform does not report
+  /// a work area, and returns the requested height untouched when there is
+  /// nothing trustworthy to measure against, since a slightly oversized window
+  /// beats refusing to resize at all.
+  @visibleForTesting
+  static double clampHeightToDisplay(double height, Display? display) {
+    final available = display?.visibleSize?.height ?? display?.size.height;
+    if (available == null || available <= 0) return height;
+
+    final usable = available - _workAreaMargin;
+    // A work area smaller than the margin would otherwise produce a zero or
+    // negative height, which setSize rejects.
+    if (usable <= 0) return math.min(height, available);
+
+    return math.min(height, usable);
   }
 
   @override

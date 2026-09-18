@@ -776,62 +776,28 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ),
                 ],
                 const SizedBox(height: 16),
+                // Generated from the canonical device list rather than
+                // written out chip by chip. The hand-written version listed
+                // four platforms and omitted linux, while the setting that
+                // seeds selectedTypes can contain it - so a Linux target
+                // arrived selected with no chip to show or clear it, and Send
+                // routed the clip to a destination the dialog never displayed.
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _buildDeviceChip(
-                      'windows',
-                      Icons.laptop_windows,
-                      'Windows',
-                      selectedTypes.contains('windows'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('windows')) {
-                          selectedTypes.remove('windows');
-                        } else {
-                          selectedTypes.add('windows');
-                        }
-                      }),
-                    ),
-                    _buildDeviceChip(
-                      'macos',
-                      Icons.laptop_mac,
-                      'macOS',
-                      selectedTypes.contains('macos'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('macos')) {
-                          selectedTypes.remove('macos');
-                        } else {
-                          selectedTypes.add('macos');
-                        }
-                      }),
-                    ),
-                    _buildDeviceChip(
-                      'android',
-                      Icons.phone_android,
-                      'Android',
-                      selectedTypes.contains('android'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('android')) {
-                          selectedTypes.remove('android');
-                        } else {
-                          selectedTypes.add('android');
-                        }
-                      }),
-                    ),
-                    _buildDeviceChip(
-                      'ios',
-                      Icons.phone_iphone,
-                      'iOS',
-                      selectedTypes.contains('ios'),
-                      () => setDialogState(() {
-                        if (selectedTypes.contains('ios')) {
-                          selectedTypes.remove('ios');
-                        } else {
-                          selectedTypes.add('ios');
-                        }
-                      }),
-                    ),
+                    for (final type in ClipboardRepository.validDeviceTypes)
+                      _buildDeviceChip(
+                        type,
+                        iconForDeviceType(type),
+                        DeviceTypeTarget.platformLabel(type),
+                        selectedTypes.contains(type),
+                        () => setDialogState(() {
+                          if (!selectedTypes.remove(type)) {
+                            selectedTypes.add(type);
+                          }
+                        }),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 16),

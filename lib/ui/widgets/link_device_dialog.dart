@@ -11,6 +11,10 @@ import '../../services/window_service.dart';
 import '../theme/colors.dart';
 
 /// Window height needed to show the pairing dialog without scrolling.
+///
+/// A request, not a guarantee: WindowService clamps it to the work area of
+/// the display the window is on, so on a short screen the window stays fully
+/// visible and the dialog's scroll view takes over instead.
 const double _dialogWindowHeight = 700;
 
 /// Dialog for displaying QR code to link new mobile device
