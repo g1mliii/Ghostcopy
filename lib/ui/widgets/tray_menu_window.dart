@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import '../../services/game_mode_service.dart';
 import '../../services/window_service.dart';
@@ -22,29 +20,14 @@ class TrayMenuWindow extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onQuit;
 
-  /// Space reserved around the menu card on macOS so its drop shadow is not
-  /// clipped by the window edge.
-  ///
-  /// Private again: it was exposed so main.dart could offset the window by it,
-  /// but macOS pops a native NSMenu and never shows this widget, so that call
-  /// site was unreachable and has been removed.
-  static const EdgeInsets _macOSInset = EdgeInsets.only(left: 16, top: 8);
-
   @override
   Widget build(BuildContext context) {
-    // Platform-specific positioning:
-    // - macOS: menu hangs below the status item, left edges aligned, matching
-    //   how a native NSMenu opens from the menu bar
-    // - Windows: Taskbar is at bottom, so menu extends upward from bottom-right
-    final alignment = Platform.isMacOS
-        ? Alignment.topLeft
-        : Alignment.bottomRight;
-    final padding = Platform.isMacOS
-        ? _macOSInset
-        : const EdgeInsets.only(
-            right: 16,
-            bottom: 60,
-          ); // Bottom padding for Windows taskbar
+    // Windows only: macOS pops a native NSMenu from TrayService and never
+    // renders this widget, so a macOS branch here could only ever be dead
+    // code that looked like the place to fix macOS placement.
+    // The taskbar is at the bottom, so the menu extends upward from there.
+    const alignment = Alignment.bottomRight;
+    const padding = EdgeInsets.only(right: 16, bottom: 60);
 
     return Material(
       type: MaterialType.transparency,

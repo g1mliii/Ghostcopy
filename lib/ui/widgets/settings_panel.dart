@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -102,6 +101,10 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   /// completed while it was open - it only corrected itself when reopened.
   StreamSubscription<AuthState>? _authStateSub;
 
+  /// The account the panel is currently drawn for, so a replayed or
+  /// token-refresh event for the same user can be dropped.
+  String? _lastAuthUserId;
+
   // Separate debounce timers per field to prevent data loss
   Timer? _webhookDebounceTimer;
   Timer? _vaultPathDebounceTimer;
@@ -122,9 +125,27 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _loadWebhookStatus();
     _loadObsidianStatus();
 
-    _authStateSub = widget.authService.authStateChanges.listen((_) {
+    // Filtered to actual identity changes, for two reasons.
+    //
+    // gotrue's onAuthStateChange is an UNBOUNDED ReplaySubject, so subscribing
+    // replays every auth event this process has ever seen. The app is always
+    // resident and the session auto-refreshes roughly hourly, so after a week
+    // of uptime opening Settings replayed a few hundred events, each one
+    // rebuilding the panel and re-running both loaders.
+    //
+    // And tokenRefreshed fires on that same hourly timer while the panel is
+    // open, for a session whose user has not changed. Comparing the user id
+    // drops both: a replayed event and a refresh both land on the id we are
+    // already showing.
+    _lastAuthUserId = widget.authService.currentUser?.id;
+    _authStateSub = widget.authService.authStateChanges.listen((state) {
       if (!mounted) return;
-      setState(() {});
+
+      final userId = state.session?.user.id;
+      if (userId == _lastAuthUserId) return;
+      _lastAuthUserId = userId;
+
+      scheduleRebuild();
       // Encryption and device state are per-account, so they are stale too.
       _loadEncryptionStatus();
       _loadTargetDevices();
@@ -562,8 +583,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop =
-        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final isDesktop = Adaptive.isDesktop;
 
     // NOTE: Individual builder methods (_buildSettingToggle, _buildTextField, etc.)
     // already wrap their content in RepaintBoundary. No need for additional wrapping here.
@@ -1208,6 +1228,8 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
               ],
             ),
           ),
+          // One guard for the whole expanded section. Three separate ones
+          // made adding an element a coin flip on which guard it joined.
           if (_deviceSelectorExpanded) ...[
             const SizedBox(height: 4),
             Text(
@@ -1218,9 +1240,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
               ),
             ),
             const SizedBox(height: 12),
-          ],
-          // Device checkboxes
-          if (_deviceSelectorExpanded)
+            // Device checkboxes
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1281,10 +1301,9 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                 );
               }).toList(),
             ),
-          // Inside the guard: it describes the chips, so while they are
-          // collapsed it told the user to tap something not on screen.
-          if (_deviceSelectorExpanded) ...[
             const SizedBox(height: 8),
+            // Inside the guard: it describes the chips, so while they were
+            // collapsed it told the user to tap something not on screen.
             const Text(
               'Tap to select specific devices or leave all selected',
               style: TextStyle(

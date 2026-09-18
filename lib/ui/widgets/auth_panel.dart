@@ -725,37 +725,19 @@ class _AuthPanelState extends State<AuthPanel> {
         : 'Signing into a different account leaves them behind, and they '
               'cannot be moved across later.';
 
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: GhostColors.surfaceLight,
-        title: Text(
-          deletesClips ? 'Delete your clips?' : 'Leave your clips behind?',
-          style: const TextStyle(fontSize: 16, color: GhostColors.textPrimary),
-        ),
-        content: Text(
+    return Adaptive.confirm(
+      context,
+      title: deletesClips ? 'Delete your clips?' : 'Leave your clips behind?',
+      message:
           "You have $clips saved on this device's anonymous account. "
           '$consequence\n\n'
           'To keep them, use Create Account instead - it turns this anonymous '
           'account into yours and brings the clips with it.',
-          style: const TextStyle(fontSize: 13, color: GhostColors.textMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(
-              deletesClips ? 'Delete and sign in' : 'Sign in anyway',
-              style: const TextStyle(color: GhostColors.textMuted),
-            ),
-          ),
-        ],
-      ),
+      confirmText: deletesClips ? 'Delete and sign in' : 'Sign in anyway',
+      // Only the Google path actually destroys anything, so only it gets the
+      // destructive styling - and on Apple platforms the Cupertino variant.
+      isDestructive: deletesClips,
     );
-    return result ?? false;
   }
 
   Future<void> _handleSignInDifferent() async {

@@ -1013,6 +1013,10 @@ class _MyAppState extends State<MyApp> {
     ]);
   }
 
+  /// Windows only. macOS pops a real NSMenu from TrayService and never
+  /// reaches this, so there are no platform branches below - one that looked
+  /// like the place to fix macOS placement was exactly the trap this note
+  /// replaces.
   Future<void> _showTrayMenu() async {
     // Hide window first to prevent warping during resize
     await windowManager.hide();
@@ -1027,15 +1031,9 @@ class _MyAppState extends State<MyApp> {
 
     // Configure window for tray menu
     // Increase size to handling overflow issues on different DPIs
-    const menuSize = Size(320, 450);
-    await windowManager.setSize(menuSize);
+    await windowManager.setSize(const Size(320, 450));
     await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setAsFrameless();
-
-    // macOS-specific: Set window to be transparent and ignore mouse events on transparent areas
-    if (Platform.isMacOS) {
-      await windowManager.setHasShadow(false); // Remove default window shadow
-    }
 
     // Wait for resize to complete
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1101,8 +1099,12 @@ class _MyAppState extends State<MyApp> {
           : SpotlightScreen(
               openSettingsOnShow: _openSettingsOnShow,
               onSettingsOpened: () {
-                // Reset flag after settings opened
-                setState(() => _openSettingsOnShow = false);
+                // Guarded: the child now calls back even when the panel was
+                // already open, so without this a repeat tray click rebuilt
+                // this whole subtree to write false over false.
+                if (_openSettingsOnShow) {
+                  setState(() => _openSettingsOnShow = false);
+                }
               },
             );
     }

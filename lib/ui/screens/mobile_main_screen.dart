@@ -15,6 +15,7 @@ import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
+import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
@@ -789,8 +790,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     for (final type in ClipboardRepository.validDeviceTypes)
                       _buildDeviceChip(
                         type,
-                        iconForDeviceType(type),
-                        DeviceTypeTarget.platformLabel(type),
                         selectedTypes.contains(type),
                         () => setDialogState(() {
                           if (!selectedTypes.remove(type)) {
@@ -835,13 +834,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  Widget _buildDeviceChip(
-    String deviceType,
-    IconData icon,
-    String label,
-    bool isSelected,
-    VoidCallback onTap,
-  ) {
+  /// Icon and label are derived from [type] rather than passed in: they were
+  /// three positional arguments computed from it at the call site, and the
+  /// first was not read at all.
+  Widget _buildDeviceChip(String type, bool isSelected, VoidCallback onTap) {
+    final icon = iconForDeviceType(type);
+    final label = platformLabel(type);
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),

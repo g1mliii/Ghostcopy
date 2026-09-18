@@ -1087,12 +1087,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// Only Android is scaled down. Material 3's switch is 52x32 and overweight
   /// beside 14px type; CupertinoSwitch is already the size iOS users know, and
   /// shrinking it would make it the odd one out on its own platform.
-  Widget _adaptiveSwitch({
-    required bool value,
-    required ValueChanged<bool>? onChanged,
-  }) {
-    return AdaptiveSwitch(value: value, onChanged: onChanged);
-  }
 
   /// One switch row, so every toggle in Settings is the same size and colour.
   ///
@@ -1119,7 +1113,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         subtitle,
         style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
       ),
-      trailing: _adaptiveSwitch(value: value, onChanged: onChanged),
+      trailing: AdaptiveSwitch(value: value, onChanged: onChanged),
       // The whole row toggles, which SwitchListTile gave for free.
       onTap: onChanged == null ? null : () => onChanged(!value),
     );

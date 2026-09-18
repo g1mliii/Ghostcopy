@@ -147,8 +147,11 @@ class WindowService implements IWindowService {
   /// the Windows taskbar and the macOS menu bar and Dock.
   Future<double> _clampToWorkArea(double height) async {
     try {
-      final displays = await screenRetriever.getAllDisplays();
-      final bounds = await windowManager.getBounds();
+      // Independent platform-channel round trips, so they go together.
+      final (displays, bounds) = await (
+        screenRetriever.getAllDisplays(),
+        windowManager.getBounds(),
+      ).wait;
       final display =
           displayContaining(displays, bounds.center) ??
           await screenRetriever.getPrimaryDisplay();
@@ -193,12 +196,11 @@ class WindowService implements IWindowService {
     final available = display?.visibleSize?.height ?? display?.size.height;
     if (available == null || available <= 0) return height;
 
-    final usable = available - _workAreaMargin;
     // A work area smaller than the margin would otherwise produce a zero or
-    // negative height, which setSize rejects.
-    if (usable <= 0) return math.min(height, available);
-
-    return math.min(height, usable);
+    // negative height, which setSize rejects, so the margin is dropped rather
+    // than applied in that case.
+    final usable = available - _workAreaMargin;
+    return math.min(height, usable > 0 ? usable : available);
   }
 
   @override
