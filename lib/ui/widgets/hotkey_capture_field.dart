@@ -23,6 +23,49 @@ class HotkeyCapture extends StatefulWidget {
 
   @override
   State<HotkeyCapture> createState() => _HotkeyCapture();
+
+  /// The string [HotKey] stores for a key whose label is not a usable one.
+  ///
+  /// The capture test was "keyLabel is a single character", which silently
+  /// limited the field to letters and digits even though HotkeyService can
+  /// register far more. Space was the damaging case, because it passes that
+  /// test rather than failing it: its label is a literal " ", so the field
+  /// happily produced HotKey(key: " "), which convertKey trims to an empty
+  /// string and then refuses. The macOS default is Option+Space, so a user
+  /// who changed their shortcut had no way to set it back.
+  ///
+  /// Every value here must be a key [HotkeyService.convertKey] accepts, which
+  /// is asserted in the tests. Enter, Tab, Escape and Backspace are
+  /// deliberately absent: they are poor global shortcuts and capturing them
+  /// would fight the way the field itself is operated.
+  @visibleForTesting
+  static String? storedKeyFor(LogicalKeyboardKey key) => _namedKeys[key];
+
+  static final Map<LogicalKeyboardKey, String> _namedKeys = {
+    LogicalKeyboardKey.space: 'space',
+    LogicalKeyboardKey.delete: 'delete',
+    LogicalKeyboardKey.insert: 'insert',
+    LogicalKeyboardKey.home: 'home',
+    LogicalKeyboardKey.end: 'end',
+    LogicalKeyboardKey.pageUp: 'pageup',
+    LogicalKeyboardKey.pageDown: 'pagedown',
+    LogicalKeyboardKey.arrowUp: 'arrowup',
+    LogicalKeyboardKey.arrowDown: 'arrowdown',
+    LogicalKeyboardKey.arrowLeft: 'arrowleft',
+    LogicalKeyboardKey.arrowRight: 'arrowright',
+    LogicalKeyboardKey.f1: 'f1',
+    LogicalKeyboardKey.f2: 'f2',
+    LogicalKeyboardKey.f3: 'f3',
+    LogicalKeyboardKey.f4: 'f4',
+    LogicalKeyboardKey.f5: 'f5',
+    LogicalKeyboardKey.f6: 'f6',
+    LogicalKeyboardKey.f7: 'f7',
+    LogicalKeyboardKey.f8: 'f8',
+    LogicalKeyboardKey.f9: 'f9',
+    LogicalKeyboardKey.f10: 'f10',
+    LogicalKeyboardKey.f11: 'f11',
+    LogicalKeyboardKey.f12: 'f12',
+  };
 }
 
 class _HotkeyCapture extends State<HotkeyCapture> {
@@ -203,9 +246,12 @@ class _HotkeyCapture extends State<HotkeyCapture> {
         return KeyEventResult.handled;
       }
 
-      // Capture letter/number keys
-      final keyLabel = event.logicalKey.keyLabel.toLowerCase();
-      if (keyLabel.length == 1 &&
+      // Named keys are resolved first, because the single-character test
+      // below cannot be trusted for them - see [storedKeyFor].
+      final namedKey = HotkeyCapture.storedKeyFor(event.logicalKey);
+      final keyLabel = namedKey ?? event.logicalKey.keyLabel.toLowerCase();
+
+      if ((namedKey != null || keyLabel.length == 1) &&
           (_ctrlPressed || _shiftPressed || _altPressed || _metaPressed)) {
         // Valid hotkey captured
         final newHotkey = HotKey(

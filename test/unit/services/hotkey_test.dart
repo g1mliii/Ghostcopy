@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/hotkey_service.dart';
 import 'package:ghostcopy/services/impl/hotkey_service.dart';
+import 'package:ghostcopy/ui/widgets/hotkey_capture_field.dart';
 
 /// Regression tests for the global hotkey.
 ///
@@ -90,6 +91,86 @@ void main() {
           reason: '"$key" must be refused, not silently registered as S',
         );
       }
+    });
+  });
+
+  group('capture field and service agree', () {
+    // The field used to accept anything whose keyLabel was one character,
+    // which is a different set from what convertKey can register. Space fell
+    // through the gap in the worst way: its label IS one character, a literal
+    // " ", so the field accepted it and produced a hotkey the service then
+    // refused - and since Option+Space is the macOS default, a user who
+    // changed their shortcut could not restore it.
+    test('space is captured as a registerable key', () {
+      final stored = HotkeyCapture.storedKeyFor(LogicalKeyboardKey.space);
+
+      expect(stored, equals('space'));
+      expect(HotkeyService.convertKey(stored!), isNotNull);
+    });
+
+    test('a raw space label is still refused by the service', () {
+      // Proves the normalization is load-bearing rather than cosmetic: the
+      // value the field produced before is genuinely unregisterable.
+      expect(HotkeyService.convertKey(' '), isNull);
+    });
+
+    test('every named key the field emits can be registered', () {
+      // The invariant: the field must never hand the service a key it will
+      // reject. Adding a key to the field's map without adding it to
+      // convertKey fails here rather than at the moment a user presses it.
+      const named = <LogicalKeyboardKey>[
+        LogicalKeyboardKey.space,
+        LogicalKeyboardKey.delete,
+        LogicalKeyboardKey.insert,
+        LogicalKeyboardKey.home,
+        LogicalKeyboardKey.end,
+        LogicalKeyboardKey.pageUp,
+        LogicalKeyboardKey.pageDown,
+        LogicalKeyboardKey.arrowUp,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.arrowLeft,
+        LogicalKeyboardKey.arrowRight,
+        LogicalKeyboardKey.f1,
+        LogicalKeyboardKey.f5,
+        LogicalKeyboardKey.f12,
+      ];
+
+      for (final key in named) {
+        final stored = HotkeyCapture.storedKeyFor(key);
+        expect(stored, isNotNull, reason: '${key.debugName} is not mapped');
+        expect(
+          HotkeyService.convertKey(stored!),
+          isNotNull,
+          reason: '${key.debugName} maps to "$stored", which cannot register',
+        );
+      }
+    });
+
+    test('keys that are poor global shortcuts stay unmapped', () {
+      // Capturing these would fight the way the field is operated.
+      for (final key in [
+        LogicalKeyboardKey.enter,
+        LogicalKeyboardKey.tab,
+        LogicalKeyboardKey.escape,
+        LogicalKeyboardKey.backspace,
+      ]) {
+        expect(
+          HotkeyCapture.storedKeyFor(key),
+          isNull,
+          reason: '${key.debugName} should not be capturable',
+        );
+      }
+    });
+
+    test('the default macOS hotkey survives a storage round-trip', () {
+      // The end-to-end shape of the bug: capture it, store it, read it back,
+      // register it.
+      const captured = HotKey(key: 'space', alt: true);
+
+      final restored = HotKey.fromStorageString(captured.toStorageString());
+
+      expect(restored, equals(captured));
+      expect(HotkeyService.convertKey(restored!.key), isNotNull);
     });
   });
 }
