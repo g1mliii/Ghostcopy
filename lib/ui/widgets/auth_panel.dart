@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
+import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -424,7 +425,12 @@ class _AuthPanelState extends State<AuthPanel> {
       // Can be re-enabled on desktop if needed
       if (_isLogin) {
         // Orphaned rather than deleted on this path - see the doc comment.
-        if (!await _confirmGuestClipsBeforeSignIn(deletesClips: false)) {
+        if (!await confirmGuestClipsBeforeSignIn(
+          context,
+          authService: widget.authService,
+          clipboardRepository: _clipboardRepository,
+          deletesClips: false,
+        )) {
           if (mounted) setState(() => _authLoading = false);
           return;
         }
@@ -547,7 +553,12 @@ class _AuthPanelState extends State<AuthPanel> {
         // that the email button stops to ask about.
         // deletesClips: this path really does destroy them, so the dialog
         // says so rather than offering the gentler "left behind" wording.
-        if (!await _confirmGuestClipsBeforeSignIn(deletesClips: true)) {
+        if (!await confirmGuestClipsBeforeSignIn(
+          context,
+          authService: widget.authService,
+          clipboardRepository: _clipboardRepository,
+          deletesClips: true,
+        )) {
           if (mounted) setState(() => _authLoading = false);
           return;
         }
@@ -681,63 +692,6 @@ class _AuthPanelState extends State<AuthPanel> {
         });
       }
     }
-  }
-
-  /// Ask before signing into a different account while holding guest clips.
-  ///
-  /// Signing in changes user_id, and clips belong to the id that made them.
-  /// The two paths differ in how final that is, which is why [deletesClips]
-  /// exists: on the email path the anonymous account's clips merely become
-  /// unreachable, but on the Google path AuthService._cleanupPreviousSession
-  /// runs cleanup_user_data against the outgoing anonymous id and deletes them
-  /// outright. Neither can be undone, so both ask - but the dialog has to say
-  /// which one is about to happen, or the user consents to abandonment and
-  /// gets destruction.
-  ///
-  /// Deliberately names the alternative, because the user almost always wants
-  /// Create Account - that keeps the same id and the clips with it.
-  ///
-  /// Returns true when there is nothing to lose or the user accepted losing it.
-  Future<bool> _confirmGuestClipsBeforeSignIn({
-    required bool deletesClips,
-  }) async {
-    if (!widget.authService.isAnonymous) return true;
-
-    final orphanCount = await _clipboardRepository
-        .getClipboardCountForCurrentUser();
-    if (orphanCount == 0) return true;
-    if (!mounted) return false;
-
-    return _confirmLeavingClipsBehind(orphanCount, deletesClips: deletesClips);
-  }
-
-  Future<bool> _confirmLeavingClipsBehind(
-    int count, {
-    required bool deletesClips,
-  }) async {
-    final clips = count == 1 ? '1 clip' : '$count clips';
-
-    // Worded per path. Saying "left behind" when the clips are about to be
-    // deleted understates the only thing this dialog exists to warn about.
-    final consequence = deletesClips
-        ? 'Signing in with Google deletes them from this account first. '
-              'They cannot be recovered.'
-        : 'Signing into a different account leaves them behind, and they '
-              'cannot be moved across later.';
-
-    return Adaptive.confirm(
-      context,
-      title: deletesClips ? 'Delete your clips?' : 'Leave your clips behind?',
-      message:
-          "You have $clips saved on this device's anonymous account. "
-          '$consequence\n\n'
-          'To keep them, use Create Account instead - it turns this anonymous '
-          'account into yours and brings the clips with it.',
-      confirmText: deletesClips ? 'Delete and sign in' : 'Sign in anyway',
-      // Only the Google path actually destroys anything, so only it gets the
-      // destructive styling - and on Apple platforms the Cupertino variant.
-      isDestructive: deletesClips,
-    );
   }
 
   Future<void> _handleSignInDifferent() async {

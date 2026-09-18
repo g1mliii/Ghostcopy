@@ -10,6 +10,7 @@ import '../../main.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -785,6 +786,19 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     try {
       // Mobile doesn't use hCaptcha - simplified auth flow
       if (_isLogin) {
+        // Same guard the desktop panel uses. Without it this screen signed
+        // into another account with no prompt, stranding the guest clips -
+        // and this is the surface most likely to be holding them.
+        // Orphaned rather than deleted on the email path.
+        if (!await confirmGuestClipsBeforeSignIn(
+          context,
+          authService: locator<IAuthService>(),
+          deletesClips: false,
+        )) {
+          if (mounted) setState(() => _authLoading = false);
+          return;
+        }
+
         // Sign in with new account (no captcha on mobile)
         await locator<IAuthService>().signInWithEmail(
           _emailController.text,
@@ -856,6 +870,18 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       final bool success;
 
       if (_isLogin) {
+        // deletesClips: AuthService._cleanupPreviousSession runs
+        // cleanup_user_data against the outgoing anonymous account on this
+        // path, so the clips are destroyed rather than merely stranded.
+        if (!await confirmGuestClipsBeforeSignIn(
+          context,
+          authService: locator<IAuthService>(),
+          deletesClips: true,
+        )) {
+          if (mounted) setState(() => _authLoading = false);
+          return;
+        }
+
         // Sign in with Google
         success = await locator<IAuthService>().signInWithGoogle();
       } else {
