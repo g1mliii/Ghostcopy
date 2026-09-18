@@ -639,11 +639,15 @@ class MobileMainViewModel extends ChangeNotifier {
 
     try {
       final bytes = content!.fileBytes!;
-      final filename = content.filename ?? 'file';
       final typeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
-        filename,
+        content.filename,
       );
+      // Sniffed extension rather than a bare 'file'. This name is stored as
+      // originalFilename and travels to every receiving device, where a name
+      // with nothing after the dot leaves their share sheet unable to identify
+      // the type - the same reason a shared PDF came up under Safari's icon.
+      final filename = content.filename ?? 'file.${typeInfo.extension}';
 
       List<String>? targetTypes;
       if (_selectedDeviceTypes.isNotEmpty) {

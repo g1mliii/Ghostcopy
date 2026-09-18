@@ -435,7 +435,15 @@ class SpotlightViewModel extends ChangeNotifier {
         // Download file to temp location and copy path
         final bytes = await _clipboardRepo.downloadFile(item);
         if (bytes != null) {
-          final filename = item.metadata?.originalFilename ?? 'file';
+          // Sniffed extension rather than a bare 'file': this path is written
+          // to the clipboard, and a name with nothing after the dot gives the
+          // receiving app no way to tell what it just pasted.
+          final detected = FileTypeService.instance.detectFromBytes(
+            bytes,
+            item.metadata?.originalFilename,
+          );
+          final filename =
+              item.metadata?.originalFilename ?? 'file.${detected.extension}';
           final tempFile = await TempFileService.instance.saveTempFile(
             bytes,
             filename,
