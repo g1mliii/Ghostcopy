@@ -30,6 +30,7 @@ BRAND = os.path.join(ROOT, "assets", "brand")
 # lib/ui/theme/colors.dart by hand - there is no way to import Dart here.
 BACKGROUND = (0x0F, 0x0F, 0x13)
 PRIMARY = (0x66, 0x70, 0xFF)
+SURFACE = (0x19, 0x19, 0x1F)  # card colour the email templates sit the logo on
 
 written = []
 
@@ -234,6 +235,27 @@ def website() -> None:
         written.append(os.path.relpath(path, ROOT))
 
 
+def email_logo() -> None:
+    """A hosted logo for the Supabase auth emails.
+
+    Email cannot reference a local asset, so this has to live at a public URL -
+    https://ghostcopy.app/icons/email-logo.png, served by the same site as the
+    favicons. Written at 2x the display size because mail clients do not do
+    srcset and the templates set an explicit width.
+
+    PNG, not SVG: Gmail strips SVG entirely.
+
+    Flattened onto the card colour rather than left transparent. Outlook's Word
+    renderer composites PNG alpha against white, which would turn the rounded
+    corners into white wedges on the dark card; baking #19191F in makes them
+    disappear against it in every client instead.
+    """
+    card = Image.new("RGBA", (128, 128), SURFACE + (255,))
+    card.alpha_composite(tile(128, radius=0.22, opaque=False))
+    for base in ("website", os.path.join("website", "dist")):
+        save(card.convert("RGB"), base, "icons", "email-logo.png")
+
+
 def favicon_ico() -> None:
     """Multi-resolution .ico for Windows and the website."""
     sizes = [16, 24, 32, 48, 64, 128, 256]
@@ -259,6 +281,7 @@ if __name__ == "__main__":
     flutter_assets()
     flutter_web()
     website()
+    email_logo()
     favicon_ico()
     print(f"wrote {len(written)} files")
     for w in sorted(written):
