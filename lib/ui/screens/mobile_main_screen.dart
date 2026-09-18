@@ -1370,7 +1370,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: GhostSpacing.chipHeight,
+          // Scales with the label. A horizontal ListView needs a bounded
+          // height, and this was a flat 38 - so the chips inside it were
+          // clipped at the bigger accessibility sizes however much room they
+          // asked for, and the text showed as fragments of its own glyphs.
+          height: _deviceChipRowHeight(context),
           child:
               // Suppressed during pull-to-refresh: the indicator the user
               // dragged already reports that reload. See isRefreshing.
@@ -1841,6 +1845,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 }
 
 /// Device selection chip widget
+/// Height of the destination chip row.
+///
+/// Only the label's share of the chip is scaled: the icon, the padding and the
+/// border are fixed sizes and do not grow with the user's text setting, so
+/// scaling the whole 38 would make the row far taller than the text needs.
+double _deviceChipRowHeight(BuildContext context) {
+  const labelLine = 18.0;
+  const chrome = GhostSpacing.chipHeight - labelLine;
+  return chrome + MediaQuery.textScalerOf(context).scale(labelLine);
+}
+
 /// Destination chip: one platform, or "All devices".
 class _DeviceChip extends StatelessWidget {
   const _DeviceChip({
@@ -1879,8 +1894,15 @@ class _DeviceChip extends StatelessWidget {
           onTap: onTap,
           borderRadius: _radius,
           child: Container(
-            height: GhostSpacing.chipHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            // A floor, not a fixed height. This was `height: chipHeight`, so
+            // the box stayed 38 tall however large the label got and the text
+            // spilled straight out of it at the bigger accessibility sizes.
+            // The minimum keeps the chip exactly as it was at normal sizes and
+            // lets it grow past that when the label needs the room.
+            constraints: const BoxConstraints(
+              minHeight: GhostSpacing.chipHeight,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: _radius,
               border: Border.all(

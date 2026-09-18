@@ -197,9 +197,11 @@ class SettingsService implements ISettingsService {
   @override
   Future<bool> getScreenshotProtection() async {
     _ensureInitialized();
-    // Defaults ON: a clipboard history is worth protecting from the app
-    // switcher and casual screen shares, so opting out is the deliberate act.
-    return _prefs!.getBool(_keyScreenshotProtection) ?? true;
+    // Defaults OFF. It is the user's own device: screenshots, screen
+    // recording and an ordinary app switcher preview are all things they are
+    // entitled to, and an app that quietly blocks them is taking a decision
+    // that is not its to take. Anyone who wants the cover can turn it on.
+    return _prefs!.getBool(_keyScreenshotProtection) ?? false;
   }
 
   @override

@@ -25,15 +25,15 @@ import UIKit
   /// shared_preferences namespaces its keys with "flutter." and writes them to
   /// NSUserDefaults, so the value is readable here without a channel call.
   ///
-  /// Defaults to true, matching SettingsService.getScreenshotProtection(): a
-  /// clipboard history is worth covering by default, so opting out is the
-  /// deliberate act.
+  /// Defaults to false, matching SettingsService.getScreenshotProtection().
+  /// It is the user's own device; an ordinary app switcher preview is theirs
+  /// to have. Anyone who wants the cover can turn it on.
+  ///
+  /// The two defaults have to agree. This one decides what happens before Dart
+  /// has run, and a mismatch would blur a window whose own toggle says it
+  /// should not be blurred.
   private var hidesAppSwitcherPreview: Bool {
-    let defaults = UserDefaults.standard
-    guard defaults.object(forKey: "flutter.screenshot_protection") != nil else {
-      return true
-    }
-    return defaults.bool(forKey: "flutter.screenshot_protection")
+    UserDefaults.standard.bool(forKey: "flutter.screenshot_protection")
   }
 
   /// Cover the window while the app is off-screen, so the task switcher
