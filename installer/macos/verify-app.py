@@ -15,7 +15,7 @@ def check(condition, message):
         raise ValueError(message)
 
 
-def verify(app):
+def verify(app, require_updater=False):
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     signature = subprocess.run(
         ['codesign', '-dvv', str(app)], capture_output=True, text=True, check=True,
@@ -36,7 +36,14 @@ def verify(app):
     check(profile['ExpirationDate'] > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), 'Expired provisioning profile')
     check(profile.get('ProvisionsAllDevices') is True, 'Not a Developer ID distribution profile')
     allowed = profile['Entitlements']
-    bundle = plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier']
+    info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+    bundle = info['CFBundleIdentifier']
+    if require_updater:
+        check(info.get('SUFeedURL') == 'https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml', 'Incorrect update feed URL')
+        check(info.get('SUPublicEDKey') == '7u9K3OLvC/WnDejiCYfZCvqEooph4mz4nhpAIysobC0=', 'Incorrect Sparkle signing key')
+        check(info.get('SUVerifyUpdateBeforeExtraction') is True, 'Update archive verification is disabled')
+        check(info.get('SURequireSignedFeed') is True, 'Signed update feed is required')
+        check((app / 'Contents/Frameworks/Sparkle.framework').is_dir(), 'Sparkle framework not embedded')
     team = entitlements.get('com.apple.developer.team-identifier')
     check(team and team == allowed.get('com.apple.developer.team-identifier'), 'Team does not match profile')
     app_id = entitlements.get('com.apple.application-identifier', '')
@@ -57,8 +64,9 @@ def verify(app):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('app', type=pathlib.Path)
+    parser.add_argument('--require-updater', action='store_true')
     args = parser.parse_args()
     try:
-        verify(args.app.resolve())
+        verify(args.app.resolve(), args.require_updater)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         sys.exit(f'Export validation failed: {error}')

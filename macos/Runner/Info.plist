@@ -25,6 +25,20 @@
 	     LaunchServices promoted the app to a regular one when the browser
 	     opened ghostcopy:// after OAuth, and nothing put it back. Setting the
 	     policy at runtime does not stick while the app is frontmost. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>7u9K3OLvC/WnDejiCYfZCvqEooph4mz4nhpAIysobC0=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUSendProfileInfo</key>
+	<false/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 	<key>LSUIElement</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>

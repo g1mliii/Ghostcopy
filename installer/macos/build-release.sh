@@ -12,6 +12,8 @@ profile="$1"
 shift
 output="$root/build/installer/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$output"
+git rev-parse HEAD > "$output/source-commit.txt"
+git status --porcelain --untracked-files=normal > "$output/source-dirty.txt"
 # macOS 27 rejects some Rust proc-macro dylibs stripped by older toolchains.
 # Keep host build-dependency debug info; Xcode still strips the shipped app.
 export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true
@@ -24,7 +26,7 @@ xcodebuild -exportArchive -archivePath "$output/GhostCopy.xcarchive" \
     -exportPath "$output/export" -exportOptionsPlist "$script_dir/ExportOptions.plist" \
     -allowProvisioningUpdates
 app="$output/export/ghostcopy.app"
-python3 "$script_dir/verify-app.py" "$app"
+python3 "$script_dir/verify-app.py" "$app" --require-updater
 # Notarize/staple the app too, so the copy dragged out of the DMG has a ticket.
 ditto -c -k --keepParent "$app" "$output/GhostCopy.zip"
 xcrun notarytool submit "$output/GhostCopy.zip" --keychain-profile "$profile" --wait
@@ -36,5 +38,6 @@ codesign --sign 'Developer ID Application: Subaig Suri (R9TKT8U45R)' --timestamp
 xcrun notarytool submit "$output/GhostCopy.dmg" --keychain-profile "$profile" --wait
 xcrun stapler staple "$output/GhostCopy.dmg"
 xcrun stapler validate "$output/GhostCopy.dmg"
+"$script_dir/prepare-update.sh" "$output"
 echo "Signed and notarized: $output/GhostCopy.dmg"
 echo 'Still required: install from this DMG and run the LaunchServices smoke test (see README).'

@@ -26,16 +26,19 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$work/stage/.background"
 ditto "$app" "$work/stage/GhostCopy.app"
+cp "$app/Contents/Resources/AppIcon.icns" "$work/stage/.VolumeIcon.icns"
 ln -s /Applications "$work/stage/Applications"
 xcrun swift "$script_dir/background.swift" "$work/stage/.background/background.png"
 hdiutil create -quiet -volname GhostCopy -srcfolder "$work/stage" -format UDRW -fs HFS+ "$work/writable.dmg"
 hdiutil attach -nobrowse -plist "$work/writable.dmg" > "$work/mount.plist"
 mountpoint="$(python3 -c 'import plistlib,sys; print(next(e["mount-point"] for e in plistlib.load(open(sys.argv[1], "rb"))["system-entities"] if "mount-point" in e))' "$work/mount.plist")"
 mounted=true
+xcrun SetFile -a C "$mountpoint"
 osascript "$script_dir/layout.applescript" "$mountpoint"
 [[ -f "$mountpoint/.DS_Store" ]] || { echo 'Finder did not save the installer layout.' >&2; exit 1; }
 sync
 hdiutil detach -quiet "$mountpoint"
 mounted=false
 hdiutil convert -quiet "$work/writable.dmg" -format UDZO -imagekey zlib-level=9 -o "$output"
+xcrun swift "$script_dir/set-file-icon.swift" "$app/Contents/Resources/AppIcon.icns" "$output"
 echo "Created $output"

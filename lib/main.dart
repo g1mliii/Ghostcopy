@@ -17,6 +17,7 @@ import 'locator.dart';
 import 'models/clipboard_item.dart';
 import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
+import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
@@ -380,6 +381,10 @@ Future<void> main(List<String> args) async {
       ..registerSingleton<ISettingsService>(settingsService)
       ..registerSingleton<IAutoStartService>(autoStartService)
       ..registerSingleton<IClipboardRepository>(clipboardRepository);
+
+    if (Platform.isMacOS) {
+      locator.registerSingleton<IAppUpdateService>(AppUpdateService());
+    }
 
     // Initialize stateless utility services (singletons for consistency)
     final securityService = SecurityService();
@@ -809,6 +814,8 @@ class _MyAppState extends State<MyApp> {
       // changes so its checkmark matches the current state. On Windows this
       // is a no-op and the custom window is used instead.
       if (Platform.isMacOS) {
+        locator<IAppUpdateService>().addListener(_onUpdaterStateChanged);
+        unawaited(locator<IAppUpdateService>().initialize());
         unawaited(_refreshNativeTrayMenu());
         _gameModeMenuSub = locator<IGameModeService>().isActiveStream.listen(
           (_) => unawaited(_refreshNativeTrayMenu()),
@@ -946,6 +953,11 @@ class _MyAppState extends State<MyApp> {
       _powerEventSubscription = null;
       _gameModeMenuSub?.cancel();
       _gameModeMenuSub = null;
+      if (Platform.isMacOS) {
+        locator<IAppUpdateService>()
+          ..removeListener(_onUpdaterStateChanged)
+          ..dispose();
+      }
 
       // Dispose all services to prevent memory leaks
       locator<IAuthService>().dispose();
@@ -1001,8 +1013,41 @@ class _MyAppState extends State<MyApp> {
     await windowManager.destroy();
   }
 
+  void _onUpdaterStateChanged() {
+    unawaited(_refreshNativeTrayMenu());
+  }
+
+  Future<void> _runUpdateAction(Future<void> Function() action) async {
+    try {
+      await action();
+    } on PlatformException catch (error) {
+      debugPrint('[AppUpdateService] Update action failed: ${error.message}');
+      await locator<IWindowService>().showSpotlight();
+      final dialogContext = _navigatorKey.currentContext;
+      if (!mounted || dialogContext == null || !dialogContext.mounted) return;
+      await showDialog<void>(
+        context: dialogContext,
+        builder: (context) => AlertDialog(
+          title: const Text('Unable to check for updates'),
+          content: Text(error.message ?? 'Please try again later.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   Future<void> _refreshNativeTrayMenu() async {
+    final updater = locator<IAppUpdateService>();
     final gameMode = locator<IGameModeService>();
+    await (locator<ITrayService>() as TrayService).setUpdateAvailable(
+      available: updater.updateAvailable,
+    );
+    if (!mounted) return;
     await locator<ITrayService>().setContextMenu([
       TrayMenuItem(
         label: 'Show Spotlight',
@@ -1014,6 +1059,21 @@ class _MyAppState extends State<MyApp> {
         onTap: gameMode.toggle,
       ),
       TrayMenuItem(label: 'Settings', onTap: _openSettingsFromTray),
+      const TrayMenuItem.separator(),
+      TrayMenuItem(
+        label: updater.updateAvailable
+            ? 'Update available…'
+            : 'Check for Updates…',
+        onTap: () => _runUpdateAction(updater.checkForUpdates),
+      ),
+      if (updater.isAvailable)
+        TrayMenuItem(
+          label: 'Automatically check for updates',
+          isChecked: updater.automaticChecks,
+          onTap: () => _runUpdateAction(
+            () => updater.setAutomaticChecks(enabled: !updater.automaticChecks),
+          ),
+        ),
       const TrayMenuItem.separator(),
       TrayMenuItem(label: 'Quit GhostCopy', onTap: _handleQuit),
     ]);

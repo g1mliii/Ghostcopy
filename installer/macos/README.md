@@ -25,6 +25,46 @@ Finder may request automation access to save the disk image's icon layout.
 The image contains the app and an Applications shortcut, with a generated
 background explaining the drag-to-install operation.
 
+The mounted volume and the `.dmg` file use the GhostCopy app icon. macOS
+stores a downloaded file's custom Finder icon as local metadata, so a browser
+or file service may show the generic disk-image icon for the file before it is
+opened. The mounted installer window is the reliable branded surface and
+always contains the GhostCopy app icon.
+
+## Sparkle updates
+
+The release app embeds Sparkle 2.10.0 and checks the signed appcast at
+`https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml`.
+The menu bar offers **Check for Updates…** and a preference for scheduled
+checks. Scheduled notices are kept gentle for this tray-only app; they do not
+take focus away from the current application. Update archives and appcasts are
+verified with Sparkle Ed25519 signatures as well as Apple's Developer ID and
+notarization checks.
+
+The updater key is generated once in the login Keychain under the
+`com.ghostcopy.ghostcopy` account. Keep that private key in the Keychain and
+never commit or print it. The public key is in `macos/Runner/Info.plist`.
+
+To prepare a candidate after a clean build:
+
+```bash
+installer/macos/build-release.sh ghostcopy --build-name=1.0.0 --build-number=2
+```
+
+That command refuses an unresolved signing/profile setup, validates the
+notarized DMG, records the source commit, and generates a signed local
+appcast. Review the candidate and release notes, then publish explicitly:
+
+```bash
+installer/macos/publish-update.sh build/installer/YYYYMMDD-HHMMSS \
+  "<full pushed commit SHA>" release-notes.md
+```
+
+Publishing creates a versioned draft GitHub release first, then updates the
+fixed `macos-updates` feed release and downloads the live feed again to verify
+that it matches the signed local feed. It will refuse a dirty or mismatched
+source commit. Do not publish a build number already present in the feed.
+
 ## Why archive/export matters
 
 Do not hand re-sign a Flutter build with `Runner/Release.entitlements`.

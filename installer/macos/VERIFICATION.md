@@ -26,6 +26,14 @@ Host: macOS 27.0 (26A428), Xcode 27.0 (27A266a).
 - Shell syntax, plist parsing, Swift type-checking, and Git whitespace checks
   passed. No Flutter application source changed, so Flutter unit tests were
   not rerun; the release archive compiled the application and native plugins.
+- Sparkle 2.10.0 resolved through Swift Package Manager and was embedded in a
+  Release archive/export. The updater bridge passes four focused Flutter tests
+  and `flutter analyze` reports no issues. Its feed URL and Ed25519 public key
+  are checked by the release validator before a candidate can be prepared.
+- The new DMG builder applies the GhostCopy icon to the local `.dmg` file and
+  keeps the app icon in the mounted installer window. Some download services
+  discard Finder's local file-icon metadata, so the branded mounted window is
+  the portable guarantee.
 
 The UI automation tool timed out when inspecting the running tray application.
 Clipboard sync, existing-passphrase decryption, and Intel launch remain manual
