@@ -119,6 +119,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
+
+  /// What prettifying last produced, to tell an offer from a done job.
+  ///
+  /// Compared against the field's current contents rather than kept as a "has
+  /// been prettified" flag, so editing or pasting over it re-offers the action
+  /// without anything having to remember to clear this.
+  String? _prettifiedJson;
   final FocusNode _textFieldFocusNode = FocusNode();
 
   // ViewModel - handles business logic and state
@@ -1178,32 +1185,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   if (_viewModel.detectedContentType?.type ==
                       TransformerContentType.json) ...[
                     const SizedBox(width: 6),
-                    // Tinted, unlike Upload beside it. Upload is always there
-                    // and reads as furniture; this appears only when the clip
-                    // actually parses as JSON, so it has to look like something
-                    // that just turned up and can be pressed. accentSoft is the
-                    // selected-control fill - present without competing with
-                    // Send, which stays the only saturated purple on screen.
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: GhostColors.accentSoft,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: GhostColors.accentBorder),
-                      ),
-                      child: IconButton(
-                        onPressed: _handlePrettifyJson,
-                        icon: const Icon(Icons.data_object),
-                        color: GhostColors.accentText,
-                        iconSize: 20,
-                        // Says what was noticed and what pressing does. A bare
-                        // "Prettify JSON" does not explain why an icon the user
-                        // has not seen before just appeared.
-                        tooltip: 'JSON detected - tap to format it',
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(),
-                        splashRadius: 18,
-                      ),
-                    ),
+                    _buildPrettifyJsonButton(),
                   ],
                 ],
               ),
@@ -1282,6 +1264,52 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     ];
   }
 
+  /// The prettify action, offered until it has been taken.
+  ///
+  /// Tinted while there is something to do, and plain once the field already
+  /// holds the formatted text - at that point it is just another tool sitting
+  /// beside Upload, and an accent on it would be drawing attention to work that
+  /// is already done.
+  ///
+  /// Whether it has been taken is a comparison, not a flag: the field is
+  /// formatted when its current contents are exactly what prettifying last
+  /// produced. So editing a character, or pasting different JSON, brings the
+  /// offer back on its own, with nothing to remember to reset.
+  Widget _buildPrettifyJsonButton() {
+    final isFormatted =
+        _prettifiedJson != null && _prettifiedJson == _viewModel.content;
+
+    final button = IconButton(
+      onPressed: _handlePrettifyJson,
+      icon: const Icon(Icons.data_object),
+      // Matches the Upload icon beside it once there is nothing to offer.
+      color: isFormatted ? GhostColors.primary : GhostColors.accentText,
+      iconSize: 20,
+      // Says what was noticed as well as what pressing does. A bare "Prettify
+      // JSON" does not explain why an icon the user has not seen before just
+      // appeared.
+      tooltip: isFormatted
+          ? 'JSON formatted'
+          : 'JSON detected - tap to format it',
+      padding: const EdgeInsets.all(8),
+      constraints: const BoxConstraints(),
+      splashRadius: 18,
+    );
+
+    if (isFormatted) return button;
+
+    // accentSoft is the selected-control fill - present without competing with
+    // Send, which stays the only saturated purple on screen.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: GhostColors.accentSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: GhostColors.accentBorder),
+      ),
+      child: button,
+    );
+  }
+
   /// Rewrite the field with the prettified form.
   Future<void> _handlePrettifyJson() async {
     final result = await _transformerService.transform(
@@ -1290,7 +1318,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
     if (!mounted) return;
     if (result.isSuccess && result.transformedContent != null) {
-      setState(() => _textController.text = result.transformedContent!);
+      setState(() {
+        _textController.text = result.transformedContent!;
+        _prettifiedJson = result.transformedContent;
+      });
     }
   }
 
