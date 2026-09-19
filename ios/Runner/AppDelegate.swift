@@ -63,6 +63,16 @@ import UserNotifications
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
+    // Older builds registered a CLIPBOARD_SYNC category with Dismiss and
+    // custom actions. Those notifications can still be on a user's device
+    // after upgrading, and their dismissal also reaches this delegate. Only
+    // the ordinary notification tap is a supported GhostCopy action; treating
+    // every response as a tap would copy a clip the user explicitly dismissed.
+    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else {
+      completionHandler()
+      return
+    }
+
     let userInfo = response.notification.request.content.userInfo
     let clipboardId = userInfo["clipboard_id"] as? String ?? ""
 
@@ -90,4 +100,3 @@ import UserNotifications
   }
 
 }
-

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
@@ -1367,10 +1369,12 @@ class ClipboardRepository implements IClipboardRepository {
         // across manufacturers.
         final model = android.model.trim();
         final brand = android.brand.trim();
+        final installId = await _getOrCreateInstallId();
         if (model.isNotEmpty) {
-          name = model.toLowerCase().startsWith(brand.toLowerCase())
+          final label = model.toLowerCase().startsWith(brand.toLowerCase())
               ? model
               : '${_capitalize(brand)} $model'.trim();
+          name = '$label · ${installId.substring(0, 8)}';
         }
       } else if (Platform.isIOS) {
         final ios = await info.iosInfo;
@@ -1380,9 +1384,13 @@ class ClipboardRepository implements IClipboardRepository {
         // iPad or a simulator, which is what the unique index needs.
         final model = ios.utsname.machine.trim();
         final readable = ios.name.trim();
-        name = readable.isNotEmpty
-            ? readable
-            : (model.isNotEmpty ? model : null);
+        final stableId =
+            ios.identifierForVendor ?? await _getOrCreateInstallId();
+        final shortId = stableId.replaceAll('-', '');
+        final label = readable.isNotEmpty ? readable : model;
+        name = label.isNotEmpty
+            ? '$label · ${shortId.substring(0, min(8, shortId.length))}'
+            : null;
       }
 
       if (name != null && name.isNotEmpty) {
@@ -1403,6 +1411,22 @@ class ClipboardRepository implements IClipboardRepository {
 
   static String _capitalize(String value) =>
       value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
+
+  static const _installIdKey = 'ghostcopy_device_install_id';
+
+  static Future<String> _getOrCreateInstallId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_installIdKey);
+    if (existing != null && existing.length >= 8) return existing;
+
+    final random = Random.secure();
+    final generated = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    await prefs.setString(_installIdKey, generated);
+    return generated;
+  }
 
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;

@@ -84,9 +84,15 @@ class DeviceService implements IDeviceService {
     required String userId,
     required String deviceType,
     required String currentName,
+    required String? fcmToken,
   }) async {
     final legacyName = '${platformLabel(deviceType)} Device';
-    if (currentName == legacyName) return;
+    // A generic row may belong to another phone that has not upgraded yet.
+    // The FCM token is the only server-side proof that it was this install's
+    // row, so never delete a row without matching the current token.
+    if (currentName == legacyName || fcmToken == null || fcmToken.isEmpty) {
+      return;
+    }
 
     try {
       await _supabase
@@ -94,7 +100,8 @@ class DeviceService implements IDeviceService {
           .delete()
           .eq('user_id', userId)
           .eq('device_type', deviceType)
-          .eq('device_name', legacyName);
+          .eq('device_name', legacyName)
+          .eq('fcm_token', fcmToken);
       debugPrint('[DeviceService] Removed legacy "$legacyName" row');
     } on Object catch (e) {
       debugPrint('[DeviceService] Could not remove the legacy row: $e');
@@ -146,6 +153,7 @@ class DeviceService implements IDeviceService {
         userId: userId,
         deviceType: deviceType,
         currentName: deviceName,
+        fcmToken: fcmToken,
       );
 
       // Invalidate cache since device list changed

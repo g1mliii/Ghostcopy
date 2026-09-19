@@ -540,7 +540,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             );
 
             if (manualSuccess && mounted) {
-              setState(() => _encryptionEnabled = true);
+              await _verifyRestoredPassphrase();
             }
           }
         }
@@ -550,6 +550,73 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         setState(() => _encryptionLoading = false);
         showGhostToast(context, 'Error: $e', type: GhostToastType.error);
       }
+    }
+  }
+
+  /// Confirm that a manually entered restore key opens at least one existing
+  /// encrypted clip before marking encryption enabled. A mistyped key is still
+  /// a valid passphrase to secure storage, so accepting it here would split
+  /// future clips onto a new key while the old history stayed locked.
+  Future<void> _verifyRestoredPassphrase() async {
+    final repo = locator<IClipboardRepository>();
+    final lockedBefore = repo.undecryptableItemCount.value;
+    if (lockedBefore == 0) {
+      if (mounted) setState(() => _encryptionEnabled = true);
+      return;
+    }
+
+    setState(() => _encryptionLoading = true);
+    try {
+      await repo.getHistory();
+      if (!mounted) return;
+
+      final lockedAfter = repo.undecryptableItemCount.value;
+      if (lockedAfter >= lockedBefore) {
+        try {
+          await _encryptionService!.clearPassphrase();
+        } on Exception catch (e) {
+          debugPrint(
+            '[MobileSettings] Could not clear rejected passphrase: $e',
+          );
+        }
+        if (!mounted) return;
+        final stillEnabled = await _encryptionService!.isEnabled();
+        if (!mounted) return;
+        setState(() {
+          _encryptionEnabled = stillEnabled;
+          _encryptionLoading = false;
+        });
+        showGhostToast(
+          context,
+          stillEnabled
+              ? 'That passphrase did not unlock any clips; try again'
+              : 'That passphrase did not unlock any of your clips',
+          type: GhostToastType.error,
+        );
+        return;
+      }
+
+      setState(() {
+        _encryptionEnabled = true;
+        _encryptionLoading = false;
+      });
+      if (lockedAfter > 0) {
+        showGhostToast(
+          context,
+          '${lockedBefore - lockedAfter} clip(s) unlocked. $lockedAfter '
+          'still use a different passphrase.',
+          type: GhostToastType.success,
+        );
+      }
+    } on Object catch (e) {
+      debugPrint('[MobileSettings] Restored passphrase check failed: $e');
+      if (!mounted) return;
+      setState(() => _encryptionLoading = false);
+      showGhostToast(
+        context,
+        'Could not check your passphrase - try again',
+        type: GhostToastType.error,
+      );
     }
   }
 
