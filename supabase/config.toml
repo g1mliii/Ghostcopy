@@ -44,15 +44,24 @@ verify_jwt = false
 # Note that diff compares subjects only - it cannot show a change to the HTML
 # body, so a template edit always appears as "no differences". That is expected;
 # the push still uploads the file at content_path.
+#
+# content_path is relative to where the CLI runs, which is the repository root
+# in .github/workflows/deploy.yml - not to this file. Supabase's own documented
+# example is "./supabase/templates/confirmation.html" from a config.toml that
+# itself sits in supabase/, which only reads correctly that way. These paths
+# were written without the prefix and pointed at nothing; a missing file is not
+# an error to the CLI, and `config diff` compares subjects only, so the push
+# would have reported success and uploaded no template at all. CI now checks
+# every declared path resolves before it pushes.
 
 [auth.email.template.confirmation]
 subject = "Confirm your GhostCopy account"
-content_path = "./email-templates/confirm-signup.html"
+content_path = "./supabase/email-templates/confirm-signup.html"
 
 [auth.email.template.recovery]
 subject = "Reset your GhostCopy password"
-content_path = "./email-templates/reset-password.html"
+content_path = "./supabase/email-templates/reset-password.html"
 
 [auth.email.template.email_change]
 subject = "Confirm your new GhostCopy email"
-content_path = "./email-templates/change-email.html"
+content_path = "./supabase/email-templates/change-email.html"

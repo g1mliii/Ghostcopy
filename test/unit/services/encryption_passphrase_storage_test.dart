@@ -23,7 +23,10 @@ void main() {
     storage = _MockSecureStorage();
     when(() => storage.delete(key: any(named: 'key'))).thenAnswer((_) async {});
     when(
-      () => storage.write(key: any(named: 'key'), value: any(named: 'value')),
+      () => storage.write(
+        key: any(named: 'key'),
+        value: any(named: 'value'),
+      ),
     ).thenAnswer((_) async {});
   });
 
@@ -51,6 +54,44 @@ void main() {
     verify(
       () => storage.write(key: passphraseKey, value: 'the old passphrase'),
     ).called(1);
+  });
+
+  test('a failure after the passphrase lands still restores it', () async {
+    // The window the first rollback missed. The verification hash is written
+    // after the passphrase has already been replaced, so a failure there left
+    // the NEW passphrase on disk while setPassphrase reported failure and the
+    // OLD key stayed in memory. Next launch loads the new one and every clip
+    // encrypted under the old key is unreadable - the same loss the rollback
+    // exists to prevent, one step later.
+    when(
+      () => storage.read(key: passphraseKey),
+    ).thenAnswer((_) async => 'the old passphrase');
+    when(
+      () => storage.read(key: hashKey),
+    ).thenAnswer((_) async => 'the old hash');
+    when(
+      () => storage.write(
+        key: hashKey,
+        value: any(named: 'value'),
+      ),
+    ).thenThrow(Exception('device refused the hash'));
+    // The restore writes the old hash back, which must not throw.
+    when(
+      () => storage.write(key: hashKey, value: 'the old hash'),
+    ).thenAnswer((_) async {});
+
+    final service = EncryptionService(secureStorage: storage);
+    await service.initialize(userId);
+
+    await expectLater(
+      service.setPassphrase('the new passphrase'),
+      throwsA(isA<PassphraseStorageException>()),
+    );
+
+    verify(
+      () => storage.write(key: passphraseKey, value: 'the old passphrase'),
+    ).called(1);
+    verify(() => storage.write(key: hashKey, value: 'the old hash')).called(1);
   });
 
   test('a failed delete is reported, not swallowed', () async {

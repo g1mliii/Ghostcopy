@@ -1359,16 +1359,23 @@ class MobileMainViewModel extends ChangeNotifier {
     final now = DateTime.now();
     final last = _lastTokenReassert;
     if (last != null && now.difference(last) < _tokenReassertInterval) return;
-    _lastTokenReassert = now;
 
     try {
       final token = await locator<IFcmService>().getToken();
       if (token == null || token.isEmpty) return;
       await _deviceService.registerCurrentDevice(fcmToken: token);
+
+      // Stamped on success only. It used to be stamped before the attempt, so
+      // a null token or a transient registration failure still started the
+      // hour - and the whole point of this is to repair a token the edge
+      // function cleared, which is exactly when the attempt is most likely to
+      // fail. The device stayed unreachable for an hour, and the comment below
+      // claiming it runs again on the next resume was not true.
+      _lastTokenReassert = now;
       debugPrint('[MobileMainVM] FCM token re-asserted on resume');
     } on Exception catch (e) {
-      // Never surfaced: this is upkeep the user did not ask for, and it runs
-      // again on the next resume.
+      // Never surfaced: this is upkeep the user did not ask for. Not stamping
+      // means the next resume retries, which is the intent.
       debugPrint('[MobileMainVM] Could not re-assert FCM token: $e');
     }
   }

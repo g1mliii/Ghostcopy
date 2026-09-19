@@ -114,6 +114,13 @@ jobs:
               - 'website/**'
             functions:
               - 'supabase/functions/**'
+              # config.toml carries functions.verify_jwt, and only a
+              # `functions deploy` applies it - auth_config runs `config push`,
+              # which does not. Without this a change to that flag sat unapplied
+              # until some unrelated function source happened to change, and the
+              # flag in question is the one whose last regression killed push
+              # for every device.
+              - 'supabase/config.toml'
             migrations:
               - 'supabase/migrations/**'
             auth_config:

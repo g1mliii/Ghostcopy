@@ -267,58 +267,90 @@ class EncryptionService implements IEncryptionService {
       // unreadable at the next launch. The same window exists in the Keychain
       // accessibility migration and is closed the same way there.
       final previous = await _secureStorage.read(key: _passphraseKey);
-      await _secureStorage.delete(key: _passphraseKey);
-      if (Platform.isIOS) {
-        // Also under the old accessibility. An item left there is invisible to
-        // every read this class makes but still collides with the add below,
-        // which is the errSecDuplicateItem dead end the dialog used to tell
-        // people to reinstall out of - and reinstalling does not help, because
-        // Keychain items survive app deletion. initialize()'s migration
-        // normally clears it; this covers the case where that was rolled back
-        // or never ran, so there is a way out from inside the app.
-        await _secureStorage.delete(
-          key: _passphraseKey,
-          iOptions: legacyPassphraseIosOptions,
-        );
-      }
-      try {
-        await _secureStorage.write(key: _passphraseKey, value: passphrase);
-      } on Exception {
-        if (previous != null && previous.isNotEmpty) {
+      final previousHash = await _secureStorage.read(key: _verificationHashKey);
+
+      // Everything from the first delete to the derived key is one operation,
+      // and it either lands whole or is put back. Rolling back only the
+      // passphrase write was not enough: the hash write and the key derivation
+      // both run after the old passphrase has already been replaced, so a
+      // failure there reported failure while the NEW passphrase sat on disk
+      // and the OLD key stayed in memory. The next launch would load the new
+      // one and every clip encrypted under the old key would be unreadable -
+      // the same outcome the rollback exists to prevent, one step later.
+      Future<void> restorePrevious() async {
+        try {
           await _secureStorage.delete(key: _passphraseKey);
-          await _secureStorage.write(key: _passphraseKey, value: previous);
+          if (previous != null && previous.isNotEmpty) {
+            await _secureStorage.write(key: _passphraseKey, value: previous);
+          }
+          await _secureStorage.delete(key: _verificationHashKey);
+          if (previousHash != null && previousHash.isNotEmpty) {
+            await _secureStorage.write(
+              key: _verificationHashKey,
+              value: previousHash,
+            );
+          }
           debugPrint(
-            '[EncryptionService] Write failed - restored the previous '
-            'passphrase',
+            '[EncryptionService] Setup failed - restored the previous state',
+          );
+        } on Exception catch (e) {
+          // Nothing further to try, and the original failure is the one worth
+          // reporting.
+          debugPrint('[EncryptionService] Could not restore: $e');
+        }
+      }
+
+      try {
+        await _secureStorage.delete(key: _passphraseKey);
+        if (Platform.isIOS) {
+          // Also under the old accessibility. An item left there is invisible to
+          // every read this class makes but still collides with the add below,
+          // which is the errSecDuplicateItem dead end the dialog used to tell
+          // people to reinstall out of - and reinstalling does not help, because
+          // Keychain items survive app deletion. initialize()'s migration
+          // normally clears it; this covers the case where that was rolled back
+          // or never ran, so there is a way out from inside the app.
+          await _secureStorage.delete(
+            key: _passphraseKey,
+            iOptions: legacyPassphraseIosOptions,
           );
         }
+        await _secureStorage.write(key: _passphraseKey, value: passphrase);
+
+        // Verify it was written
+        final stored = await _secureStorage.read(key: _passphraseKey);
+        debugPrint(
+          '[EncryptionService] Passphrase stored: ${stored != null && stored.isNotEmpty}',
+        );
+
+        // Create verification hash to validate passphrase later
+        final verificationHash = sha256
+            .convert(utf8.encode(passphrase))
+            .toString();
+        await _secureStorage.delete(key: _verificationHashKey);
+        await _secureStorage.write(
+          key: _verificationHashKey,
+          value: verificationHash,
+        );
+
+        // Derive encryption key
+        await _deriveKey(passphrase);
+      } on Exception {
+        await restorePrevious();
         rethrow;
       }
 
-      // Verify it was written
-      final stored = await _secureStorage.read(key: _passphraseKey);
-      debugPrint(
-        '[EncryptionService] Passphrase stored: ${stored != null && stored.isNotEmpty}',
-      );
-
-      // Create verification hash to validate passphrase later
-      final verificationHash = sha256
-          .convert(utf8.encode(passphrase))
-          .toString();
-      await _secureStorage.delete(key: _verificationHashKey);
-      await _secureStorage.write(
-        key: _verificationHashKey,
-        value: verificationHash,
-      );
-
-      // Derive encryption key
-      await _deriveKey(passphrase);
-
-      // Cloud backup is disabled: it encrypted the passphrase with a key
+      // Outside the rollback: cloud backup is disabled, and this only purges
+      // what an earlier build uploaded - it encrypted the passphrase with a key
       // derived purely from server-known values, so the server could recover
-      // it. Instead of uploading, purge anything an earlier build left behind.
+      // it. Housekeeping for an obsolete artifact is not a reason to undo a
+      // passphrase that stored successfully, nor to report failure for one.
       if (_passphraseSync != null) {
-        await _passphraseSync.deleteCloudBackup();
+        try {
+          await _passphraseSync.deleteCloudBackup();
+        } on Exception catch (e) {
+          debugPrint('[EncryptionService] Could not purge cloud backup: $e');
+        }
       }
 
       debugPrint('[EncryptionService] ✅ Encryption enabled successfully');
