@@ -103,9 +103,24 @@ final class FlutterChannelHub {
     notificationChannel.invokeMethod(
       "handleNotificationAction",
       arguments: ["clipboardId": clipboardId, "action": action]
-    ) { result in
+    ) { [weak self] result in
       if let error = result as? FlutterError {
         print("[ChannelHub] ⚠️ Notification action error: \(error.message ?? "unknown")")
+        return
+      }
+
+      // Dart reports a failed action by COMPLETING with false, not by
+      // erroring - a clip it could not fetch, decrypt or download comes back
+      // that way. Only FlutterError was inspected here, so the warm path threw
+      // the tap away in silence: no copy, no sheet, nothing said, and nothing
+      // kept. The deferred path already surfaces this; its live twin did not.
+      //
+      // Parked rather than reported, because there is no UI to report from
+      // here - and parking means the next drain retries it, which is the
+      // better outcome anyway.
+      if let handled = result as? Bool, handled == false {
+        self?.pendingNotificationAction = (clipboardId: clipboardId, action: action)
+        print("[ChannelHub] Dart could not handle \(clipboardId) - parked for retry")
       }
     }
   }

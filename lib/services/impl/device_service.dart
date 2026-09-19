@@ -102,7 +102,7 @@ class DeviceService implements IDeviceService {
   }
 
   @override
-  Future<void> registerCurrentDevice({String? fcmToken}) async {
+  Future<bool> registerCurrentDevice({String? fcmToken}) async {
     _ensureInitialized();
     _ensureAuthenticated();
 
@@ -150,14 +150,17 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device list changed
       _invalidateCache();
+      return true;
     } on PostgrestException catch (e) {
       debugPrint(
         '[DeviceService] ❌ Postgres error registering device: ${e.message}',
       );
       // Don't rethrow - device registration is non-critical
+      return false;
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to register device: $e');
       // Don't rethrow - device registration is non-critical
+      return false;
     }
   }
 

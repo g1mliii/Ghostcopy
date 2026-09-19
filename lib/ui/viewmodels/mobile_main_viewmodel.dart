@@ -1363,14 +1363,20 @@ class MobileMainViewModel extends ChangeNotifier {
     try {
       final token = await locator<IFcmService>().getToken();
       if (token == null || token.isEmpty) return;
-      await _deviceService.registerCurrentDevice(fcmToken: token);
+      final registered = await _deviceService.registerCurrentDevice(
+        fcmToken: token,
+      );
 
-      // Stamped on success only. It used to be stamped before the attempt, so
-      // a null token or a transient registration failure still started the
-      // hour - and the whole point of this is to repair a token the edge
-      // function cleared, which is exactly when the attempt is most likely to
-      // fail. The device stayed unreachable for an hour, and the comment below
-      // claiming it runs again on the next resume was not true.
+      // Stamped on a confirmed write only. It used to be stamped before the
+      // attempt, so a null token or a transient failure still started the hour
+      // - and the case this exists to repair, a token the edge function
+      // cleared, is exactly when the attempt is most likely to fail.
+      //
+      // Moving it after the await was not enough on its own: registration
+      // treats itself as non-critical and swallows its own errors, so the await
+      // completes either way. It reports the outcome now, and that is what the
+      // throttle turns on.
+      if (!registered) return;
       _lastTokenReassert = now;
       debugPrint('[MobileMainVM] FCM token re-asserted on resume');
     } on Exception catch (e) {

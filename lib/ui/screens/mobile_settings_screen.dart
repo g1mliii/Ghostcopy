@@ -472,10 +472,29 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           // screen with nothing said.
           debugPrint('[MobileSettings] Failed to disable encryption: $e');
           if (!mounted) return;
-          setState(() => _encryptionLoading = false);
+
+          // The switch follows the key, not the throw. clearPassphrase drops
+          // the in-memory key before it reports a storage failure, so the
+          // service is already encrypting nothing - and leaving the switch on
+          // said the opposite. Every clip sent afterwards would have gone up as
+          // plaintext under a UI promising end-to-end encryption, which is the
+          // one thing this screen must never get wrong.
+          final stillEnabled = await _encryptionService!.isEnabled();
+          if (!mounted) return;
+          setState(() {
+            _encryptionEnabled = stillEnabled;
+            _encryptionLoading = false;
+          });
+
+          // Reported separately, because it is a different fact: the key is
+          // gone from memory either way, but the passphrase may still be on
+          // disk, and initialize() reads it again on the next launch.
           showGhostToast(
             context,
-            'Could not turn encryption off - try again',
+            stillEnabled
+                ? 'Could not turn encryption off - try again'
+                : 'Encryption is off, but the passphrase may still be stored '
+                      'on this device',
             type: GhostToastType.error,
           );
           return;
