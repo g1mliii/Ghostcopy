@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
@@ -12,6 +12,7 @@ import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _MockAuthService extends Mock implements IAuthService {}
 
@@ -131,6 +132,11 @@ void main() {
     clipboardSyncService = _TestClipboardSyncService();
     notificationService = _TestNotificationService();
 
+    when(() => authService.currentUserId).thenReturn(null);
+    when(
+      () => authService.authStateChanges,
+    ).thenAnswer((_) => const Stream<AuthState>.empty());
+
     when(() => transformerService.detectContentType(any())).thenAnswer(
       (_) async =>
           const ContentDetectionResult(type: TransformerContentType.plainText),
@@ -161,6 +167,24 @@ void main() {
     expect(viewModel.historyItems, history);
     expect(clipboardSyncService.onClipboardReceived, isNotNull);
     verify(() => clipboardRepository.getHistory()).called(1);
+  });
+
+  test('reloads history when the desktop auth account changes', () async {
+    final authEvents = StreamController<AuthState>();
+    addTearDown(authEvents.close);
+    when(() => authService.currentUserId).thenReturn('old-user');
+    when(
+      () => authService.authStateChanges,
+    ).thenAnswer((_) => authEvents.stream);
+    when(
+      () => clipboardRepository.getHistory(),
+    ).thenAnswer((_) async => <ClipboardItem>[]);
+
+    await viewModel.initialize();
+    authEvents.add(const AuthState(AuthChangeEvent.signedOut, null));
+    await Future<void>.delayed(Duration.zero);
+
+    verify(() => clipboardRepository.getHistory()).called(2);
   });
 
   test('handleSend sends text and clears state on success', () async {

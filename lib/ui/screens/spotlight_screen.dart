@@ -1796,8 +1796,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Handle closing the settings panel
   void _handleSettingsClose() => _closeActivePanel();
 
-  /// Handle closing the auth panel
-  void _handleAuthClose() => _closeActivePanel();
+  /// Handle closing the auth panel.
+  ///
+  /// Auth changes happen while this screen stays mounted. Refresh after the
+  /// panel's post-login work has completed so a desktop sign-in cannot leave
+  /// the anonymous account's empty history on screen until encryption is
+  /// toggled.
+  void _handleAuthClose() {
+    _closeActivePanel();
+    unawaited(_viewModel.refreshHistory());
+  }
 
   /// Handle closing the history panel
   Future<void> _handleHistoryClose() async => _closeActivePanel();

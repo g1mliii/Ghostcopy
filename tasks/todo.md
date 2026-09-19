@@ -272,6 +272,32 @@ Still open:
       alongside it, or the traffic lights come back - verify on Windows
 - [ ] Launch-at-startup still unverified under the sandbox
 
+## Cross-platform verification: next manual pass
+
+- [ ] **System notifications.** Verify a received clip produces a native
+      notification while Game Mode is off on macOS and Windows; verify Game
+      Mode suppresses it and that the notification tap opens/copies the clip.
+      On macOS this means Notification Center/banner permissions and the menu
+      bar app's `NSUserNotification`/UserNotifications delivery. On Windows
+      this means the Windows toast notification (and its Action Center entry),
+      including a fresh-install permission check.
+- [ ] **Encryption after reinstall/account switch.** Install over an existing
+      Keychain entry, sign into the same account, and confirm encrypted history
+      appears without toggling encryption or signing out again.
+- [ ] **Background resource check.** Measure a release build in the tray after
+      15 minutes and while the window is closed: resident memory, CPU, and
+      thread count. The previous baseline was about 48 MB in tray, 125 MB with
+      the window open, and 24 MB Dart heap; the reported 116 MB/12 threads/
+      0.4% CPU should be compared against that baseline before further tuning.
+      Capture one macOS Activity Monitor sample and one Windows Task Manager
+      sample before changing the lifecycle or realtime services.
+- [ ] **Obsidian integration.** Run the configured export path with text,
+      Markdown, and a filename containing spaces/Unicode; confirm the file is
+      written to the selected vault and failures are reported.
+- [ ] **Webhook integration.** Point the webhook at a request inspector,
+      send text, image, and file clips, and verify payload shape, signing/auth,
+      retry behavior, and that a failed endpoint does not block clipboard sync.
+
 ## Later: clipboard export and import
 
 After iOS. Not urgent, and deliberately not part of the account work it came

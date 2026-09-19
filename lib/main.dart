@@ -852,12 +852,17 @@ class _MyAppState extends State<MyApp> {
     // user nothing.
     final token = await widget.fcmTokenFuture;
     try {
-      await locator<IDeviceService>().registerCurrentDevice();
-      if (token != null) {
-        await locator<IDeviceService>().updateFcmToken(token);
+      final registered = await locator<IDeviceService>().registerCurrentDevice(
+        fcmToken: token,
+      );
+      if (registered && token != null) {
         debugPrint('[Mobile] ✅ FCM token stored for signed-in device');
       } else {
-        debugPrint('[Mobile] ⚠️ No FCM token available - push will not arrive');
+        debugPrint(
+          token == null
+              ? '[Mobile] ⚠️ No FCM token available - push will not arrive'
+              : '[Mobile] ⚠️ Device registration failed - will retry',
+        );
       }
     } on Exception catch (e) {
       // Push is not worth failing startup over; sync still works without it.
@@ -1120,15 +1125,13 @@ class _MyAppState extends State<MyApp> {
       return MobileWelcomeScreen(
         fcmTokenFuture: widget.fcmTokenFuture,
         onAuthComplete: () async {
-          // Register device with FCM token after auth
-          await locator<IDeviceService>().registerCurrentDevice();
-
           // Update FCM token if available. Resolved by now in practice - the
           // fetch starts at launch and signing in takes seconds - but awaited
           // rather than assumed.
           final token = await widget.fcmTokenFuture;
-          if (token != null) {
-            await locator<IDeviceService>().updateFcmToken(token);
+          final registered = await locator<IDeviceService>()
+              .registerCurrentDevice(fcmToken: token);
+          if (registered && token != null) {
             debugPrint('[Mobile] ✅ Device registered with FCM token');
           }
 

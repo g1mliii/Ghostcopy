@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
@@ -102,14 +103,36 @@ class SpotlightViewModel extends ChangeNotifier {
   Timer? _contentDetectionTimer;
   Timer? _historyReloadTimer;
   Timer? _errorClearTimer;
+  StreamSubscription<AuthState>? _authStateSubscription;
+  String? _historyUserId;
+  int _accountRevision = 0;
 
   // ========== INITIALIZATION ==========
 
   /// Initialize the ViewModel
   /// Call this once after construction
   Future<void> initialize() async {
+    _historyUserId = _authService.currentUserId;
+
+    // The desktop spotlight stays mounted while the auth panel switches
+    // accounts. Without listening here it loaded the anonymous account once,
+    // then kept showing that empty list after sign-in until the user toggled
+    // encryption (the settings callback happened to refresh history). Reload
+    // the repository as soon as Supabase announces the new user instead.
+    _authStateSubscription = _authService.authStateChanges.listen((state) {
+      final userId = state.session?.user.id;
+      if (userId == _historyUserId) return;
+
+      _historyUserId = userId;
+      _accountRevision++;
+      _historyItems = <ClipboardItem>[];
+      _isLoadingHistory = true;
+      notifyListeners();
+      unawaited(_loadHistory(revision: _accountRevision));
+    });
+
     // Load initial history
-    await _loadHistory();
+    await _loadHistory(revision: _accountRevision);
 
     // Set up Realtime callback for history updates
     _syncService.onClipboardReceived = _debouncedLoadHistory;
@@ -197,7 +220,7 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Refresh history manually
   Future<void> refreshHistory() async {
-    await _loadHistory();
+    await _loadHistory(revision: _accountRevision);
   }
 
   /// Populate content from system clipboard
@@ -503,12 +526,13 @@ class SpotlightViewModel extends ChangeNotifier {
   // ========== PRIVATE METHODS ==========
 
   /// Load clipboard history from repository
-  Future<void> _loadHistory() async {
+  Future<void> _loadHistory({required int revision}) async {
     try {
       _isLoadingHistory = true;
       notifyListeners();
 
       final items = await _clipboardRepo.getHistory();
+      if (_isDisposed || revision != _accountRevision) return;
       _historyItems = items;
       _isLoadingHistory = false;
       notifyListeners();
@@ -516,6 +540,7 @@ class SpotlightViewModel extends ChangeNotifier {
       debugPrint('[SpotlightVM] ✓ Loaded ${items.length} history items');
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Failed to load history: $e');
+      if (_isDisposed || revision != _accountRevision) return;
       _isLoadingHistory = false;
       notifyListeners();
     }
@@ -526,7 +551,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _historyReloadTimer?.cancel();
     _historyReloadTimer = Timer(
       const Duration(milliseconds: 500),
-      _loadHistory,
+      () => _loadHistory(revision: _accountRevision),
     );
   }
 
@@ -598,6 +623,8 @@ class SpotlightViewModel extends ChangeNotifier {
     _contentDetectionTimer = null;
     _historyReloadTimer?.cancel();
     _historyReloadTimer = null;
+    _authStateSubscription?.cancel();
+    _authStateSubscription = null;
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
 
