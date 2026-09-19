@@ -178,15 +178,22 @@ class EncryptionService implements IEncryptionService {
       // items are invisible to a read under the new options. On a locked phone
       // this finds nothing and does nothing; the move happens on the next
       // foreground launch, which is the first moment it could.
+      //
+      // It hands back what it read, and that is the value used below rather
+      // than a second read of the same key under the same options. The
+      // migration has to read the passphrase to decide whether it has work to
+      // do, so asking again is pure duplication - on every launch, every
+      // re-key, and every push-woken isolate.
+      final String? passphrase;
       if (Platform.isIOS) {
-        await migrateKeychainAccessibility(
+        final current = await migrateKeychainAccessibility(
           storage: _secureStorage,
           keys: [_passphraseKey, _verificationHashKey],
         );
+        passphrase = current[_passphraseKey];
+      } else {
+        passphrase = await _secureStorage.read(key: _passphraseKey);
       }
-
-      // Try to load and initialize with existing passphrase
-      final passphrase = await _secureStorage.read(key: _passphraseKey);
       if (passphrase != null && passphrase.isNotEmpty) {
         debugPrint(
           '[EncryptionService] Found existing passphrase, deriving key...',

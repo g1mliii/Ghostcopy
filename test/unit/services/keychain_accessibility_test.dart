@@ -24,6 +24,9 @@ class _FakeKeychain extends Mock implements FlutterSecureStorage {
   /// exists only on the stack.
   final Set<String> failWritesFor = {};
 
+  /// Every read, so the test below can hold the Keychain round trips down.
+  int reads = 0;
+
   @override
   Future<String?> read({
     required String key,
@@ -34,6 +37,7 @@ class _FakeKeychain extends Mock implements FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    reads++;
     final item = items[key];
     if (item == null) return null;
     return item.$2 == iOptions?.accessibility ? item.$1 : null;
@@ -86,7 +90,7 @@ void main() {
 
   setUp(() => keychain = _FakeKeychain());
 
-  Future<void> migrate() => migrateKeychainAccessibility(
+  Future<Map<String, String?>> migrate() => migrateKeychainAccessibility(
     storage: keychain,
     keys: const [passphraseKey, hashKey],
   );
@@ -94,9 +98,14 @@ void main() {
   test('moves an existing passphrase to first_unlock', () async {
     keychain.items[passphraseKey] = ('correct horse battery staple', legacy);
 
-    await migrate();
+    final current = await migrate();
 
     expect(keychain.items[passphraseKey], ('correct horse battery staple', migrated));
+    expect(
+      current[passphraseKey],
+      'correct horse battery staple',
+      reason: 'handed back so initialize() need not read the same key again',
+    );
     expect(
       await keychain.read(key: passphraseKey, iOptions: passphraseIosOptions),
       'correct horse battery staple',
@@ -105,18 +114,24 @@ void main() {
   });
 
   test('a fresh install writes nothing', () async {
-    await migrate();
+    final current = await migrate();
 
     expect(keychain.items, isEmpty);
+    expect(current[passphraseKey], isNull);
   });
 
   test('is a no-op once already migrated', () async {
     keychain.items[passphraseKey] = ('secret', migrated);
 
     await migrate();
-    await migrate();
+    final current = await migrate();
 
     expect(keychain.items[passphraseKey], ('secret', migrated));
+    expect(
+      current[passphraseKey],
+      'secret',
+      reason: 'the already-migrated read is the one initialize() consumes',
+    );
   });
 
   test('puts the passphrase back if the new write fails', () async {
@@ -127,12 +142,21 @@ void main() {
     keychain.items[passphraseKey] = ('secret', legacy);
     keychain.failWritesFor.add(passphraseKey);
 
-    await migrate();
+    final current = await migrate();
 
     expect(
       keychain.items[passphraseKey],
       ('secret', legacy),
       reason: 'still readable under the old options, which is where it started',
+    );
+    expect(
+      current[passphraseKey],
+      isNull,
+      reason:
+          'the value is under the OLD options, so a read under the new ones - '
+          'which is what this stands in for - would not find it either. '
+          'Reporting it here would have initialize() derive a key from a '
+          'passphrase that hasPassphrase() cannot see.',
     );
   });
 
@@ -151,15 +175,32 @@ void main() {
     );
   });
 
+  test('reads each key once when there is nothing left to migrate', () async {
+    // The steady state, which is every launch after the first. The migration
+    // has to read the passphrase anyway to know whether it has work to do, so
+    // it hands that value back and initialize() consumes it instead of issuing
+    // an identical read - this asserts the reads it does do stay at one per
+    // key, which is what makes that worth doing.
+    keychain.items[passphraseKey] = ('secret', migrated);
+    keychain.items[hashKey] = ('hash', migrated);
+
+    final current = await migrate();
+
+    expect(keychain.reads, 2, reason: 'one per key, and no legacy probe');
+    expect(current[passphraseKey], 'secret');
+    expect(current[hashKey], 'hash');
+  });
+
   test('survives a read that throws, without deleting anything', () async {
     final throwing = _ThrowingKeychain()..items[passphraseKey] = ('secret', legacy);
 
-    await migrateKeychainAccessibility(
+    final current = await migrateKeychainAccessibility(
       storage: throwing,
       keys: const [passphraseKey],
     );
 
     expect(throwing.items[passphraseKey], ('secret', legacy));
+    expect(current[passphraseKey], isNull);
   });
 }
 

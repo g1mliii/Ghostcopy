@@ -44,24 +44,36 @@ const passphraseIosOptions = IOSOptions(
 /// a real upgrade is that the user's encrypted clips become permanently
 /// unreadable. That happened once here; see tasks/lessons.md, 2026-09-17.
 ///
+/// Returns what each key now holds under [passphraseIosOptions], so the caller
+/// does not have to read it again - this already had to read the passphrase to
+/// decide whether the migration was needed, and `initialize()` was then issuing
+/// an identical read for the value. A null entry means nothing is readable
+/// there, which is what a second read would have found too: no item at all, a
+/// locked device, or a move that failed and was rolled back.
+///
 /// Safe to call on every launch: it is a no-op once there is nothing left under
 /// the old options.
 ///
 /// Callers gate this to iOS. It is not run on macOS - the Keychain there has
 /// the same mechanics, but no background isolate wakes on a locked Mac, so the
 /// change would be a second migration bought for nothing.
-Future<void> migrateKeychainAccessibility({
+Future<Map<String, String?>> migrateKeychainAccessibility({
   required FlutterSecureStorage storage,
   required Iterable<String> keys,
 }) async {
+  final current = <String, String?>{};
   for (final key in keys) {
+    current[key] = null;
     try {
       // Already moved. A generic-password item is identified by service and
       // account, and accessibility is not part of that identity, so the old and
       // new items cannot both exist - finding one here means the migration has
       // run and there is nothing behind it.
       final migrated = await storage.read(key: key, iOptions: passphraseIosOptions);
-      if (migrated != null) continue;
+      if (migrated != null) {
+        current[key] = migrated;
+        continue;
+      }
 
       final legacy = await storage.read(
         key: key,
@@ -107,6 +119,7 @@ Future<void> migrateKeychainAccessibility({
         continue;
       }
 
+      current[key] = legacy;
       debugPrint('[Keychain] migrated $key to first_unlock');
     } on Object catch (e) {
       // One key failing must not stop the other, and must not stop startup.
@@ -115,4 +128,5 @@ Future<void> migrateKeychainAccessibility({
       debugPrint('[Keychain] could not migrate $key: $e');
     }
   }
+  return current;
 }
