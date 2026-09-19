@@ -126,18 +126,24 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
       }
     } on PassphraseStorageException catch (e) {
       // Not a passphrase problem, so do not send the user back to re-type one.
-      // The device refused to keep it - on iOS usually a Keychain entry left by
-      // a previous install that cannot be read or overwritten - and the only
-      // thing that helps is reinstalling.
+      // The device refused to keep it outright.
+      //
+      // This used to advise reinstalling, on the theory that the cause was a
+      // stale Keychain entry from a previous install. It is not advice that
+      // works: Keychain items survive app deletion on iOS, so a reinstall
+      // meets the same entry again - and setPassphrase now clears that entry
+      // under both accessibilities before writing, so it is no longer the
+      // likely cause anyway. What is left is a device that genuinely would not
+      // store it, where retrying after a restart is the honest suggestion.
       debugPrint(
         '[PassphraseDialog] Secure storage refused the passphrase: $e',
       );
       if (!mounted) return;
       setState(() {
         _errorMessage =
-            'This device could not save your passphrase. Your passphrase is '
-            'fine and your clips are safe - reinstalling GhostCopy should '
-            'clear it.';
+            'This device would not save your passphrase. Your passphrase is '
+            'fine and your clips are safe - restart your device and try '
+            'again.';
         _isLoading = false;
       });
     } on Exception catch (e) {

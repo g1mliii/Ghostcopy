@@ -605,6 +605,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   void _initializeShareIntentListeners() {
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
       if (value.isNotEmpty) unawaited(_handleSharedFiles(value));
+
+      // Tell the plugin the payload is consumed, as its own usage requires.
+      // The iOS extension writes each share into the App Group and nothing
+      // cleared it, so getInitialMedia kept returning the last one: an ordinary
+      // cold launch days later re-sent a clip that had already gone, with the
+      // notification to match. `value` is already in hand and the files live in
+      // a temp cache, so this only drops the stored payload.
+      ReceiveSharingIntent.instance.reset();
     });
 
     _intentDataStreamSubscription = ReceiveSharingIntent.instance

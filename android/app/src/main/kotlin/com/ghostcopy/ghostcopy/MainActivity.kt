@@ -308,21 +308,42 @@ class MainActivity : FlutterActivity() {
             // Park the action first. On a cold start the invokeMethod below is
             // delivered into the void - Dart registers its handler ~1.5s later,
             // and Flutter drops platform -> Dart messages that arrive with no
-            // handler attached, without an error or a callback. Dart therefore
-            // pulls this on startup and on resume; the push below only shortens
-            // the warm path, and MobileMainViewModel de-dupes by clipboard id so
-            // the two transports cannot copy the same clip twice.
-            pendingNotificationAction = mapOf(
+            // handler attached, without an error or a callback. Dart pulls the
+            // parked copy when it builds the screen; the push below only
+            // shortens the warm path.
+            val parked = mapOf(
                 "clipboardId" to clipboardId,
                 "action" to action
             )
+            pendingNotificationAction = parked
 
             // Invoke Flutter method to fetch clipboard item and perform action
             // Same method call that iOS uses via AppDelegate
-            channel.invokeMethod("handleNotificationAction", mapOf(
-                "clipboardId" to clipboardId,
-                "action" to action
-            ))
+            //
+            // Cleared on a confirmed handling, and only then. Both transports
+            // used to fire and the parked copy was never cleared, so when the
+            // screen was later rebuilt - signing out and back in is enough -
+            // its startup drain replayed a clip that had already been copied,
+            // or opened a second share sheet for it. There is no de-duplication
+            // on the Dart side to fall back on; an earlier comment here said
+            // there was, and there is not.
+            //
+            // A dropped message never reaches success(), so the cold-start case
+            // keeps its parked copy, which is the whole point of having one.
+            channel.invokeMethod("handleNotificationAction", parked, object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (result == true && pendingNotificationAction === parked) {
+                        pendingNotificationAction = null
+                        Log.d(TAG, "Dart handled $clipboardId directly - parked copy dropped")
+                    }
+                }
+
+                override fun error(code: String, message: String?, details: Any?) {
+                    Log.w(TAG, "Dart failed to handle $clipboardId: $message")
+                }
+
+                override fun notImplemented() {}
+            })
             Log.d(TAG, "✅ Queued+triggered $action action for clipboard item $clipboardId ($expectedContentType)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)

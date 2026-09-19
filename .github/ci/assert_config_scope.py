@@ -12,53 +12,84 @@ pull` would write ~20 of those settings into it in one go, and a partial
 [auth.email.smtp] block (say, one missing `pass`) invalidates SMTP and stops
 every auth email with nothing surfacing the failure. In CI there is no TTY, so
 push's confirmation prompt defaults to yes and would apply all of it silently.
-The CLI's own help says to diff first for this reason; this is that check.
 
-Reads `supabase config diff --output-format json` on stdin.
+The file itself is the source of truth for this check, not the remote diff.
+An earlier version read only the diff's `declared` entries, which cannot see a
+declaration whose value already equals production - and that is precisely what
+`config pull` produces, since it writes the remote's own values. The widened
+file would have diffed clean and sailed through the guard on the one path the
+guard exists to stop. The diff is still read, when supplied, to print what
+would change.
 """
-import json
 import sys
+import tomllib
 
-ALLOWED = ["auth", "email", "template"]
+# Everything `supabase config push` may write, as a prefix of the flattened
+# TOML path. `project_id` names the target rather than configuring it, and
+# `functions` is deploy configuration - outside push's scope entirely, which the
+# CLI reports as api/auth/database/pooler/realtime/storage.
+ALLOWED_PREFIXES = (
+    ("auth", "email", "template"),
+    ("functions",),
+)
+ALLOWED_EXACT = {("project_id",)}
+
+CONFIG = "supabase/config.toml"
+
+
+def _leaves(node, path=()):
+    """Every scalar declaration in the file, as a tuple path."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _leaves(value, path + (key,))
+    else:
+        yield path
+
+
+def _allowed(path):
+    return path in ALLOWED_EXACT or any(
+        path[: len(prefix)] == prefix for prefix in ALLOWED_PREFIXES
+    )
 
 
 def main() -> int:
-    raw = sys.stdin.read().strip()
-    if not raw:
-        print("::error::no diff output to check", file=sys.stderr)
+    try:
+        with open(CONFIG, "rb") as fh:
+            config = tomllib.load(fh)
+    except OSError as e:
+        print(f"::error::could not read {CONFIG}: {e}", file=sys.stderr)
         return 1
 
-    # The CLI prints human-readable preamble lines before the JSON object.
-    line = next((l for l in reversed(raw.splitlines()) if l.startswith("{")), "")
-    if not line:
-        print("::error::could not find JSON in diff output", file=sys.stderr)
-        print(raw, file=sys.stderr)
-        return 1
+    stray = sorted(p for p in _leaves(config) if not _allowed(p))
+    for path in stray:
+        print(
+            "::error::{} declares {}, which is outside auth.email.template. "
+            "Refusing to push - this would change a production auth "
+            "setting.".format(CONFIG, ".".join(path))
+        )
 
-    changes = json.loads(line).get("changes", [])
+    # Supplemental: what the remote says would actually change. Absence of a
+    # diff entry proves nothing (a declaration matching production produces
+    # none), so this never relaxes the verdict above.
+    raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
+    line = next(
+        (l for l in reversed(raw.splitlines()) if l.startswith("{")), ""
+    )
+    if line:
+        import json
 
-    # Only declared properties are written by a push; the rest are reported
-    # purely so you can see what the dashboard holds.
-    declared = [c for c in changes if c.get("declared")]
-    for c in declared:
-        print("declares {}: {!r} -> {!r}".format(
-            ".".join(c["path"]), c.get("local"), c.get("remote")))
+        for c in json.loads(line).get("changes", []):
+            if c.get("declared"):
+                print("would change {}: {!r} -> {!r}".format(
+                    ".".join(c["path"]), c.get("remote"), c.get("local")))
 
-    stray = [c for c in declared if c["path"][:3] != ALLOWED]
     if stray:
-        for c in stray:
-            print("::error::config.toml declares {}, which is outside "
-                  "auth.email.template. Refusing to push - this would change a "
-                  "production auth setting.".format(".".join(c["path"])))
         return 1
-
-    if not declared:
-        print("OK - nothing outside auth.email.template is declared, and the "
-              "subjects already match. The push uploads template bodies only "
-              "(diff cannot see HTML changes).")
-    else:
-        print("OK - all {} declared changes are email templates.".format(
-            len(declared)))
+    print(
+        "OK - {} declares only email templates. The settings this project "
+        "keeps in the dashboard are undeclared here and stay untouched."
+        .format(CONFIG)
+    )
     return 0
 
 

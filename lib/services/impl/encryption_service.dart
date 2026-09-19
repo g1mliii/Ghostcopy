@@ -257,8 +257,43 @@ class EncryptionService implements IEncryptionService {
       // passphrase were wrong, and there is no way out of it from inside the
       // app. delete() is idempotent and costs one call.
       debugPrint('[EncryptionService] Writing passphrase to secure storage...');
+
+      // Read the outgoing value first, so a failed replacement can be undone.
+      // This is a replacement whenever a passphrase already exists - a QR
+      // import, or entering a different one - and the delete below is not
+      // optional, for the reason above. That leaves a window where the only
+      // copy of the old passphrase is this local: if the write then failed,
+      // nothing restored it, and every clip encrypted under it became
+      // unreadable at the next launch. The same window exists in the Keychain
+      // accessibility migration and is closed the same way there.
+      final previous = await _secureStorage.read(key: _passphraseKey);
       await _secureStorage.delete(key: _passphraseKey);
-      await _secureStorage.write(key: _passphraseKey, value: passphrase);
+      if (Platform.isIOS) {
+        // Also under the old accessibility. An item left there is invisible to
+        // every read this class makes but still collides with the add below,
+        // which is the errSecDuplicateItem dead end the dialog used to tell
+        // people to reinstall out of - and reinstalling does not help, because
+        // Keychain items survive app deletion. initialize()'s migration
+        // normally clears it; this covers the case where that was rolled back
+        // or never ran, so there is a way out from inside the app.
+        await _secureStorage.delete(
+          key: _passphraseKey,
+          iOptions: legacyPassphraseIosOptions,
+        );
+      }
+      try {
+        await _secureStorage.write(key: _passphraseKey, value: passphrase);
+      } on Exception {
+        if (previous != null && previous.isNotEmpty) {
+          await _secureStorage.delete(key: _passphraseKey);
+          await _secureStorage.write(key: _passphraseKey, value: previous);
+          debugPrint(
+            '[EncryptionService] Write failed - restored the previous '
+            'passphrase',
+          );
+        }
+        rethrow;
+      }
 
       // Verify it was written
       final stored = await _secureStorage.read(key: _passphraseKey);
@@ -319,16 +354,28 @@ class EncryptionService implements IEncryptionService {
       // half the entries on disk - the worst outcome for something whose whole
       // job is to make the key unavailable. Failing to erase is worth logging,
       // never worth abandoning the rest of the teardown for.
+      Exception? undeleted;
       for (final key in [_passphraseKey, _verificationHashKey]) {
         try {
           await _secureStorage.delete(key: key);
         } on Exception catch (e) {
           debugPrint('[EncryptionService] Could not delete $key: $e');
+          undeleted ??= e;
         }
       }
 
       // Clear from memory
       _setKeyBytes(null);
+
+      // Reported, not just logged. Returning normally told the settings screen
+      // encryption was off while the passphrase was still on disk - and
+      // initialize() reads it again on the next launch, so it would come back
+      // by itself with the user believing they had turned it off. Both deletes
+      // are still attempted and the in-memory key is still dropped first; only
+      // the reporting changes.
+      if (undeleted != null) {
+        throw PassphraseStorageException(undeleted.toString());
+      }
 
       debugPrint('Encryption disabled - passphrase cleared');
     } on Exception catch (e) {

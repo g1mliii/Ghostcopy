@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
-import 'dart:ui' show Rect;
+import 'dart:ui' show Offset, PlatformDispatcher, Rect;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
@@ -984,6 +984,22 @@ class MobileMainViewModel extends ChangeNotifier {
     String? mimeType,
     String? filename,
   }) async {
+    // UIKit presents the sheet as a popover on iPad and throws without an
+    // anchor. The notification path has no widget to point at - it is driven by
+    // an external intent - and passed null, so tapping a file notification on an
+    // iPad failed instead of sharing. Falls back to the middle of the screen,
+    // which is where a popover with no better answer belongs.
+    var origin = sharePositionOrigin;
+    if (origin == null && Platform.isIOS) {
+      final view = PlatformDispatcher.instance.views.first;
+      final size = view.physicalSize / view.devicePixelRatio;
+      origin = Rect.fromCenter(
+        center: Offset(size.width / 2, size.height / 2),
+        width: 1,
+        height: 1,
+      );
+    }
+
     await SharePlus.instance.share(
       ShareParams(
         // The mime type is passed as well as the extension. The extension is
@@ -1008,7 +1024,7 @@ class MobileMainViewModel extends ChangeNotifier {
         // FPPSharePlusPlugin turns into LPLinkMetadata.title, and it is
         // preferred over `subject`, which is meant for email.
         title: filename,
-        sharePositionOrigin: sharePositionOrigin,
+        sharePositionOrigin: origin,
       ),
     );
   }

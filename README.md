@@ -49,7 +49,7 @@ sign-in session.
 
 4. **Point the app at your Supabase project**
 
-   There is no `.env` file. Edit `_supabaseUrl` and `_supabaseAnonKey` at the
+   There is no `.env` file. Edit `_supabaseUrl` and `_supabasePublishableKey` at the
    top of `lib/main.dart`. A publishable key is public by design - the security
    boundary is Supabase's RLS policies, not hiding the key.
 
