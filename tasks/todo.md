@@ -88,17 +88,32 @@ from Apple rather than enabled in the portal - developer.apple.com, Contact ->
 Request. Since iOS 16 `UIDevice.name` returns the model, so a phone reports
 "iPhone" instead of "Subai's iPhone"; the entitlement restores the real name.
 
-Not a blocker and not a fix for anything broken. The device-row collision is
-already solved by using distinct model names, so this only makes the name
-nicer. Apple is selective and turnaround is slow, so it is worth requesting in
+The device-row collision is NOT solved while this is pending, which an earlier
+version of this note got wrong. `initializeDeviceName()` prefers `ios.name`,
+and since iOS 16 that returns the generic model name - "iPhone" - without this
+entitlement, not "iPhone 15 Pro". So every iPhone on an account resolves to the
+same device_name, collides on the UNIQUE (user_id, device_type, device_name)
+index, shares one row and one FCM token, and whichever launched last wins while
+the other stops receiving push.
+
+The Simulator is not subject to the entitlement gate and returns its full
+assigned name, which is why this looks fine in testing.
+
+Two devices per account is the ordinary case, so this is worth closing rather
+than waiting on Apple, who are selective and may decline. Swapping the
+preference to `ios.utsname.machine` ("iPhone16,1") distinguishes models today
+and is a one-line change; `ios.name` then becomes the nicer name if and when
+the entitlement lands. Apple is selective and turnaround is slow, so it is worth requesting in
 the background rather than waiting on.
 
 The justification that fits: users manage several devices, the settings screen
 lists them, and clips are labelled by which device sent them - so identifying a
 device by the name its owner gave it is the point rather than a convenience.
 
-No code change if granted. `initializeDeviceName()` already reads `ios.name`
-first and only falls back to the model identifier when it comes back empty.
+No code change if granted, as the code stands: `initializeDeviceName()` already
+reads `ios.name` first and only falls back to the model identifier when it comes
+back empty. If the interim swap above is taken, granting it means reversing that
+preference again.
 
 - [ ] Submit the request
 - [ ] If granted, add the key to `ios/Runner/Runner.entitlements`

@@ -254,6 +254,16 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     // Remove method channel handlers to prevent memory leaks
     _notificationChannel.setMethodCallHandler(null);
 
+    // And tell the native side, which otherwise keeps pushing taps at a channel
+    // nobody is answering. It parks them instead until the next screen pulls.
+    // Fire and forget: nothing here can wait, and a platform without this
+    // method answers MissingPluginException, which is not a failure.
+    unawaited(
+      _notificationChannel
+          .invokeMethod<void>('notificationHandlerDetached')
+          .catchError((Object _) {}),
+    );
+
     super.dispose();
   }
 

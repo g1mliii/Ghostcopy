@@ -1079,7 +1079,11 @@ class MobileMainViewModel extends ChangeNotifier {
               onError: onError,
             );
         }
-      } on Exception catch (e) {
+        // `Object`, not `Exception`. This is a per-item boundary whose entire
+        // job is that one bad item cannot take the batch down, and an Error -
+        // a failed null check, a bad cast - would otherwise sail straight past
+        // it and strand the rest along with the history reload below.
+      } on Object catch (e) {
         debugPrint('[ShareSheet] Failed to send shared item: $e');
         onError?.call('Could not send that item');
       }
@@ -1099,6 +1103,18 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onSuccess,
     void Function(String message)? onError,
   }) async {
+    // Not `currentUserId!`. A share can arrive before there is a session -
+    // getInitialMedia() fires on a cold launch, which can beat the anonymous
+    // sign-in that normally guarantees one - and the bang threw a TypeError.
+    // That is an Error, not an Exception, so the caller's catch did not hold
+    // it: it escaped the loop, skipped onError, skipped every remaining item
+    // and skipped loadHistory, leaving the share to vanish with no toast.
+    final userId = _authService.currentUserId;
+    if (userId == null) {
+      onError?.call('Sign in to send files');
+      return;
+    }
+
     final bytes = await File(file.path).readAsBytes();
     final filename = file.path.split(Platform.pathSeparator).last;
 
@@ -1115,7 +1131,7 @@ class MobileMainViewModel extends ChangeNotifier {
     );
 
     await _clipboardRepo.insertFile(
-      userId: _authService.currentUserId!,
+      userId: userId,
       deviceType: ClipboardRepository.getCurrentDeviceType(),
       deviceName: null,
       fileBytes: bytes,

@@ -986,8 +986,6 @@ class _MyAppState extends State<MyApp> {
       if (locator.isRegistered<IFcmService>()) {
         locator<IFcmService>().dispose();
       }
-
-      // Dispose widget service (singleton) to clean up method channel
     }
 
     // Stop temp file cleanup timer (cross-platform)

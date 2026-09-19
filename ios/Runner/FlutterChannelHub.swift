@@ -20,14 +20,26 @@ final class FlutterChannelHub {
 
   private var notificationChannel: FlutterMethodChannel?
 
+  /// Whether Dart currently has a handler on the notification channel.
+  ///
+  /// Not the same question as whether `notificationChannel` exists, which is
+  /// what this used to test. The engine - and so the channel - is built during
+  /// launch, well before main() has run far enough to build the screen that
+  /// answers, and on a cold launch from a notification tap iOS calls didReceive
+  /// inside that window. Testing the channel meant taking the invoke path with
+  /// nobody on the other end, so the parked-tap fallback below was bypassed in
+  /// precisely the case it exists for.
+  private var isDartListening = false
+
   /// A notification action that arrived before Flutter was ready.
   ///
   /// Tapping a notification for an app the user swiped away cold-launches it,
-  /// and iOS calls didReceive long before the scene has built a
-  /// FlutterViewController - so the engine, and therefore these channels, do
-  /// not exist yet. Sending on a nil channel is a silent no-op, which would
-  /// mean the one case this whole flow exists for - tap a notification, get the
-  /// clip - quietly did nothing on a killed app.
+  /// and iOS calls didReceive long before main() has built the screen that
+  /// answers. The channel itself is usually up by then - it is built with the
+  /// engine during launch - so the thing that is missing is a handler on the
+  /// Dart end, not the channel. Either way an invoke lands on nobody, which
+  /// would mean the one case this whole flow exists for - tap a notification,
+  /// get the clip - quietly did nothing on a killed app.
   ///
   /// One slot, not a queue: each entry is "the clip the user just asked for",
   /// and if two arrive before the engine is up the newer tap is the one they
@@ -50,6 +62,11 @@ final class FlutterChannelHub {
         // channel is not the same as Dart listening on it - the engine exists
         // well before main() has built the screen that answers - so the parked
         // tap is handed over on request rather than pushed and hoped for.
+        //
+        // This call is also the readiness signal: Dart makes it immediately
+        // after setMethodCallHandler and nowhere else, so its arrival is proof
+        // a push would now land.
+        self?.isDartListening = true
         guard let pending = self?.pendingNotificationAction else {
           result(nil)
           return
@@ -57,6 +74,13 @@ final class FlutterChannelHub {
         self?.pendingNotificationAction = nil
         print("[ChannelHub] Handing deferred tap for \(pending.clipboardId) to Dart")
         result(["clipboardId": pending.clipboardId, "action": pending.action])
+
+      case "notificationHandlerDetached":
+        // The screen holding the handler was disposed - on sign-out, say. It
+        // clears its handler, so anything invoked from here would land on
+        // nobody; park instead until the next screen pulls.
+        self?.isDartListening = false
+        result(nil)
 
       default:
         result(FlutterMethodNotImplemented)
@@ -68,10 +92,11 @@ final class FlutterChannelHub {
   // MARK: - Outbound
 
   func sendNotificationAction(clipboardId: String, action: String) {
-    guard let notificationChannel = notificationChannel else {
-      // Cold launch from a notification tap: hold it until attach() runs.
+    guard isDartListening, let notificationChannel = notificationChannel else {
+      // Cold launch from a notification tap, or the screen is between builds:
+      // hold it until Dart next pulls.
       pendingNotificationAction = (clipboardId: clipboardId, action: action)
-      print("[ChannelHub] Engine not ready - deferring action for \(clipboardId)")
+      print("[ChannelHub] Dart not listening - deferring action for \(clipboardId)")
       return
     }
 

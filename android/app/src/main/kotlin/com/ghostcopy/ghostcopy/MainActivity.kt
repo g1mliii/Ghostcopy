@@ -287,16 +287,17 @@ class MainActivity : FlutterActivity() {
      * booted, would already be too late for the first backgrounding. The window
      * has to be correct from the moment it exists.
      *
-     * Defaults to true, matching ISettingsService: protection is the default and
-     * switching it off is the deliberate act.
+     * Defaults to false, matching ISettingsService: it is the user's own device,
+     * and an ordinary Recents preview is theirs to have. Turning the cover on is
+     * the deliberate act.
+     *
+     * The two defaults have to agree. This one decides what happens before Dart
+     * has run, so a mismatch would blank a Recents card whose own toggle says it
+     * should not be blanked.
      */
     private fun applyScreenshotProtection() {
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         // shared_preferences namespaces every key it writes with "flutter.".
-        // Default false, matching SettingsService.getScreenshotProtection().
-        // These two defaults have to agree: this one decides what happens
-        // before Dart has run, and a mismatch would show a toggle that
-        // disagrees with the window it describes.
         val enabled = prefs.getBoolean("flutter.$PREF_SCREENSHOT_PROTECTION", false)
         setSecureFlag(enabled)
     }
