@@ -510,16 +510,18 @@ Future<void> main(List<String> args) async {
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
     StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
 
-    // Before anything registers this device or sends a clip. The name is read
-    // synchronously from then on, and resolving a phone's model is async - so
-    // without this every send and every registration would use the generic
-    // fallback, and `devices` is uniquely indexed on
+    // Both before anything registers this device or sends a clip, and both
+    // independent of each other - so started together rather than one after the
+    // other, as the desktop branch above already does. The device name is read
+    // synchronously from here on and resolving a phone's model is a
+    // platform-channel round trip, so it has to be settled before the first
+    // send: `devices` is uniquely indexed on
     // (user_id, device_type, device_name).
-    await ClipboardRepository.initializeDeviceName();
-
-    // Initialize Settings Service (needed for clipboard auto-clear and other settings)
     final settingsService = SettingsService();
-    await settingsService.initialize();
+    await Future.wait([
+      ClipboardRepository.initializeDeviceName(),
+      settingsService.initialize(),
+    ]);
     debugPrint('[App] ✅ Settings service initialized for mobile');
     locator
       ..registerSingleton<ISettingsService>(settingsService)

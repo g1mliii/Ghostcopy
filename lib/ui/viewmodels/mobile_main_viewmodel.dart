@@ -878,38 +878,13 @@ class MobileMainViewModel extends ChangeNotifier {
       final clipboardService = ClipboardService.instance;
 
       if (item.isImage || item.isFile) {
-        final fileBytes = await _clipboardRepo.downloadFile(item);
-        if (fileBytes == null) {
+        final shared = await _shareStoredFile(
+          item,
+          sharePositionOrigin: sharePositionOrigin,
+        );
+        if (!shared) {
           throw Exception('Failed to download file');
         }
-
-        // Same detection as processShareAction(). This used to fall back to
-        // the literal string 'file', with nothing after a dot, so the share
-        // sheet had no extension to identify the type by and drew the icon of
-        // whatever handles unknown data - a text document arriving under
-        // Safari's logo. The notification path was fixed for exactly this and
-        // the in-app tap was left behind.
-        final detected = FileTypeService.instance.detectFromBytes(
-          fileBytes,
-          item.metadata?.originalFilename,
-        );
-        final filename =
-            item.metadata?.originalFilename ??
-            (item.isImage
-                ? 'image.${detected.extension}'
-                : 'file.${detected.extension}');
-
-        final tempFile = await ClipboardService.instance.writeTempFile(
-          fileBytes,
-          filename,
-        );
-
-        await _shareFile(
-          tempFile.path,
-          sharePositionOrigin,
-          mimeType: detected.mimeType,
-          filename: filename,
-        );
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
@@ -944,6 +919,62 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Open the OS share sheet for a file on disk.
   ///
+  /// Download a stored clip and hand it to the share sheet.
+  ///
+  /// Returns false when the download produced nothing.
+  ///
+  /// This sequence - download, sniff the type, build a name that carries an
+  /// extension, stage a temp file, present the sheet - existed twice, in the
+  /// in-app tap and the notification path, and the duplication had already cost
+  /// something: the extension fix was applied to the notification copy and the
+  /// in-app one was left behind, so the same clip shared correctly from a
+  /// notification and under the wrong icon from the history list.
+  ///
+  /// [sharePositionOrigin] is null for the notification path, which has no
+  /// widget to anchor an iPad popover to.
+  Future<bool> _shareStoredFile(
+    ClipboardItem item, {
+    Rect? sharePositionOrigin,
+  }) async {
+    _isPreparingShare = true;
+    notifyListeners();
+    try {
+      final fileBytes = await _clipboardRepo.downloadFile(item);
+      if (fileBytes == null) return false;
+
+      final resolved = FileTypeService.instance.resolveFilename(
+        fileBytes,
+        originalFilename: item.metadata?.originalFilename,
+        isImage: item.isImage,
+      );
+
+      final tempFile = await ClipboardService.instance.writeTempFile(
+        fileBytes,
+        resolved.name,
+      );
+
+      // Cleared before the sheet is presented, not after: share() does not
+      // return until the user dismisses it, and leaving a spinner running
+      // underneath a sheet they are reading is worse than none at all.
+      _isPreparingShare = false;
+      notifyListeners();
+
+      await _shareFile(
+        tempFile.path,
+        sharePositionOrigin,
+        mimeType: resolved.info.mimeType,
+        filename: resolved.name,
+      );
+      return true;
+    } finally {
+      // A download that throws must not leave the spinner up forever.
+      if (_isPreparingShare) {
+        _isPreparingShare = false;
+        if (!_isDisposed) notifyListeners();
+      }
+    }
+  }
+
   /// [sharePositionOrigin] is required on iPad: UIActivityViewController is
   /// presented as a popover there and must be anchored to the widget that
   /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
@@ -1115,15 +1146,21 @@ class MobileMainViewModel extends ChangeNotifier {
       return;
     }
 
-    final bytes = await File(file.path).readAsBytes();
     final filename = file.path.split(Platform.pathSeparator).last;
 
-    if (bytes.length > ClipboardLimits.maxFileBytes) {
+    // Size checked by stat, before the read. Reading first meant a shared video
+    // was pulled into one contiguous Uint8List on the Dart heap purely to
+    // discover it was over the limit and throw it away - and a share arrives
+    // while the app is cold and already competing for memory with whatever
+    // launched it, so a few hundred MB there is a jetsam risk, not a slow path.
+    if (await File(file.path).length() > ClipboardLimits.maxFileBytes) {
       onError?.call(
         '$filename is too large (max ${ClipboardLimits.maxFileLabel})',
       );
       return;
     }
+
+    final bytes = await File(file.path).readAsBytes();
 
     final fileTypeInfo = FileTypeService.instance.detectFromBytes(
       bytes,
@@ -1190,59 +1227,15 @@ class MobileMainViewModel extends ChangeNotifier {
       }
 
       if (item.isImage || item.isFile || action == 'share') {
-        _isPreparingShare = true;
-        notifyListeners();
-
-        final fileBytes = await _clipboardRepo.downloadFile(item);
-        if (fileBytes != null) {
-          // The share sheet identifies a file by its extension, so the name
-          // has to carry one. The old fallback for a non-image was the literal
-          // string 'file', with nothing after a dot - iOS could not tell what
-          // it was and drew the icon of whatever handles unknown data, which
-          // is why a text document arrived showing Safari's logo.
-          //
-          // The bytes are already in hand, so the type is detected from them
-          // rather than guessed: originalFilename is trusted when present,
-          // otherwise the sniffed extension is used, and image.* stays as a
-          // last resort.
-          final detected = FileTypeService.instance.detectFromBytes(
-            fileBytes,
-            item.metadata?.originalFilename,
-          );
-          final filename =
-              item.metadata?.originalFilename ??
-              (item.isImage
-                  ? 'image.${detected.extension}'
-                  : 'file.${detected.extension}');
-
-          final tempFile = await ClipboardService.instance.writeTempFile(
-            fileBytes,
-            filename,
-          );
-
-          // No anchor: this path is driven by an external share intent, so
-          // there is no widget to point an iPad popover at.
-          // Cleared before the sheet is presented, not after: share() does not
-          // return until the user dismisses it, and leaving a spinner running
-          // underneath a sheet they are reading is worse than none at all.
-          _isPreparingShare = false;
-          notifyListeners();
-
-          await _shareFile(
-            tempFile.path,
-            null,
-            mimeType: detected.mimeType,
-            filename: filename,
-          );
-          debugPrint(
-            '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
-          );
-        } else {
-          _isPreparingShare = false;
-          notifyListeners();
+        // No anchor: this path is driven by an external share intent, so there
+        // is no widget to point an iPad popover at.
+        if (!await _shareStoredFile(item)) {
           debugPrint('[MobileMainVM] Failed to download file for sharing');
           return false;
         }
+        debugPrint(
+          '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
+        );
       } else {
         final clipboardService = ClipboardService.instance;
 

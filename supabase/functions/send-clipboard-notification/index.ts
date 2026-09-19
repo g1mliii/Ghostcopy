@@ -94,6 +94,25 @@ Deno.serve(async (req)=>{
     const authHeader = req.headers.get('Authorization');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const isServiceRole = !!serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`;
+    // Which client every data query below uses.
+    //
+    // supabaseClient is built from the anon key with the caller's Authorization
+    // header forwarded, which worked while that header was a service-role JWT:
+    // PostgREST decoded it, saw role=service_role and bypassed RLS. Supabase's
+    // current API keys are opaque `sb_secret_...` strings with nothing to
+    // decode, so on the trigger path the same request runs as anon against
+    // RLS-protected tables. supabaseAdmin is constructed with the key directly.
+    //
+    // Chosen once, here, rather than per query. It was picked at the devices
+    // select alone, which left the last_active update below silently writing
+    // nothing on every trigger call, and made "remember the right client" an
+    // invariant each new query had to rediscover.
+    //
+    // This widens the client's privileges, not the rows it may see: every query
+    // is still scoped to userId, which is record.user_id for trigger calls and
+    // the authenticated user otherwise. supabaseClient stays for auth.getUser(),
+    // which must run as the caller.
+    const db = isServiceRole ? supabaseAdmin : supabaseClient;
 
     // Body is parsed up front because the service-role path needs record.user_id
     // to establish identity.
@@ -196,7 +215,7 @@ Deno.serve(async (req)=>{
       // Recency check: only allow notifications for items created in the last 5 minutes.
       // Prevents replay-based notification spam using old clipboard_ids.
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: dbItem, error: clipboardError } = await supabaseClient.from('clipboard').select('id, content_type, rich_text_format, file_size_bytes, content').eq('id', clipboard_id).eq('user_id', userId) // Security: ensure user owns this item
+      const { data: dbItem, error: clipboardError } = await db.from('clipboard').select('id, content_type, rich_text_format, file_size_bytes, content').eq('id', clipboard_id).eq('user_id', userId) // Security: ensure user owns this item
       .gte('created_at', fiveMinutesAgo).single();
       if (clipboardError || !dbItem) {
         console.error('[Notification] Failed to fetch clipboard item:', clipboardError);
@@ -225,21 +244,7 @@ Deno.serve(async (req)=>{
     const targetText = target_device_types && target_device_types.length > 0 ? target_device_types.join(', ') : 'all devices';
     console.log(`[Notification] User ${userId} sending ${contentType} from ${device_type} to ${targetText}`);
     // Query devices table for FCM tokens.
-    //
-    // The trigger path reads through supabaseAdmin, not supabaseClient.
-    // supabaseClient is built from the anon key with the caller's Authorization
-    // header forwarded, which worked while that header was a service-role JWT:
-    // PostgREST decoded it, saw role=service_role and bypassed RLS. Supabase's
-    // current API keys are opaque `sb_secret_...` strings with nothing to
-    // decode, so the same request runs as anon against an RLS-protected table
-    // and the select fails. supabaseAdmin is constructed with the key directly
-    // and is the right client for a privileged read regardless.
-    //
-    // userId is still the trusted value established above - record.user_id for
-    // trigger calls, the authenticated user otherwise - so this widens the
-    // client's privileges, not the rows it may see.
-    const deviceReader = isServiceRole ? supabaseAdmin : supabaseClient;
-    let query = deviceReader.from('devices').select('id, device_type, device_name, fcm_token').eq('user_id', userId).neq('device_type', device_type); // Skip self-notifications: don't send to sending device type
+    let query = db.from('devices').select('id, device_type, device_name, fcm_token').eq('user_id', userId).neq('device_type', device_type); // Skip self-notifications: don't send to sending device type
     // Filter by target device types if specified
     if (target_device_types && target_device_types.length > 0) {
       query = query.in('device_type', target_device_types);
@@ -265,7 +270,7 @@ Deno.serve(async (req)=>{
     // result, and awaiting it afterwards added a full Postgres round-trip to
     // the push path before this function could respond.
     const deviceIds = devices.map((d)=>d.id);
-    const lastActiveUpdate = deviceIds.length > 0 ? supabaseClient.from('devices').update({
+    const lastActiveUpdate = deviceIds.length > 0 ? db.from('devices').update({
       last_active: new Date().toISOString()
     }).in('id', deviceIds).lt('last_active', new Date(Date.now() - 60 * 60 * 1000).toISOString()) : null;
     // ------------------------------------------------------------------

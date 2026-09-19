@@ -438,12 +438,16 @@ class SpotlightViewModel extends ChangeNotifier {
           // Sniffed extension rather than a bare 'file': this path is written
           // to the clipboard, and a name with nothing after the dot gives the
           // receiving app no way to tell what it just pasted.
-          final detected = FileTypeService.instance.detectFromBytes(
-            bytes,
-            item.metadata?.originalFilename,
-          );
-          final filename =
-              item.metadata?.originalFilename ?? 'file.${detected.extension}';
+          // Shared with the mobile share paths. This copy never grew the
+          // `image.*` case they have, which is the drift that comes of writing
+          // the same naming rule out four times.
+          final filename = FileTypeService.instance
+              .resolveFilename(
+                bytes,
+                originalFilename: item.metadata?.originalFilename,
+                isImage: item.isImage,
+              )
+              .name;
           final tempFile = await TempFileService.instance.saveTempFile(
             bytes,
             filename,

@@ -542,11 +542,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
-  /// Outcome of a share handed to us by the OS.
-  ///
-  /// These were three identical pairs of inline closures, one per share type,
-  /// each rebuilding the same SnackBar - and they used SnackBar while the rest
-  /// of this screen uses the app's own toast.
   void _setupMethodChannels() {
     _notificationChannel.setMethodCallHandler((call) async {
       switch (call.method) {
@@ -585,7 +580,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
       final clipboardId = pending['clipboardId'] as String?;
       final action = pending['action'] as String?;
-      if (clipboardId == null || clipboardId.isEmpty) return;
 
       debugPrint(
         '[MobileMain] Draining deferred notification tap: $clipboardId',
@@ -594,8 +588,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         clipboardId: clipboardId,
         action: action,
       );
+    } on MissingPluginException catch (e) {
+      // A build whose native side does not answer this. Listed separately
+      // because MissingPluginException does not extend PlatformException, so
+      // the clause below - which was written for exactly this case - never
+      // caught it, and the throw escaped an unawaited call as an unhandled
+      // async error instead.
+      debugPrint('[MobileMain] No native side for a deferred tap: ${e.message}');
     } on PlatformException catch (e) {
-      // Nothing parked, or an older build without the native side of this.
       debugPrint('[MobileMain] No deferred notification action: ${e.message}');
     }
   }
@@ -1854,7 +1854,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 }
 
-/// Device selection chip widget
 /// Height of the destination chip row.
 ///
 /// Only the label's share of the chip is scaled: the icon, the padding and the

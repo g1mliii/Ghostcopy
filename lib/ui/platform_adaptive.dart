@@ -148,30 +148,6 @@ class Adaptive {
     );
   }
 
-  /// Clips a child to the platform's rounded-corner shape.
-  ///
-  /// The counterpart to [surfaceShape], for the cases that clip content -
-  /// thumbnails, previews - rather than paint a decoration.
-  static Widget clip({
-    required Widget child,
-    double radius = 12,
-    Clip clipBehavior = Clip.antiAlias,
-  }) {
-    final borderRadius = BorderRadius.circular(radius);
-    if (isApple) {
-      return ClipRSuperellipse(
-        borderRadius: borderRadius,
-        clipBehavior: clipBehavior,
-        child: child,
-      );
-    }
-    return ClipRRect(
-      borderRadius: borderRadius,
-      clipBehavior: clipBehavior,
-      child: child,
-    );
-  }
-
   /// A yes/no dialog using each platform's own conventions.
   ///
   /// Only for simple title + message + two buttons. Dialogs with custom bodies

@@ -1352,13 +1352,10 @@ class ClipboardRepository implements IClipboardRepository {
   static Future<void> initializeDeviceName() async {
     if (_deviceNameResolved) return;
 
-    // Desktop has a hostname, which is already specific to the machine and is
-    // what the user calls it.
-    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-      getCurrentDeviceName();
-      return;
-    }
-
+    // Desktop is handled by the fallback at the end: it has a hostname, which
+    // is already specific to the machine and is what the user calls it, and
+    // neither branch below fires there. It had its own early return, which did
+    // nothing the fallback does not.
     try {
       final info = DeviceInfoPlugin();
       String? name;

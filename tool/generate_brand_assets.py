@@ -13,6 +13,7 @@ master and re-run. Hand-editing a PNG leaves it to be silently overwritten.
 
 import io
 import os
+import struct
 import sys
 
 try:
@@ -84,6 +85,88 @@ def rounded_mask(px: int, radius: float) -> Image.Image:
         fill=255,
     )
     return mask.resize((px, px), Image.LANCZOS)
+
+
+def _bmp_frame(img: Image.Image) -> bytes:
+    """One ICO frame in the BMP form Windows expects below 256px."""
+    # tile() hands back RGB when it flattened for opacity, RGBA otherwise, and
+    # the packing below reads four channels either way.
+    img = img.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+
+    xor = bytearray()
+    for y in range(h - 1, -1, -1):  # BMP rows run bottom-up
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            xor += bytes((b, g, r, a))
+
+    stride = ((w + 31) // 32) * 4
+    mask = bytearray()
+    for y in range(h - 1, -1, -1):
+        row = bytearray(stride)
+        for x in range(w):
+            if px[x, y][3] == 0:
+                row[x // 8] |= 0x80 >> (x % 8)
+        mask += row
+
+    header = struct.pack(
+        "<IiiHHIIiiII",
+        40,        # biSize
+        w,         # biWidth
+        h * 2,     # biHeight: XOR bitmap plus AND mask
+        1,         # biPlanes
+        32,        # biBitCount
+        0,         # biCompression = BI_RGB
+        len(xor) + len(mask),
+        0, 0, 0, 0,
+    )
+    return header + bytes(xor) + bytes(mask)
+
+
+def _png_frame(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img = img.convert("RGBA")
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def write_ico(frames: list, *parts: str) -> None:
+    """Write a multi-resolution .ico, each frame drawn at its own size.
+
+    Not `Image.save(format="ICO", sizes=...)`. That takes ONE image and
+    resamples it for every frame, so a 16px tray icon is a downsampled 256px
+    render - mush, exactly where crispness matters most. Rendering each size
+    from the vector and packing the frames by hand is the whole point.
+    """
+    frames = sorted(frames, key=lambda f: f.size[0])
+    blobs = [_png_frame(f) if f.size[0] >= 256 else _bmp_frame(f)
+             for f in frames]
+
+    offset = 6 + 16 * len(frames)
+    out = bytearray(struct.pack("<HHH", 0, 1, len(frames)))
+    for frame, blob in zip(frames, blobs):
+        w, h = frame.size
+        out += struct.pack(
+            "<BBBBHHII",
+            0 if w >= 256 else w,
+            0 if h >= 256 else h,
+            0,   # palette entries: 0 for true colour
+            0,
+            1,   # colour planes
+            32,  # bits per pixel
+            len(blob),
+            offset,
+        )
+        offset += len(blob)
+    for blob in blobs:
+        out += blob
+
+    path = os.path.join(ROOT, *parts)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(bytes(out))
+    written.append(os.path.relpath(path, ROOT))
 
 
 def on_transparent(px: int, master: str = "logo-white.svg") -> Image.Image:
@@ -193,6 +276,12 @@ def tray_icons() -> None:
     save(tile(64, radius=0.2, opaque=False), "assets", "icons", "tray_icon.png")
     save(tile(24, radius=0.2, opaque=False), "assets", "icons",
          "tray_icon_linux.png")
+    # Windows loads this one, not the PNG - see tray_service.dart. It was left
+    # out when this script took over from tool/generate_desktop_icons.py, so
+    # the Windows tray kept showing the pre-rebrand mark while every other
+    # surface changed.
+    write_ico([tile(s, radius=0.2, opaque=False) for s in (16, 20, 24, 32, 48)],
+              "assets", "icons", "tray_icon.ico")
 
 
 def flutter_assets() -> None:
@@ -258,17 +347,12 @@ def email_logo() -> None:
 
 def favicon_ico() -> None:
     """Multi-resolution .ico for Windows and the website."""
-    sizes = [16, 24, 32, 48, 64, 128, 256]
-    frames = [tile(s) for s in sizes]
+    frames = [tile(s) for s in (16, 24, 32, 48, 64, 128, 256)]
     for parts in (("website", "icons", "favicon.ico"),
                   ("website", "dist", "icons", "favicon.ico"),
                   ("windows", "runner", "resources", "app_icon.ico"),
                   ("installer", "ghostcopy.ico")):
-        path = os.path.join(ROOT, *parts)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        frames[-1].save(path, format="ICO",
-                        sizes=[(s, s) for s in sizes])
-        written.append(os.path.relpath(path, ROOT))
+        write_ico(frames, *parts)
 
 
 if __name__ == "__main__":

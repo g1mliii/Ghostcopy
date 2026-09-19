@@ -30,6 +30,30 @@ class FileTypeService {
   final Map<String, FileTypeInfo> _detectionCache = {};
   static const int _maxCacheSize = 100;
 
+  /// The detected type, plus a filename that carries an extension.
+  ///
+  /// The extension is what identifies the content downstream: a name with
+  /// nothing after the dot leaves a share sheet with no way to tell what it
+  /// has, so it draws the icon of whatever handles unknown data - which is how
+  /// a PDF came to arrive under Safari's logo. `originalFilename` is trusted
+  /// when present, and otherwise the name is built from the sniffed extension.
+  ///
+  /// One copy of that policy. It was written out at four call sites across the
+  /// mobile and desktop ViewModels, and had already drifted - the desktop copy
+  /// never grew the `image.*` case - which is the same way the bug above got
+  /// fixed on the notification path and left alone on the in-app one.
+  ({String name, FileTypeInfo info}) resolveFilename(
+    Uint8List bytes, {
+    String? originalFilename,
+    bool isImage = false,
+  }) {
+    final info = detectFromBytes(bytes, originalFilename);
+    return (
+      name: originalFilename ?? '${isImage ? 'image' : 'file'}.${info.extension}',
+      info: info,
+    );
+  }
+
   FileTypeInfo detectFromBytes(Uint8List bytes, String? filename) {
     final cacheKey = _cacheKey(bytes, filename);
 

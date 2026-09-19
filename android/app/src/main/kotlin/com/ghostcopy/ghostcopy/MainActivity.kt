@@ -2,8 +2,6 @@ package com.ghostcopy.ghostcopy
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -16,12 +14,8 @@ class MainActivity : FlutterActivity() {
     private companion object {
         private const val TAG = "MainActivity"
 
-        /**
-         * Largest shared payload accepted, in bytes.
-         *
-         * Mirrors ClipboardLimits.maxFileBytes on the Dart side and the CHECK
-         * constraint in supabase/schema.sql. Change all three together.
-         */
+        // Mirrors _notificationChannel in mobile_main_screen.dart and
+        // FlutterChannelHub.notificationChannelName on iOS.
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
 
         // Must match the manifest's default_notification_channel_id, the
@@ -33,15 +27,13 @@ class MainActivity : FlutterActivity() {
         private const val PREF_SCREENSHOT_PROTECTION = "screenshot_protection"
     }
 
-    // Method channels (stored to prevent memory leaks)
-
     // Guards against re-copying the same clip every time the activity resumes
     // while a notification-launched intent is still attached.
     private var lastHandledFcmClipboardId: String? = null
 
     // A notification action that Dart has not collected yet. Written whenever a
     // tap is handled, cleared when Dart drains it through
-    // "getPendingNotificationAction". This is what makes a cold-start tap work:
+    // "takePendingNotificationAction". This is what makes a cold-start tap work:
     // the action waits here instead of being fired at a Dart handler that does
     // not exist yet.
     private var pendingNotificationAction: Map<String, String>? = null
@@ -93,7 +85,12 @@ class MainActivity : FlutterActivity() {
                 // Dart message with no handler is discarded silently. This
                 // handler is registered in configureFlutterEngine, i.e. before
                 // the entrypoint runs, so it is always ready to be asked.
-                "getPendingNotificationAction" -> {
+                // Same verb as FlutterChannelHub on iOS. Dart drains through one
+                // non-platform-branched code path, so the two native sides have
+                // to answer the same name - this used to be
+                // "getPendingNotificationAction", which that path never called,
+                // so an Android tap parked here was never collected.
+                "takePendingNotificationAction" -> {
                     result.success(pendingNotificationAction)
                     pendingNotificationAction = null
                 }
@@ -220,64 +217,6 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Copy content to system clipboard based on content type.
-     * Supports: text, html, markdown, images
-     */
-    private fun copyToClipboard(
-        content: String,
-        contentType: String,
-        richTextFormat: String,
-        deviceType: String
-    ) {
-        try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-
-            when {
-                contentType == "html" -> {
-                    // Copy HTML with plain text fallback
-                    val plainText = content.replace(Regex("<[^>]*>"), "")
-                    val clip = ClipData.newHtmlText("HTML", plainText, content)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d(TAG, "✅ Copied HTML to clipboard")
-                }
-                contentType == "markdown" -> {
-                    // Copy Markdown as plain text
-                    val clip = ClipData.newPlainText("Markdown", content)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d(TAG, "✅ Copied Markdown as plain text")
-                }
-                else -> {
-                    // Plain text (default)
-                    val clip = ClipData.newPlainText("GhostCopy", content)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d(TAG, "✅ Copied text to clipboard")
-                }
-            }
-
-            Toast.makeText(this, "Copied from $deviceType", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to copy to clipboard: ${e.message}", e)
-            Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * Fetch clipboard item from Supabase database and copy to clipboard or share.
-     * Called when content is too large to fit in FCM payload.
-     *
-     * Uses the notifications method channel for consistency with iOS.
-     */
-    /**
-     * Create the channel FCM names in its manifest metadata.
-     *
-     * flutter_local_notifications creates this channel lazily, the first time
-     * the app itself shows a local notification - which may never have happened
-     * when a push arrives. A push naming a channel that does not exist is shown
-     * on a default-importance fallback instead, with no heads-up banner. Channels
-     * are persistent and re-creating one with the same id is a no-op, so this is
-     * safe to run on every launch.
-     */
-    /**
      * Apply the user's screenshot-protection preference to this window.
      *
      * Read natively, from the store shared_preferences writes to, rather than
@@ -314,6 +253,16 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "Screenshot protection ${if (enabled) "on" else "off"}")
     }
 
+    /**
+     * Create the channel FCM names in its manifest metadata.
+     *
+     * flutter_local_notifications creates this channel lazily, the first time
+     * the app itself shows a local notification - which may never have happened
+     * when a push arrives. A push naming a channel that does not exist is shown
+     * on a default-importance fallback instead, with no heads-up banner. Channels
+     * are persistent and re-creating one with the same id is a no-op, so this is
+     * safe to run on every launch.
+     */
     private fun ensureNotificationChannel() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
@@ -330,6 +279,12 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "✅ Created notification channel $NOTIFICATION_CHANNEL_ID")
     }
 
+    /**
+     * Fetch clipboard item from Supabase database and copy to clipboard or share.
+     * Called when content is too large to fit in FCM payload.
+     *
+     * Uses the notifications method channel for consistency with iOS.
+     */
     private fun fetchAndCopyClipboardItem(
         clipboardId: String,
         expectedContentType: String,
@@ -375,21 +330,4 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * Clean up method channels to prevent memory leaks.
-     */
-    override fun onDestroy() {
-        // Remove method channel handlers
-
-        super.onDestroy()
-    }
-
-    /**
-     * Show a short toast message.
-     */
-    private fun showToast(message: String) {
-        runOnUiThread {
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        }
-    }
 }

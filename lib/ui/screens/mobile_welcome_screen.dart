@@ -64,13 +64,19 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     // fires on a *change* - so nothing created the scanner on first launch and
     // the tab sat on its "Switch to this tab to activate scanner" placeholder
     // until the user switched away and back. Create it for the starting tab.
+    //
+    // Unconditional: the controller is built with the default initialIndex and
+    // _qrTabIndex is 0, so the guard that used to be here could not be false.
     // Assigned directly rather than through setState: build has not run yet.
-    if (_tabController.index == _qrTabIndex) {
-      _scannerController = MobileScannerController(
-        detectionSpeed: DetectionSpeed.noDuplicates,
-      );
-    }
+    _scannerController = _newScannerController();
   }
+
+  /// The scanner's configuration, in one place.
+  ///
+  /// Built here and again on the first switch to the QR tab; written out twice
+  /// it was two places to change a detection setting.
+  MobileScannerController _newScannerController() =>
+      MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
 
   @override
   void dispose() {
@@ -90,9 +96,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // QR tab - initialize scanner if not already initialized (Fix #18)
       // Create controller OUTSIDE setState, then trigger rebuild
       if (_scannerController == null) {
-        final controller = MobileScannerController(
-          detectionSpeed: DetectionSpeed.noDuplicates,
-        );
+        final controller = _newScannerController();
         setState(() {
           _scannerController = controller;
         });

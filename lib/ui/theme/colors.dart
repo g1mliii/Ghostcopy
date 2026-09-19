@@ -83,7 +83,6 @@ class GhostColors {
   static final primaryAlpha90 = primary.withValues(alpha: 0.9);
 
   // Cached success alpha variants
-  static final successAlpha15 = success.withValues(alpha: 0.15);
   static final successAlpha20 = success.withValues(alpha: 0.2);
 
   // Cached surface alpha variants (used in hover states, overlays)
@@ -116,12 +115,10 @@ class GhostColors {
   /// off here in the first place. Darkening reads as the control being pushed
   /// in, and matches what iOS does natively, where a pressed control dims.
   static final blackAlpha18 = Colors.black.withValues(alpha: 0.18);
-  static final blackAlpha30 = Colors.black.withValues(alpha: 0.3);
   static final blackAlpha50 = Colors.black.withValues(alpha: 0.5);
   static final redAlpha10 = Colors.red.withValues(alpha: 0.1);
   static final redAlpha30 = Colors.red.withValues(alpha: 0.3);
   static final redDarkAlpha20 = Colors.red.shade900.withValues(alpha: 0.2);
-  static final redDarkAlpha30 = Colors.red.shade900.withValues(alpha: 0.3);
   static final redLightAlpha30 = Colors.red.shade400.withValues(alpha: 0.3);
 
   // Cached glassBorder alpha variant

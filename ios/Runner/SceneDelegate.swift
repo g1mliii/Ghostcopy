@@ -61,36 +61,16 @@ import UIKit
   }
 
   // MARK: - Deep links
-
-  /// Handles links opened while the app is already running.
-  override func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-    for context in URLContexts {
-      handle(url: context.url)
-    }
-    super.scene(scene, openURLContexts: URLContexts)
-  }
-
-  /// Handles a link that launched the app from cold. `connectionOptions`
-  /// carries the URL in that case - `openURLContexts` is never called for it.
-  override func scene(
-    _ scene: UIScene,
-    willConnectTo session: UISceneSession,
-    options connectionOptions: UIScene.ConnectionOptions
-  ) {
-    super.scene(scene, willConnectTo: session, options: connectionOptions)
-    for context in connectionOptions.urlContexts {
-      handle(url: context.url)
-    }
-  }
-
-  private func handle(url: URL) {
-    // com.ghostcopy.share://<text> is gone with the hand-rolled share path;
-    // receive_sharing_intent's extension owns the share sheet now and calls
-    // back on ShareMedia-<bundle id>, which the plugin handles itself.
-    guard url.scheme == "ghostcopy" else { return }
-
-    // ghostcopy://copy/<id> and ghostcopy://share/<id> were the home screen
-    // widget's two taps and went with it. The scheme itself stays - Supabase
-    // uses it for OAuth and password reset.
-  }
+  //
+  // Nothing to override. Both URL schemes this app answers are handled by
+  // plugins on the Flutter side: ghostcopy:// is Supabase's OAuth and
+  // password-reset callback, and ShareMedia-<bundle id> belongs to
+  // receive_sharing_intent, whose extension owns the share sheet.
+  //
+  // There used to be a handle(url:) here with openURLContexts and willConnectTo
+  // overrides feeding it. It became a guard and two comments once the hand-rolled
+  // com.ghostcopy.share:// path and the widget's ghostcopy://copy/<id> and
+  // ghostcopy://share/<id> taps were removed with the home screen widget - three
+  // methods implementing a no-op, and a plausible-looking place for the next
+  // person to add a deep link and wonder why it never fires.
 }
