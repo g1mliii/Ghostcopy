@@ -369,13 +369,10 @@ void main() {
       when(() => authService.currentUserId).thenReturn(null);
       final errors = <String>[];
 
-      await viewModel.handleSharedFiles(
-        [
-          SharedMediaFile(path: '/tmp/a.pdf', type: SharedMediaType.file),
-          SharedMediaFile(path: '/tmp/b.pdf', type: SharedMediaType.file),
-        ],
-        onError: errors.add,
-      );
+      await viewModel.handleSharedFiles([
+        SharedMediaFile(path: '/tmp/a.pdf', type: SharedMediaType.file),
+        SharedMediaFile(path: '/tmp/b.pdf', type: SharedMediaType.file),
+      ], onError: errors.add);
 
       expect(
         errors.length,

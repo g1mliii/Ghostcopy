@@ -594,7 +594,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // the clause below - which was written for exactly this case - never
       // caught it, and the throw escaped an unawaited call as an unhandled
       // async error instead.
-      debugPrint('[MobileMain] No native side for a deferred tap: ${e.message}');
+      debugPrint(
+        '[MobileMain] No native side for a deferred tap: ${e.message}',
+      );
     } on PlatformException catch (e) {
       debugPrint('[MobileMain] No deferred notification action: ${e.message}');
     }

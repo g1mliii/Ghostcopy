@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/services/impl/encryption_service.dart';
 import 'package:mocktail/mocktail.dart';
 
@@ -44,6 +45,26 @@ void main() {
       isTrue,
       reason: 'user A has a passphrase, so a key should be derived',
     );
+  });
+
+  test('storage failure prevents initialization and allows a retry', () async {
+    final service = EncryptionService(secureStorage: storage);
+    when(
+      () => storage.read(key: 'encryption_passphrase_$userA'),
+    ).thenThrow(SecurityException('Keychain unavailable'));
+
+    await expectLater(
+      service.initialize(userA),
+      throwsA(isA<SecurityException>()),
+    );
+
+    when(
+      () => storage.read(key: 'encryption_passphrase_$userA'),
+    ).thenAnswer((_) async => 'correct horse battery staple');
+    await service.initialize(userA);
+
+    expect(await service.isEnabled(), isTrue);
+    verify(() => storage.read(key: 'encryption_passphrase_$userA')).called(2);
   });
 
   test('re-keys when a different user signs in', () async {

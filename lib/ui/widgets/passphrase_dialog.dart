@@ -199,7 +199,9 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
                         ? Icons.visibility
                         : Icons.visibility_off,
                   ),
-                  tooltip: _obscurePassphrase ? 'Show passphrase' : 'Hide passphrase',
+                  tooltip: _obscurePassphrase
+                      ? 'Show passphrase'
+                      : 'Hide passphrase',
                   onPressed: () {
                     setState(() {
                       _obscurePassphrase = !_obscurePassphrase;

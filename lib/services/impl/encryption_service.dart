@@ -175,9 +175,8 @@ class EncryptionService implements IEncryptionService {
 
     try {
       // Before the first read, because the keys are user-scoped and the old
-      // items are invisible to a read under the new options. On a locked phone
-      // this finds nothing and does nothing; the move happens on the next
-      // foreground launch, which is the first moment it could.
+      // items are invisible to a read under the new options. Inaccessible
+      // storage must fail initialization so sends cannot fall back to plaintext.
       //
       // It hands back what it read, and that is the value used below rather
       // than a second read of the same key under the same options. The
@@ -207,11 +206,12 @@ class EncryptionService implements IEncryptionService {
       debugPrint(
         '[EncryptionService] ✅ Initialized (encryption enabled: ${_keyBytes != null})',
       );
-      completer.complete();
-    } catch (e, st) {
-      completer.completeError(e, st);
-      rethrow;
     } finally {
+      // This future is only a barrier for concurrent callers, which recheck
+      // _initialized and retry after a failure. The initiating caller receives
+      // the exception directly; duplicating it onto an unobserved future would
+      // also report an unhandled asynchronous error.
+      completer.complete();
       _initFuture = null;
     }
   }

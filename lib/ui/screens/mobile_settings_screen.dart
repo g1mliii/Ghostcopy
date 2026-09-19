@@ -13,6 +13,7 @@ import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
+import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/device_selection.dart';
@@ -55,6 +56,7 @@ class MobileSettingsScreen extends StatefulWidget {
     required this.authService,
     required this.deviceService,
     required this.settingsService,
+    this.encryptionService,
     this.openPassphraseRestore = false,
     super.key,
   });
@@ -62,6 +64,9 @@ class MobileSettingsScreen extends StatefulWidget {
   final IAuthService authService;
   final IDeviceService deviceService;
   final ISettingsService settingsService;
+
+  /// Overrides the shared encryption service, primarily for testing.
+  final IEncryptionService? encryptionService;
 
   /// Go straight to restoring the passphrase on open.
   ///
@@ -80,7 +85,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _devicesLoading = false;
 
   // Encryption state
-  EncryptionService? _encryptionService;
+  IEncryptionService? _encryptionService;
   bool _encryptionEnabled = false;
   bool _encryptionLoading = false;
   bool _hasBackup = false;
@@ -100,15 +105,12 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeEncryption().then((_) {
-      // Chained rather than fired alongside: _restoreFromBackup needs the
-      // service _initializeEncryption stands up, and that method already makes
-      // its own auto-restore attempt - so if the passphrase came back from the
-      // cloud there is nothing left to ask the user for, and opening a dialog
-      // on top of a screen that has just silently succeeded would be noise.
-      if (!mounted || !widget.openPassphraseRestore) return;
+    _initializeEncryption().then((ready) {
+      // Use the same decryption verification as the encryption switch. The
+      // restore dialog alone only checks whether the passphrase can be saved.
+      if (!mounted || !ready || !widget.openPassphraseRestore) return;
       if (_encryptionEnabled) return;
-      unawaited(_restoreFromBackup());
+      unawaited(_handleEncryptionToggle(true));
     });
     _loadDevices();
     _loadAppInfo();
@@ -158,42 +160,43 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     super.dispose();
   }
 
-  Future<void> _initializeEncryption() async {
+  Future<bool> _initializeEncryption() async {
     final userId = widget.authService.currentUserId;
-    if (userId != null) {
-      setState(() => _encryptionLoading = true);
+    if (userId == null) return false;
+    setState(() => _encryptionLoading = true);
 
-      // Use shared singleton instance
-      _encryptionService = EncryptionService.instance;
+    try {
+      _encryptionService =
+          widget.encryptionService ?? EncryptionService.instance;
       await _encryptionService!.initialize(userId);
 
       var enabled = await _encryptionService!.isEnabled();
       var hasBackup = false;
-
-      // Check for backup if encryption is disabled
       if (!enabled) {
         hasBackup = await _encryptionService!.hasCloudBackup();
-
-        // Auto-restore attempt on load (same as desktop)
         if (hasBackup) {
-          try {
-            final restored = await _encryptionService!.autoRestoreFromCloud();
-            if (restored) {
-              enabled = true;
-            }
-          } on Exception catch (e) {
-            debugPrint('[MobileSettings] Auto-restore on load failed: $e');
-          }
+          enabled = await _encryptionService!.autoRestoreFromCloud();
         }
       }
 
+      if (!mounted) return false;
+      setState(() {
+        _encryptionEnabled = enabled;
+        _hasBackup = hasBackup;
+      });
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[MobileSettings] Could not initialize encryption: $e');
       if (mounted) {
-        setState(() {
-          _encryptionEnabled = enabled;
-          _hasBackup = hasBackup;
-          _encryptionLoading = false;
-        });
+        showGhostToast(
+          context,
+          'Could not access your passphrase - reopen settings to try again',
+          type: GhostToastType.error,
+        );
       }
+      return false;
+    } finally {
+      if (mounted) setState(() => _encryptionLoading = false);
     }
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/services/impl/keychain_accessibility.dart';
 import 'package:mocktail/mocktail.dart';
 
@@ -23,6 +24,9 @@ class _FakeKeychain extends Mock implements FlutterSecureStorage {
   /// Keys whose next write throws, to exercise the window where the value
   /// exists only on the stack.
   final Set<String> failWritesFor = {};
+
+  /// Simulates a successful write that does not persist its value.
+  final Set<String> dropWritesFor = {};
 
   /// Every read, so the test below can hold the Keychain round trips down.
   int reads = 0;
@@ -57,6 +61,7 @@ class _FakeKeychain extends Mock implements FlutterSecureStorage {
     if (failWritesFor.remove(key)) {
       throw Exception('simulated secure-storage failure');
     }
+    if (dropWritesFor.remove(key)) return;
     if (items.containsKey(key)) {
       throw Exception('-25299 duplicate item');
     }
@@ -100,7 +105,10 @@ void main() {
 
     final current = await migrate();
 
-    expect(keychain.items[passphraseKey], ('correct horse battery staple', migrated));
+    expect(keychain.items[passphraseKey], (
+      'correct horse battery staple',
+      migrated,
+    ));
     expect(
       current[passphraseKey],
       'correct horse battery staple',
@@ -109,7 +117,8 @@ void main() {
     expect(
       await keychain.read(key: passphraseKey, iOptions: passphraseIosOptions),
       'correct horse battery staple',
-      reason: 'the whole point is that it is now readable under the new options',
+      reason:
+          'the whole point is that it is now readable under the new options',
     );
   });
 
@@ -142,22 +151,11 @@ void main() {
     keychain.items[passphraseKey] = ('secret', legacy);
     keychain.failWritesFor.add(passphraseKey);
 
-    final current = await migrate();
+    await expectLater(migrate(), throwsA(isA<SecurityException>()));
 
-    expect(
-      keychain.items[passphraseKey],
-      ('secret', legacy),
-      reason: 'still readable under the old options, which is where it started',
-    );
-    expect(
-      current[passphraseKey],
-      isNull,
-      reason:
-          'the value is under the OLD options, so a read under the new ones - '
-          'which is what this stands in for - would not find it either. '
-          'Reporting it here would have initialize() derive a key from a '
-          'passphrase that hasPassphrase() cannot see.',
-    );
+    expect(keychain.items[passphraseKey], ('secret', legacy));
+    final retried = await migrate();
+    expect(retried[passphraseKey], 'secret');
   });
 
   test('does not lose the other key when one fails', () async {
@@ -165,7 +163,7 @@ void main() {
     keychain.items[hashKey] = ('hash', legacy);
     keychain.failWritesFor.add(passphraseKey);
 
-    await migrate();
+    await expectLater(migrate(), throwsA(isA<SecurityException>()));
 
     expect(keychain.items[passphraseKey], ('secret', legacy));
     expect(
@@ -191,16 +189,28 @@ void main() {
     expect(current[hashKey], 'hash');
   });
 
-  test('survives a read that throws, without deleting anything', () async {
-    final throwing = _ThrowingKeychain()..items[passphraseKey] = ('secret', legacy);
+  test('a read failure is not reported as an absent passphrase', () async {
+    final throwing = _ThrowingKeychain()
+      ..items[passphraseKey] = ('secret', legacy);
 
-    final current = await migrateKeychainAccessibility(
-      storage: throwing,
-      keys: const [passphraseKey],
+    await expectLater(
+      migrateKeychainAccessibility(
+        storage: throwing,
+        keys: const [passphraseKey],
+      ),
+      throwsA(isA<SecurityException>()),
     );
 
     expect(throwing.items[passphraseKey], ('secret', legacy));
-    expect(current[passphraseKey], isNull);
+  });
+
+  test('an unverified migration restores the key and fails closed', () async {
+    keychain.items[passphraseKey] = ('secret', legacy);
+    keychain.dropWritesFor.add(passphraseKey);
+
+    await expectLater(migrate(), throwsA(isA<SecurityException>()));
+
+    expect(keychain.items[passphraseKey], ('secret', legacy));
   });
 }
 

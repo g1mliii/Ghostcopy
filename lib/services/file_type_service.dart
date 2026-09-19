@@ -49,7 +49,8 @@ class FileTypeService {
   }) {
     final info = detectFromBytes(bytes, originalFilename);
     return (
-      name: originalFilename ?? '${isImage ? 'image' : 'file'}.${info.extension}',
+      name:
+          originalFilename ?? '${isImage ? 'image' : 'file'}.${info.extension}',
       info: info,
     );
   }

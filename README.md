@@ -55,7 +55,11 @@ sign-in session.
 
    For mobile builds you also need Firebase config, which is gitignored:
    `android/app/google-services.json` and
-   `ios/Runner/GoogleService-Info.plist`. Desktop does not use FCM and needs
+   `ios/Runner/GoogleService-Info.plist`. For the iOS build-check workflow, add
+   a repository Actions secret named `IOS_GOOGLE_SERVICE_INFO_PLIST` under
+   **Settings → Secrets and variables → Actions → New repository secret**.
+   Use the complete plist XML as its value (no base64 encoding); CI writes and
+   validates the file before compiling. Desktop does not use FCM and needs
    neither.
 
 5. **Run the app**

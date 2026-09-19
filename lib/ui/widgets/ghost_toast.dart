@@ -219,14 +219,14 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
                 ),
                 decoration: ShapeDecoration(
                   // One surface colour for every type. Success used to wash the
-                    // whole toast in translucent green and error in translucent
-                    // red, which sat oddly in an app that is otherwise opaque
-                    // and near-black, and made a routine "Copied to clipboard"
-                    // louder than the action. The type is still legible from
-                    // the icon, which is the part that carries meaning; the
-                    // surface just holds the text. Matches the desktop toast in
-                    // notification_service.dart.
-                    color: GhostColors.surfaceAlpha95,
+                  // whole toast in translucent green and error in translucent
+                  // red, which sat oddly in an app that is otherwise opaque
+                  // and near-black, and made a routine "Copied to clipboard"
+                  // louder than the action. The type is still legible from
+                  // the icon, which is the part that carries meaning; the
+                  // surface just holds the text. Matches the desktop toast in
+                  // notification_service.dart.
+                  color: GhostColors.surfaceAlpha95,
                   shape: Adaptive.surfaceShape(
                     radius: 12,
                     side: BorderSide(color: GhostColors.glassBorderAlpha30),
