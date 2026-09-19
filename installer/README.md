@@ -2,6 +2,9 @@
 
 This directory contains the installation packaging scripts for GhostCopy.
 
+For the signed and notarized macOS drag-to-Applications installer, see
+[macOS packaging](macos/README.md). The instructions below cover Windows.
+
 ## Prerequisites
 
 ### For Inno Setup (Traditional .exe Installer)
