@@ -1,15 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import '../theme/animations.dart';
 
+import '../platform_adaptive.dart';
+import '../theme/animations.dart';
 import '../theme/colors.dart';
 
 /// Custom toast notification system matching GhostCopy design language
 ///
 /// Features:
-/// - Dark theme with glassmorphism
-/// - Slide-in animation from bottom-right
+/// - Dark theme, one opaque surface for every type
+/// - Slides down from the top, clear of the notch
 /// - Auto-dismiss after duration
 /// - Icon support for different toast types
 /// - Smooth fade + slide transitions
@@ -131,7 +132,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
 
     _slideAnimation =
         Tween<Offset>(
-          begin: const Offset(0, 1), // Slide up from bottom
+          begin: const Offset(0, -1), // Slide down from above
           end: Offset.zero,
         ).animate(
           CurvedAnimation(
@@ -174,17 +175,6 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
     super.dispose();
   }
 
-  Color _getBackgroundColor() {
-    switch (widget.type) {
-      case GhostToastType.success:
-        return GhostColors.successAlpha15;
-      case GhostToastType.error:
-        return GhostColors.redDarkAlpha30;
-      case GhostToastType.info:
-        return GhostColors.surfaceAlpha95;
-    }
-  }
-
   Color _getIconColor() {
     switch (widget.type) {
       case GhostToastType.success:
@@ -198,46 +188,77 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
 
   @override
   Widget build(BuildContext context) {
+    // Top, not bottom. A confirmation at the bottom of a phone screen lands
+    // under the thumb that just triggered it and over the send button, and on
+    // this screen it covered the very control the user had been aiming at.
+    //
+    // Offset by the safe area so it clears the notch and Dynamic Island rather
+    // than tucking behind them.
+    final topInset = MediaQuery.of(context).padding.top;
+
     return Positioned(
-      bottom: 24,
-      left: 20,
-      right: 20,
+      top: topInset + 12,
+      left: 0,
+      right: 0,
       child: FadeTransition(
         opacity: _fadeAnimation,
         child: SlideTransition(
           position: _slideAnimation,
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: _getBackgroundColor(),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: GhostColors.glassBorderAlpha30),
-                boxShadow: [
-                  BoxShadow(
-                    color: GhostColors.blackAlpha30,
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                // Capped and centred rather than stretched edge to edge: a
+                // three-word confirmation spread across a full phone width
+                // reads as a banner, which is heavier than the moment
+                // deserves. Same cap the desktop toast uses.
+                constraints: const BoxConstraints(maxWidth: 320),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 12,
+                ),
+                decoration: ShapeDecoration(
+                  // One surface colour for every type. Success used to wash the
+                  // whole toast in translucent green and error in translucent
+                  // red, which sat oddly in an app that is otherwise opaque
+                  // and near-black, and made a routine "Copied to clipboard"
+                  // louder than the action. The type is still legible from
+                  // the icon, which is the part that carries meaning; the
+                  // surface just holds the text. Matches the desktop toast in
+                  // notification_service.dart.
+                  color: GhostColors.surfaceAlpha95,
+                  shape: Adaptive.surfaceShape(
+                    radius: 12,
+                    side: BorderSide(color: GhostColors.glassBorderAlpha30),
                   ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(widget.icon, size: 20, color: _getIconColor()),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      widget.message,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: GhostColors.textPrimary,
+                  shadows: const [
+                    BoxShadow(
+                      color: Color(0x80000000),
+                      blurRadius: 20,
+                      offset: Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(widget.icon, size: 18, color: _getIconColor()),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        widget.message,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.2,
+                          color: GhostColors.textPrimary,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

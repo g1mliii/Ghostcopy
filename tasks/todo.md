@@ -2,22 +2,226 @@
 
 ## Active Task
 
-**iOS bring-up** (starts 2026-09-16). macOS is done bar sign-in testing.
+**iOS bring-up** (2026-09-16 to 2026-09-17). iOS runs on real hardware.
 
-iOS already compiles (CI run 34999420416) but has never been run. It needs a
-real device for anything that matters - APNs, clipboard, the home screen
-widget - so expect the setup step to be larger than the code step.
+Branch note: `ios/bring-up` sits on `macos/bring-up` (PR #16), rebased onto it
+after the Codex review fixes landed there. **The iOS PR must target
+`macos/bring-up`**, or its diff re-shows the macOS work.
 
-Before writing iOS code, copy across the gitignored Firebase config, which the
-clone does not carry:
+### Done
 
-- [ ] `ios/Runner/GoogleService-Info.plist` (from the Windows machine or the
-      Firebase console)
-- [ ] Register the test device and fix signing, the same way macOS needed it
-- [ ] `flutter run -d ios` on a real device, then a functional pass
+- [x] Builds, signs and runs on an iPhone 15 Pro, and on the simulator
+- [x] Google sign-in, sync, history, encryption all working on device
+- [x] **UIScene migration.** Mandatory on the iOS 27 SDK - without it UIKit
+      refuses to launch the app at all. That was the white screen
+- [x] `NSExtension` removed from the app Info.plist - iOS was treating the whole
+      app as an app extension
+- [x] Camera crash fixed (`NSCameraUsageDescription`) - would have killed
+      onboarding on first launch, since the welcome screen opens on the QR tab
+- [x] QR scanner never initialised on a cold launch (shared with Android)
+- [x] Entitlements, App Group and `DEVELOPMENT_TEAM` wired into the target
+- [x] `GoogleService-Info.plist` added to Copy Bundle Resources - copying the
+      file in was never enough, nothing referenced it
+- [x] Squircles on Apple platforms (`Adaptive.surfaceShape`), iOS spinner on the
+      four mobile paths that still drew Material's
+- [x] Notification flow simplified: tap opens the app and copies, or opens the
+      share sheet for files. No long-press actions
+- [x] Cold-launch notification taps no longer lost (native parks, Dart collects)
+- [x] Passphrase storage hardened - see below
 
-Much of the mobile work is shared with Android, which is already running, so
-the unshared surface is APNs, the widget, and the share sheet.
+### Push: was dead for a day, and it was not iOS
+
+`send-clipboard-notification` returned 401 on every invocation from
+2026-09-16 18:32Z. Supabase migrated the project to its current API key scheme,
+so `SUPABASE_SERVICE_ROLE_KEY` became a 41-character `sb_secret_...` key while
+the `fcm_service_role_key` vault secret stayed the 219-character legacy JWT.
+The function compares them byte for byte to recognise its own trigger, so every
+call fell through to `auth.getUser()`, 403'd, and returned 401 before reading
+the body. Nothing surfaced it: the trigger fired, the client saw a successful
+send, the clip synced, and only the notification silently never arrived.
+
+The same key change broke a second thing one layer deeper: the devices query
+ran through a client built from the anon key with the caller's Authorization
+header forwarded, which worked while that header was a JWT PostgREST could
+decode. Opaque keys have nothing to decode, so the query ran as anon against an
+RLS-protected table and 500'd.
+
+Fixed by updating the vault secret (server state, not in this repo), reading
+devices through `supabaseAdmin` on the trigger path, and pinning
+`verify_jwt = false` in `supabase/config.toml` - `deploy.yml` deploys with no
+flags on every push to main, so without that file the next merge silently turns
+the platform JWT gate back on and breaks push again.
+
+**Diagnosing this from the client was impossible** and cost most of the night.
+The app was healthy at every step because it was never the problem. What found
+it was a temporary diagnostic returning key lengths in the 401 body, read back
+out of `net._http_response` - pg_net records every response, and the dashboard
+logs do not carry console output.
+
+### Why the notification Copy action is gone
+
+The long-press Copy button needed the clip staged on the device by a background
+isolate woken by a `content-available` push. On a real iPhone the isolate woke
+and wrote `pending_push.json` but never staged the clip, and the fallback needs
+a network round trip a background action does not reliably get time for.
+
+Dropped rather than chased, because it could not be made dependable: iOS
+throttles background wake-ups on battery, Low Power Mode and usage, and refuses
+them outright for an app the user swiped away. A button that copies instantly
+sometimes and silently does nothing the rest of the time is worse than a tap
+that always behaves the same way. Android keeps the fast path - its background
+execution is genuinely more permissive.
+
+### Still to test on the phone
+
+- [ ] Text clip: notification says "Tap to open and copy" -> tap -> app opens,
+      clipboard holds the clip
+- [ ] File or image: tap -> app opens -> **share sheet opens automatically**.
+      Never run on iOS. Same `processShareAction` code Android uses
+- [ ] Cold launch: swipe the app away, send a clip, tap the notification. This
+      is what the deferred-tap handoff exists for
+
+### Later: request the iOS device-name entitlement
+
+`com.apple.developer.device-information.user-assigned-device-name`, requested
+from Apple rather than enabled in the portal - developer.apple.com, Contact ->
+Request. Since iOS 16 `UIDevice.name` returns the model, so a phone reports
+"iPhone" instead of "Subai's iPhone"; the entitlement restores the real name.
+
+The device-row collision is NOT solved while this is pending, which an earlier
+version of this note got wrong. `initializeDeviceName()` prefers `ios.name`,
+and since iOS 16 that returns the generic model name - "iPhone" - without this
+entitlement, not "iPhone 15 Pro". So every iPhone on an account resolves to the
+same device_name, collides on the UNIQUE (user_id, device_type, device_name)
+index, shares one row and one FCM token, and whichever launched last wins while
+the other stops receiving push.
+
+The Simulator is not subject to the entitlement gate and returns its full
+assigned name, which is why this looks fine in testing.
+
+Two devices per account is the ordinary case, so this is worth closing rather
+than waiting on Apple, who are selective and may decline. Swapping the
+preference to `ios.utsname.machine` ("iPhone16,1") distinguishes models today
+and is a one-line change; `ios.name` then becomes the nicer name if and when
+the entitlement lands. Apple is selective and turnaround is slow, so it is worth requesting in
+the background rather than waiting on.
+
+The justification that fits: users manage several devices, the settings screen
+lists them, and clips are labelled by which device sent them - so identifying a
+device by the name its owner gave it is the point rather than a convenience.
+
+No code change if granted, as the code stands: `initializeDeviceName()` already
+reads `ios.name` first and only falls back to the model identifier when it comes
+back empty. If the interim swap above is taken, granting it means reversing that
+preference again.
+
+- [ ] Submit the request
+- [ ] If granted, add the key to `ios/Runner/Runner.entitlements`
+
+### Accessibility pass, both platforms - done 2026-09-18
+
+Audited at the top content size on a device, not guessed at. Screenshots were
+the only reliable oracle: a red-pixel counter and a log grep for the overflow
+banner both reported clean while the screenshots plainly showed "BOTTOM
+OVERFLOWED BY 16 PIXELS".
+
+- [x] **Dynamic Type / textScaler.** Welcome screen, settings, spotlight and
+      the device chips all reflow now. The device-selector chips needed the
+      `SizedBox` around the horizontal `ListView` loosened, not just the chip -
+      fixing the chip alone left the labels as glyph fragments
+- [x] **Touch target sizes** - one deliberate exception: Settings' delete
+      button is 40dp, sized that way to fix a dead-space bug. Revisit if it
+      ever reads as hard to hit
+- [x] **Screen reader labels** on the icon-only controls
+- [x] **Contrast ratios.** `textMuted` on `surface` measures 6.4:1 and was
+      never the problem
+
+- [ ] **`primary` as a foreground is 4.44:1 on `surface`**, just under AA. Not
+      part of the pass above because it is a palette decision, not a fix: it is
+      used as a foreground in ~104 places, so either the token moves or those
+      call sites move to `accentText` (8.98:1) one at a time. The email
+      templates already took the second route
+
+### Open
+
+- [x] **Cmd+Q on macOS - decided against 2026-09-18, will not do.** The
+      original entry argued it should intercept Cmd+Q and hide instead, the way
+      menu-bar apps often do. Rejected on the owner's call: Cmd+Q means quit,
+      and an app that keeps syncing the clipboard after the user quit it is the
+      worse surprise. Leaving it alone.
+
+
+- [x] **Per-device names - done.** Every iOS device used to register as "iOS
+      Device" against
+      a UNIQUE (user_id, device_type, device_name) index, so a simulator and a
+      phone share one row and one FCM token - whichever launched last wins, and
+      the other silently stops receiving push. Same for two Androids. Needs
+      `device_info_plus` as a direct dependency, async resolution (the getter is
+      synchronous and read on every send), and a decision about existing rows.
+      Note iOS gives only the model name without an Apple entitlement
+- [x] **Keychain accessibility - done 2026-09-18.** The passphrase and its
+      verification hash now live under `first_unlock`
+      (`kSecAttrAccessibleAfterFirstUnlock`) instead of the default
+      `kSecAttrAccessibleWhenUnlocked`, so the push-woken isolate can decrypt on
+      a locked phone. Done as the migration it always was, in
+      `lib/services/impl/keychain_accessibility.dart`: read under the old
+      options, delete, write under the new, read back, and restore under the old
+      options if any of that fails. The delete-before-write window is
+      unavoidable - SecItemAdd matches on service and account alone, so the new
+      item cannot be added while the old one is there - which is why the restore
+      exists rather than a rethrow. Runs on iOS only, on every launch, and is a
+      no-op once nothing is left under the old options.
+
+      Takes effect after one *unlocked* launch. On a locked phone the old item
+      cannot be read, so the migration finds nothing and correctly does nothing;
+      that push falls back to opening the app, as it does today. Not applied to
+      macOS - same Keychain mechanics, but nothing wakes on a locked Mac, so it
+      would be a second migration bought for nothing.
+
+      Still to confirm on the device, and it cannot be checked on a fresh
+      install: it needs one that already holds a passphrase written by an older
+      build. Note simulator Keychain items survive app uninstalls, which is what
+      disguised this last time.
+- [x] Home screen widget - REMOVED on both platforms. An iOS widget extension
+      cannot write the general pasteboard on a real device, so a tap could only
+      open the app; not worth maintaining for that, and the Android half alone
+      did not justify it either.
+- [x] iOS share sheet **into** the app - done. ios/ShareExtension now exists
+      and the plugin owns the share sheet on both platforms; the hand-rolled
+      Android path that ran alongside it is gone. Shares auto-send to the
+      "Send to devices" targets
+- [ ] `flutter logs` returns nothing from a profile build on device. The
+      background isolate is only observable by writing files to the app
+      container and reading them with `devicectl device info files`
+- [ ] Publishable key migration is done in the app; **do not disable legacy API
+      keys** until every released build carries it
+
+## Later: logo and palette distance from Discord
+
+Raised 2026-09-17, resolved 2026-09-18. The mark was a rounded two-eyed face on
+purple, close enough to Discord's to be worth distance before App Review or a
+wider audience.
+
+- [x] Superseded: the mark was replaced outright rather than tapered. The
+      original entry proposed a wavy hem, on the reasoning that silhouette is
+      what people recognise and a rounded blob face on *that* purple reads as
+      derivative. The new mark is a clipboard/speech-bubble with a folded
+      corner and a tail, which carries its own silhouette and says what the app
+      does - so the hem is moot. Worth one more look with fresh eyes before
+      submission, since this is a judgement call rather than a measurement
+- [x] `primaryHover` was `0xFF4752C4` - Discord's dark blurple exactly, and the
+      last literal match. Now `0xFF555CCB`, the darker primary `accentDisabled`
+      is already built from, so the palette carries one dark accent instead of
+      two that differ by three per channel
+- [x] CLAUDE.md documented `primary: Color(0xFF5865F2)` annotated
+      "(Discord-like)". Fixed, and the stale block is why two launch screens
+      were built against the wrong background - it is now pointed at
+      `colors.dart` as the source of truth
+- [x] Redo the app icon on every platform. All 78 assets now generate from one
+      master SVG via `tool/generate_brand_assets.py`, covering the iOS asset
+      catalog, Android mipmaps and adaptive/themed icons, macOS iconset,
+      Windows .ico, the silhouette-only tray icon, the website and favicons,
+      and the hosted logo the auth emails point at
 
 ## macOS: done 2026-09-16
 
@@ -162,7 +366,7 @@ should start as early as a build allows and run while the macOS work happens.
 - [x] Memory: All timers cancelled, subscriptions cancelled, caches cleared in dispose()
 - [x] Memory: _isDisposed flag prevents notifyListeners() after disposal
 - [x] Performance: Services remain singletons (injected from locator)
-- [x] Performance: WidgetService() uses factory constructor returning singleton
+- [x] Performance: services use factory constructors returning singletons
 - [x] Security: Fixed _autoCopyToClipboard to check item.isEncrypted before decrypting
 - [x] Security: Clipboard auto-clear still works on app background
 - [x] Security: Sensitive data detection still checked before send

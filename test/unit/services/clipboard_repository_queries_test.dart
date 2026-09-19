@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
@@ -101,6 +102,30 @@ void main() {
     repository.dispose();
     await client.dispose();
   });
+
+  test(
+    'encryption initialization failure prevents plaintext uploads',
+    () async {
+      when(
+        () => encryption.initialize('user'),
+      ).thenThrow(SecurityException('Keychain unavailable'));
+      final item = ClipboardItem(
+        id: '',
+        userId: 'user',
+        deviceType: 'ios',
+        content: 'private clip',
+        createdAt: DateTime.now(),
+      );
+
+      await expectLater(
+        repository.insert(item),
+        throwsA(isA<SecurityException>()),
+      );
+
+      expect(requests, isEmpty);
+      verifyNever(encryption.isEnabled);
+    },
+  );
 
   test(
     'clipboard count failures cannot be mistaken for an empty account',

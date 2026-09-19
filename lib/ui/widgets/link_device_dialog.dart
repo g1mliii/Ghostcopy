@@ -171,6 +171,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                   IconButton(
                     icon: const Icon(Icons.close, size: 20),
                     color: GhostColors.textMuted,
+                    tooltip: 'Close',
                     onPressed: () => Navigator.of(context).pop(),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),

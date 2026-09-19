@@ -5,6 +5,7 @@ import '../../models/device.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
+import '../theme/spacing.dart';
 
 /// A single device item in the device list
 ///
@@ -279,12 +280,17 @@ class _DeviceListItemState extends State<DeviceListItem> {
                 icon: const Icon(Icons.check, size: 18),
                 color: GhostColors.success,
                 onPressed: _saveName,
+                tooltip: 'Save device name',
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints: const BoxConstraints(
+                  minWidth: GhostSpacing.minTouchTarget,
+                  minHeight: GhostSpacing.minTouchTarget,
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.close, size: 18),
                 color: GhostColors.textMuted,
+                tooltip: 'Cancel renaming',
                 onPressed: () => setState(() {
                   _isEditing = false;
                   _nameController.text = widget.device.displayName;
@@ -297,8 +303,12 @@ class _DeviceListItemState extends State<DeviceListItem> {
                 icon: const Icon(Icons.delete_outline, size: 18),
                 color: GhostColors.textMuted,
                 onPressed: _confirmRemove,
+                tooltip: 'Remove device',
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints: const BoxConstraints(
+                  minWidth: GhostSpacing.minTouchTarget,
+                  minHeight: GhostSpacing.minTouchTarget,
+                ),
               ),
             ],
           ],

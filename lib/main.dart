@@ -49,7 +49,6 @@ import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
 import 'services/url_shortener_service.dart';
 import 'services/webhook_service.dart';
-import 'services/widget_service.dart';
 import 'services/window_service.dart';
 import 'ui/platform_adaptive.dart';
 import 'ui/screens/mobile_main_screen.dart';
@@ -64,9 +63,18 @@ import 'utils/windows_registry.dart';
 
 // Configuration - These values are safe to be public
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
+//
+// This is the publishable key from Supabase's current API key scheme, not the
+// legacy `anon` JWT it replaced. Both were accepted while legacy keys stayed
+// enabled, which is exactly what made the switchover easy to miss: the project
+// had already been migrated, and the only thing that broke was a server-side
+// comparison against SUPABASE_SERVICE_ROLE_KEY, silently, for a day.
+// Moved now because there are no released builds to strand - the key is
+// compiled in, so changing it later would mean every old install keeps sending
+// the legacy key and legacy keys could never be turned off.
 const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-const _supabaseAnonKey =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+const _supabasePublishableKey =
+    'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
 
 /// Top-level background message handler for Firebase Cloud Messaging.
 /// This handles notifications when the app is terminated or in background.
@@ -113,7 +121,7 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     // still applies.
     await Supabase.initialize(
       url: _supabaseUrl,
-      publishableKey: _supabaseAnonKey,
+      publishableKey: _supabasePublishableKey,
       // Same guard as the UI isolate: this one also starts a deep-link
       // observer, and it must not accept a session from a URL either.
       authOptions: const FlutterAuthClientOptions(
@@ -304,7 +312,7 @@ Future<void> main(List<String> args) async {
     // Initialize Supabase with session persistence
     Supabase.initialize(
       url: _supabaseUrl,
-      publishableKey: _supabaseAnonKey,
+      publishableKey: _supabasePublishableKey,
       // supabase_flutter starts its own AppLinks deep-link observer that calls
       // getSessionFromUrl directly, bypassing _handleDeepLinkArgs. Its default
       // predicate accepts any URI carrying access_token, so without this the
@@ -502,9 +510,18 @@ Future<void> main(List<String> args) async {
     // ignore: cancel_subscriptions - Subscriptions are cancelled in MyApp.dispose()
     StreamSubscription<RemoteMessage>? messageOpenedAppSubscription;
 
-    // Initialize Settings Service (needed for clipboard auto-clear and other settings)
+    // Both before anything registers this device or sends a clip, and both
+    // independent of each other - so started together rather than one after the
+    // other, as the desktop branch above already does. The device name is read
+    // synchronously from here on and resolving a phone's model is a
+    // platform-channel round trip, so it has to be settled before the first
+    // send: `devices` is uniquely indexed on
+    // (user_id, device_type, device_name).
     final settingsService = SettingsService();
-    await settingsService.initialize();
+    await Future.wait([
+      ClipboardRepository.initializeDeviceName(),
+      settingsService.initialize(),
+    ]);
     debugPrint('[App] ✅ Settings service initialized for mobile');
     locator
       ..registerSingleton<ISettingsService>(settingsService)
@@ -526,13 +543,7 @@ Future<void> main(List<String> args) async {
       fcmService = FcmService();
       await fcmService.initialize();
 
-      // Initialize widget service (singleton) for home screen widgets
-      final widgetService = WidgetService();
-      await widgetService.initialize();
-      debugPrint('[App] ✅ Widget service initialized');
-      locator
-        ..registerSingleton<IFcmService>(fcmService)
-        ..registerSingleton<IWidgetService>(widgetService);
+      locator.registerSingleton<IFcmService>(fcmService);
 
       // Configure Android notification channel for clipboard sync
       if (Platform.isAndroid) {
@@ -976,11 +987,6 @@ class _MyAppState extends State<MyApp> {
       locator<IDeviceService>().dispose();
       if (locator.isRegistered<IFcmService>()) {
         locator<IFcmService>().dispose();
-      }
-
-      // Dispose widget service (singleton) to clean up method channel
-      if (locator.isRegistered<IWidgetService>()) {
-        locator<IWidgetService>().dispose();
       }
     }
 

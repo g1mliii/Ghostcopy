@@ -11,7 +11,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
 import '../device_service.dart';
-import '../widget_service.dart';
 import 'encryption_service.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
@@ -475,10 +474,6 @@ class AuthService implements IAuthService {
       // Reset encryption and repository state before signing out
       EncryptionService.instance.reset();
       ClipboardRepository.instance.reset();
-
-      // Widget thumbnails are decrypted renderings written to disk. Leaving
-      // them would show the previous account's clips to whoever signs in next.
-      await WidgetService().clearThumbnailCache();
 
       // Same for the clip staged for instant-copy by the FCM background
       // isolate: it holds ONE clip's decrypted plaintext, and CopyActivity only

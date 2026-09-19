@@ -105,7 +105,6 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")
 
     // WorkManager for background tasks (widget refresh)
-    implementation("androidx.work:work-runtime-ktx:2.8.1")
 
     // Gson for JSON serialization (widget data persistence)
     implementation("com.google.code.gson:gson:2.10.1")

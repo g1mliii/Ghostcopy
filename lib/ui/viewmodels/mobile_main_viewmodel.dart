@@ -1,24 +1,26 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
-import 'dart:ui' show Rect;
+import 'dart:ui' show Offset, PlatformDispatcher, Rect;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
-
+import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
+import '../../services/fcm_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
-import '../../services/widget_service.dart';
+import '../../utils/platform_label.dart';
 
 /// ViewModel for MobileMainScreen - handles business logic and state
 ///
@@ -65,6 +67,16 @@ class MobileMainViewModel extends ChangeNotifier {
 
   bool _isUploadingImage = false;
   bool get isUploadingImage => _isUploadingImage;
+
+  /// A file is being fetched so the share sheet can be handed something.
+  ///
+  /// Tapping a notification for a file opens the app and then waits on a
+  /// download from storage before the sheet can appear. Nothing is prefetched -
+  /// the background staging this used to rely on was dropped because iOS could
+  /// not be relied on to run it - so the wait is real, and without a sign of it
+  /// the app looks like it opened and did nothing.
+  bool _isPreparingShare = false;
+  bool get isPreparingShare => _isPreparingShare;
 
   String? _sendErrorMessage;
   String? get sendErrorMessage => _sendErrorMessage;
@@ -381,13 +393,6 @@ class MobileMainViewModel extends ChangeNotifier {
         _historyError = null;
         _cleanupCache();
         notifyListeners();
-
-        // Update widget with latest clipboard data (non-blocking)
-        unawaited(
-          WidgetService().updateWidgetData(items).catchError((Object e) {
-            debugPrint('[MobileMainVM] Failed to update widget: $e');
-          }),
-        );
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to load history: $e');
@@ -635,11 +640,15 @@ class MobileMainViewModel extends ChangeNotifier {
 
     try {
       final bytes = content!.fileBytes!;
-      final filename = content.filename ?? 'file';
       final typeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
-        filename,
+        content.filename,
       );
+      // Sniffed extension rather than a bare 'file'. This name is stored as
+      // originalFilename and travels to every receiving device, where a name
+      // with nothing after the dot leaves their share sheet unable to identify
+      // the type - the same reason a shared PDF came up under Safari's icon.
+      final filename = content.filename ?? 'file.${typeInfo.extension}';
 
       List<String>? targetTypes;
       if (_selectedDeviceTypes.isNotEmpty) {
@@ -869,28 +878,19 @@ class MobileMainViewModel extends ChangeNotifier {
       final clipboardService = ClipboardService.instance;
 
       if (item.isImage || item.isFile) {
-        final fileBytes = await _clipboardRepo.downloadFile(item);
-        if (fileBytes == null) {
+        final shared = await _shareStoredFile(
+          item,
+          sharePositionOrigin: sharePositionOrigin,
+        );
+        if (!shared) {
           throw Exception('Failed to download file');
         }
-
-        final filename =
-            item.metadata?.originalFilename ??
-            (item.isImage
-                ? 'image.${item.mimeType?.split("/").last ?? "png"}'
-                : 'file');
-
-        final tempFile = await ClipboardService.instance.writeTempFile(
-          fileBytes,
-          filename,
-        );
-
-        await _shareFile(tempFile.path, sharePositionOrigin);
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
@@ -903,8 +903,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = _decryptedContentCache[item.id] ?? item.content;
 
         await clipboardService.writeText(finalContent);
@@ -918,15 +919,112 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Open the OS share sheet for a file on disk.
   ///
+  /// Download a stored clip and hand it to the share sheet.
+  ///
+  /// Returns false when the download produced nothing.
+  ///
+  /// This sequence - download, sniff the type, build a name that carries an
+  /// extension, stage a temp file, present the sheet - existed twice, in the
+  /// in-app tap and the notification path, and the duplication had already cost
+  /// something: the extension fix was applied to the notification copy and the
+  /// in-app one was left behind, so the same clip shared correctly from a
+  /// notification and under the wrong icon from the history list.
+  ///
+  /// [sharePositionOrigin] is null for the notification path, which has no
+  /// widget to anchor an iPad popover to.
+  Future<bool> _shareStoredFile(
+    ClipboardItem item, {
+    Rect? sharePositionOrigin,
+  }) async {
+    _isPreparingShare = true;
+    notifyListeners();
+    try {
+      final fileBytes = await _clipboardRepo.downloadFile(item);
+      if (fileBytes == null) return false;
+
+      final resolved = FileTypeService.instance.resolveFilename(
+        fileBytes,
+        originalFilename: item.metadata?.originalFilename,
+        isImage: item.isImage,
+      );
+
+      final tempFile = await ClipboardService.instance.writeTempFile(
+        fileBytes,
+        resolved.name,
+      );
+
+      // Cleared before the sheet is presented, not after: share() does not
+      // return until the user dismisses it, and leaving a spinner running
+      // underneath a sheet they are reading is worse than none at all.
+      _isPreparingShare = false;
+      notifyListeners();
+
+      await _shareFile(
+        tempFile.path,
+        sharePositionOrigin,
+        mimeType: resolved.info.mimeType,
+        filename: resolved.name,
+      );
+      return true;
+    } finally {
+      // A download that throws must not leave the spinner up forever.
+      if (_isPreparingShare) {
+        _isPreparingShare = false;
+        if (!_isDisposed) notifyListeners();
+      }
+    }
+  }
+
   /// [sharePositionOrigin] is required on iPad: UIActivityViewController is
   /// presented as a popover there and must be anchored to the widget that
   /// triggered it, or UIKit throws. It is ignored on iPhone and Android.
-  Future<void> _shareFile(String path, Rect? sharePositionOrigin) async {
+  Future<void> _shareFile(
+    String path,
+    Rect? sharePositionOrigin, {
+    String? mimeType,
+    String? filename,
+  }) async {
+    // UIKit presents the sheet as a popover on iPad and throws without an
+    // anchor. The notification path has no widget to point at - it is driven by
+    // an external intent - and passed null, so tapping a file notification on an
+    // iPad failed instead of sharing. Falls back to the middle of the screen,
+    // which is where a popover with no better answer belongs.
+    var origin = sharePositionOrigin;
+    if (origin == null && Platform.isIOS) {
+      final view = PlatformDispatcher.instance.views.first;
+      final size = view.physicalSize / view.devicePixelRatio;
+      origin = Rect.fromCenter(
+        center: Offset(size.width / 2, size.height / 2),
+        width: 1,
+        height: 1,
+      );
+    }
+
     await SharePlus.instance.share(
       ShareParams(
-        files: [XFile(path)],
-        text: 'Shared via GhostCopy',
-        sharePositionOrigin: sharePositionOrigin,
+        // The mime type is passed as well as the extension. The extension is
+        // what the file itself carries; this tells the share sheet directly,
+        // so it does not have to infer the type to pick an icon and a list of
+        // apps that can take it.
+        //
+        // No `text`. It used to carry "Shared via GhostCopy", which is a
+        // second item in the share, not a caption: the sheet read the payload
+        // as plain text AND a document, fell back to a generic handler icon
+        // instead of the file's own - a PDF came up under Safari's logo - and
+        // pasted that sentence into whatever received it.
+        files: [XFile(path, mimeType: mimeType)],
+        // The sheet's header title, which is where the filename shows up.
+        // Without it iOS has nothing to title the item with and falls back to
+        // type and size alone - "PDF - 223 KB" for a document the user knows
+        // by name.
+        //
+        // `title`, not `fileNameOverrides`: that one is documented as
+        // supported wherever `files` is, but is only read by the web
+        // implementation, so it does nothing here. `title` is what
+        // FPPSharePlusPlugin turns into LPLinkMetadata.title, and it is
+        // preferred over `subject`, which is meant for email.
+        title: filename,
+        sharePositionOrigin: origin,
       ),
     );
   }
@@ -985,48 +1083,121 @@ class MobileMainViewModel extends ChangeNotifier {
   }
 
   /// Handle shared files from share intent
+  /// Send everything the share sheet handed over, straight to the devices in
+  /// Settings.
+  ///
+  /// No picker and no preview: "Send to devices" already says where clips go,
+  /// and the point of sharing from another app is to be done without stopping
+  /// to answer a dialog.
+  ///
+  /// Routed by [SharedMediaFile.type], because `path` is not always a path -
+  /// the package documents it as "file path, url or the text", and carries
+  /// text and URLs in that same field. Every item used to go straight to
+  /// `File(path).readAsBytes()`, so sharing a paragraph or a link threw
+  /// FileSystemException, got swallowed by the catch below, and silently did
+  /// nothing. That is the main thing anyone shares to a clipboard app.
   Future<void> handleSharedFiles(
-    List<dynamic> files, {
+    List<SharedMediaFile> files, {
     Set<String> targetDeviceTypes = const {},
     void Function(String message)? onSuccess,
+    void Function(String message)? onError,
   }) async {
     for (final file in files) {
       try {
-        // file is SharedMediaFile from receive_sharing_intent
-        final path = (file as dynamic).path as String;
-        if (path.isEmpty) continue;
+        if (file.path.isEmpty) continue;
 
-        final bytes = await File(path).readAsBytes();
-        final filename = path.split(Platform.pathSeparator).last;
+        switch (file.type) {
+          case SharedMediaType.text:
+          case SharedMediaType.url:
+            await saveSharedContent(
+              file.path,
+              targetDeviceTypes,
+              onSuccess: (msg) => onSuccess?.call(msg),
+              onError: onError,
+            );
 
-        final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-          bytes,
-          filename,
-        );
-
-        final deviceType = ClipboardRepository.getCurrentDeviceType();
-
-        await _clipboardRepo.insertFile(
-          userId: _authService.currentUserId!,
-          deviceType: deviceType,
-          deviceName: null,
-          fileBytes: bytes,
-          originalFilename: filename,
-          contentType: fileTypeInfo.contentType,
-          mimeType: fileTypeInfo.mimeType,
-          // null, not an empty list: the repository reads null as "every
-          // device".
-          targetDeviceTypes: targetDeviceTypes.isEmpty
-              ? null
-              : targetDeviceTypes.toList(),
-        );
-
-        onSuccess?.call('Shared file uploaded: $filename');
-      } on Exception catch (e) {
-        debugPrint('Error handling shared file: $e');
+          case SharedMediaType.image:
+          case SharedMediaType.video:
+          case SharedMediaType.file:
+            await _sendSharedFile(
+              file,
+              targetDeviceTypes: targetDeviceTypes,
+              onSuccess: onSuccess,
+              onError: onError,
+            );
+        }
+        // `Object`, not `Exception`. This is a per-item boundary whose entire
+        // job is that one bad item cannot take the batch down, and an Error -
+        // a failed null check, a bad cast - would otherwise sail straight past
+        // it and strand the rest along with the history reload below.
+      } on Object catch (e) {
+        debugPrint('[ShareSheet] Failed to send shared item: $e');
+        onError?.call('Could not send that item');
       }
     }
     unawaited(loadHistory());
+  }
+
+  /// Upload one shared file, which really is on disk.
+  ///
+  /// Enforces the same ceiling as every other entry point. The share path used
+  /// to skip this check, so an oversized file uploaded in full and was
+  /// rejected by the server's CHECK constraint afterwards - the user waited
+  /// through the whole transfer to be told no.
+  Future<void> _sendSharedFile(
+    SharedMediaFile file, {
+    required Set<String> targetDeviceTypes,
+    void Function(String message)? onSuccess,
+    void Function(String message)? onError,
+  }) async {
+    // Not `currentUserId!`. A share can arrive before there is a session -
+    // getInitialMedia() fires on a cold launch, which can beat the anonymous
+    // sign-in that normally guarantees one - and the bang threw a TypeError.
+    // That is an Error, not an Exception, so the caller's catch did not hold
+    // it: it escaped the loop, skipped onError, skipped every remaining item
+    // and skipped loadHistory, leaving the share to vanish with no toast.
+    final userId = _authService.currentUserId;
+    if (userId == null) {
+      onError?.call('Sign in to send files');
+      return;
+    }
+
+    final filename = file.path.split(Platform.pathSeparator).last;
+
+    // Size checked by stat, before the read. Reading first meant a shared video
+    // was pulled into one contiguous Uint8List on the Dart heap purely to
+    // discover it was over the limit and throw it away - and a share arrives
+    // while the app is cold and already competing for memory with whatever
+    // launched it, so a few hundred MB there is a jetsam risk, not a slow path.
+    if (await File(file.path).length() > ClipboardLimits.maxFileBytes) {
+      onError?.call(
+        '$filename is too large (max ${ClipboardLimits.maxFileLabel})',
+      );
+      return;
+    }
+
+    final bytes = await File(file.path).readAsBytes();
+
+    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+      bytes,
+      filename,
+    );
+
+    await _clipboardRepo.insertFile(
+      userId: userId,
+      deviceType: ClipboardRepository.getCurrentDeviceType(),
+      deviceName: null,
+      fileBytes: bytes,
+      originalFilename: filename,
+      contentType: fileTypeInfo.contentType,
+      mimeType: fileTypeInfo.mimeType,
+      // null, not an empty list: the repository reads null as "every device".
+      targetDeviceTypes: targetDeviceTypes.isEmpty
+          ? null
+          : targetDeviceTypes.toList(),
+    );
+
+    onSuccess?.call('Sent $filename');
   }
 
   /// Save shared text content
@@ -1061,89 +1232,6 @@ class MobileMainViewModel extends ChangeNotifier {
     }
   }
 
-  /// Save shared image
-  Future<void> saveSharedImage(
-    Uint8List imageBytes,
-    String mimeType,
-    Set<String> selectedDeviceTypes, {
-    void Function(String message)? onSuccess,
-    void Function(String message)? onError,
-  }) async {
-    try {
-      final contentType = ContentType.fromMimeType(mimeType);
-      if (contentType == null || !contentType.isImage) {
-        onError?.call('Unsupported image type: $mimeType');
-        return;
-      }
-
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
-
-      await _clipboardRepo.insertImage(
-        userId: _authService.currentUserId!,
-        deviceType: deviceType,
-        deviceName: null,
-        imageBytes: imageBytes,
-        mimeType: mimeType,
-        contentType: contentType,
-        targetDeviceTypes: selectedDeviceTypes.isEmpty
-            ? null
-            : selectedDeviceTypes.toList(),
-      );
-
-      final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
-      final message = selectedDeviceTypes.isEmpty
-          ? 'Shared image ($sizeKB KB) to all devices'
-          : 'Shared image ($sizeKB KB) to ${selectedDeviceTypes.join(", ")}';
-      onSuccess?.call(message);
-      debugPrint('[ShareSheet] Image saved: $sizeKB KB');
-    } on Exception catch (e) {
-      debugPrint('[ShareSheet] Error saving shared image: $e');
-      onError?.call('Failed to share image');
-    }
-  }
-
-  /// Save shared file
-  Future<void> saveSharedFile(
-    Uint8List fileBytes,
-    String mimeType,
-    String filename,
-    Set<String> selectedDeviceTypes, {
-    void Function(String message)? onSuccess,
-    void Function(String message)? onError,
-  }) async {
-    try {
-      final fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        fileBytes,
-        filename,
-      );
-
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
-
-      await _clipboardRepo.insertFile(
-        userId: _authService.currentUserId!,
-        deviceType: deviceType,
-        deviceName: null,
-        fileBytes: fileBytes,
-        mimeType: mimeType,
-        contentType: fileTypeInfo.contentType,
-        originalFilename: filename,
-        targetDeviceTypes: selectedDeviceTypes.isEmpty
-            ? null
-            : selectedDeviceTypes.toList(),
-      );
-
-      final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
-      final message = selectedDeviceTypes.isEmpty
-          ? 'Shared $filename ($sizeKB KB) to all devices'
-          : 'Shared $filename ($sizeKB KB) to ${selectedDeviceTypes.join(", ")}';
-      onSuccess?.call(message);
-      debugPrint('[ShareSheet] File saved: $filename ($sizeKB KB)');
-    } on Exception catch (e) {
-      debugPrint('[ShareSheet] Error saving shared file: $e');
-      onError?.call('Failed to share file');
-    }
-  }
-
   /// Process share action from notification or deep link
   Future<bool> processShareAction(String clipboardId, {String? action}) async {
     try {
@@ -1155,36 +1243,23 @@ class MobileMainViewModel extends ChangeNotifier {
       }
 
       if (item.isImage || item.isFile || action == 'share') {
-        final fileBytes = await _clipboardRepo.downloadFile(item);
-        if (fileBytes != null) {
-          final filename =
-              item.metadata?.originalFilename ??
-              (item.isImage
-                  ? 'image.${item.mimeType?.split("/").last ?? "png"}'
-                  : 'file');
-
-          final tempFile = await ClipboardService.instance.writeTempFile(
-            fileBytes,
-            filename,
-          );
-
-          // No anchor: this path is driven by an external share intent, so
-          // there is no widget to point an iPad popover at.
-          await _shareFile(tempFile.path, null);
-          debugPrint(
-            '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
-          );
-        } else {
+        // No anchor: this path is driven by an external share intent, so there
+        // is no widget to point an iPad popover at.
+        if (!await _shareStoredFile(item)) {
           debugPrint('[MobileMainVM] Failed to download file for sharing');
           return false;
         }
+        debugPrint(
+          '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
+        );
       } else {
         final clipboardService = ClipboardService.instance;
 
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final content = item.content;
 
         switch (item.contentType) {
@@ -1204,6 +1279,12 @@ class MobileMainViewModel extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Error processing share action: $e');
       return false;
+    } finally {
+      // A download that throws must not leave the spinner up forever.
+      if (_isPreparingShare) {
+        _isPreparingShare = false;
+        if (!_isDisposed) notifyListeners();
+      }
     }
   }
 
@@ -1251,6 +1332,45 @@ class MobileMainViewModel extends ChangeNotifier {
     // restores the flow of future events; anything that arrived while the app
     // was backgrounded would never appear until a manual pull-to-refresh.
     unawaited(loadHistory());
+
+    unawaited(_reassertFcmToken());
+  }
+
+  /// When the token was last written back on resume. Resume fires on every
+  /// glance at the app, and this is a network write.
+  DateTime? _lastTokenReassert;
+  static const _tokenReassertInterval = Duration(hours: 1);
+
+  /// Put this device's FCM token back on its row if it has gone missing.
+  ///
+  /// send-clipboard-notification clears `fcm_token` whenever FCM rejects it as
+  /// unregistered, and every send skips devices without one. That is right for
+  /// a genuinely dead token, but the only thing that ever wrote the token back
+  /// was app startup - so a single rejection left the device unreachable by
+  /// push until the user happened to cold start the app, with nothing on
+  /// screen to suggest anything was wrong.
+  ///
+  /// Resuming is the natural moment to repair it: the user is here, the token
+  /// is cheap to read, and registerCurrentDevice upserts. Throttled because
+  /// resume is frequent and this is a write.
+  Future<void> _reassertFcmToken() async {
+    if (!locator.isRegistered<IFcmService>()) return;
+
+    final now = DateTime.now();
+    final last = _lastTokenReassert;
+    if (last != null && now.difference(last) < _tokenReassertInterval) return;
+    _lastTokenReassert = now;
+
+    try {
+      final token = await locator<IFcmService>().getToken();
+      if (token == null || token.isEmpty) return;
+      await _deviceService.registerCurrentDevice(fcmToken: token);
+      debugPrint('[MobileMainVM] FCM token re-asserted on resume');
+    } on Exception catch (e) {
+      // Never surfaced: this is upkeep the user did not ask for, and it runs
+      // again on the next resume.
+      debugPrint('[MobileMainVM] Could not re-assert FCM token: $e');
+    }
   }
 
   /// Called on system memory pressure
@@ -1407,8 +1527,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else if (item.isRichText) {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = item.content;
 
         if (item.richTextFormat == RichTextFormat.html) {
@@ -1423,8 +1544,9 @@ class MobileMainViewModel extends ChangeNotifier {
       } else {
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata (the widget uses it to suppress previews), so it must
-        // NOT be used to trigger a second decrypt here.
+        // as metadata describing how the row is STORED, so it must NOT be
+        // used to trigger a second decrypt here - nor to decide that content
+        // is unreadable, which is what the widget used to do.
         final finalContent = item.content;
 
         await clipboardService.writeText(finalContent);
@@ -1483,19 +1605,4 @@ class DeviceTypeTarget {
 
   /// Names of every device this chip delivers to, for the tooltip.
   String get deviceNames => devices.map((d) => d.displayName).join(', ');
-
-  /// Proper platform names, shared by the chips, the send button and the clip
-  /// footer. Capitalising the first letter produced "Macos" and "Ios", which
-  /// read as typos rather than products.
-  static String platformLabel(String deviceType) => switch (deviceType) {
-    'windows' => 'Windows',
-    'macos' => 'macOS',
-    'linux' => 'Linux',
-    'android' => 'Android',
-    'ios' => 'iOS',
-    _ =>
-      deviceType.isEmpty
-          ? deviceType
-          : deviceType[0].toUpperCase() + deviceType.substring(1),
-  };
 }

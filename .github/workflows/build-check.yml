@@ -124,7 +124,18 @@ jobs:
           cache: true
       - run: flutter pub get
 
-      # --no-codesign: no Apple signing identity in CI, and this only needs to
-      # prove the code compiles. ios/Runner.xcodeproj does not reference
-      # GoogleService-Info.plist, so no Firebase config is needed to build.
+      # Repository Actions secret containing the complete, unencoded plist XML.
+      # Keep the file out of Git; Xcode now includes it in Runner's resources.
+      - name: Configure iOS Firebase
+        env:
+          IOS_GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.IOS_GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          if [ -z "$IOS_GOOGLE_SERVICE_INFO_PLIST" ]; then
+            echo "::error::Add the IOS_GOOGLE_SERVICE_INFO_PLIST repository Actions secret containing the full GoogleService-Info.plist XML."
+            exit 1
+          fi
+          printf '%s' "$IOS_GOOGLE_SERVICE_INFO_PLIST" > ios/Runner/GoogleService-Info.plist
+          plutil -lint ios/Runner/GoogleService-Info.plist
+
+      # --no-codesign: compile without an Apple signing identity.
       - run: flutter build ios --release --no-codesign

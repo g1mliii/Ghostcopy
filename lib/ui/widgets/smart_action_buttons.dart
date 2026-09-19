@@ -203,6 +203,7 @@ class SmartActionButtons extends StatelessWidget {
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.of(context).pop(),
+                    tooltip: 'Close',
                     color: GhostColors.textMuted,
                     iconSize: 20,
                   ),

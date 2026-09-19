@@ -50,6 +50,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   String? _authError;
 
   // QR scanning state
+  static const int _qrTabIndex = 0;
   bool _qrScanning = false;
   String? _qrError;
 
@@ -58,7 +59,24 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
+
+    // The controller starts on the QR tab, and a TabController listener only
+    // fires on a *change* - so nothing created the scanner on first launch and
+    // the tab sat on its "Switch to this tab to activate scanner" placeholder
+    // until the user switched away and back. Create it for the starting tab.
+    //
+    // Unconditional: the controller is built with the default initialIndex and
+    // _qrTabIndex is 0, so the guard that used to be here could not be false.
+    // Assigned directly rather than through setState: build has not run yet.
+    _scannerController = _newScannerController();
   }
+
+  /// The scanner's configuration, in one place.
+  ///
+  /// Built here and again on the first switch to the QR tab; written out twice
+  /// it was two places to change a detection setting.
+  MobileScannerController _newScannerController() =>
+      MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
 
   @override
   void dispose() {
@@ -74,13 +92,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   }
 
   void _onTabChanged() {
-    if (_tabController.index == 0) {
+    if (_tabController.index == _qrTabIndex) {
       // QR tab - initialize scanner if not already initialized (Fix #18)
       // Create controller OUTSIDE setState, then trigger rebuild
       if (_scannerController == null) {
-        final controller = MobileScannerController(
-          detectionSpeed: DetectionSpeed.noDuplicates,
-        );
+        final controller = _newScannerController();
         setState(() {
           _scannerController = controller;
         });
@@ -140,10 +156,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           Container(
             width: 80,
             height: 80,
-            decoration: BoxDecoration(
+            decoration: ShapeDecoration(
               color: GhostColors.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: GhostColors.glassBorder),
+              shape: Adaptive.surfaceShape(
+                radius: 20,
+                side: BorderSide(color: GhostColors.glassBorder),
+              ),
             ),
             // The real mark, not a generic Material copy glyph. White variant:
             // this sits on GhostColors.surface, which is near-black.
@@ -153,12 +171,20 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             ),
           ),
           const SizedBox(height: 16),
-          Text(
-            'GhostCopy',
-            style: GhostTypography.headline.copyWith(
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              color: GhostColors.textPrimary,
+          // The wordmark still scales with the user's text size, but it shrinks
+          // to fit rather than wrapping: at the larger accessibility sizes it
+          // broke mid-word into "GhostCo / py", which reads as a layout fault
+          // rather than a brand. A name is one object, not a sentence.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              'GhostCopy',
+              maxLines: 1,
+              style: GhostTypography.headline.copyWith(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: GhostColors.textPrimary,
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -173,6 +199,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     );
   }
 
+  /// Height for a tab carrying an icon above a label.
+  ///
+  /// Flutter's default is a flat 72, which does not move when the user turns
+  /// text size up. The icon is a fixed 24 and the padding around it is fixed
+  /// too; only the label grows, so only the label's share is scaled.
+  static double _tabHeight(BuildContext context) {
+    const iconAndPadding = 72.0 - 20.0;
+    return iconAndPadding + MediaQuery.textScalerOf(context).scale(20);
+  }
+
   Widget _buildTabBar() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 24),
@@ -183,6 +219,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       ),
       child: TabBar(
         controller: _tabController,
+        // Tab fixes its own height - 72 when it carries both an icon and a
+        // label - and nothing in it grows with text scaling, so at the larger
+        // accessibility sizes the label ran straight out of the bottom:
+        // "BOTTOM OVERFLOWED BY 16 PIXELS" across both tabs, with "Scan QR"
+        // and "Sign In" clipped mid-word. Scaling the height with the text
+        // keeps the label inside it.
+        //
+        // This is the first screen a new user sees, so it is also the worst
+        // place in the app to have it.
+        labelPadding: EdgeInsets.zero,
         indicator: BoxDecoration(
           color: GhostColors.primary,
           borderRadius: BorderRadius.circular(8),
@@ -192,9 +238,17 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         labelColor: Colors.white,
         unselectedLabelColor: GhostColors.textSecondary,
         labelStyle: GhostTypography.body.copyWith(fontWeight: FontWeight.w600),
-        tabs: const [
-          Tab(icon: Icon(Icons.qr_code_scanner), text: 'Scan QR'),
-          Tab(icon: Icon(Icons.login), text: 'Sign In'),
+        tabs: [
+          Tab(
+            icon: const Icon(Icons.qr_code_scanner),
+            text: 'Scan QR',
+            height: _tabHeight(context),
+          ),
+          Tab(
+            icon: const Icon(Icons.login),
+            text: 'Sign In',
+            height: _tabHeight(context),
+          ),
         ],
       ),
     );
@@ -210,10 +264,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           // Instructions
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
+            decoration: ShapeDecoration(
               color: GhostColors.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: GhostColors.glassBorder),
+              shape: Adaptive.surfaceShape(
+                radius: 12,
+                side: BorderSide(color: GhostColors.glassBorder),
+              ),
             ),
             child: Row(
               children: [
@@ -254,10 +310,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // 320 is roughly the width this had on a phone, so nothing changes there.
       height: 320,
       width: 320,
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: GhostColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GhostColors.glassBorder, width: 2),
+        shape: Adaptive.surfaceShape(
+          radius: 12,
+          side: BorderSide(color: GhostColors.glassBorder, width: 2),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: () {
@@ -297,10 +355,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   Widget _buildQRError() {
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: GhostColors.redAlpha10,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.redAlpha30),
+        shape: Adaptive.surfaceShape(
+          radius: 8,
+          side: BorderSide(color: GhostColors.redAlpha30),
+        ),
       ),
       child: Row(
         children: [
@@ -471,10 +531,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     return Container(
       margin: const EdgeInsets.only(top: 16),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: GhostColors.redAlpha10,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: GhostColors.redAlpha30),
+        shape: Adaptive.surfaceShape(
+          radius: 8,
+          side: BorderSide(color: GhostColors.redAlpha30),
+        ),
       ),
       child: Row(
         children: [

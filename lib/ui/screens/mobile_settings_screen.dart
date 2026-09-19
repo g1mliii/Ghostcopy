@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -12,6 +13,7 @@ import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
+import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/device_selection.dart';
@@ -54,12 +56,24 @@ class MobileSettingsScreen extends StatefulWidget {
     required this.authService,
     required this.deviceService,
     required this.settingsService,
+    this.encryptionService,
+    this.openPassphraseRestore = false,
     super.key,
   });
 
   final IAuthService authService;
   final IDeviceService deviceService;
   final ISettingsService settingsService;
+
+  /// Overrides the shared encryption service, primarily for testing.
+  final IEncryptionService? encryptionService;
+
+  /// Go straight to restoring the passphrase on open.
+  ///
+  /// Set by the "N clips are encrypted" banner, whose own copy says "Tap to
+  /// enter your passphrase" - so dropping the user on the settings list and
+  /// leaving them to find the control was a promise the screen did not keep.
+  final bool openPassphraseRestore;
 
   @override
   State<MobileSettingsScreen> createState() => _MobileSettingsScreenState();
@@ -71,7 +85,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _devicesLoading = false;
 
   // Encryption state
-  EncryptionService? _encryptionService;
+  IEncryptionService? _encryptionService;
   bool _encryptionEnabled = false;
   bool _encryptionLoading = false;
   bool _hasBackup = false;
@@ -91,7 +105,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeEncryption();
+    _initializeEncryption().then((ready) {
+      // Use the same decryption verification as the encryption switch. The
+      // restore dialog alone only checks whether the passphrase can be saved.
+      if (!mounted || !ready || !widget.openPassphraseRestore) return;
+      if (_encryptionEnabled) return;
+      unawaited(_handleEncryptionToggle(true));
+    });
     _loadDevices();
     _loadAppInfo();
     _loadUrlShorteningStatus();
@@ -140,42 +160,43 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     super.dispose();
   }
 
-  Future<void> _initializeEncryption() async {
+  Future<bool> _initializeEncryption() async {
     final userId = widget.authService.currentUserId;
-    if (userId != null) {
-      setState(() => _encryptionLoading = true);
+    if (userId == null) return false;
+    setState(() => _encryptionLoading = true);
 
-      // Use shared singleton instance
-      _encryptionService = EncryptionService.instance;
+    try {
+      _encryptionService =
+          widget.encryptionService ?? EncryptionService.instance;
       await _encryptionService!.initialize(userId);
 
       var enabled = await _encryptionService!.isEnabled();
       var hasBackup = false;
-
-      // Check for backup if encryption is disabled
       if (!enabled) {
         hasBackup = await _encryptionService!.hasCloudBackup();
-
-        // Auto-restore attempt on load (same as desktop)
         if (hasBackup) {
-          try {
-            final restored = await _encryptionService!.autoRestoreFromCloud();
-            if (restored) {
-              enabled = true;
-            }
-          } on Exception catch (e) {
-            debugPrint('[MobileSettings] Auto-restore on load failed: $e');
-          }
+          enabled = await _encryptionService!.autoRestoreFromCloud();
         }
       }
 
+      if (!mounted) return false;
+      setState(() {
+        _encryptionEnabled = enabled;
+        _hasBackup = hasBackup;
+      });
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[MobileSettings] Could not initialize encryption: $e');
       if (mounted) {
-        setState(() {
-          _encryptionEnabled = enabled;
-          _hasBackup = hasBackup;
-          _encryptionLoading = false;
-        });
+        showGhostToast(
+          context,
+          'Could not access your passphrase - reopen settings to try again',
+          type: GhostToastType.error,
+        );
       }
+      return false;
+    } finally {
+      if (mounted) setState(() => _encryptionLoading = false);
     }
   }
 
@@ -483,12 +504,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         setState(() => _encryptionLoading = false);
 
         if (success) {
+          // No toast. The clips that were unreadable a moment ago are now
+          // legible and the encryption row reads as on - the screen has already
+          // said it, and a banner over the top is just something else to
+          // dismiss.
           setState(() => _encryptionEnabled = true);
-          showGhostToast(
-            context,
-            'Passphrase restored',
-            type: GhostToastType.success,
-          );
         } else {
           // 2. Fallback to manual entry
           final userId = widget.authService.currentUserId;
@@ -502,11 +522,6 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
             if (manualSuccess && mounted) {
               setState(() => _encryptionEnabled = true);
-              showGhostToast(
-                context,
-                'Passphrase restored',
-                type: GhostToastType.success,
-              );
             }
           }
         }
@@ -590,6 +605,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
+          tooltip: 'Back',
           color: GhostColors.textPrimary,
         ),
         title: Text(
@@ -903,6 +919,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                               color: Colors.red.shade400,
                               size: 20,
                             ),
+                            tooltip: 'Remove device',
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                             // The actual culprit behind the dead space under the
@@ -1008,13 +1025,24 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Both labels flex. They were a fixed pair either side of a Spacer,
+          // which has no give: at the larger accessibility sizes the row ran
+          // past its own edge - "RIGHT OVERFLOWED BY 21 PIXELS" - because
+          // neither Text could shrink and the Spacer had already taken what
+          // was left. The summary yields first, since the chips directly below
+          // show the same selection in full.
           Row(
             children: [
               const Icon(Icons.devices, color: GhostColors.primary, size: 20),
               const SizedBox(width: 16),
-              const Text(
-                'Default devices',
-                style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+              const Expanded(
+                child: Text(
+                  'Default devices',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: GhostColors.textPrimary,
+                  ),
+                ),
               ),
               const SizedBox(width: 8),
               // Expanded rather than a Spacer with a loose Text. The summary
@@ -1131,19 +1159,27 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         children: [
           // Android only: iOS has no FLAG_SECURE equivalent, so showing the
           // switch there would promise protection the platform cannot give.
-          if (Platform.isAndroid) ...[
-            _settingSwitch(
-              icon: Icons.screenshot_outlined,
-              title: 'Block Screenshots',
-              subtitle:
-                  'Also hides clips in the app switcher and screen shares',
-              value: _screenshotProtection,
-              onChanged: _screenshotProtectionLoading
-                  ? null
-                  : _handleScreenshotProtectionChange,
-            ),
-            const Divider(height: 1, color: GhostColors.border),
-          ],
+          // Shown on both now. iOS had the blur with no way to turn it off,
+          // because this toggle was Android-only - so the app sat in the app
+          // switcher as a blurred card while almost everything else on the
+          // phone showed its content.
+          //
+          // The copy differs because the capability does. Android's FLAG_SECURE
+          // genuinely blocks screenshots and recording; iOS has no equivalent,
+          // and the blur only covers the app switcher snapshot. Promising
+          // "Block Screenshots" on iOS would be a lie.
+          _settingSwitch(
+            icon: Icons.screenshot_outlined,
+            title: Platform.isAndroid ? 'Block Screenshots' : 'Hide Preview',
+            subtitle: Platform.isAndroid
+                ? 'Also hides clips in the app switcher and screen shares'
+                : 'Blur clips in the app switcher',
+            value: _screenshotProtection,
+            onChanged: _screenshotProtectionLoading
+                ? null
+                : _handleScreenshotProtectionChange,
+          ),
+          const Divider(height: 1, color: GhostColors.border),
           // Encryption toggle
           _settingSwitch(
             icon: Icons.lock_outline,

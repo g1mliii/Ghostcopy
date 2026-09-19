@@ -25,7 +25,17 @@ class GhostColors {
 
   // Accent colors
   static const primary = Color(0xFF6670FF); // Purple-blue accent
-  static const primaryHover = Color(0xFF4752C4);
+
+  /// Hover fill for an already-selected control, and the fill of the auth
+  /// panel's primary button.
+  ///
+  /// Was 0xFF4752C4 - Discord's dark blurple, exactly - and the last literal
+  /// match left after `primary` moved off 0xFF5865F2. This is the same darker
+  /// primary that [accentDisabled] is built from, so the palette carries one
+  /// dark accent rather than two that differ by three per channel. White on it
+  /// is 5.56:1, comfortably past AA, and darker than [primary] as a hover of a
+  /// selected control should be.
+  static const primaryHover = Color(0xFF555CCB);
   static const success = Color(0xFF3BA55C); // Green for confirmations
 
   /// Fill for a SELECTED control (chips, toggles). A tint rather than the full
@@ -73,7 +83,6 @@ class GhostColors {
   static final primaryAlpha90 = primary.withValues(alpha: 0.9);
 
   // Cached success alpha variants
-  static final successAlpha15 = success.withValues(alpha: 0.15);
   static final successAlpha20 = success.withValues(alpha: 0.2);
 
   // Cached surface alpha variants (used in hover states, overlays)
@@ -106,12 +115,10 @@ class GhostColors {
   /// off here in the first place. Darkening reads as the control being pushed
   /// in, and matches what iOS does natively, where a pressed control dims.
   static final blackAlpha18 = Colors.black.withValues(alpha: 0.18);
-  static final blackAlpha30 = Colors.black.withValues(alpha: 0.3);
   static final blackAlpha50 = Colors.black.withValues(alpha: 0.5);
   static final redAlpha10 = Colors.red.withValues(alpha: 0.1);
   static final redAlpha30 = Colors.red.withValues(alpha: 0.3);
   static final redDarkAlpha20 = Colors.red.shade900.withValues(alpha: 0.2);
-  static final redDarkAlpha30 = Colors.red.shade900.withValues(alpha: 0.3);
   static final redLightAlpha30 = Colors.red.shade400.withValues(alpha: 0.3);
 
   // Cached glassBorder alpha variant
