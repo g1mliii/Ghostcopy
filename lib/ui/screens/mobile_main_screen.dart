@@ -584,10 +584,25 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       debugPrint(
         '[MobileMain] Draining deferred notification tap: $clipboardId',
       );
-      await _viewModel.handleNotificationAction(
+      final handled = await _viewModel.handleNotificationAction(
         clipboardId: clipboardId,
         action: action,
       );
+
+      // handleNotificationAction reports failure by returning false, not by
+      // throwing, and the result was dropped. The native side clears its
+      // parked slot the moment it hands the action over, so a clip that could
+      // not be fetched or decrypted left the app opening and then doing
+      // nothing at all - no copy, no sheet, no message, and nothing left to
+      // retry. It is the one case this whole path exists for, so say so.
+      if (!handled && mounted) {
+        showGhostToast(
+          context,
+          'Could not open that clip - it may have been deleted',
+          icon: Icons.error_outline,
+          type: GhostToastType.error,
+        );
+      }
     } on MissingPluginException catch (e) {
       // A build whose native side does not answer this. Listed separately
       // because MissingPluginException does not extend PlatformException, so

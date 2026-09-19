@@ -61,6 +61,46 @@ class DeviceService implements IDeviceService {
     }
   }
 
+  /// Drop the row this device registered under before it had a real name.
+  ///
+  /// Mobile used to register as the bare platform - "iOS Device" - because
+  /// getCurrentDeviceName() returned nothing there. It resolves a model name
+  /// now, and the conflict key is (user_id, device_type, device_name), so the
+  /// first launch after an upgrade inserts a SECOND row rather than renaming
+  /// the first.
+  ///
+  /// Both rows then hold the same FCM token, and send-clipboard-notification
+  /// sends once per matching row without de-duplicating tokens - so every clip
+  /// from another platform arrived as two notifications, and Settings listed a
+  /// device that no longer exists.
+  ///
+  /// Scoped to the placeholder name exactly, and skipped when that is still
+  /// what this device is called, so it can never delete a real device: a
+  /// second phone of the same platform has a model name of its own.
+  ///
+  /// Best effort. A failure here leaves a duplicate notification, which is
+  /// worth a log and not worth failing a registration for.
+  Future<void> _removeLegacyGenericRow({
+    required String userId,
+    required String deviceType,
+    required String currentName,
+  }) async {
+    final legacyName = '${platformLabel(deviceType)} Device';
+    if (currentName == legacyName) return;
+
+    try {
+      await _supabase
+          .from('devices')
+          .delete()
+          .eq('user_id', userId)
+          .eq('device_type', deviceType)
+          .eq('device_name', legacyName);
+      debugPrint('[DeviceService] Removed legacy "$legacyName" row');
+    } on Object catch (e) {
+      debugPrint('[DeviceService] Could not remove the legacy row: $e');
+    }
+  }
+
   @override
   Future<void> registerCurrentDevice({String? fcmToken}) async {
     _ensureInitialized();
@@ -100,6 +140,12 @@ class DeviceService implements IDeviceService {
 
       debugPrint(
         '[DeviceService] ✅ Device registered successfully (ID: $_currentDeviceId)',
+      );
+
+      await _removeLegacyGenericRow(
+        userId: userId,
+        deviceType: deviceType,
+        currentName: deviceName,
       );
 
       // Invalidate cache since device list changed

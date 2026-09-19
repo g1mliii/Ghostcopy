@@ -317,6 +317,107 @@ later using the same implementation for scripts and coding agents.
 - [ ] Trial the "send this to my phone" workflow before expanding scope
 - [ ] Consider a CLI after the MCP integration is useful and reliable
 
+## Release: signing, distribution and updates
+
+Written 2026-09-19. The facts below were checked against the repo, not
+remembered - where something is unverified it says so.
+
+### The two decisions, already made
+
+**macOS ships with Developer ID, not the Mac App Store.** The sandbox is
+mandatory only for the store, so it is gone (`macos/Runner/*.entitlements`).
+That removes two problems at once: Sparkle needs an XPC service bundle and
+extra entitlements to update a sandboxed app, and launch-at-startup was never
+verified working under it.
+
+The keychain survives that change. flutter_secure_storage sets
+`kSecUseDataProtectionKeychain` on macOS - `MacOsOptions` defaults it to true
+and nothing in `lib/` overrides it - so the keychain it uses does not depend on
+the sandbox, and `keychain-access-groups` is unchanged. Still worth confirming
+on a Mac that already holds a passphrase rather than a clean one; that is the
+shape of mistake tasks/lessons.md records for 2026-09-17.
+
+**Windows ships through the Microsoft Store.** Registration is now free for
+both Individual and Company accounts, via https://storedeveloper.microsoft.com
+- that entry point specifically, since Partner Center and Visual Studio still
+route to the paid legacy flow. The Store signs the package and handles updates,
+which avoids a code-signing certificate and removes the WinSparkle half of the
+updater work entirely.
+
+Unsigned direct download was the alternative and is worse than it sounds: not
+just an "unknown publisher" UAC prompt but SmartScreen, whose reputation
+accrues per certificate. Unsigned it accrues per file hash instead, so it
+resets on every release and every auto-update re-triggers the warning.
+
+Account type needs deciding before signing up - Individual is defined as
+distribution NOT in relation to a business or profession, so a released product
+points at Company, which wants a DUNS number or business documents and a work
+email on the organisation's domain. Note the domain there: the contact address
+is on anchored.site while the product is ghostcopy.app. **Individual cannot be
+converted to Company later** - it needs a new account.
+
+### Order
+
+Roughly by how long each takes to come back, not by how much work it is.
+
+- [ ] **Play closed test first.** 20 testers for 14 CONTINUOUS days before
+      production can even be applied for, and it runs unattended. See the
+      Google Play section below; start it the day a build exists.
+- [ ] **Pick a version scheme.** `pubspec.yaml` is still `1.0.0+1`. TestFlight
+      and Play both reject a duplicate build number, so decide before the first
+      upload rather than during it.
+- [ ] **iOS TestFlight.** Signing is `Apple Development` today, which is a
+      development identity - TestFlight needs Apple Distribution.
+- [ ] **macOS Developer ID.** Same wrong identity in
+      `macos/Runner.xcodeproj` (`CODE_SIGN_IDENTITY[sdk=macosx*] = "Apple
+      Development"`); needs a Developer ID Application cert. Hardened Runtime
+      is now enabled on the Release config, which notarization requires and
+      which was absent.
+- [ ] **Notarize in CI.** `xcrun notarytool submit --wait` then `xcrun stapler
+      staple`, with an App Store Connect API key in secrets. CI already builds
+      macOS on `macos-latest` and currently stops at `flutter build macos
+      --release`.
+- [ ] **Windows Store submission.** CI already builds Windows on
+      `windows-latest`, so no Windows machine is needed. Packaging moves from
+      the Inno Setup script to MSIX for the Store.
+- [ ] **Sparkle + appcast for macOS only.** The `auto_updater` package wraps
+      Sparkle and WinSparkle behind one Dart API; only the macOS half is needed
+      if Windows goes through the Store. There is no updater dependency in
+      `pubspec.yaml` today.
+- [ ] **Land the updater before any wide release.** The Supabase publishable
+      key is compiled in, and legacy API keys cannot be disabled until every
+      released build carries it. Once builds are out, an update is the only way
+      to change a compiled-in constant.
+
+### Distribution
+
+- [ ] **Binaries on GitHub Releases, not the site.** Cloudflare Pages caps
+      individual file size (25 MiB, worth confirming) and a Flutter desktop
+      build is far larger - the debug macOS app measures 192 MB. The repo is
+      public, so Releases bandwidth and Actions minutes are free, the URLs are
+      permanent and versioned, and a Sparkle appcast points at release assets
+      as a matter of course.
+- [ ] **`website/download.html` is still a waitlist page** with no download
+      links at all. The desktop links and the store badges are net-new.
+- [ ] **Detect the OS to emphasise a store, but never auto-redirect.** Show
+      both badges. User-agent detection is wrong in exactly the cases that
+      matter - iPadOS reports as macOS in desktop mode, in-app browsers lie -
+      and a wrong redirect is a dead end with no way back.
+
+### Unverified, worth knowing before the first archive
+
+- [ ] `macos/Runner.xcodeproj` carries 14 references to a `ShareExtension`
+      target, including `CODE_SIGN_ENTITLEMENTS =
+      ShareExtension/ShareExtension.entitlements`, but there is no
+      `macos/ShareExtension` directory. Ordinary builds pass, so this has not
+      mattered yet; an archive or a notarization run may disagree.
+- [ ] Windows and Linux `.ico` rendering has never been looked at on those
+      platforms. The ICO writer was rewritten and `assets/icons/tray_icon.ico`
+      - the file `tray_service.dart` actually loads on Windows - had not been
+      regenerated since the rebrand.
+
+---
+
 ## Parallel track: Google Play
 
 Play Console account purchased 2026-09-15. Full path:

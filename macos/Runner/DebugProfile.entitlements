@@ -2,15 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
+	<!-- Not sandboxed; see Release.entitlements for why. The network and
+	     user-selected-file entitlements were sandbox permissions and went
+	     with it. -->
+
+	<!-- Stays: this one is a hardened-runtime entitlement, not a sandbox one.
+	     A Flutter debug build runs Dart under JIT and cannot start without
+	     it. -->
 	<key>com.apple.security.cs.allow-jit</key>
-	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
-	<key>com.apple.security.network.server</key>
-	<true/>
-	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 	<key>keychain-access-groups</key>
 	<array>
