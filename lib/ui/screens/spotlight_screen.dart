@@ -820,30 +820,53 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                 20,
                                 20,
                               ), // Extra top padding for buttons
-                              child: SingleChildScrollView(
-                                physics: const ClampingScrollPhysics(),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    _buildHeader(),
-                                    const SizedBox(height: 12),
-                                    _buildTextField(),
+                              // Only the content area scrolls. Everything used
+                              // to sit in one scroll view, so pasting enough
+                              // text pushed Send off the bottom and the user
+                              // had to scroll a 500x400 window to reach the
+                              // one control the window exists for. The
+                              // destination chips and Send are outside it now
+                              // and cannot move.
+                              //
+                              // Flexible, not Expanded: with a short clip the
+                              // column still shrinks to its content and stays
+                              // centred, which is the ordinary case. It only
+                              // takes the remaining height when there is more
+                              // text than fits, and the field scrolls inside
+                              // that.
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _buildHeader(),
+                                  const SizedBox(height: 12),
+                                  Flexible(
+                                    child: SingleChildScrollView(
+                                      physics: const ClampingScrollPhysics(),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          _buildTextField(),
+                                          const SizedBox(height: 10),
+                                          // Empty for JSON and plain text, so
+                                          // this spreads to nothing rather
+                                          // than reserving space for a preview
+                                          // that is not coming.
+                                          ..._buildTransformerUI(),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  _buildPlatformSelector(),
+                                  const SizedBox(height: 12),
+                                  _buildSendButton(),
+                                  if (_viewModel.errorMessage != null) ...[
                                     const SizedBox(height: 10),
-                                    // Empty for JSON and plain text, so this
-                                    // spreads to nothing rather than reserving
-                                    // space for a preview that is not coming.
-                                    ..._buildTransformerUI(),
-                                    _buildPlatformSelector(),
-                                    const SizedBox(height: 12),
-                                    _buildSendButton(),
-                                    if (_viewModel.errorMessage != null) ...[
-                                      const SizedBox(height: 10),
-                                      _buildErrorMessage(),
-                                    ],
+                                    _buildErrorMessage(),
                                   ],
-                                ),
+                                ],
                               ),
                             ),
                           ),
@@ -1153,17 +1176,35 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   // not built to scroll. Here it costs nothing: the row exists
                   // either way.
                   if (_viewModel.detectedContentType?.type ==
-                      TransformerContentType.json)
-                    IconButton(
-                      onPressed: _handlePrettifyJson,
-                      icon: const Icon(Icons.data_object),
-                      color: GhostColors.primary,
-                      iconSize: 20,
-                      tooltip: 'Prettify JSON',
-                      padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(),
-                      splashRadius: 18,
+                      TransformerContentType.json) ...[
+                    const SizedBox(width: 6),
+                    // Tinted, unlike Upload beside it. Upload is always there
+                    // and reads as furniture; this appears only when the clip
+                    // actually parses as JSON, so it has to look like something
+                    // that just turned up and can be pressed. accentSoft is the
+                    // selected-control fill - present without competing with
+                    // Send, which stays the only saturated purple on screen.
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: GhostColors.accentSoft,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: GhostColors.accentBorder),
+                      ),
+                      child: IconButton(
+                        onPressed: _handlePrettifyJson,
+                        icon: const Icon(Icons.data_object),
+                        color: GhostColors.accentText,
+                        iconSize: 20,
+                        // Says what was noticed and what pressing does. A bare
+                        // "Prettify JSON" does not explain why an icon the user
+                        // has not seen before just appeared.
+                        tooltip: 'JSON detected - tap to format it',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                        splashRadius: 18,
+                      ),
                     ),
+                  ],
                 ],
               ),
             ),
