@@ -29,9 +29,19 @@ flutter run -d ios
 
 # Build release
 flutter build windows
-flutter build macos
 flutter build apk
 flutter build ios
+
+# macOS needs these two, or Cargokit fails at exit 101 compiling
+# super_native_extensions before any Swift is built: a stripped Rust
+# proc-macro dylib will not load on newer macOS toolchains. A bare
+# `flutter build macos` is the one command here that does not work.
+CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true CARGO_PROFILE_RELEASE_STRIP=none \
+  flutter build macos --release
+
+# For an actual release, use the script instead - it exports those, archives
+# and exports with the Developer ID profile, notarizes, staples and packages.
+installer/macos/build-release.sh NOTARY_KEYCHAIN_PROFILE
 
 # Run tests
 flutter test
