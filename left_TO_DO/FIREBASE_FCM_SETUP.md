@@ -8,7 +8,6 @@ This guide explains how to complete Firebase FCM setup for GhostCopy once you re
 - Dart/Flutter FCM handling ready
 - Android FCM service implemented
 - iOS notification handlers ready
-- Widget integration ready
 - Actionable notifications configured
 
 ⏳ **Credentials Needed**:
@@ -207,7 +206,6 @@ curl -X POST https://fcm.googleapis.com/v1/projects/<project-id>/messages:send \
 - ✅ Notification has "Copy", "Dismiss", "Details" action buttons
 - ✅ Tapping "Copy" adds content to clipboard
 - ✅ Tapping notification opens app
-- ✅ Widget updates with new item
 
 
 
@@ -237,40 +235,6 @@ curl -X POST https://fcm.googleapis.com/v1/projects/<project-id>/messages:send \
 - **Check 2**: Verify `category: CLIPBOARD_SYNC` in payload
 - **Check 3**: Check that `registerNotificationCategories()` was called in AppDelegate
 - **Check 4**: Rebuild app - notification categories cached at startup
-
-### Issue: "Widget not updating"
-- **Check 1**: Verify `WidgetCenter.reloadAllTimelines()` is called
-- **Check 2**: Check App Group identifier: `group.com.ghostcopy.app`
-- **Check 3**: Verify entitlements files have correct App Group
-- **Check 4**: Check console for: `[WidgetDataManager] ✅ Saved...`
-
----
-
-## Memory Leak Prevention Checklist
-
-✅ **AppDelegate**
-- Uses `[weak self]` in method channel closures
-- Proper `completionHandler` calls in notification handlers
-- No retained notification center observers
-
-✅ **ActionableNotificationManager**
-- Singleton with safe initialization
-- No retained notification objects
-- Proper cleanup on notification category update
-
-✅ **RefreshWidgetIntent**
-- URLSession created with proper timeouts
-- Task completion handlers properly called
-- No retained session objects
-
-✅ **WidgetDataManager**
-- Weak delegate references
-- Proper UserDefaults cleanup
-- No circular references
-
----
-
-## Monitoring & Debugging
 
 ### Enable Firebase Debug Logging
 

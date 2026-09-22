@@ -4,12 +4,18 @@ Every file here is generated. Do not hand-edit them — edit the mark and re-run
 the generator:
 
 ```bash
-python tool/generate_desktop_icons.py
+DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py
 ```
 
-The mark itself lives in `website/icons/ghost.svg`; the generator restates that
-vector's primitives so it can draw each size natively. If you change the .svg,
-update the constants at the top of `tool/generate_desktop_icons.py` to match.
+The mark itself lives in `assets/brand/logo-white.svg` (with black and colour
+variants beside it), and the generator rasterises it at each size rather than
+restating its primitives in code.
+
+This replaced `tool/generate_desktop_icons.py`, which is gone. That script drew
+the pre-rebrand mark from Pillow primitives and claimed the same outputs, so
+running it silently reverted the Windows, installer and tray icons - one of
+them, `tray_icon.ico`, was the live Windows tray asset and stayed reverted
+because the new generator did not write it. One generator, one source of truth.
 
 ## What gets generated
 

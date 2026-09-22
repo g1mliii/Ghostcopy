@@ -2,35 +2,21 @@ package com.ghostcopy.ghostcopy
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
-import android.net.Uri
-import android.os.Build
 import android.util.Log
 import android.widget.Toast
-import com.ghostcopy.ghostcopy.widget.ClipboardWidgetFactory
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.io.File
 
 class MainActivity : FlutterActivity() {
     private companion object {
         private const val TAG = "MainActivity"
-        private const val SHARE_CHANNEL = "com.ghostcopy.ghostcopy/share"
 
-        /**
-         * Largest shared payload accepted, in bytes.
-         *
-         * Mirrors ClipboardLimits.maxFileBytes on the Dart side and the CHECK
-         * constraint in supabase/schema.sql. Change all three together.
-         */
-        private const val MAX_SHARE_BYTES = 10 * 1024 * 1024
+        // Mirrors _notificationChannel in mobile_main_screen.dart and
+        // FlutterChannelHub.notificationChannelName on iOS.
         private const val NOTIFICATION_CHANNEL = "com.ghostcopy.ghostcopy/notifications"
-        private const val WIDGET_CHANNEL = "com.ghostcopy/widget"
 
         // Must match the manifest's default_notification_channel_id, the
         // channelId the edge function sets on the push, and the channel
@@ -41,17 +27,13 @@ class MainActivity : FlutterActivity() {
         private const val PREF_SCREENSHOT_PROTECTION = "screenshot_protection"
     }
 
-    // Method channels (stored to prevent memory leaks)
-    private var shareChannel: MethodChannel? = null
-    private var widgetChannel: MethodChannel? = null
-
     // Guards against re-copying the same clip every time the activity resumes
     // while a notification-launched intent is still attached.
     private var lastHandledFcmClipboardId: String? = null
 
     // A notification action that Dart has not collected yet. Written whenever a
     // tap is handled, cleared when Dart drains it through
-    // "getPendingNotificationAction". This is what makes a cold-start tap work:
+    // "takePendingNotificationAction". This is what makes a cold-start tap work:
     // the action waits here instead of being fired at a Dart handler that does
     // not exist yet.
     private var pendingNotificationAction: Map<String, String>? = null
@@ -62,22 +44,6 @@ class MainActivity : FlutterActivity() {
         ensureNotificationChannel()
 
         applyScreenshotProtection()
-
-        // Method channel for share sheet operations
-        shareChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            SHARE_CHANNEL
-        )
-        shareChannel?.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "shareComplete" -> {
-                    // Share was processed, close the activity
-                    finish()
-                    result.success(null)
-                }
-                else -> result.notImplemented()
-            }
-        }
 
         // Native toast channel. Flutter's in-app toast is a custom overlay that
         // does not look like the platform, so short confirmations ("Copied to
@@ -119,42 +85,14 @@ class MainActivity : FlutterActivity() {
                 // Dart message with no handler is discarded silently. This
                 // handler is registered in configureFlutterEngine, i.e. before
                 // the entrypoint runs, so it is always ready to be asked.
-                "getPendingNotificationAction" -> {
+                // Same verb as FlutterChannelHub on iOS. Dart drains through one
+                // non-platform-branched code path, so the two native sides have
+                // to answer the same name - this used to be
+                // "getPendingNotificationAction", which that path never called,
+                // so an Android tap parked here was never collected.
+                "takePendingNotificationAction" -> {
                     result.success(pendingNotificationAction)
                     pendingNotificationAction = null
-                }
-                else -> result.notImplemented()
-            }
-        }
-
-        // Method channel for widget updates
-        widgetChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            WIDGET_CHANNEL
-        )
-        widgetChannel?.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "updateWidget" -> {
-                    try {
-                        val items = call.argument<List<Map<String, Any>>>("items")
-                        val lastUpdated = call.argument<Long>("lastUpdated")
-
-                        if (items != null && lastUpdated != null) {
-                            com.ghostcopy.ghostcopy.widget.WidgetDataManager.getInstance(applicationContext)
-                                .updateFromFlutter(items, lastUpdated)
-
-                            // Notify widget to refresh
-                            com.ghostcopy.ghostcopy.widget.ClipboardWidget.notifyWidgetDataChanged(applicationContext)
-
-                            Log.d(TAG, "✅ Widget updated with ${items.size} items")
-                            result.success(true)
-                        } else {
-                            result.error("INVALID_ARGS", "Missing items or lastUpdated", null)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "❌ Failed to update widget: ${e.message}", e)
-                        result.error("UPDATE_ERROR", e.message, null)
-                    }
                 }
                 else -> result.notImplemented()
             }
@@ -219,221 +157,14 @@ class MainActivity : FlutterActivity() {
         // A notification tapped while the app is already running arrives here.
         handleFcmLaunchIntent(intent)
 
-        // Handle share intent from another app
-        if (intent.action == Intent.ACTION_SEND) {
-            handleShareIntent(intent)
-        } else if (intent.action == "com.ghostcopy.ghostcopy.COPY_ACTION") {
+        // ACTION_SEND is not handled here. receive_sharing_intent owns the
+        // share sheet on both platforms; this used to catch it as well, so a
+        // single share ran two paths - this one popping a device-picker dialog
+        // and calling finish() out from under it, the plugin's sending the same
+        // item again.
+        if (intent.action == "com.ghostcopy.ghostcopy.COPY_ACTION") {
             // Handle notification tap while app is running
             handleCopyAction(intent)
-        } else if (intent.action == "com.ghostcopy.ghostcopy.WIDGET_ITEM_CLICK") {
-            // Handle widget item tap (copy to clipboard)
-            handleWidgetItemClick(intent)
-        }
-    }
-
-    /**
-     * Typed EXTRA_STREAM lookup.
-     *
-     * The single-argument getParcelableExtra has been deprecated since API 33;
-     * the typed overload is also the safe one, because it will not hand back an
-     * object of an unexpected class from an intent any installed app can send.
-     */
-    @Suppress("DEPRECATION")
-    private fun streamExtra(intent: Intent): Uri? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-        } else {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
-        }
-    }
-
-    private fun handleShareIntent(intent: Intent) {
-        when {
-            intent.type?.startsWith("text/") == true -> {
-                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
-                if (sharedText.isNotEmpty()) {
-                    saveSharedContentFast(sharedText)
-                }
-            }
-            intent.type?.startsWith("image/") == true -> {
-                val imageUri = streamExtra(intent)
-                if (imageUri != null) {
-                    saveSharedImageFast(imageUri)
-                }
-            }
-            // Handle all other file types (PDFs, DOCs, ZIPs, etc.)
-            else -> {
-                val fileUri = streamExtra(intent)
-                if (fileUri != null) {
-                    saveSharedFileFast(fileUri)
-                }
-            }
-        }
-    }
-
-    private fun saveSharedContentFast(content: String) {
-        val channel = MethodChannel(
-            flutterEngine!!.dartExecutor.binaryMessenger,
-            SHARE_CHANNEL
-        )
-
-        // Show device selector dialog and start save in background
-        channel.invokeMethod("handleShareIntent", mapOf("content" to content))
-        // Save started in background, close activity immediately
-        // Don't wait for save to complete
-        finish()
-    }
-
-    /**
-     * Size of the content behind [uri], or null when it cannot be determined.
-     *
-     * Checked BEFORE reading. readBytes() pulls the whole stream into memory,
-     * so validating the size afterwards meant sharing a multi-gigabyte video
-     * allocated all of it just to reject it - an OOM kill rather than a toast.
-     */
-    private fun contentSize(uri: Uri): Long? {
-        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
-            ?.use { cursor ->
-                val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                    return cursor.getLong(index)
-                }
-            }
-
-        return try {
-            contentResolver.openAssetFileDescriptor(uri, "r")?.use { fd ->
-                fd.length.takeIf { it != android.content.res.AssetFileDescriptor.UNKNOWN_LENGTH }
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /**
-     * Read at most [limit] bytes, or null if the stream is longer.
-     *
-     * The bound matters even when [contentSize] answered: a provider can report
-     * one size and then serve more.
-     */
-    private fun readBounded(uri: Uri, limit: Int): ByteArray? {
-        return contentResolver.openInputStream(uri)?.use { stream ->
-            val buffer = java.io.ByteArrayOutputStream()
-            val chunk = ByteArray(64 * 1024)
-            var total = 0
-            while (true) {
-                val read = stream.read(chunk)
-                if (read <= 0) break
-                total += read
-                if (total > limit) return null
-                buffer.write(chunk, 0, read)
-            }
-            buffer.toByteArray()
-        }
-    }
-
-    /**
-     * Read a shared URI, enforcing the size ceiling and reporting failures.
-     *
-     * Both share paths need exactly this: a declared-size pre-check, a bounded
-     * read, an empty check, and a toast plus finish() on each failure. They
-     * carried their own copies, differing only in the noun in the messages.
-     *
-     * Returns null when the share cannot proceed, having already told the user
-     * and closed the activity.
-     */
-    private fun readSharedBytes(uri: Uri, noun: String): ByteArray? {
-        // Size first, then a bounded read - never readBytes() on untrusted
-        // content of unknown length.
-        val declaredSize = contentSize(uri)
-        if (declaredSize != null && declaredSize > MAX_SHARE_BYTES) {
-            Log.e(TAG, "❌ $noun too large: $declaredSize bytes (max: $MAX_SHARE_BYTES)")
-            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
-            return null
-        }
-
-        val bytes = readBounded(uri, MAX_SHARE_BYTES)
-        if (bytes == null) {
-            Log.e(TAG, "❌ $noun exceeded $MAX_SHARE_BYTES bytes while reading")
-            failShare("$noun too large (max ${MAX_SHARE_BYTES / (1024 * 1024)}MB)")
-            return null
-        }
-
-        if (bytes.isEmpty()) {
-            Log.e(TAG, "❌ Failed to read $noun from URI: $uri")
-            failShare("Failed to read ${noun.lowercase()}")
-            return null
-        }
-
-        return bytes
-    }
-
-    /** Tell the user the share failed, then close. */
-    private fun failShare(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        finish()
-    }
-
-    /** The channel Flutter listens on for shared payloads. */
-    private fun shareChannel() = MethodChannel(
-        flutterEngine!!.dartExecutor.binaryMessenger,
-        SHARE_CHANNEL
-    )
-
-    private fun saveSharedImageFast(imageUri: Uri) {
-        try {
-            val bytes = readSharedBytes(imageUri, "Image") ?: return
-
-            val mimeType = contentResolver.getType(imageUri) ?: "image/*"
-
-            // Pass raw bytes directly to Flutter (MethodChannel supports
-            // ByteArray -> Uint8List). No base64 encoding needed - saves 33%
-            // memory overhead.
-            shareChannel().invokeMethod("handleShareImage", mapOf(
-                "imageBytes" to bytes,
-                "mimeType" to mimeType
-            ))
-            // Save started in background, close activity
-            finish()
-
-            Log.d(TAG, "✅ Shared image: $mimeType, ${bytes.size / 1024}KB")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error reading shared image: ${e.message}", e)
-            failShare("Failed to share image")
-        }
-    }
-
-    private fun saveSharedFileFast(fileUri: Uri) {
-        try {
-            val bytes = readSharedBytes(fileUri, "File") ?: return
-
-            val mimeType = contentResolver.getType(fileUri) ?: "application/octet-stream"
-
-            // Get original filename from URI.
-            // getColumnIndex returns -1 for a provider that does not expose
-            // DISPLAY_NAME, and moveToFirst is false for an empty cursor -
-            // getString() then threw and the whole share failed with "Failed to
-            // share file" for a file that was perfectly shareable.
-            val filename = contentResolver.query(fileUri, null, null, null, null)?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex >= 0 && cursor.moveToFirst()) {
-                    cursor.getString(nameIndex)
-                } else {
-                    null
-                }
-            } ?: "file"
-
-            shareChannel().invokeMethod("handleShareFile", mapOf(
-                "fileBytes" to bytes,
-                "mimeType" to mimeType,
-                "filename" to filename
-            ))
-            // Save started in background, close activity
-            finish()
-
-            Log.d(TAG, "✅ Shared file: $filename ($mimeType), ${bytes.size / 1024}KB")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error reading shared file: ${e.message}", e)
-            failShare("Failed to share file")
         }
     }
 
@@ -486,64 +217,6 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Copy content to system clipboard based on content type.
-     * Supports: text, html, markdown, images
-     */
-    private fun copyToClipboard(
-        content: String,
-        contentType: String,
-        richTextFormat: String,
-        deviceType: String
-    ) {
-        try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-
-            when {
-                contentType == "html" -> {
-                    // Copy HTML with plain text fallback
-                    val plainText = content.replace(Regex("<[^>]*>"), "")
-                    val clip = ClipData.newHtmlText("HTML", plainText, content)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d(TAG, "✅ Copied HTML to clipboard")
-                }
-                contentType == "markdown" -> {
-                    // Copy Markdown as plain text
-                    val clip = ClipData.newPlainText("Markdown", content)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d(TAG, "✅ Copied Markdown as plain text")
-                }
-                else -> {
-                    // Plain text (default)
-                    val clip = ClipData.newPlainText("GhostCopy", content)
-                    clipboard.setPrimaryClip(clip)
-                    Log.d(TAG, "✅ Copied text to clipboard")
-                }
-            }
-
-            Toast.makeText(this, "Copied from $deviceType", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to copy to clipboard: ${e.message}", e)
-            Toast.makeText(this, "Failed to copy", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * Fetch clipboard item from Supabase database and copy to clipboard or share.
-     * Called when content is too large to fit in FCM payload.
-     *
-     * Uses the notifications method channel for consistency with iOS.
-     */
-    /**
-     * Create the channel FCM names in its manifest metadata.
-     *
-     * flutter_local_notifications creates this channel lazily, the first time
-     * the app itself shows a local notification - which may never have happened
-     * when a push arrives. A push naming a channel that does not exist is shown
-     * on a default-importance fallback instead, with no heads-up banner. Channels
-     * are persistent and re-creating one with the same id is a no-op, so this is
-     * safe to run on every launch.
-     */
-    /**
      * Apply the user's screenshot-protection preference to this window.
      *
      * Read natively, from the store shared_preferences writes to, rather than
@@ -553,13 +226,18 @@ class MainActivity : FlutterActivity() {
      * booted, would already be too late for the first backgrounding. The window
      * has to be correct from the moment it exists.
      *
-     * Defaults to true, matching ISettingsService: protection is the default and
-     * switching it off is the deliberate act.
+     * Defaults to false, matching ISettingsService: it is the user's own device,
+     * and an ordinary Recents preview is theirs to have. Turning the cover on is
+     * the deliberate act.
+     *
+     * The two defaults have to agree. This one decides what happens before Dart
+     * has run, so a mismatch would blank a Recents card whose own toggle says it
+     * should not be blanked.
      */
     private fun applyScreenshotProtection() {
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         // shared_preferences namespaces every key it writes with "flutter.".
-        val enabled = prefs.getBoolean("flutter.$PREF_SCREENSHOT_PROTECTION", true)
+        val enabled = prefs.getBoolean("flutter.$PREF_SCREENSHOT_PROTECTION", false)
         setSecureFlag(enabled)
     }
 
@@ -575,6 +253,16 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "Screenshot protection ${if (enabled) "on" else "off"}")
     }
 
+    /**
+     * Create the channel FCM names in its manifest metadata.
+     *
+     * flutter_local_notifications creates this channel lazily, the first time
+     * the app itself shows a local notification - which may never have happened
+     * when a push arrives. A push naming a channel that does not exist is shown
+     * on a default-importance fallback instead, with no heads-up banner. Channels
+     * are persistent and re-creating one with the same id is a no-op, so this is
+     * safe to run on every launch.
+     */
     private fun ensureNotificationChannel() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
@@ -591,6 +279,12 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "✅ Created notification channel $NOTIFICATION_CHANNEL_ID")
     }
 
+    /**
+     * Fetch clipboard item from Supabase database and copy to clipboard or share.
+     * Called when content is too large to fit in FCM payload.
+     *
+     * Uses the notifications method channel for consistency with iOS.
+     */
     private fun fetchAndCopyClipboardItem(
         clipboardId: String,
         expectedContentType: String,
@@ -614,21 +308,42 @@ class MainActivity : FlutterActivity() {
             // Park the action first. On a cold start the invokeMethod below is
             // delivered into the void - Dart registers its handler ~1.5s later,
             // and Flutter drops platform -> Dart messages that arrive with no
-            // handler attached, without an error or a callback. Dart therefore
-            // pulls this on startup and on resume; the push below only shortens
-            // the warm path, and MobileMainViewModel de-dupes by clipboard id so
-            // the two transports cannot copy the same clip twice.
-            pendingNotificationAction = mapOf(
+            // handler attached, without an error or a callback. Dart pulls the
+            // parked copy when it builds the screen; the push below only
+            // shortens the warm path.
+            val parked = mapOf(
                 "clipboardId" to clipboardId,
                 "action" to action
             )
+            pendingNotificationAction = parked
 
             // Invoke Flutter method to fetch clipboard item and perform action
             // Same method call that iOS uses via AppDelegate
-            channel.invokeMethod("handleNotificationAction", mapOf(
-                "clipboardId" to clipboardId,
-                "action" to action
-            ))
+            //
+            // Cleared on a confirmed handling, and only then. Both transports
+            // used to fire and the parked copy was never cleared, so when the
+            // screen was later rebuilt - signing out and back in is enough -
+            // its startup drain replayed a clip that had already been copied,
+            // or opened a second share sheet for it. There is no de-duplication
+            // on the Dart side to fall back on; an earlier comment here said
+            // there was, and there is not.
+            //
+            // A dropped message never reaches success(), so the cold-start case
+            // keeps its parked copy, which is the whole point of having one.
+            channel.invokeMethod("handleNotificationAction", parked, object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (result == true && pendingNotificationAction === parked) {
+                        pendingNotificationAction = null
+                        Log.d(TAG, "Dart handled $clipboardId directly - parked copy dropped")
+                    }
+                }
+
+                override fun error(code: String, message: String?, details: Any?) {
+                    Log.w(TAG, "Dart failed to handle $clipboardId: $message")
+                }
+
+                override fun notImplemented() {}
+            })
             Log.d(TAG, "✅ Queued+triggered $action action for clipboard item $clipboardId ($expectedContentType)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error fetching clipboard item: ${e.message}", e)
@@ -636,137 +351,4 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * Handle widget item click - copy content to device clipboard.
-     *
-     * Supports different content types:
-     * - Text, HTML, Markdown: Copy as plain or rich text
-     * - Images: Copy from cached thumbnail
-     * - Encrypted: Copy encrypted text (user decrypts in app)
-     */
-    private fun handleWidgetItemClick(intent: Intent) {
-        // MainActivity is exported (LAUNCHER), so an explicit intent with this
-        // action can be sent by any installed app - an <intent-filter> is not
-        // required for explicit delivery. This handler copies an intent-supplied
-        // content_preview to the system clipboard and reads an intent-supplied
-        // thumbnail path from disk, so the caller must be proven to be us.
-        // The widget's own PendingIntent carries the token; an external caller
-        // cannot read it out of app-private SharedPreferences.
-        if (!IntentAuth.isTrusted(this, intent.getStringExtra(IntentAuth.EXTRA_TOKEN))) {
-            Log.w(TAG, "⚠️ Rejected WIDGET_ITEM_CLICK from an untrusted caller")
-            return
-        }
-
-        try {
-            val clipboardId = intent.getStringExtra(ClipboardWidgetFactory.KEY_CLIPBOARD_ID) ?: ""
-            val contentType = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_TYPE) ?: "text"
-            val contentPreview = intent.getStringExtra(ClipboardWidgetFactory.KEY_CONTENT_PREVIEW) ?: ""
-            val thumbnailPath = intent.getStringExtra(ClipboardWidgetFactory.KEY_THUMBNAIL_PATH)
-            val isEncrypted = intent.getBooleanExtra(ClipboardWidgetFactory.KEY_IS_ENCRYPTED, false)
-            val action = intent.getStringExtra("action") ?: "copy"
-
-            // If action is share, delegate to Flutter to download and share
-            if (action == "share" && clipboardId.isNotEmpty()) {
-                Log.d(TAG, "📤 Widget share action for $clipboardId")
-                fetchAndCopyClipboardItem(clipboardId, contentType, "Widget")
-                return
-            }
-
-            if (contentPreview.isEmpty() && !action.equals("share")) {
-                Log.w(TAG, "Empty content for clipboard item $clipboardId")
-                return
-            }
-
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-
-            when {
-                // Copy image from thumbnail (load actual image bytes, not text path)
-                contentType.startsWith("image_") && !thumbnailPath.isNullOrEmpty() -> {
-                    try {
-                        val imageFile = File(thumbnailPath)
-                        if (!imageFile.exists()) {
-                            Log.w(TAG, "⚠️ Thumbnail file not found: $thumbnailPath")
-                            showToast("Image file not found")
-                            return
-                        }
-
-                        // Verify it's a valid image by attempting to decode
-                        val bitmap = BitmapFactory.decodeFile(thumbnailPath)
-                        if (bitmap == null) {
-                            Log.w(TAG, "⚠️ Failed to decode image: $thumbnailPath")
-                            showToast("Invalid image file")
-                            return
-                        }
-
-                        // Recycle bitmap immediately (we only needed it for validation)
-                        bitmap.recycle()
-
-                        // Create content URI for the image file
-                        val imageUri = Uri.fromFile(imageFile)
-
-                        // Copy as image with URI (this allows paste in other apps)
-                        val clip = ClipData.newUri(contentResolver, "Image", imageUri)
-                        clipboard.setPrimaryClip(clip)
-
-                        Log.d(TAG, "✅ Copied image from widget: ${imageFile.length() / 1024}KB")
-                        showToast("Image copied")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "❌ Failed to copy image: ${e.message}", e)
-                        showToast("Failed to copy image")
-                    }
-                }
-                // Copy HTML content
-                contentType == "html" -> {
-                    val clip = ClipData.newHtmlText("HTML", contentPreview, contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("HTML copied")
-                }
-                // Copy markdown as plain text (iOS limitation - no markdown mime type)
-                contentType == "markdown" -> {
-                    val clip = ClipData.newPlainText("Markdown", contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("Markdown copied")
-                }
-                // Copy encrypted content (will show lock icon in app)
-                isEncrypted -> {
-                    val clip = ClipData.newPlainText("Encrypted", contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("Encrypted content copied")
-                }
-                // Copy plain text (default)
-                else -> {
-                    val clip = ClipData.newPlainText("Text", contentPreview)
-                    clipboard.setPrimaryClip(clip)
-                    showToast("Copied")
-                }
-            }
-
-            Log.d(TAG, "✅ Widget item copied: $contentType")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to handle widget item click: ${e.message}", e)
-            showToast("Failed to process")
-        }
-    }
-
-    /**
-     * Clean up method channels to prevent memory leaks.
-     */
-    override fun onDestroy() {
-        // Remove method channel handlers
-        shareChannel?.setMethodCallHandler(null)
-        widgetChannel?.setMethodCallHandler(null)
-        shareChannel = null
-        widgetChannel = null
-
-        super.onDestroy()
-    }
-
-    /**
-     * Show a short toast message.
-     */
-    private fun showToast(message: String) {
-        runOnUiThread {
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        }
-    }
 }

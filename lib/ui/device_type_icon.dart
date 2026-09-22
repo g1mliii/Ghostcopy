@@ -8,9 +8,10 @@ import 'package:flutter/material.dart';
 /// duplication that silently drifts - the same platform could end up with one
 /// icon on a chip and a different one on the clip it produced.
 ///
-/// Pairs with `DeviceTypeTarget.platformLabel`, which does the same job for the
-/// text. That one lives on the ViewModel because it returns a String; this
-/// cannot follow it there without dragging Flutter UI types into a ViewModel.
+/// Pairs with `platformLabel`, which does the same job for the text. That one
+/// lives under `utils/` because it returns a String and the models and services
+/// need it too; this cannot follow it there without dragging Flutter UI types
+/// out of `ui/`.
 IconData iconForDeviceType(String deviceType) =>
     switch (deviceType.toLowerCase()) {
       'windows' => Icons.laptop_windows,

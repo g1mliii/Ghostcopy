@@ -24,6 +24,8 @@ on:
       - 'website/**'
       - 'supabase/functions/**'
       - 'supabase/migrations/**'
+      - 'supabase/email-templates/**'
+      - 'supabase/config.toml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
@@ -32,7 +34,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options: [all, website, functions, migrations]
+        options: [all, website, functions, migrations, auth_config]
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -97,6 +99,7 @@ jobs:
       website: ${{ steps.filter.outputs.website }}
       functions: ${{ steps.filter.outputs.functions }}
       migrations: ${{ steps.filter.outputs.migrations }}
+      auth_config: ${{ steps.filter.outputs.auth_config }}
     steps:
       # Full history: on push events paths-filter diffs against the previous
       # commit, which a depth-1 checkout does not have.
@@ -111,8 +114,18 @@ jobs:
               - 'website/**'
             functions:
               - 'supabase/functions/**'
+              # config.toml carries functions.verify_jwt, and only a
+              # `functions deploy` applies it - auth_config runs `config push`,
+              # which does not. Without this a change to that flag sat unapplied
+              # until some unrelated function source happened to change, and the
+              # flag in question is the one whose last regression killed push
+              # for every device.
+              - 'supabase/config.toml'
             migrations:
               - 'supabase/migrations/**'
+            auth_config:
+              - 'supabase/email-templates/**'
+              - 'supabase/config.toml'
 
   website:
     name: Deploy website (Cloudflare Pages)
@@ -189,6 +202,55 @@ jobs:
             supabase functions deploy "$name" --project-ref "$PROJECT_REF"
             echo "::endgroup::"
           done
+
+  # Auth email templates. supabase/email-templates/ used to be a copy of what
+  # someone had pasted into the dashboard by hand; config.toml now points at
+  # those files and this job ships them, so the repo is the source of truth.
+  #
+  # Independent of migrations and functions - it only writes auth config - so it
+  # does not wait on those. It does wait on the website, because the templates
+  # <img> an absolute URL on ghostcopy.app: pushed first, every auth email sent
+  # in the gap between the two jobs carries a broken logo.
+  auth_config:
+    name: Push auth config (Supabase)
+    runs-on: ubuntu-latest
+    needs: [ci_green, changes, website]
+    if: >-
+      always() && !cancelled() &&
+      (needs.ci_green.result == 'success' || needs.ci_green.result == 'skipped') &&
+      (needs.website.result == 'success' || needs.website.result == 'skipped') && (
+      (github.event_name == 'push' && needs.changes.outputs.auth_config == 'true') ||
+      (github.event_name == 'workflow_dispatch' &&
+       contains(fromJSON('["all","auth_config"]'), github.event.inputs.target)))
+    environment: production
+    timeout-minutes: 10
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+
+      - name: Check credentials
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$PROJECT_REF" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF must both be set."
+            exit 1
+          fi
+
+      # There is no TTY here, so push's confirmation prompt defaults to yes and
+      # would apply anything the file declares without asking. See the script
+      # for what that could cost.
+      - name: Guard - only email templates may be declared
+        run: |
+          supabase config diff --project-ref "$PROJECT_REF" --output-format json \
+            | python3 .github/ci/assert_config_scope.py
+
+      - name: Push
+        run: supabase config push --project-ref "$PROJECT_REF"
 
   migrations:
     name: Apply migrations (Supabase)

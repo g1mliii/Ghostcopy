@@ -20,7 +20,13 @@ abstract class IDeviceService {
   /// Pass [fcmToken] when one is already known: the upsert writes every
   /// column, so supplying it here registers the device and its push token in a
   /// single write instead of two.
-  Future<void> registerCurrentDevice({String? fcmToken});
+  /// Returns true when the row was written.
+  ///
+  /// Registration is non-critical and swallows its own failures rather than
+  /// bringing down a launch, so the result is the only way a caller can tell a
+  /// successful write from a silent one - which matters to anything that
+  /// throttles its retries on the assumption the last attempt worked.
+  Future<bool> registerCurrentDevice({String? fcmToken});
 
   /// Get all devices registered for the current user
   ///

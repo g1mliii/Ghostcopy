@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
@@ -14,6 +17,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
+import '../../utils/platform_label.dart';
 import '../clipboard_repository.dart';
 
 /// Implementation of ClipboardRepository with security hardening
@@ -1340,6 +1344,90 @@ class ClipboardRepository implements IClipboardRepository {
   static String? _cachedDeviceName;
   static bool _deviceNameResolved = false;
 
+  /// Resolve the device name once, before anything reads it.
+  ///
+  /// [getCurrentDeviceName] is synchronous and read on every send and every
+  /// realtime callback, but a phone's model name only comes back
+  /// asynchronously. Called from main() so the answer is cached before the
+  /// first send; if it is skipped the synchronous getter still returns a
+  /// usable fallback, just a generic one.
+  static Future<void> initializeDeviceName() async {
+    if (_deviceNameResolved) return;
+
+    // Desktop is handled by the fallback at the end: it has a hostname, which
+    // is already specific to the machine and is what the user calls it, and
+    // neither branch below fires there. It had its own early return, which did
+    // nothing the fallback does not.
+    try {
+      final info = DeviceInfoPlugin();
+      String? name;
+
+      if (Platform.isAndroid) {
+        final android = await info.androidInfo;
+        // "Pixel 8" rather than "sdk_gphone64_arm64": model is what the user
+        // would call it, and brand disambiguates identical model numbers
+        // across manufacturers.
+        final model = android.model.trim();
+        final brand = android.brand.trim();
+        final installId = await _getOrCreateInstallId();
+        if (model.isNotEmpty) {
+          final label = model.toLowerCase().startsWith(brand.toLowerCase())
+              ? model
+              : '${_capitalize(brand)} $model'.trim();
+          name = '$label · ${installId.substring(0, 8)}';
+        }
+      } else if (Platform.isIOS) {
+        final ios = await info.iosInfo;
+        // Since iOS 16 `name` returns the model, not what the user called the
+        // phone - that needs an Apple-granted entitlement. So "iPhone 15 Pro"
+        // rather than "Subai's iPhone". Still enough to tell a phone from an
+        // iPad or a simulator, which is what the unique index needs.
+        final model = ios.utsname.machine.trim();
+        final readable = ios.name.trim();
+        final stableId =
+            ios.identifierForVendor ?? await _getOrCreateInstallId();
+        final shortId = stableId.replaceAll('-', '');
+        final label = readable.isNotEmpty ? readable : model;
+        name = label.isNotEmpty
+            ? '$label · ${shortId.substring(0, min(8, shortId.length))}'
+            : null;
+      }
+
+      if (name != null && name.isNotEmpty) {
+        _cachedDeviceName = name;
+        _deviceNameResolved = true;
+        debugPrint('[Repository] Device name resolved: $name');
+        return;
+      }
+    } on Object catch (e) {
+      // Never fatal: a generic name still works, it just collides with another
+      // device of the same platform.
+      debugPrint('[Repository] Could not read device info: $e');
+    }
+
+    // Fall through to the platform-label fallback.
+    getCurrentDeviceName();
+  }
+
+  static String _capitalize(String value) =>
+      value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
+
+  static const _installIdKey = 'ghostcopy_device_install_id';
+
+  static Future<String> _getOrCreateInstallId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_installIdKey);
+    if (existing != null && existing.length >= 8) return existing;
+
+    final random = Random.secure();
+    final generated = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    await prefs.setString(_installIdKey, generated);
+    return generated;
+  }
+
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;
 
@@ -1349,8 +1437,20 @@ class ClipboardRepository implements IClipboardRepository {
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
         final hostname = Platform.localHostname;
         _cachedDeviceName = hostname.isNotEmpty ? hostname : null;
+      } else {
+        // Mobile has no hostname to read, and this used to return null - so
+        // every clip sent from a phone landed with device_name NULL and the
+        // history could not say where it came from. DeviceService already
+        // falls back to this exact string when registering the device, so
+        // using it here keeps the clipboard row and the devices row agreeing.
+        //
+        // This is a placeholder, not an identity: two phones on the same
+        // platform both answer "Android Device". See the note on
+        // registerCurrentDevice - the devices table is uniquely keyed on
+        // (user_id, device_type, device_name), so telling them apart needs a
+        // real per-device name, which is a larger change.
+        _cachedDeviceName = '${platformLabel(getCurrentDeviceType())} Device';
       }
-      // For mobile, stays null - can be set by user in settings
     } on Exception {
       // Handle any exceptions when accessing hostname
       _cachedDeviceName = null;

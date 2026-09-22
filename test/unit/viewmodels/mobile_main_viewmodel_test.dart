@@ -9,7 +9,9 @@ import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/viewmodels/mobile_main_viewmodel.dart';
+import 'package:ghostcopy/utils/platform_label.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 class _MockAuthService extends Mock implements IAuthService {}
 
@@ -336,10 +338,52 @@ void main() {
 
     test('platformLabel spells product names properly', () {
       // Capitalising the first letter gave "Macos" and "Ios".
-      expect(DeviceTypeTarget.platformLabel('macos'), 'macOS');
-      expect(DeviceTypeTarget.platformLabel('ios'), 'iOS');
-      expect(DeviceTypeTarget.platformLabel('windows'), 'Windows');
-      expect(DeviceTypeTarget.platformLabel('android'), 'Android');
+      expect(platformLabel('macos'), 'macOS');
+      expect(platformLabel('ios'), 'iOS');
+      expect(platformLabel('windows'), 'Windows');
+      expect(platformLabel('android'), 'Android');
+      // linux is in device_type_enum and in validDeviceTypes, so a chip can be
+      // built for it; the assertions above happened to skip the one platform a
+      // hand-written list had previously omitted.
+      expect(platformLabel('linux'), 'Linux');
+    });
+
+    test('platformLabel does not care about case', () {
+      // device_type is a Postgres enum, so real rows are always lowercase.
+      // This is the safety net that let DeviceTypeTarget's own copy of this
+      // mapping - which switched on the raw string - be deleted rather than
+      // kept for the one case it handled differently.
+      expect(platformLabel('MacOS'), 'macOS');
+      expect(platformLabel('IOS'), 'iOS');
+    });
+  });
+
+  group('share sheet', () {
+    test('a shared file with no session reports it instead of throwing', () async {
+      // getInitialMedia() fires on a cold launch and can beat the anonymous
+      // sign-in that normally guarantees a session. This used to be
+      // `currentUserId!`, and the resulting TypeError is an Error, not an
+      // Exception - so it escaped the per-item catch, took the rest of the
+      // batch and the history reload with it, and left onError uncalled, which
+      // is the one thing that would have told the user anything.
+      when(() => authService.currentUserId).thenReturn(null);
+      final errors = <String>[];
+
+      await viewModel.handleSharedFiles([
+        SharedMediaFile(path: '/tmp/a.pdf', type: SharedMediaType.file),
+        SharedMediaFile(path: '/tmp/b.pdf', type: SharedMediaType.file),
+      ], onError: errors.add);
+
+      expect(
+        errors.length,
+        2,
+        reason: 'both items report; the first must not abandon the second',
+      );
+      // The history reload at the end of the batch is the other thing the
+      // escaping Error used to skip, and the one the user would actually
+      // notice: the app opens, the share is gone, and the list never refreshes.
+      await Future<void>.delayed(Duration.zero);
+      verify(() => clipboardRepository.getHistory()).called(greaterThan(0));
     });
   });
 

@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ---
 ## Project Overview
 
-GhostCopy is a cross-platform clipboard synchronization tool built with Flutter. Desktop (Windows/macOS) runs as an invisible background utility with a "Spotlight-style" popup triggered by global hotkey. Mobile (iOS/Android) serves as a receiver with push notifications and home screen widgets.
+GhostCopy is a cross-platform clipboard synchronization tool built with Flutter. Desktop (Windows/macOS) runs as an invisible background utility with a "Spotlight-style" popup triggered by global hotkey. Mobile (iOS/Android) serves as a receiver with push notifications.
 
 ## Build & Development Commands
 
@@ -99,13 +99,18 @@ All features are implemented as services with abstract interfaces for testabilit
 
 ## UI Design System
 
-**Theme**: Dark + glassmorphism, inspired by Discord and Blip
+**Theme**: Dark + glassmorphism
+
+These are the real values from `lib/ui/theme/colors.dart` - check there first.
+This block was stale for a while and read #5865F2, which is Discord's Blurple
+verbatim; the launch screens were built against the old background from here
+and ended up a shade off the app they hand over to.
 
 **Colors** (see `lib/ui/theme/colors.dart`):
 ```dart
-background: Color(0xFF0D0D0F)    // Deep black
-surface: Color(0xFF1A1A1D)       // Card surfaces
-primary: Color(0xFF5865F2)       // Purple-blue accent (Discord-like)
+background: Color(0xFF0F0F13)    // Deep black
+surface: Color(0xFF19191F)       // Card surfaces
+primary: Color(0xFF6670FF)       // Purple-blue accent
 success: Color(0xFF3BA55C)       // Green confirmations
 ```
 
@@ -146,7 +151,7 @@ test/
 - Use `const` widgets where possible to reduce rebuilds
 
 ### Mobile-Specific Testing
-- **Memory Profiling**: Test widget updates, notification listeners, and app backgrounding/foregrounding scenarios
+- **Memory Profiling**: Test notification listeners and app backgrounding/foregrounding scenarios
 - **Security Review Checklist**:
   - FCM token storage and handling
   - Clipboard data clearing after auto-copy
@@ -167,14 +172,22 @@ test/
 | `glados` | Property-based testing |
 | `flutter_local_notifications` | Notification channels (mobile) |
 | `firebase_messaging` | FCM push notifications (mobile) |
-| `home_widget` | Home screen widget (mobile) |
 
 ## Environment Setup
 
-**There is no `.env` file.** The Supabase URL and anon key are compile-time
-constants at the top of `lib/main.dart`. That is deliberate: an anon key is
-public by design, and the security boundary is Supabase's RLS policies, not
-concealment of the key.
+**There is no `.env` file.** The Supabase URL and publishable key are
+compile-time constants at the top of `lib/main.dart`. That is deliberate: a
+publishable key is public by design, and the security boundary is Supabase's
+RLS policies, not concealment of the key.
+
+It is the `sb_publishable_...` key from Supabase's current API key scheme, not
+the legacy `anon` JWT. Do not disable legacy API keys until every released
+build carries the publishable key - it is compiled in, so an old install keeps
+sending whatever it shipped with. The server-side counterpart is the
+`sb_secret_...` key: `SUPABASE_SERVICE_ROLE_KEY` in an Edge Function now holds
+that, and the `fcm_service_role_key` vault secret the notification trigger
+sends must match it byte for byte or `send-clipboard-notification` returns 401
+and push stops with nothing surfacing the failure.
 
 Two config files are gitignored and must be copied across (or re-downloaded
 from the Firebase console) when setting up a new machine for mobile work:
@@ -212,8 +225,14 @@ Both tools execute in a secure V8 sandbox isolate with no file system access. Us
 - **Push Notifications**: FCM for Android, APNs for iOS via Firebase Cloud Messaging
   - FCM tokens stored in Supabase user table
   - Supabase Edge Function or database trigger sends notifications on new clipboard items
-  - Notification tap opens app and auto-copies content
-- **Home Screen Widget**: Displays 5 most recent clips in scrollable list, auto-updates via `home_widget` package
+  - Notification tap opens app and auto-copies content (Android copies silently
+    via CopyActivity when the background isolate staged the clip)
+- **No home screen widget.** One existed and was removed: an iOS widget
+  extension cannot write the general pasteboard on a real device (measured -
+  the staged file read back fine and `UIPasteboard.general.string` did not hold
+  the value microseconds later, in-process), so tapping a clip could only open
+  the app. That is barely more than the notification tap already does, and the
+  Android half was not worth maintaining alone.
 - **UI Design**: Glassmorphism cards, dark theme, staggered animations consistent with desktop
 
 ## Database Schema

@@ -1,0 +1,67 @@
+project_id = "xhbggxftvnlkotvehwmj"
+
+# send-clipboard-notification is called by the
+# notify_mobile_devices_on_clipboard_insert trigger over pg_net, carrying the
+# `sb_secret_...` key held in the fcm_service_role_key vault secret.
+#
+# verify_jwt MUST stay false. Supabase's current API key scheme issues opaque
+# `sb_secret_...` keys rather than JWTs, so the platform's JWT gate has nothing
+# to validate and rejects the trigger with a 401 before the function runs at
+# all - no logs, no error surfaced anywhere, push simply stops for every device
+# on every platform. That is how push spent a day dead before anyone noticed.
+#
+# This is not a relaxation of auth, and it does not depend on anything
+# iOS-specific: the function authenticates its own callers either way, matching
+# the service-role key exactly for trigger calls and falling back to
+# auth.getUser() plus an ownership check on record.user_id for everyone else.
+# The platform gate was redundant even when it worked.
+#
+# Declared here rather than passed as --no-verify-jwt on the command line,
+# because .github/workflows/deploy.yml runs `supabase functions deploy` with no
+# flags on every push to main - so without this file the next merge would
+# silently turn JWT verification back on and break push again.
+[functions.send-clipboard-notification]
+verify_jwt = false
+
+# Auth email templates, deployed by `supabase config push` in
+# .github/workflows/deploy.yml. Before this, supabase/email-templates/ was only
+# a version-controlled copy of what someone had pasted into the dashboard, and
+# the two drifted the moment anyone forgot.
+#
+# Only these three blocks are declared here, and that is deliberate. `config
+# push` writes exactly what the file declares and leaves everything else alone,
+# so the 27 settings this project configures in the dashboard - anonymous
+# sign-ins, Google OAuth, the Resend SMTP credentials, site_url, the
+# ghostcopy:// redirect allow-list - stay untouched precisely because they are
+# absent. Do not paste a fuller config in here: `supabase config pull` would
+# write all of them, and a partial [auth.email.smtp] block (one missing `pass`)
+# invalidates SMTP and silently stops every auth email.
+#
+# The subjects must match what the dashboard already had, or a push rewrites
+# them as a side effect of shipping a template. `supabase config diff` prints
+# the remote value of each, which is where these came from.
+#
+# Note that diff compares subjects only - it cannot show a change to the HTML
+# body, so a template edit always appears as "no differences". That is expected;
+# the push still uploads the file at content_path.
+#
+# content_path is relative to where the CLI runs, which is the repository root
+# in .github/workflows/deploy.yml - not to this file. Supabase's own documented
+# example is "./supabase/templates/confirmation.html" from a config.toml that
+# itself sits in supabase/, which only reads correctly that way. These paths
+# were written without the prefix and pointed at nothing; a missing file is not
+# an error to the CLI, and `config diff` compares subjects only, so the push
+# would have reported success and uploaded no template at all. CI now checks
+# every declared path resolves before it pushes.
+
+[auth.email.template.confirmation]
+subject = "Confirm your GhostCopy account"
+content_path = "./supabase/email-templates/confirm-signup.html"
+
+[auth.email.template.recovery]
+subject = "Reset your GhostCopy password"
+content_path = "./supabase/email-templates/reset-password.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new GhostCopy email"
+content_path = "./supabase/email-templates/change-email.html"

@@ -18,7 +18,6 @@ GhostCopy is a cross-platform clipboard synchronization tool built with Flutter.
 | `tray_manager` | System tray icon and menu |
 | `launch_at_startup` | Auto-start on login |
 | `flutter_local_notifications` | Mobile push notifications |
-| `home_widget` | iOS/Android home screen widgets |
 | `dart_jsonwebtoken` | JWT decoding |
 
 ## Architecture Principles

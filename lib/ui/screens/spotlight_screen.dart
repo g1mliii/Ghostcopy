@@ -119,6 +119,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
+
+  /// What prettifying last produced, to tell an offer from a done job.
+  ///
+  /// Compared against the field's current contents rather than kept as a "has
+  /// been prettified" flag, so editing or pasting over it re-offers the action
+  /// without anything having to remember to clear this.
+  String? _prettifiedJson;
   final FocusNode _textFieldFocusNode = FocusNode();
 
   // ViewModel - handles business logic and state
@@ -820,32 +827,53 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                 20,
                                 20,
                               ), // Extra top padding for buttons
-                              child: SingleChildScrollView(
-                                physics: const ClampingScrollPhysics(),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    _buildHeader(),
-                                    const SizedBox(height: 12),
-                                    _buildTextField(),
+                              // Only the content area scrolls. Everything used
+                              // to sit in one scroll view, so pasting enough
+                              // text pushed Send off the bottom and the user
+                              // had to scroll a 500x400 window to reach the
+                              // one control the window exists for. The
+                              // destination chips and Send are outside it now
+                              // and cannot move.
+                              //
+                              // Flexible, not Expanded: with a short clip the
+                              // column still shrinks to its content and stays
+                              // centred, which is the ordinary case. It only
+                              // takes the remaining height when there is more
+                              // text than fits, and the field scrolls inside
+                              // that.
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _buildHeader(),
+                                  const SizedBox(height: 12),
+                                  Flexible(
+                                    child: SingleChildScrollView(
+                                      physics: const ClampingScrollPhysics(),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          _buildTextField(),
+                                          const SizedBox(height: 10),
+                                          // Empty for JSON and plain text, so
+                                          // this spreads to nothing rather
+                                          // than reserving space for a preview
+                                          // that is not coming.
+                                          ..._buildTransformerUI(),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  _buildPlatformSelector(),
+                                  const SizedBox(height: 12),
+                                  _buildSendButton(),
+                                  if (_viewModel.errorMessage != null) ...[
                                     const SizedBox(height: 10),
-                                    // Show transformer previews if content is transformable
-                                    if (_viewModel
-                                            .detectedContentType
-                                            ?.isTransformable ??
-                                        false)
-                                      ..._buildTransformerUI(),
-                                    _buildPlatformSelector(),
-                                    const SizedBox(height: 12),
-                                    _buildSendButton(),
-                                    if (_viewModel.errorMessage != null) ...[
-                                      const SizedBox(height: 10),
-                                      _buildErrorMessage(),
-                                    ],
+                                    _buildErrorMessage(),
                                   ],
-                                ),
+                                ],
                               ),
                             ),
                           ),
@@ -903,6 +931,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Widget _buildSettingsButton() {
     return _HoverableIconButton(
       icon: Icons.settings,
+      tooltip: 'Settings',
       isActive: _showSettings,
       onTap: () {
         if (_showSettings) {
@@ -919,6 +948,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Widget _buildHistoryButton() {
     return _HoverableIconButton(
       icon: Icons.history,
+      tooltip: 'Clipboard history',
       isActive: _showHistory,
       onTap: () {
         if (_showHistory) {
@@ -1144,6 +1174,19 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                     constraints: const BoxConstraints(),
                     splashRadius: 18,
                   ),
+                  // Prettifying JSON rewrites the field in place - it shows
+                  // nothing of its own, so it does not need a panel. It had a
+                  // full-width button in the transformer block below, which
+                  // cost about 66px of a 400px window on top of a text field
+                  // that pasted JSON already fills to its six-line maximum.
+                  // That tipped the column into scrolling, and this window is
+                  // not built to scroll. Here it costs nothing: the row exists
+                  // either way.
+                  if (_viewModel.detectedContentType?.type ==
+                      TransformerContentType.json) ...[
+                    const SizedBox(width: 6),
+                    _buildPrettifyJsonButton(),
+                  ],
                 ],
               ),
             ),
@@ -1193,63 +1236,93 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   /// Build transformer UI (JSON prettify, JWT decode, color preview)
+  /// Previews that have something of their own to show.
+  ///
+  /// JSON is not here: it is an action, not a preview, and lives beside the
+  /// upload button under the field. Returns an empty list when there is nothing
+  /// to render, rather than a pair of SizedBoxes around nothing - the spacing
+  /// used to be added for any transformable type, so JSON left 26px of blank
+  /// column behind after its button moved.
   List<Widget> _buildTransformerUI() {
-    if (_viewModel.detectedContentType == null) return [];
-
-    final widgets = <Widget>[const SizedBox(height: 10)];
-
-    switch (_viewModel.detectedContentType!.type) {
-      case TransformerContentType.json:
-        widgets.add(_buildJsonTransformer());
+    final Widget preview;
+    switch (_viewModel.detectedContentType?.type) {
       case TransformerContentType.jwt:
-        widgets.add(_buildJwtTransformer());
+        preview = _buildJwtTransformer();
       case TransformerContentType.hexColor:
-        widgets.add(_buildHexColorPreview());
+        preview = _buildHexColorPreview();
+      case TransformerContentType.json:
       case TransformerContentType.plainText:
-        break;
+      case null:
+        return const [];
     }
 
-    // Add spacing after transformer widgets to prevent overlap with device selector
-    widgets.add(const SizedBox(height: 16));
-
-    return widgets;
+    return [
+      const SizedBox(height: 10),
+      preview,
+      // Spacing after, so the preview does not sit against the device selector.
+      const SizedBox(height: 16),
+    ];
   }
 
-  /// Build JSON prettifier button and preview
-  Widget _buildJsonTransformer() {
-    return RepaintBoundary(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ElevatedButton.icon(
-            icon: const Icon(Icons.format_align_left, size: 16),
-            label: const Text('Prettify JSON'),
-            onPressed: () async {
-              final result = await _transformerService.transform(
-                _viewModel.content,
-                TransformerContentType.json,
-              );
-              if (!mounted) return;
-              if (result.isSuccess && result.transformedContent != null) {
-                setState(() {
-                  _textController.text = result.transformedContent!;
-                });
-              } else {
-                // Error handling moved to ViewModel
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: GhostColors.primaryAlpha80,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-          ),
-        ],
-      ),
+  /// The prettify action, offered until it has been taken.
+  ///
+  /// Tinted while there is something to do, and plain once the field already
+  /// holds the formatted text - at that point it is just another tool sitting
+  /// beside Upload, and an accent on it would be drawing attention to work that
+  /// is already done.
+  ///
+  /// Whether it has been taken is a comparison, not a flag: the field is
+  /// formatted when its current contents are exactly what prettifying last
+  /// produced. So editing a character, or pasting different JSON, brings the
+  /// offer back on its own, with nothing to remember to reset.
+  Widget _buildPrettifyJsonButton() {
+    final isFormatted =
+        _prettifiedJson != null && _prettifiedJson == _viewModel.content;
+
+    final button = IconButton(
+      onPressed: _handlePrettifyJson,
+      icon: const Icon(Icons.data_object),
+      // Matches the Upload icon beside it once there is nothing to offer.
+      color: isFormatted ? GhostColors.primary : GhostColors.accentText,
+      iconSize: 20,
+      // Says what was noticed as well as what pressing does. A bare "Prettify
+      // JSON" does not explain why an icon the user has not seen before just
+      // appeared.
+      tooltip: isFormatted
+          ? 'JSON formatted'
+          : 'JSON detected - tap to format it',
+      padding: const EdgeInsets.all(8),
+      constraints: const BoxConstraints(),
+      splashRadius: 18,
     );
+
+    if (isFormatted) return button;
+
+    // accentSoft is the selected-control fill - present without competing with
+    // Send, which stays the only saturated purple on screen.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: GhostColors.accentSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: GhostColors.accentBorder),
+      ),
+      child: button,
+    );
+  }
+
+  /// Rewrite the field with the prettified form.
+  Future<void> _handlePrettifyJson() async {
+    final result = await _transformerService.transform(
+      _viewModel.content,
+      TransformerContentType.json,
+    );
+    if (!mounted) return;
+    if (result.isSuccess && result.transformedContent != null) {
+      setState(() {
+        _textController.text = result.transformedContent!;
+        _prettifiedJson = result.transformedContent;
+      });
+    }
   }
 
   /// Build JWT decoder preview
@@ -1654,6 +1727,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
                     color: GhostColors.textSecondary,
+                    tooltip: 'Close panel',
                     onPressed: _closeActivePanel,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -1722,8 +1796,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Handle closing the settings panel
   void _handleSettingsClose() => _closeActivePanel();
 
-  /// Handle closing the auth panel
-  void _handleAuthClose() => _closeActivePanel();
+  /// Handle closing the auth panel.
+  ///
+  /// Auth changes happen while this screen stays mounted. Refresh after the
+  /// panel's post-login work has completed so a desktop sign-in cannot leave
+  /// the anonymous account's empty history on screen until encryption is
+  /// toggled.
+  void _handleAuthClose() {
+    _closeActivePanel();
+    unawaited(_viewModel.refreshHistory());
+  }
 
   /// Handle closing the history panel
   Future<void> _handleHistoryClose() async => _closeActivePanel();
@@ -2141,6 +2223,7 @@ class _HistorySearchBarState extends State<_HistorySearchBar> {
               ? IconButton(
                   icon: const Icon(Icons.clear, size: 16),
                   color: GhostColors.textMuted,
+                  tooltip: 'Clear search',
                   onPressed: () {
                     widget.controller.clear();
                     widget.onChanged('');
@@ -2571,11 +2654,19 @@ class _HoverableIconButton extends StatefulWidget {
     required this.icon,
     required this.isActive,
     required this.onTap,
+    required this.tooltip,
   });
 
   final IconData icon;
   final bool isActive;
   final VoidCallback onTap;
+
+  /// Required, not optional. This is an icon with no text beside it, so
+  /// without a label it reads as nothing at all to a screen reader - and on
+  /// desktop, where the whole window is icons in a row, there was no hover
+  /// tooltip either. Making it required means a new one cannot be added
+  /// without saying what it does.
+  final String tooltip;
 
   @override
   State<_HoverableIconButton> createState() => _HoverableIconButtonState();
@@ -2600,23 +2691,26 @@ class _HoverableIconButtonState extends State<_HoverableIconButton> {
         valueListenable: _isHovered,
         builder: (context, isHovered, _) {
           final isHighlighted = widget.isActive || isHovered;
-          return InkWell(
-            onTap: widget.onTap,
-            borderRadius: _borderRadius,
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isHighlighted
-                    ? GhostColors.primaryAlpha10
-                    : Colors.transparent,
-                borderRadius: _borderRadius,
-              ),
-              child: Icon(
-                widget.icon,
-                size: 22,
-                color: isHighlighted
-                    ? GhostColors.primary
-                    : GhostColors.textSecondary,
+          return Tooltip(
+            message: widget.tooltip,
+            child: InkWell(
+              onTap: widget.onTap,
+              borderRadius: _borderRadius,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isHighlighted
+                      ? GhostColors.primaryAlpha10
+                      : Colors.transparent,
+                  borderRadius: _borderRadius,
+                ),
+                child: Icon(
+                  widget.icon,
+                  size: 22,
+                  color: isHighlighted
+                      ? GhostColors.primary
+                      : GhostColors.textSecondary,
+                ),
               ),
             ),
           );

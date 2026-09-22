@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <application
-        android:label="ghostcopy"
+        android:label="GhostCopy"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false"
         android:allowBackup="false"
@@ -127,25 +127,6 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
-
-        <!-- Clipboard Widget Provider -->
-        <receiver
-            android:name=".widget.ClipboardWidget"
-            android:exported="true"
-            android:label="GhostCopy">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/clipboard_widget_info" />
-        </receiver>
-
-        <!-- Widget ListView Data Service -->
-        <service
-            android:name=".widget.ClipboardWidgetService"
-            android:permission="android.permission.BIND_REMOTEVIEWS"
-            android:exported="false" />
 
         <!-- FileProvider for sharing files securely -->
         <provider

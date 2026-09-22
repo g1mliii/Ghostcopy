@@ -8,7 +8,6 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
-import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/file_type_service.dart';
@@ -56,7 +55,6 @@ const double _twoPaneMinAspect = 0.85;
 /// history list does. So the compose side is pinned and history takes the rest.
 const double _composePaneWidth = 400;
 
-const _shareChannel = MethodChannel('com.ghostcopy.ghostcopy/share');
 const _notificationChannel = MethodChannel(
   'com.ghostcopy.ghostcopy/notifications',
 );
@@ -254,8 +252,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     _linkSubscription?.cancel();
 
     // Remove method channel handlers to prevent memory leaks
-    _shareChannel.setMethodCallHandler(null);
     _notificationChannel.setMethodCallHandler(null);
+
+    // And tell the native side, which otherwise keeps pushing taps at a channel
+    // nobody is answering. It parks them instead until the next screen pulls.
+    // Fire and forget: nothing here can wait, and a platform without this
+    // method answers MissingPluginException, which is not a failure.
+    unawaited(
+      _notificationChannel
+          .invokeMethod<void>('notificationHandlerDetached')
+          .catchError((Object _) {}),
+    );
 
     super.dispose();
   }
@@ -535,136 +542,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     }
   }
 
-  /// Outcome of a share handed to us by the OS.
-  ///
-  /// These were three identical pairs of inline closures, one per share type,
-  /// each rebuilding the same SnackBar - and they used SnackBar while the rest
-  /// of this screen uses the app's own toast.
-  void _shareSucceeded(String message) {
-    if (!mounted) return;
-    showGhostToast(context, message, type: GhostToastType.success);
-  }
-
-  void _shareFailed(String message) {
-    if (!mounted) return;
-    showGhostToast(context, message, type: GhostToastType.error);
-  }
-
   void _setupMethodChannels() {
-    _shareChannel.setMethodCallHandler((call) async {
-      switch (call.method) {
-        case 'handleShareIntent':
-          // ignore: avoid_dynamic_calls
-          final content = call.arguments['content'] as String?;
-          if (content != null && content.isNotEmpty) {
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(
-              content,
-            );
-
-            if (selectedDeviceTypes != null) {
-              unawaited(
-                _viewModel.saveSharedContent(
-                  content,
-                  selectedDeviceTypes,
-                  onSuccess: _shareSucceeded,
-                  onError: _shareFailed,
-                ),
-              );
-            }
-            return true;
-          }
-          return false;
-
-        case 'handleShareImage':
-          // ignore: avoid_dynamic_calls
-          final imageBytes = call.arguments['imageBytes'] as Uint8List?;
-          // ignore: avoid_dynamic_calls
-          final mimeType = call.arguments['mimeType'] as String?;
-
-          if (imageBytes != null && imageBytes.isNotEmpty) {
-            if (imageBytes.length > ClipboardLimits.maxFileBytes) {
-              debugPrint(
-                '[MobileMain] Image too large: ${imageBytes.length} bytes',
-              );
-              showGhostToast(
-                context,
-                'Image too large (max 10MB)',
-                icon: Icons.error_outline,
-                type: GhostToastType.error,
-              );
-              return false;
-            }
-
-            final sizeKB = (imageBytes.length / 1024).toStringAsFixed(1);
-
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(
-              'Image ($sizeKB KB)',
-            );
-
-            if (selectedDeviceTypes != null) {
-              unawaited(
-                _viewModel.saveSharedImage(
-                  imageBytes,
-                  mimeType!,
-                  selectedDeviceTypes,
-                  onSuccess: _shareSucceeded,
-                  onError: _shareFailed,
-                ),
-              );
-            }
-            return true;
-          }
-          return false;
-
-        case 'handleShareFile':
-          // ignore: avoid_dynamic_calls
-          final fileBytes = call.arguments['fileBytes'] as Uint8List?;
-          // ignore: avoid_dynamic_calls
-          final mimeType = call.arguments['mimeType'] as String?;
-          // ignore: avoid_dynamic_calls
-          final filename = call.arguments['filename'] as String?;
-
-          if (fileBytes != null && fileBytes.isNotEmpty && filename != null) {
-            if (fileBytes.length > ClipboardLimits.maxFileBytes) {
-              debugPrint(
-                '[MobileMain] File too large: ${fileBytes.length} bytes',
-              );
-              showGhostToast(
-                context,
-                'File too large (max 10MB)',
-                icon: Icons.error_outline,
-                type: GhostToastType.error,
-              );
-              return false;
-            }
-
-            final sizeKB = (fileBytes.length / 1024).toStringAsFixed(1);
-
-            final selectedDeviceTypes = await _showDeviceSelectorDialog(
-              '$filename ($sizeKB KB)',
-            );
-
-            if (selectedDeviceTypes != null) {
-              unawaited(
-                _viewModel.saveSharedFile(
-                  fileBytes,
-                  mimeType!,
-                  filename,
-                  selectedDeviceTypes,
-                  onSuccess: _shareSucceeded,
-                  onError: _shareFailed,
-                ),
-              );
-            }
-            return true;
-          }
-          return false;
-
-        default:
-          return false;
-      }
-    });
-
     _notificationChannel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'handleNotificationAction':
@@ -681,11 +559,75 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           return false;
       }
     });
+
+    // Ask for anything that arrived before this handler existed.
+    //
+    // Tapping a notification for an app the user swiped away cold-launches it,
+    // and the native side sees that tap long before Dart is running - let alone
+    // before this screen is built. A push from native would land on nobody and
+    // be lost, so the native side holds it and Dart collects it here, once it
+    // is actually able to answer. Pulling is the only ordering that does not
+    // depend on guessing how long a cold start takes.
+    unawaited(_drainPendingNotificationAction());
+  }
+
+  /// Collect a notification tap the native side parked during a cold launch.
+  Future<void> _drainPendingNotificationAction() async {
+    try {
+      final pending = await _notificationChannel
+          .invokeMapMethod<String, dynamic>('takePendingNotificationAction');
+      if (pending == null || !mounted) return;
+
+      final clipboardId = pending['clipboardId'] as String?;
+      final action = pending['action'] as String?;
+
+      debugPrint(
+        '[MobileMain] Draining deferred notification tap: $clipboardId',
+      );
+      final handled = await _viewModel.handleNotificationAction(
+        clipboardId: clipboardId,
+        action: action,
+      );
+
+      // handleNotificationAction reports failure by returning false, not by
+      // throwing, and the result was dropped. The native side clears its
+      // parked slot the moment it hands the action over, so a clip that could
+      // not be fetched or decrypted left the app opening and then doing
+      // nothing at all - no copy, no sheet, no message, and nothing left to
+      // retry. It is the one case this whole path exists for, so say so.
+      if (!handled && mounted) {
+        showGhostToast(
+          context,
+          'Could not open that clip - it may have been deleted',
+          icon: Icons.error_outline,
+          type: GhostToastType.error,
+        );
+      }
+    } on MissingPluginException catch (e) {
+      // A build whose native side does not answer this. Listed separately
+      // because MissingPluginException does not extend PlatformException, so
+      // the clause below - which was written for exactly this case - never
+      // caught it, and the throw escaped an unawaited call as an unhandled
+      // async error instead.
+      debugPrint(
+        '[MobileMain] No native side for a deferred tap: ${e.message}',
+      );
+    } on PlatformException catch (e) {
+      debugPrint('[MobileMain] No deferred notification action: ${e.message}');
+    }
   }
 
   void _initializeShareIntentListeners() {
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
-      if (value.isNotEmpty) unawaited(_handleSharedFilesWithTargets(value));
+      if (value.isNotEmpty) unawaited(_handleSharedFiles(value));
+
+      // Tell the plugin the payload is consumed, as its own usage requires.
+      // The iOS extension writes each share into the App Group and nothing
+      // cleared it, so getInitialMedia kept returning the last one: an ordinary
+      // cold launch days later re-sent a clip that had already gone, with the
+      // notification to match. `value` is already in hand and the files live in
+      // a temp cache, so this only drops the stored payload.
+      ReceiveSharingIntent.instance.reset();
     });
 
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
@@ -693,7 +635,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         .listen(
           (value) {
             if (value.isNotEmpty) {
-              unawaited(_handleSharedFilesWithTargets(value));
+              unawaited(_handleSharedFiles(value));
             }
           },
           onError: (Object err) {
@@ -704,14 +646,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     debugPrint('[ShareSheet] Share intent listeners initialized');
   }
 
-  /// Sends shared files straight to the devices in Settings.
+  /// Sends a shared item to the devices in Settings.
   ///
-  /// No picker: the point of sharing from another app is to be done in one
-  /// tap, and the Default devices setting already says where clips go. Change
-  /// the target in Settings, or send from the app itself to pick per-send.
-  Future<void> _handleSharedFilesWithTargets(
-    List<SharedMediaFile> files,
-  ) async {
+  /// One path for both platforms, the share plugin's. Android used to run a
+  /// second, native one alongside it - MainActivity caught ACTION_SEND, popped
+  /// a device-picker dialog and called finish() immediately, closing the
+  /// activity out from under the dialog it had just asked for - while this
+  /// path ran too. Both fired on the same share.
+  Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
     final targets = await locator<ISettingsService>()
         .getAutoSendTargetDevices();
     if (!mounted) return;
@@ -720,162 +662,23 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       files,
       targetDeviceTypes: targets,
       onSuccess: (msg) {
-        if (mounted) {
-          showGhostToast(
-            context,
-            msg,
-            icon: Icons.upload_file,
-            type: GhostToastType.success,
-          );
-        }
+        if (!mounted) return;
+        showGhostToast(
+          context,
+          msg,
+          icon: Icons.upload_file,
+          type: GhostToastType.success,
+        );
       },
-    );
-  }
-
-  Future<Set<String>?> _showDeviceSelectorDialog(String content) async {
-    // Seeded from the "Send to devices" setting, so the usual case is one tap
-    // rather than re-picking the same devices on every share.
-    final selectedTypes = Set<String>.from(
-      await locator<ISettingsService>().getAutoSendTargetDevices(),
-    );
-    if (!mounted) return null;
-
-    return showDialog<Set<String>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            backgroundColor: GhostColors.surface,
-            title: const Text(
-              'Share to Devices',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: GhostColors.textPrimary,
-              ),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Select which device types to send to:',
-                  style: TextStyle(fontSize: 13, color: GhostColors.textMuted),
-                ),
-                if (content.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  // Named so a share started from another app shows what is
-                  // about to be sent, rather than an unlabelled device list.
-                  Text(
-                    content,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.textSecondary,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                // Generated from the canonical device list rather than
-                // written out chip by chip. The hand-written version listed
-                // four platforms and omitted linux, while the setting that
-                // seeds selectedTypes can contain it - so a Linux target
-                // arrived selected with no chip to show or clear it, and Send
-                // routed the clip to a destination the dialog never displayed.
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final type in ClipboardRepository.validDeviceTypes)
-                      _buildDeviceChip(
-                        type,
-                        selectedTypes.contains(type),
-                        () => setDialogState(() {
-                          if (!selectedTypes.remove(type)) {
-                            selectedTypes.add(type);
-                          }
-                        }),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  selectedTypes.isEmpty
-                      ? 'Empty = All devices'
-                      : '${selectedTypes.length} type(s) selected',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: GhostColors.textMuted,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(color: Colors.grey.shade400),
-                ),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(selectedTypes),
-                child: const Text(
-                  'Send',
-                  style: TextStyle(color: GhostColors.primary),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  /// Icon and label are derived from [type] rather than passed in: they were
-  /// three positional arguments computed from it at the call site, and the
-  /// first was not read at all.
-  Widget _buildDeviceChip(String type, bool isSelected, VoidCallback onTap) {
-    final icon = iconForDeviceType(type);
-    final label = platformLabel(type);
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? GhostColors.primaryAlpha20
-              : GhostColors.background,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? GhostColors.primary : GhostColors.glassBorder,
-            width: 1.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: isSelected ? GhostColors.primary : GhostColors.textMuted,
-              ),
-            ),
-          ],
-        ),
-      ),
+      onError: (msg) {
+        if (!mounted) return;
+        showGhostToast(
+          context,
+          msg,
+          icon: Icons.error_outline,
+          type: GhostToastType.error,
+        );
+      },
     );
   }
 
@@ -954,7 +757,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  Future<void> _navigateToSettings() async {
+  Future<void> _navigateToSettings({bool openPassphraseRestore = false}) async {
     final authService = locator<IAuthService>();
     final userBefore = authService.currentUserId;
 
@@ -964,6 +767,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           authService: locator(),
           deviceService: locator(),
           settingsService: locator(),
+          openPassphraseRestore: openPassphraseRestore,
         ),
       ),
     );
@@ -1074,16 +878,69 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // they belong next to each other rather than stacked with hundreds of dp
       // of dead margin down each side. See _twoPaneMinAspect for why width
       // alone cannot make this call.
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final w = constraints.maxWidth;
-          final h = constraints.maxHeight;
-          final splits =
-              w >= _twoPaneMinWidth && h > 0 && (w / h) >= _twoPaneMinAspect;
-          return splits
-              ? _buildTwoPaneBody(context)
-              : _buildSingleColumnBody(context);
-        },
+      body: Stack(
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final h = constraints.maxHeight;
+              final splits =
+                  w >= _twoPaneMinWidth &&
+                  h > 0 &&
+                  (w / h) >= _twoPaneMinAspect;
+              return splits
+                  ? _buildTwoPaneBody(context)
+                  : _buildSingleColumnBody(context);
+            },
+          ),
+          if (_viewModel.isPreparingShare) _buildPreparingShareOverlay(),
+        ],
+      ),
+    );
+  }
+
+  /// Shown while a file is fetched for the share sheet.
+  ///
+  /// Tapping a notification for a file opens the app and then waits on a
+  /// download before the sheet can appear. Without this the app looks like it
+  /// opened and did nothing, which on a fast phone reads as a failure rather
+  /// than a wait.
+  ///
+  /// Deliberately blocking: the sheet is about to take over the screen, so
+  /// letting the user start something else in the gap only creates a race
+  /// between their tap and the sheet appearing over it.
+  Widget _buildPreparingShareOverlay() {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: GhostColors.background.withValues(alpha: 0.72),
+        child: Center(
+          child: DecoratedBox(
+            decoration: ShapeDecoration(
+              color: GhostColors.surface,
+              shape: Adaptive.surfaceShape(radius: GhostSpacing.surfaceRadius),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Adaptive.progressIndicator(
+                    size: 24,
+                    color: GhostColors.primary,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Preparing to share…',
+                    style: GhostTypography.body.copyWith(
+                      fontSize: 13,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1548,7 +1405,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: GhostSpacing.chipHeight,
+          // Scales with the label. A horizontal ListView needs a bounded
+          // height, and this was a flat 38 - so the chips inside it were
+          // clipped at the bigger accessibility sizes however much room they
+          // asked for, and the text showed as fragments of its own glyphs.
+          height: _deviceChipRowHeight(context),
           child:
               // Suppressed during pull-to-refresh: the indicator the user
               // dragged already reports that reload. See isRefreshing.
@@ -1661,7 +1522,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     final selected = _viewModel.selectedDeviceTypes;
     if (selected.isEmpty) return 'Send to all devices';
     if (selected.length == 1) {
-      return 'Send to ${DeviceTypeTarget.platformLabel(selected.first)}';
+      return 'Send to ${platformLabel(selected.first)}';
     }
     return 'Send to ${selected.length} platforms';
   }
@@ -1684,7 +1545,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
             child: InkWell(
               borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
-              onTap: _navigateToSettings,
+              // The banner says "Tap to enter your passphrase", so it goes to
+              // the passphrase flow, not to the settings list with the control
+              // somewhere on it.
+              onTap: () => _navigateToSettings(openPassphraseRestore: true),
               child: Padding(
                 padding: const EdgeInsets.all(14),
                 child: Row(
@@ -2015,7 +1879,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 }
 
-/// Device selection chip widget
+/// Height of the destination chip row.
+///
+/// Only the label's share of the chip is scaled: the icon, the padding and the
+/// border are fixed sizes and do not grow with the user's text setting, so
+/// scaling the whole 38 would make the row far taller than the text needs.
+double _deviceChipRowHeight(BuildContext context) {
+  const labelLine = 18.0;
+  const chrome = GhostSpacing.chipHeight - labelLine;
+  return chrome + MediaQuery.textScalerOf(context).scale(labelLine);
+}
+
 /// Destination chip: one platform, or "All devices".
 class _DeviceChip extends StatelessWidget {
   const _DeviceChip({
@@ -2054,8 +1928,15 @@ class _DeviceChip extends StatelessWidget {
           onTap: onTap,
           borderRadius: _radius,
           child: Container(
-            height: GhostSpacing.chipHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            // A floor, not a fixed height. This was `height: chipHeight`, so
+            // the box stayed 38 tall however large the label got and the text
+            // spilled straight out of it at the bigger accessibility sizes.
+            // The minimum keeps the chip exactly as it was at normal sizes and
+            // lets it grow past that when the label needs the room.
+            constraints: const BoxConstraints(
+              minHeight: GhostSpacing.chipHeight,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: _radius,
               border: Border.all(
@@ -2325,7 +2206,7 @@ class _HistoryRowState extends State<_HistoryRow> {
           color: GhostColors.textMuted,
         ),
         Text(
-          DeviceTypeTarget.platformLabel(item.deviceType),
+          platformLabel(item.deviceType),
           style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         const Text(
@@ -2375,10 +2256,10 @@ class _HistoryRowState extends State<_HistoryRow> {
   static String _targetLabel(List<String>? targets) {
     if (targets == null || targets.isEmpty) return 'All devices';
     if (targets.length == 1) {
-      return DeviceTypeTarget.platformLabel(targets.first);
+      return platformLabel(targets.first);
     }
     if (targets.length == 2) {
-      return targets.map(DeviceTypeTarget.platformLabel).join(', ');
+      return targets.map(platformLabel).join(', ');
     }
     return '${targets.length} devices';
   }

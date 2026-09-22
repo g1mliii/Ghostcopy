@@ -250,7 +250,7 @@ packages:
     source: hosted
     version: "0.7.15"
   device_info_plus:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: device_info_plus
       sha256: "98f28b42168cc509abc92f88518882fd58061ea372d7999aecc424345c7bff6a"
@@ -637,14 +637,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
-  home_widget:
-    dependency: "direct main"
-    description:
-      name: home_widget
-      sha256: b8d377e6a5aacc65193170addf252cce7868fa621b740cdd7b517a233871c185
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.9.4"
   hooks:
     dependency: transitive
     description:

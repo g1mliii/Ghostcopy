@@ -58,3 +58,140 @@ Each entry should include:
   request. Related: an RLS `WITH CHECK` failure returns 42501/401, not the 400 a column
   constraint gives, so tightening a policy can silently change the status codes a client
   branches on.
+
+
+### 2026-09-16 - Called a build green because the .app directory existed
+
+- **Date**: 2026-09-16
+- **Failure Mode**: Reported "the build succeeded" to the user after seeing
+  `build/ios/Debug-iphonesimulator/Runner.app` on disk. The build was still
+  running. Xcode creates the bundle directory early and fills it as it goes -
+  at that moment it held only `Frameworks`, with no binary and no `Info.plist`.
+  The install then failed with "Missing bundle ID", which is what a half-built
+  bundle looks like, not a configuration problem.
+- **Detection Signal**: `xcrun simctl install` failed on a build I had just
+  announced as finished. The build log was 0 bytes and `xcodebuild` was still
+  in `ps`.
+- **Prevention Rule**: A build artifact existing is not a build succeeding.
+  Confirm the *process* finished and read its exit status before reporting -
+  for a backgrounded build that means the completion notification or an
+  explicit `ps` check, never `find`-ing the output path. Related trap in this
+  session: `cmd | tail` reports tail's exit status, so a failing build shows
+  `EXIT=0`. Use `${PIPESTATUS[0]}` or check the log text for the failure line.
+
+
+### 2026-09-16 - Dismissed the load-bearing half of a working fix as cargo cult
+
+- **Date**: 2026-09-16
+- **Failure Mode**: iOS pods failed on Xcode 27 with `IPHONEOS_DEPLOYMENT_TARGET
+  is set to 13.0`. `macos/Podfile` already solved the same problem two ways: a
+  project-level loop and a per-target, per-configuration loop. I copied the
+  project-level loop, explicitly declined to copy the per-target loop as
+  "mobile_scanner-specific cargo cult", and it did not work. The per-target loop
+  was the part that mattered. Two further attempts failed because I had also
+  misidentified *where* the 13.0 lived: my script printed those configurations
+  as "(project-level)" merely because their block had no `PRODUCT_NAME`, and I
+  believed the label instead of checking which configuration list owned them.
+  They belonged to `PBXAggregateTarget "Flutter"`.
+- **Detection Signal**: The setting read 16.0 in memory during `post_install`
+  and 13.0 on disk afterwards - which should have prompted "I am editing the
+  wrong object", not "CocoaPods is overwriting my save". Resolving the owning
+  configuration list by UUID found the aggregate target immediately.
+- **Prevention Rule**: When a sibling platform in the same repo already solves
+  the identical problem, port its fix whole and only then remove parts that are
+  demonstrably unnecessary - "this looks unrelated" is a hypothesis, not a
+  finding. And when locating a setting in a pbxproj, resolve the owning target
+  or configuration list by UUID; absence of a field like `PRODUCT_NAME` is not
+  evidence of project scope. Root cause worth remembering: Flutter's generated
+  podspec pins `ios.deployment_target = '13.0'` and podhelper only strips values
+  strictly below 13, so exactly 13.0 survives into a toolchain that rejects it.
+
+
+### 2026-09-17 - Theorised three times from source when the device log had the answer
+
+- **Date**: 2026-09-17
+- **Failure Mode**: iOS launched to a blank white screen. I produced three
+  confident diagnoses from reading code, and all three were wrong: first the
+  `NSExtension` key in the app Info.plist (a real bug, but not this one),
+  then `SystemChrome.setEnabledSystemUIMode` throwing `MissingPluginException`,
+  then the same call hanging on an unanswered platform channel. The actual
+  cause was in `log show` the whole time: `Application failed to launch:
+  UIScene life cycle is required for apps built with this SDK`. Building
+  against the iOS 27 SDK makes UIScene mandatory, so UIKit refused to launch
+  the app - which is why every Dart log line looked healthy. Dart was running
+  fine; it had no window to draw into.
+- **Detection Signal**: Instrumenting `main()` with prints either side of the
+  suspect call disproved the hang outright - `setEnabledSystemUIMode` completed
+  in 5ms and `runApp` was reached. Every theory had predicted Dart stopping
+  early; Dart was never the problem.
+- **Prevention Rule**: For a native launch or rendering failure, read the
+  device log *first* - `xcrun simctl spawn <udid> log show --predicate 'process
+  == "Runner"' --last 5m`. Dart-level logs only cover the Dart side, and a
+  clean Dart log with no UI is positive evidence the problem is native. Reading
+  source generates hypotheses; only the log distinguishes between them. Second
+  rule: after a fix, screenshot again before concluding it failed - the
+  migration had actually worked, and I called it a "second independent bug"
+  because I captured the screen before Flutter's first frame landed.
+
+
+### 2026-09-17 - Changing Keychain accessibility orphaned the existing passphrase
+
+- **Date**: 2026-09-17
+- **Failure Mode**: Gave FlutterSecureStorage an explicit
+  `IOSOptions(accessibility: KeychainAccessibility.first_unlock)` so a
+  push-woken background isolate could read the encryption key while the phone
+  was locked. The reasoning was sound and the locked-phone bug is real. What I
+  missed is that accessibility is part of a Keychain item's attributes, so
+  changing it orphans every item already written under the old value: the read
+  no longer matches and returns nothing, and the subsequent write collides with
+  the item that is still there. On a real upgrade that locks a user out of
+  their own encrypted clips permanently - the old passphrase is unreadable and
+  a new one cannot be stored.
+- **Detection Signal**: Two contradictory lines in the same run -
+  `No existing passphrase found` followed by
+  `Failed to set passphrase: ... Code: -25299 ... The specified item already
+  exists in the keychain.` A read miss and a write duplicate for the same key
+  can only both be true when the query attributes changed. Caught on a
+  simulator that looked like a clean install, because simulator Keychain items
+  survive app uninstalls.
+- **Prevention Rule**: Never change the accessibility (or any query attribute)
+  of an existing secure-storage key without a migration: read with the OLD
+  options, delete, then write with the new ones, and ship that migration before
+  or alongside the change. More generally - a storage change that alters how a
+  key is *addressed* is a data migration, not a configuration tweak, and needs
+  to be tested against a device that already holds the old data rather than a
+  fresh one. Reverted rather than fixed forward at the time, because the
+  original bug it addressed only affects a locked phone while the regression
+  destroys access to encrypted data outright.
+- **Resolved 2026-09-18**: fixed forward, as a migration this time -
+  `lib/services/impl/keychain_accessibility.dart`, with tests that model the two
+  Keychain behaviours that caused this (an item is identified by service and
+  account, so old and new cannot coexist and an add collides; a read filters on
+  accessibility, so the old item is invisible). The rule above stands: what made
+  it safe was the migration, not the constant.
+
+
+
+### 2026-09-17 - Installed a Flutter debug build on device and called it a crash
+
+- **Date**: 2026-09-17
+- **Failure Mode**: Built the app for the physical iPhone with `xcodebuild
+  -configuration Debug` and installed it with `devicectl`, then told the user
+  it was ready to open. Tapping the icon killed it instantly (signal 11). I had
+  assumed iOS Flutter debug builds launch standalone and that only hot reload
+  needed the tooling attached. They do not: since iOS 14 a debug build cannot
+  create a FlutterEngine without `flutter run` or Xcode driving it, because JIT
+  is unavailable to a home-screen launch. The binary was fine; the
+  configuration was wrong for how it was going to be started.
+- **Detection Signal**: `devicectl device process launch --console` printed the
+  engine's own explanation - "Cannot create a FlutterEngine instance in debug
+  mode without Flutter tooling or Xcode ... Alternatively profile and release
+  mode apps can be launched from the home screen" - immediately before
+  "App terminated due to signal 11". The signal alone looks like a native crash
+  in the changed code and sent me looking at the wrong thing first.
+- **Prevention Rule**: Match the build configuration to how the app will be
+  started. Anything the user launches themselves from the home screen must be
+  `--release` (or `--profile`); Debug is only for `flutter run` or Xcode. And
+  for any launch failure on device, run with `--console` before forming a
+  hypothesis - the engine usually says what is wrong in plain English, and a
+  bare signal number invites blaming the most recent diff.

@@ -11,7 +11,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
 import '../device_service.dart';
-import '../widget_service.dart';
 import 'encryption_service.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
@@ -476,15 +475,19 @@ class AuthService implements IAuthService {
       EncryptionService.instance.reset();
       ClipboardRepository.instance.reset();
 
-      // Widget thumbnails are decrypted renderings written to disk. Leaving
-      // them would show the previous account's clips to whoever signs in next.
-      await WidgetService().clearThumbnailCache();
-
       // Same for the clip staged for instant-copy by the FCM background
       // isolate: it holds ONE clip's decrypted plaintext, and CopyActivity only
       // deletes it when the notification is actually tapped. An untapped
       // notification leaves it on disk indefinitely - across a sign-out too.
       await _clearPendingCopy();
+
+      // And the home screen widget's thumbnail cache, which nothing else owns
+      // any more. WidgetService created and pruned widget_thumbnails/, and it
+      // was deleted along with the widget - but an install upgrading from a
+      // build that had one still has the directory, holding decrypted JPEG
+      // renderings of clips that are encrypted everywhere else. With no owner
+      // left they would outlive every account switch.
+      await _clearLegacyWidgetThumbnails();
 
       debugPrint('[AuthService] Reset encryption and repository state');
 
@@ -512,6 +515,25 @@ class AuthService implements IAuthService {
       }
     } on Object catch (e) {
       debugPrint('[AuthService] Could not clear staged clip: $e');
+    }
+  }
+
+  /// Remove the home screen widget's thumbnail cache, left by an older build.
+  ///
+  /// Best effort and deliberately quiet: it is gone on any install that never
+  /// had the widget, and failing to remove it is not a reason to fail a sign
+  /// out. Safe to keep running - it is a no-op once the directory is gone, and
+  /// nothing recreates it.
+  Future<void> _clearLegacyWidgetThumbnails() async {
+    try {
+      final cacheDir = await getApplicationCacheDirectory();
+      final legacy = Directory('${cacheDir.path}/widget_thumbnails');
+      if (legacy.existsSync()) {
+        await legacy.delete(recursive: true);
+        debugPrint('[AuthService] Removed legacy widget thumbnail cache');
+      }
+    } on Object catch (e) {
+      debugPrint('[AuthService] Could not remove widget thumbnails: $e');
     }
   }
 
