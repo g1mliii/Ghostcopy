@@ -34,6 +34,14 @@ final class AppUpdater: NSObject, SPUStandardUserDriverDelegate {
             result(FlutterError(code: "not_started", message: "The updater is not available in this build.", details: nil))
             return
           }
+          // Come forward first. This is an LSUIElement agent: no Dock icon, no
+          // menu bar, and it is not the frontmost app when the user picks
+          // "Check for Updates..." from the tray. Sparkle's window would open
+          // behind whatever they were using, with nothing to click to find it -
+          // the menu item would look like it had done nothing. The failure path
+          // in _runUpdateAction already calls showSpotlight for the same
+          // reason; this is the success path's version of it.
+          NSApp.activate()
           self.controller.checkForUpdates(nil)
           result(nil)
         case "setAutomaticChecks":
