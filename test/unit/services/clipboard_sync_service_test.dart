@@ -7,11 +7,17 @@ import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/impl/clipboard_sync_service.dart';
+import 'package:ghostcopy/services/obsidian_service.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/temp_file_service.dart';
+import 'package:ghostcopy/services/webhook_service.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+class _Webhook extends Mock implements IWebhookService {}
+
+class _Obsidian extends Mock implements IObsidianService {}
 
 class _Repository extends Mock implements IClipboardRepository {}
 
@@ -28,6 +34,8 @@ class _Supabase extends Mock implements SupabaseClient {}
 class _Auth extends Mock implements GoTrueClient {}
 
 void main() {
+  late _Webhook webhook;
+  late _Obsidian obsidian;
   late _Repository repository;
   late _Settings settings;
   late _Clipboard clipboard;
@@ -58,8 +66,25 @@ void main() {
   });
 
   setUp(() {
+    webhook = _Webhook();
+    obsidian = _Obsidian();
     repository = _Repository();
     settings = _Settings();
+    when(settings.getWebhookEnabled).thenAnswer((_) async => true);
+    when(
+      settings.getWebhookUrl,
+    ).thenAnswer((_) async => 'https://example.com/hook');
+    when(settings.getObsidianEnabled).thenAnswer((_) async => true);
+    when(settings.getObsidianVaultPath).thenAnswer((_) async => '/vault');
+    when(settings.getObsidianFileName).thenAnswer((_) async => 'clipboard.md');
+    when(() => webhook.sendWebhook(any(), any())).thenAnswer((_) async {});
+    when(
+      () => obsidian.appendToVault(
+        vaultPath: any(named: 'vaultPath'),
+        fileName: any(named: 'fileName'),
+        content: any(named: 'content'),
+      ),
+    ).thenAnswer((_) async {});
     clipboard = _Clipboard();
     tempFiles = _TempFiles();
     final client = _Supabase();
@@ -90,10 +115,62 @@ void main() {
       supabaseClient: client,
       clipboardService: clipboard,
       tempFileService: tempFiles,
+      webhookService: webhook,
+      obsidianService: obsidian,
     );
   });
 
   tearDown(() => service.dispose());
+
+  testWidgets('manual text sends reach both integrations', (tester) async {
+    service.notifyManualSend('manual clip');
+    await tester.pump();
+    verify(
+      () => webhook.sendWebhook(
+        'https://example.com/hook',
+        any(that: containsPair('direction', 'sent')),
+      ),
+    ).called(1);
+    verify(
+      () => obsidian.appendToVault(
+        vaultPath: '/vault',
+        fileName: 'clipboard.md',
+        content: 'manual clip',
+      ),
+    ).called(1);
+  });
+
+  for (final behavior in AutoReceiveBehavior.values) {
+    testWidgets(
+      'received clips reach integrations with ${behavior.name} copying',
+      (tester) async {
+        when(settings.getAutoReceiveBehavior).thenAnswer((_) async => behavior);
+        service.updateClipboardModificationTime();
+        when(repository.getLatestItemId).thenAnswer((_) async => '1');
+        when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+        service.startPolling(interval: const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
+        verify(
+          () => webhook.sendWebhook(
+            'https://example.com/hook',
+            any(that: containsPair('direction', 'received')),
+          ),
+        ).called(1);
+        verify(
+          () => obsidian.appendToVault(
+            vaultPath: '/vault',
+            fileName: 'clipboard.md',
+            content: 'clip 1',
+          ),
+        ).called(1);
+        if (behavior != AutoReceiveBehavior.always) {
+          verifyNever(() => clipboard.writeText(any()));
+        }
+        service.stopPolling();
+      },
+    );
+  }
 
   testWidgets(
     'account reinitialization invalidates the macOS pasteboard counter',

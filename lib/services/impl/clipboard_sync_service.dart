@@ -221,6 +221,16 @@ class ClipboardSyncService implements IClipboardSyncService {
           !_canReceive(item)) {
         return;
       }
+      // Delivery to integrations is independent of the clipboard copy policy.
+      if (item.contentType == ContentType.text ||
+          item.contentType == ContentType.html ||
+          item.contentType == ContentType.markdown) {
+        _fireIntegrations(
+          content: item.content,
+          deviceType: item.deviceType,
+          direction: 'received',
+        );
+      }
       final deviceType = item.deviceType;
       final now = DateTime.now();
 
@@ -454,27 +464,10 @@ class ClipboardSyncService implements IClipboardSyncService {
       } on Exception catch (e) {
         debugPrint('[ClipboardSyncService] Could not read back clipboard: $e');
       }
-      notifyManualSend(
+      _recordClipboardContent(
         writtenContent.text ?? '',
         clipboardContent: writtenContent,
       );
-
-      // Received clips reach the integrations too. Text-like only, matching
-      // the send side: an image or a file has no readable body to post or to
-      // append to a note, and neither path has ever fired for them.
-      //
-      // item.content is already plaintext here - the repository decrypts
-      // before handing items over, which is why the copy above can write it
-      // straight to the clipboard.
-      if (item.contentType == ContentType.text ||
-          item.contentType == ContentType.html ||
-          item.contentType == ContentType.markdown) {
-        _fireIntegrations(
-          content: item.content,
-          deviceType: item.deviceType,
-          direction: 'received',
-        );
-      }
     } finally {
       _clipboardWritesInProgress--;
     }
@@ -893,6 +886,23 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Notify service that content was manually sent via UI
   @override
   void notifyManualSend(String content, {ClipboardContent? clipboardContent}) {
+    if (_isDisposed) return;
+    _recordClipboardContent(content, clipboardContent: clipboardContent);
+    if (!(clipboardContent?.hasImage ?? false) &&
+        !(clipboardContent?.hasFile ?? false) &&
+        content.isNotEmpty) {
+      _fireIntegrations(
+        content: content,
+        deviceType: ClipboardRepository.getCurrentDeviceType(),
+        direction: 'sent',
+      );
+    }
+  }
+
+  void _recordClipboardContent(
+    String content, {
+    ClipboardContent? clipboardContent,
+  }) {
     final effectiveClipboardContent =
         clipboardContent ??
         (content.isNotEmpty

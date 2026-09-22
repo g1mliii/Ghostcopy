@@ -34,6 +34,29 @@ class ObsidianService implements IObsidianService {
     required String content,
   }) async {
     try {
+      var normalizedVault = vaultPath.trim();
+      if (normalizedVault.length >= 2 &&
+          ((normalizedVault.startsWith("'") && normalizedVault.endsWith("'")) ||
+              (normalizedVault.startsWith('"') &&
+                  normalizedVault.endsWith('"')))) {
+        normalizedVault = normalizedVault.substring(
+          1,
+          normalizedVault.length - 1,
+        );
+      }
+      if (normalizedVault.startsWith('~/')) {
+        final home = Platform.environment['HOME'];
+        if (home != null) {
+          normalizedVault = path.join(home, normalizedVault.substring(2));
+        }
+      }
+      if (!path.isAbsolute(normalizedVault) ||
+          !Directory(normalizedVault).existsSync()) {
+        throw const FileSystemException(
+          'Choose an existing absolute Obsidian vault folder',
+        );
+      }
+
       // SECURITY: Sanitize fileName to prevent path traversal attacks
       // OPTIMIZED: Use pre-compiled regex patterns
       final sanitizedFileName = fileName
@@ -42,13 +65,13 @@ class ObsidianService implements IObsidianService {
           .replaceAll(_leadingDotRegex, '_'); // Remove leading dots
 
       // Use path package for safe path joining
-      final filePath = path.join(vaultPath, sanitizedFileName);
+      final filePath = path.join(normalizedVault, sanitizedFileName);
 
       // CRITICAL SECURITY CHECK: Verify resolved path is within vault directory
       // OPTIMIZED: Cache canonical vault path to reduce expensive filesystem I/O
       final canonicalVault = _canonicalVaultCache.putIfAbsent(
-        vaultPath,
-        () => path.canonicalize(path.absolute(vaultPath)),
+        normalizedVault,
+        () => path.canonicalize(path.absolute(normalizedVault)),
       );
       // Must still canonicalize file path each time (changes with each fileName)
       final canonicalFile = path.canonicalize(path.absolute(filePath));
