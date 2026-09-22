@@ -1051,7 +1051,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     required String direction,
   }) {
     _fireWebhook(content, deviceType, direction);
-    _appendToObsidian(content);
+    _appendToObsidian(content, deviceType, direction);
   }
 
   void _fireWebhook(String content, String deviceType, String direction) {
@@ -1097,7 +1097,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Append to Obsidian vault (non-blocking with tracking - Fix #10)
-  void _appendToObsidian(String content) {
+  void _appendToObsidian(String content, String deviceType, String direction) {
     if (_isDisposed) return;
     final obsidian = _obsidianService;
     if (obsidian == null) return;
@@ -1121,6 +1121,8 @@ class ClipboardSyncService implements IClipboardSyncService {
 
         if (!_isDisposed) {
           await obsidian.appendToVault(
+            deviceType: deviceType,
+            direction: direction,
             vaultPath: vaultPath,
             fileName: fileName,
             content: content,
