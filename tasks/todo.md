@@ -254,19 +254,34 @@ so nobody builds it twice.
 | Bounded retention and storage cleanup | `20260915000000_bound_cleanup_and_rate_limits.sql`, R2 deletion queue |
 
 The infinite-sync-loop footgun that plan leads with is therefore closed on the
-application side. The remaining exposure is billing, which is not in the repo.
+application side. What is left is outside the repo.
 
 ### Now - dashboard only, no code, no dependency on any platform
 
-- [ ] Google Cloud (Firebase) Billing -> Budgets & Alerts: thresholds at 50%,
-      80%, 100% with email alerts
-- [ ] Supabase Project Settings -> Billing: spend cap or usage notifications on
-      Database Egress, Database Size, and Edge Function invocations
-- [ ] Cloudflare Account -> Notifications: R2 storage capacity and request
-      thresholds, plus 5xx rate spikes
+Worth being precise about what the exposure actually is, because on the plans
+this project is on it is mostly **not** a bill. Every quota below should be
+re-checked against current provider docs rather than trusted from here.
 
-These are the only items where waiting has an asymmetric cost: a runaway bill
-happens in hours and cannot be capped retroactively. About fifteen minutes.
+- [ ] **Supabase (free plan).** Cannot be charged, so there is no bill to cap -
+      but that inverts the risk rather than removing it. Exceeding free limits
+      gets a project restricted or paused, and a paused project is the app
+      fully down for every user on every platform. That is worse than an
+      unexpected invoice, and it is the one to watch around a launch. Set usage
+      notifications on Database Egress and Database Size, and know in advance
+      what upgrading costs, so the answer to an outage is a plan rather than a
+      decision made under pressure
+- [ ] **Google Cloud / Firebase.** FCM messaging itself is free and not
+      metered, so "essentially free" holds for what this app uses it for.
+      Confirm which plan the project is on: on Spark nothing can bill, on Blaze
+      other services can. If Blaze, set Budgets & Alerts at 50/80/100%
+- [ ] **Cloudflare R2.** The only place real money can leak. The free
+      allowance is generous, but overage bills once a payment method is on
+      file, and R2 has no hard spend cap - notifications are the only guard, so
+      configure them on storage capacity and Class A/B operation counts. Worth
+      confirming what "limits already on it" means today: a Cloudflare
+      notification is an alert after the fact, not a ceiling
+- [ ] **Cloudflare 5xx rate spike notification.** Free, and the fastest signal
+      that image sync is broken for everyone rather than one device
 
 ### With the first public build, not after it
 
@@ -388,20 +403,30 @@ Roughly by how long each takes to come back, not by how much work it is.
 - [ ] **Play closed test first.** 20 testers for 14 CONTINUOUS days before
       production can even be applied for, and it runs unattended. See the
       Google Play section below; start it the day a build exists.
-- [ ] **Pick a version scheme.** `pubspec.yaml` is still `1.0.0+1`. TestFlight
-      and Play both reject a duplicate build number, so decide before the first
-      upload rather than during it.
+- [ ] **Sentry in the client, before the first shipped build.** A hard
+      ordering constraint, not a preference: it has to be compiled into the
+      build that goes out. Ship without it and the first real crashes are
+      invisible, and seeing them costs another signed, notarized release per
+      platform. Scrub clipboard content from every event before sending. See
+      the monitoring section above.
+- [ ] **Pick a version scheme.** `pubspec.yaml` is `1.0.0+3`, matching the
+      macOS build that is installed and tested. TestFlight and Play both reject
+      a duplicate build number, and Sparkle refuses anything not greater than
+      the published build, so all three want the same monotonic number -
+      decide before the first upload rather than during it.
 - [ ] **iOS TestFlight.** Signing is `Apple Development` today, which is a
       development identity - TestFlight needs Apple Distribution.
-- [ ] **macOS Developer ID.** Same wrong identity in
-      `macos/Runner.xcodeproj` (`CODE_SIGN_IDENTITY[sdk=macosx*] = "Apple
-      Development"`); needs a Developer ID Application cert. Hardened Runtime
-      is now enabled on the Release config, which notarization requires and
-      which was absent.
-- [ ] **Notarize in CI.** `xcrun notarytool submit --wait` then `xcrun stapler
-      staple`, with an App Store Connect API key in secrets. CI already builds
-      macOS on `macos-latest` and currently stops at `flutter build macos
-      --release`.
+- [x] **macOS Developer ID.** Solved without changing the project's signing
+      identity: `installer/macos/build-release.sh` archives and exports, and
+      the export does the Developer ID distribution signing independently of
+      whatever Release is configured with. Builds 1-3 notarized and stapled.
+- [x] **Notarize in CI - decided against.** Publishing needs three secrets in
+      one place: the Developer ID private key, notarization credentials, and
+      the Sparkle EdDSA key. That last one is unrecoverable - if it leaks,
+      anyone can sign an update every installed copy accepts and installs. Not
+      worth that to replace one local command. A workflow that *verifies* a
+      published feed (signature, checksums, feed matches release) is still
+      worth having; publishing stays manual.
 - [ ] **Windows Store submission.** CI already builds Windows on
       `windows-latest`, so no Windows machine is needed. Packaging moves from
       the Inno Setup script to MSIX for the Store.
