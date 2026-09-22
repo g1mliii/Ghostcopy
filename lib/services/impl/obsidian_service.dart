@@ -32,6 +32,8 @@ class ObsidianService implements IObsidianService {
     required String vaultPath,
     required String fileName,
     required String content,
+    String? deviceType,
+    String? direction,
   }) async {
     try {
       var normalizedVault = vaultPath.trim();
@@ -91,11 +93,36 @@ class ObsidianService implements IObsidianService {
         debugPrint('[ObsidianService] ✅ Created new file: $sanitizedFileName');
       }
 
-      // Append with timestamp
-      final timestamp = DateTime.now().toString().split(
-        '.',
-      )[0]; // Remove microseconds
-      final entry = '\n## $timestamp\n$content\n\n';
+      final now = DateTime.now();
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
+      final minute = now.minute.toString().padLeft(2, '0');
+      final period = now.hour < 12 ? 'AM' : 'PM';
+      final timestamp =
+          '${months[now.month - 1]} ${now.day}, ${now.year} · $hour:$minute $period';
+      final device = switch (deviceType) {
+        'macos' => 'macOS',
+        'ios' => 'iOS',
+        'windows' => 'Windows',
+        'android' => 'Android',
+        _ => 'device',
+      };
+      final action = direction == 'received' ? 'Received' : 'Sent';
+      final entry =
+          '\n### $timestamp\n*$action from $device*\n\n$content\n\n---\n';
 
       await file.writeAsString(entry, mode: FileMode.append);
       debugPrint('[ObsidianService] ✅ Appended to $sanitizedFileName');

@@ -11,11 +11,17 @@ void main() {
       await ObsidianService().appendToVault(
         vaultPath: '$quote${vault.path}$quote',
         fileName: 'clipboard.md',
-        content: 'integration test',
+        content: 'integration test\n\n  indented text',
+        deviceType: 'macos',
+        direction: 'received',
       );
     }
     final note = await File('${vault.path}/clipboard.md').readAsString();
     expect('integration test'.allMatches(note), hasLength(2));
+    expect('*Received from macOS*'.allMatches(note), hasLength(2));
+    expect(note, contains('integration test\n\n  indented text'));
+    expect(note, startsWith('\n### '));
+    expect(note, endsWith('\n\n---\n'));
   });
 
   test('missing vault is rejected without creating a new directory', () async {

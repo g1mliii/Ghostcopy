@@ -80,6 +80,8 @@ void main() {
     when(() => webhook.sendWebhook(any(), any())).thenAnswer((_) async {});
     when(
       () => obsidian.appendToVault(
+        deviceType: any(named: 'deviceType'),
+        direction: any(named: 'direction'),
         vaultPath: any(named: 'vaultPath'),
         fileName: any(named: 'fileName'),
         content: any(named: 'content'),
@@ -133,6 +135,8 @@ void main() {
     ).called(1);
     verify(
       () => obsidian.appendToVault(
+        deviceType: any(named: 'deviceType'),
+        direction: any(named: 'direction'),
         vaultPath: '/vault',
         fileName: 'clipboard.md',
         content: 'manual clip',
@@ -159,6 +163,8 @@ void main() {
         ).called(1);
         verify(
           () => obsidian.appendToVault(
+            deviceType: any(named: 'deviceType'),
+            direction: any(named: 'direction'),
             vaultPath: '/vault',
             fileName: 'clipboard.md',
             content: 'clip 1',

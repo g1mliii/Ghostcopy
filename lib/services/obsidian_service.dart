@@ -10,6 +10,8 @@ abstract class IObsidianService {
     required String vaultPath,
     required String fileName,
     required String content,
+    String? deviceType,
+    String? direction,
   });
 
   /// Dispose resources (no-op for this service)
