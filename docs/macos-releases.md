@@ -107,6 +107,7 @@ that does not exist yet. It finishes by re-downloading the live feed and
 | `Unexpanded Xcode variable in signed entitlements` | Hand re-signed instead of archive/export |
 | `Keychain group changed` | Entitlement drift that would orphan saved passphrases |
 | `Missing profile authorizing Keychain access` | Export dropped `embedded.provisionprofile`; app will not launch |
+| `The Sparkle signing key does not match the one embedded in the app` | The Keychain key would sign an update every installed copy rejects |
 | `Increase --build-number beyond the published macOS build` | Build number is not newer than the live feed |
 | `Cannot check published version: HTTP <n>` | Feed unreachable — refuses to guess rather than ship a downgrade |
 | `Already prepared` | `updates/` exists; delete it or build fresh rather than re-sign in place |
