@@ -1049,7 +1049,7 @@ class _MyAppState extends State<MyApp> {
   Future<void> _refreshNativeTrayMenu() async {
     final updater = locator<IAppUpdateService>();
     final gameMode = locator<IGameModeService>();
-    await (locator<ITrayService>() as TrayService).setUpdateAvailable(
+    await locator<ITrayService>().setUpdateAvailable(
       available: updater.updateAvailable,
     );
     if (!mounted) return;

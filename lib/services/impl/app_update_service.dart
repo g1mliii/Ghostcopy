@@ -38,15 +38,22 @@ class AppUpdateService extends IAppUpdateService {
       _startupError = error.message;
       debugPrint('[AppUpdateService] Could not start updater: $_startupError');
     } on MissingPluginException {
-      _startupError = 'Updates are unavailable in this build.';
+      // No _startupError: the fallback in checkForUpdates is this same
+      // sentence, so setting it here changed nothing observable.
       debugPrint('[AppUpdateService] Native updater is unavailable');
     }
   }
 
   void _applyState(Object? value) {
     if (_disposed || value is! Map<Object?, Object?>) return;
-    _automaticChecks = value['automaticChecks'] == true;
-    _updateAvailable = value['updateAvailable'] == true;
+    final automatic = value['automaticChecks'] == true;
+    final available = value['updateAvailable'] == true;
+    // Only when something moved. Every notify rebuilds the native tray menu
+    // from scratch - three platform round trips and a fresh NSMenu - and the
+    // native side pushes state on events that often change neither flag.
+    if (automatic == _automaticChecks && available == _updateAvailable) return;
+    _automaticChecks = automatic;
+    _updateAvailable = available;
     notifyListeners();
   }
 

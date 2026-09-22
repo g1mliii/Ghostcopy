@@ -15,7 +15,43 @@ def check(condition, message):
         raise ValueError(message)
 
 
-def verify(app, require_updater=False):
+def _check_signing_key_matches(embedded_key, sparkle_bin):
+    """The key updates will be signed with must be the one the app verifies.
+
+    generate_appcast signs with a Keychain account, and every verification step
+    in prepare-update.sh checks against that SAME account - so a regenerated or
+    imported key there passes the whole pipeline while each installed copy
+    rejects the update, because each checks the SUPublicEDKey in its own bundle.
+    Nothing related the two.
+
+    Here rather than in prepare-update.sh, where it was first written. That
+    script runs last, after both notarization round trips, so a mismatch cost
+    ten to twenty minutes before anything said so - and any future path that
+    packages or re-signs without going through it lost the check entirely.
+    build-release.sh calls this verifier in its first seconds, and every caller
+    of the shared gate inherits it.
+
+    Skipped when the tools are not on hand: this file is also used to inspect a
+    bundle, and that should not need the release toolchain.
+    """
+    if sparkle_bin is None:
+        return
+    generate_keys = pathlib.Path(sparkle_bin) / 'generate_keys'
+    if not generate_keys.is_file():
+        return
+    signing_key = subprocess.run(
+        [str(generate_keys), '--account', 'com.ghostcopy.ghostcopy', '-p'],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    check(
+        signing_key == embedded_key,
+        'The Sparkle signing key does not match the app: signing with it would '
+        f'ship an update every install rejects (app {embedded_key}, '
+        f'keychain {signing_key})',
+    )
+
+
+def verify(app, require_updater=False, sparkle_bin=None):
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     signature = subprocess.run(
         ['codesign', '-dvv', str(app)], capture_output=True, text=True, check=True,
@@ -48,6 +84,7 @@ def verify(app, require_updater=False):
         check(info.get('SUVerifyUpdateBeforeExtraction') is True, 'Update archive verification is disabled')
         check(info.get('SURequireSignedFeed') is True, 'Signed update feed is required')
         check((app / 'Contents/Frameworks/Sparkle.framework').is_dir(), 'Sparkle framework not embedded')
+        _check_signing_key_matches(info['SUPublicEDKey'], sparkle_bin)
     team = entitlements.get('com.apple.developer.team-identifier')
     check(team and team == allowed.get('com.apple.developer.team-identifier'), 'Team does not match profile')
     app_id = entitlements.get('com.apple.application-identifier', '')
@@ -69,8 +106,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('app', type=pathlib.Path)
     parser.add_argument('--require-updater', action='store_true')
+    # Where the Sparkle tools live, so the signing key can be compared with the
+    # one in the bundle. Optional: without it that single check is skipped and
+    # everything else still runs, which keeps this usable for plain inspection.
+    parser.add_argument('--sparkle-bin', default=None)
     args = parser.parse_args()
     try:
-        verify(args.app.resolve(), args.require_updater)
+        verify(args.app.resolve(), args.require_updater, args.sparkle_bin)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         sys.exit(f'Export validation failed: {error}')

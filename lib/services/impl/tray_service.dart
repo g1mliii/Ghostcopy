@@ -71,6 +71,7 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   /// Mark a pending macOS update without opening a window or taking focus.
+  @override
   Future<void> setUpdateAvailable({required bool available}) async {
     if (!_usesNativeMenu) return;
     await trayManager.setTitle(available ? '•' : '');

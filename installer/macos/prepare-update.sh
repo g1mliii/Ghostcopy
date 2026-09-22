@@ -10,38 +10,28 @@ release="$(cd "$1" && pwd)"
 notes="${2:-}"
 [[ -z "$notes" || -f "$notes" ]] || { echo "No such release notes file: $notes" >&2; exit 1; }
 app="$release/export/ghostcopy.app"
-python3 "$script_dir/verify-app.py" "$app" --require-updater
+bin="$("$script_dir/sparkle-tools.sh")"
+# --sparkle-bin so a standalone run of this script gets the signing-key
+# comparison too, not only the one build-release.sh performs.
+python3 "$script_dir/verify-app.py" "$app" --require-updater --sparkle-bin "$bin"
 xcrun stapler validate "$release/GhostCopy.dmg"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$build" =~ ^[1-9][0-9]*$ ]] || {
     echo 'Release version must be x.y.z and build number a positive integer.' >&2; exit 1;
 }
-bin="$("$script_dir/sparkle-tools.sh")"
+# The signing key is compared with the app's SUPublicEDKey by verify-app.py
+# above, which build-release.sh also runs before it notarizes anything. It
+# lived here first, which meant a mismatch surfaced only after both
+# notarization round trips and was missed entirely by any path that did not
+# come through this script.
 
-# The signing key must be the one the shipped app will check against.
-#
-# generate_appcast signs with the Keychain account below, and both verification
-# steps at the end of this script check against that SAME account - so a
-# regenerated, imported or otherwise wrong key there passes every local check
-# while every installed copy rejects the update, because each verifies against
-# the SUPublicEDKey baked into its own bundle. verify-app.py confirms the app
-# carries the expected key but never compares it with the signing account, so
-# nothing in the pipeline related the two.
-#
-# Checked here, before anything is written, so a mismatch costs nothing to
-# recover from.
-embedded_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
-signing_key="$("$bin/generate_keys" --account com.ghostcopy.ghostcopy -p)"
-if [[ "$signing_key" != "$embedded_key" ]]; then
-    echo 'The Sparkle signing key does not match the one embedded in the app.' >&2
-    echo "  app SUPublicEDKey: $embedded_key" >&2
-    echo "  keychain account:  $signing_key" >&2
-    echo 'Signing with this key would ship an update every install rejects.' >&2
-    exit 1
-fi
-
-feed_url='https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml'
+# Read from the app rather than written out again. This asks "what build is
+# already published?", and it has to ask the feed the shipped app actually
+# reads - a second copy here could point somewhere else, and a 404 from the
+# wrong URL is treated below as "nothing published yet", which silently
+# disables the build-number check.
+feed_url="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")"
 # A real previous feed must be reachable and valid. Only 404 permits bootstrap.
 status="$(curl --location --silent --show-error --output "$release/previous-appcast.xml" --write-out '%{http_code}' "$feed_url")"
 case "$status" in
