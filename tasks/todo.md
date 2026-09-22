@@ -237,6 +237,66 @@ Still open:
       send text, image, and file clips, and verify payload shape, signing/auth,
       retry behavior, and that a failed endpoint does not block clipboard sync.
 
+## Monitoring, error tracking and cost guards
+
+From a monitoring plan reviewed 2026-09-22. Most of its cost-control advice is
+already implemented here, and more strictly than it suggested - recorded below
+so nobody builds it twice.
+
+### Already in place
+
+| Recommendation | What the repo does |
+|---|---|
+| Tag origin device so B does not echo back to A | `isFromDifferentDevice = deviceName != currentDeviceName` (`clipboard_sync_service.dart:163`, `:345`) |
+| Debounce client clipboard events | 5-second poll (`clipboard_sync_service.dart:474`) |
+| Per-user rate limit, suggested 30/min | **10/min**, Postgres trigger `check_clipboard_rate_limit` (`schema.sql:152`) |
+| Payload cap, suggested 15-20 MB | 100 KB text (`maxContentLength`), 10 MB files (`ClipboardLimits.maxFileBytes`) |
+| Bounded retention and storage cleanup | `20260915000000_bound_cleanup_and_rate_limits.sql`, R2 deletion queue |
+
+The infinite-sync-loop footgun that plan leads with is therefore closed on the
+application side. The remaining exposure is billing, which is not in the repo.
+
+### Now - dashboard only, no code, no dependency on any platform
+
+- [ ] Google Cloud (Firebase) Billing -> Budgets & Alerts: thresholds at 50%,
+      80%, 100% with email alerts
+- [ ] Supabase Project Settings -> Billing: spend cap or usage notifications on
+      Database Egress, Database Size, and Edge Function invocations
+- [ ] Cloudflare Account -> Notifications: R2 storage capacity and request
+      thresholds, plus 5xx rate spikes
+
+These are the only items where waiting has an asymmetric cost: a runaway bill
+happens in hours and cannot be capped retroactively. About fifteen minutes.
+
+### With the first public build, not after it
+
+- [ ] **Sentry in the client.** Ordering matters: it has to be compiled into
+      the build that ships. Ship without it and the first real crashes are
+      invisible, and seeing them costs a whole new signed, notarized release.
+      Scrub clipboard content from every event before sending
+
+### After Windows, iOS and macOS are out
+
+Diagnostics for a system with real traffic. With no users they are scaffolding
+to maintain, not signal.
+
+- [ ] Sentry in the Supabase Edge Functions (`@sentry/deno`) - deploys are
+      instant, so this has no ordering constraint
+- [ ] A `sync_id` UUID generated per clipboard event, passed through the edge
+      function, R2 upload metadata and FCM payload, and attached to Sentry
+      tags. Turns "the image did not sync" into one query
+- [ ] A `/health` edge function doing `SELECT 1`, pinged every 60s by an
+      external monitor
+- [ ] Sync latency: log `receive_timestamp - create_timestamp` and watch P95.
+      A creeping P95 is the first sign of FCM backlog or a missing index
+
+### Decided against for now
+
+- Log drains to Axiom or Better Stack. Supabase's built-in log retention plus
+  Sentry covers this until retention expires before problems are noticed, or
+  alerting on raw log patterns is needed. The source plan reached the same
+  conclusion.
+
 ## Later: clipboard export and import
 
 After iOS. Not urgent, and deliberately not part of the account work it came
