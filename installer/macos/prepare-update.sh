@@ -15,6 +15,30 @@ build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$build" =~ ^[1-9][0-9]*$ ]] || {
     echo 'Release version must be x.y.z and build number a positive integer.' >&2; exit 1;
 }
+bin="$("$script_dir/sparkle-tools.sh")"
+
+# The signing key must be the one the shipped app will check against.
+#
+# generate_appcast signs with the Keychain account below, and both verification
+# steps at the end of this script check against that SAME account - so a
+# regenerated, imported or otherwise wrong key there passes every local check
+# while every installed copy rejects the update, because each verifies against
+# the SUPublicEDKey baked into its own bundle. verify-app.py confirms the app
+# carries the expected key but never compares it with the signing account, so
+# nothing in the pipeline related the two.
+#
+# Checked here, before anything is written, so a mismatch costs nothing to
+# recover from.
+embedded_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
+signing_key="$("$bin/generate_keys" --account com.ghostcopy.ghostcopy -p)"
+if [[ "$signing_key" != "$embedded_key" ]]; then
+    echo 'The Sparkle signing key does not match the one embedded in the app.' >&2
+    echo "  app SUPublicEDKey: $embedded_key" >&2
+    echo "  keychain account:  $signing_key" >&2
+    echo 'Signing with this key would ship an update every install rejects.' >&2
+    exit 1
+fi
+
 feed_url='https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml'
 # A real previous feed must be reachable and valid. Only 404 permits bootstrap.
 status="$(curl --location --silent --show-error --output "$release/previous-appcast.xml" --write-out '%{http_code}' "$feed_url")"
@@ -36,7 +60,6 @@ updates="$release/updates"
 [[ ! -e "$updates" ]] || { echo "Already prepared: $updates" >&2; exit 1; }
 mkdir -p "$updates"
 ditto "$release/GhostCopy.dmg" "$updates/GhostCopy-$version-$build.dmg"
-bin="$("$script_dir/sparkle-tools.sh")"
 "$bin/generate_appcast" --account com.ghostcopy.ghostcopy --maximum-deltas 0 \
     --download-url-prefix "https://github.com/g1mliii/Ghostcopy/releases/download/$tag/" \
     "$updates"
