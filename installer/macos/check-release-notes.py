@@ -16,6 +16,11 @@ def main():
         action='store_true',
         help='Report missing notes without failing, for the prepare step.',
     )
+    parser.add_argument(
+        '--extract',
+        action='store_true',
+        help='Print the validated notes, for publishing them unchanged.',
+    )
     args = parser.parse_args()
     item = ET.parse(args.appcast).find('./channel/item')
     if item is None:
@@ -24,7 +29,13 @@ def main():
     # appcast, never a separate notes file, so the dialog would fail to load.
     if item.find(SPARKLE + 'releaseNotesLink') is not None:
         sys.exit('Release notes became a link; nothing in this pipeline uploads that URL.')
-    if not (item.findtext('description') or '').strip():
+    description = (item.findtext('description') or '').strip()
+    if description and args.extract:
+        # The same text the appcast was signed with, so the GitHub release body
+        # cannot say something different from the update dialog.
+        print(description)
+        return
+    if not description:
         message = (
             'No release notes are embedded in the appcast, so the update '
             'dialog will be blank.'
