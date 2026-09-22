@@ -2,11 +2,17 @@
 
 ## Active Task
 
-**iOS bring-up** (2026-09-16 to 2026-09-17). iOS runs on real hardware.
+**macOS release** (2026-09-19 onward), on `codex/macos-installer` (PR #18).
+Installer and Sparkle updates both verified end to end against a local feed;
+the first publish is the remaining step. See
+[`docs/macos-releases.md`](../docs/macos-releases.md) for the runbook and
+`installer/macos/VERIFICATION.md` for what was actually exercised.
 
-Branch note: `ios/bring-up` sits on `macos/bring-up` (PR #16), rebased onto it
-after the Codex review fixes landed there. **The iOS PR must target
-`macos/bring-up`**, or its diff re-shows the macOS work.
+## Done: iOS bring-up
+
+2026-09-16 to 2026-09-17, merged as PR #17. iOS runs on real hardware. Two
+post-mortems from it - the silent push outage and why the notification Copy
+action is gone - are in [`tasks/lessons.md`](lessons.md).
 
 ### Done
 
@@ -29,57 +35,11 @@ after the Codex review fixes landed there. **The iOS PR must target
 - [x] Cold-launch notification taps no longer lost (native parks, Dart collects)
 - [x] Passphrase storage hardened - see below
 
-### Push: was dead for a day, and it was not iOS
+### Tested on the phone - 2026-09-22
 
-`send-clipboard-notification` returned 401 on every invocation from
-2026-09-16 18:32Z. Supabase migrated the project to its current API key scheme,
-so `SUPABASE_SERVICE_ROLE_KEY` became a 41-character `sb_secret_...` key while
-the `fcm_service_role_key` vault secret stayed the 219-character legacy JWT.
-The function compares them byte for byte to recognise its own trigger, so every
-call fell through to `auth.getUser()`, 403'd, and returned 401 before reading
-the body. Nothing surfaced it: the trigger fired, the client saw a successful
-send, the clip synced, and only the notification silently never arrived.
-
-The same key change broke a second thing one layer deeper: the devices query
-ran through a client built from the anon key with the caller's Authorization
-header forwarded, which worked while that header was a JWT PostgREST could
-decode. Opaque keys have nothing to decode, so the query ran as anon against an
-RLS-protected table and 500'd.
-
-Fixed by updating the vault secret (server state, not in this repo), reading
-devices through `supabaseAdmin` on the trigger path, and pinning
-`verify_jwt = false` in `supabase/config.toml` - `deploy.yml` deploys with no
-flags on every push to main, so without that file the next merge silently turns
-the platform JWT gate back on and breaks push again.
-
-**Diagnosing this from the client was impossible** and cost most of the night.
-The app was healthy at every step because it was never the problem. What found
-it was a temporary diagnostic returning key lengths in the 401 body, read back
-out of `net._http_response` - pg_net records every response, and the dashboard
-logs do not carry console output.
-
-### Why the notification Copy action is gone
-
-The long-press Copy button needed the clip staged on the device by a background
-isolate woken by a `content-available` push. On a real iPhone the isolate woke
-and wrote `pending_push.json` but never staged the clip, and the fallback needs
-a network round trip a background action does not reliably get time for.
-
-Dropped rather than chased, because it could not be made dependable: iOS
-throttles background wake-ups on battery, Low Power Mode and usage, and refuses
-them outright for an app the user swiped away. A button that copies instantly
-sometimes and silently does nothing the rest of the time is worse than a tap
-that always behaves the same way. Android keeps the fast path - its background
-execution is genuinely more permissive.
-
-### Still to test on the phone
-
-- [ ] Text clip: notification says "Tap to open and copy" -> tap -> app opens,
-      clipboard holds the clip
-- [ ] File or image: tap -> app opens -> **share sheet opens automatically**.
-      Never run on iOS. Same `processShareAction` code Android uses
-- [ ] Cold launch: swipe the app away, send a clip, tap the notification. This
-      is what the deferred-tap handoff exists for
+- [x] Text clip: notification tap opens the app and the clipboard holds the clip
+- [x] File or image: tap opens the app and the share sheet
+- [x] Cold launch after swiping the app away, via the deferred-tap handoff
 
 ### Later: request the iOS device-name entitlement
 
@@ -88,23 +48,20 @@ from Apple rather than enabled in the portal - developer.apple.com, Contact ->
 Request. Since iOS 16 `UIDevice.name` returns the model, so a phone reports
 "iPhone" instead of "Subai's iPhone"; the entitlement restores the real name.
 
-The device-row collision is NOT solved while this is pending, which an earlier
-version of this note got wrong. `initializeDeviceName()` prefers `ios.name`,
-and since iOS 16 that returns the generic model name - "iPhone" - without this
-entitlement, not "iPhone 15 Pro". So every iPhone on an account resolves to the
-same device_name, collides on the UNIQUE (user_id, device_type, device_name)
-index, shares one row and one FCM token, and whichever launched last wins while
-the other stops receiving push.
+The device-row collision this once blocked is solved, and no longer waits on
+Apple. `initializeDeviceName()` appends the first eight characters of
+`identifierForVendor` to the label, so two iPhones on one account produce
+different `device_name` values and no longer collide on the
+UNIQUE (user_id, device_type, device_name) index - which was the failure where
+they shared one row and one FCM token and whichever launched last won. What is
+left is cosmetic: without the entitlement the readable half is the model, so a
+phone reads "iPhone 15 Pro - a1b2c3d4" rather than "Subai's iPhone".
 
 The Simulator is not subject to the entitlement gate and returns its full
 assigned name, which is why this looks fine in testing.
 
-Two devices per account is the ordinary case, so this is worth closing rather
-than waiting on Apple, who are selective and may decline. Swapping the
-preference to `ios.utsname.machine` ("iPhone16,1") distinguishes models today
-and is a one-line change; `ios.name` then becomes the nicer name if and when
-the entitlement lands. Apple is selective and turnaround is slow, so it is worth requesting in
-the background rather than waiting on.
+Nothing is blocked on it now, so it is worth requesting in the background and
+forgetting about. Apple are selective and may decline.
 
 The justification that fits: users manage several devices, the settings screen
 lists them, and clips are labelled by which device sent them - so identifying a
@@ -196,33 +153,6 @@ OVERFLOWED BY 16 PIXELS".
 - [ ] Publishable key migration is done in the app; **do not disable legacy API
       keys** until every released build carries it
 
-## Later: logo and palette distance from Discord
-
-Raised 2026-09-17, resolved 2026-09-18. The mark was a rounded two-eyed face on
-purple, close enough to Discord's to be worth distance before App Review or a
-wider audience.
-
-- [x] Superseded: the mark was replaced outright rather than tapered. The
-      original entry proposed a wavy hem, on the reasoning that silhouette is
-      what people recognise and a rounded blob face on *that* purple reads as
-      derivative. The new mark is a clipboard/speech-bubble with a folded
-      corner and a tail, which carries its own silhouette and says what the app
-      does - so the hem is moot. Worth one more look with fresh eyes before
-      submission, since this is a judgement call rather than a measurement
-- [x] `primaryHover` was `0xFF4752C4` - Discord's dark blurple exactly, and the
-      last literal match. Now `0xFF555CCB`, the darker primary `accentDisabled`
-      is already built from, so the palette carries one dark accent instead of
-      two that differ by three per channel
-- [x] CLAUDE.md documented `primary: Color(0xFF5865F2)` annotated
-      "(Discord-like)". Fixed, and the stale block is why two launch screens
-      were built against the wrong background - it is now pointed at
-      `colors.dart` as the source of truth
-- [x] Redo the app icon on every platform. All 78 assets now generate from one
-      master SVG via `tool/generate_brand_assets.py`, covering the iOS asset
-      catalog, Android mipmaps and adaptive/themed icons, macOS iconset,
-      Windows .ico, the silhouette-only tray icon, the website and favicons,
-      and the hosted logo the auth emails point at
-
 ## macOS: done 2026-09-16
 
 Nobody had ever launched GhostCopy on a Mac before this session. It now builds,
@@ -271,6 +201,15 @@ Still open:
       first tray-menu open. The fix needs `setWindowButtonVisibility(false)`
       alongside it, or the traffic lights come back - verify on Windows
 - [ ] Launch-at-startup still unverified under the sandbox
+
+## Before submission
+
+- [ ] One more look at the app mark with fresh eyes. The Discord-distance work
+      is done and verified in `colors.dart` - the mark was replaced outright
+      with a clipboard/speech-bubble that carries its own silhouette, and
+      `primaryHover` moved off Discord's dark blurple - but "far enough" is a
+      judgement call rather than a measurement, and it is cheaper to revisit
+      now than after App Review.
 
 ## Cross-platform verification: next manual pass
 
