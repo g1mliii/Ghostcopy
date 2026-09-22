@@ -21,6 +21,10 @@ tag="$(cat "$updates/release-tag.txt")"
 repo='g1mliii/Ghostcopy'
 bin="$("$script_dir/sparkle-tools.sh")"
 "$bin/sign_update" --account com.ghostcopy.ghostcopy --verify "$updates/appcast.xml"
+# An update whose dialog is blank looks broken. Notes are embedded and signed at
+# prepare time, so this cannot be corrected here; it needs prepare-update.sh
+# rerun with the notes file.
+python3 "$script_dir/check-release-notes.py" "$updates/appcast.xml"
 # Validate the commit exists remotely before creating any release.
 gh api "repos/$repo/commits/$commit" --silent
 # Upload binary before exposing it in the stable feed. Never overwrite binaries.

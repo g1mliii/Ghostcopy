@@ -25,6 +25,33 @@ marketing version (`CFBundleShortVersionString`) is what people see. Both are
 passed on the command line; `pubspec.yaml` stays at `1.0.0+1` and is not the
 source of truth for a release.
 
+## What a user actually experiences
+
+Nothing installs by itself. `SUAutomaticallyUpdate` is `false`, so every
+update is a choice, every time.
+
+`SUEnableAutomaticChecks` is `true` in `Info.plist`, which both turns scheduled
+checks on and suppresses Sparkle's usual first-launch "check automatically?"
+prompt. The app checks on Sparkle's normal schedule while it is running.
+
+When a **scheduled** check finds an update, the user is not interrupted.
+`AppUpdater` declares `supportsGentleScheduledUpdateReminders` and returns
+`false` from `standardUserDriverShouldHandleShowingScheduledUpdate`, so no
+window appears and nothing takes focus. Instead a dot appears next to the menu
+bar icon and the tray item changes from **Check for Updates…** to **Update
+available…**. It waits there until the user opens the menu.
+
+When the user picks either menu item, they get Sparkle's normal dialog with the
+release notes and an install button. Choosing to install quits the app,
+installs, and **relaunches it automatically** - for a tray app that reads as
+the menu bar icon disappearing for a few seconds and coming back. There is no
+"update installed, please reopen" prompt, because the relaunch is the
+acknowledgement.
+
+That gentleness is a deliberate tradeoff and worth revisiting with real users:
+a dot in the menu bar is easy to never notice, and someone who never opens the
+tray menu will never update.
+
 ## One-time setup on a release machine
 
 - Xcode signed into team `R9TKT8U45R`, with the Developer ID Application
@@ -81,8 +108,28 @@ automated check and still loses everyone's clips.
 **4. Push the commit.** The publish step refuses a commit that GitHub has never
 seen, and refuses a candidate whose recorded commit does not match.
 
-**5. Write release notes.** A plain Markdown file; it becomes the GitHub release
-body and is what Sparkle shows in the update dialog.
+**5. Write release notes.** An **HTML fragment** - no `<!DOCTYPE>`, no `<body>`,
+just the markup:
+
+```html
+<h2>GhostCopy 1.0.1</h2>
+<p>What changed:</p>
+<ul><li>…</li></ul>
+```
+
+The format is not a preference. `generate_appcast` embeds a fragment directly
+into the signed appcast, which is what the update dialog renders. A Markdown
+file or a full HTML document becomes a `sparkle:releaseNotesLink` instead,
+pointing at a URL nothing in this pipeline uploads, so the dialog would fail to
+load its own notes. Pass it to the build so it is embedded and signed:
+
+```bash
+RELEASE_NOTES=release-notes.html \
+    installer/macos/build-release.sh ghostcopy --build-name=1.0.1 --build-number=4
+```
+
+Notes are embedded at prepare time, so they cannot be added at publish time.
+`publish-update.sh` refuses a candidate whose dialog would be blank.
 
 **6. Publish.**
 
@@ -112,6 +159,10 @@ that does not exist yet. It finishes by re-downloading the live feed and
 | `Cannot check published version: HTTP <n>` | Feed unreachable — refuses to guess rather than ship a downgrade |
 | `Already prepared` | `updates/` exists; delete it or build fresh rather than re-sign in place |
 | `Publish only a candidate built from the supplied clean commit` | Working tree was dirty, or the candidate predates the commit |
+| `Display name is not GhostCopy` | `CFBundleDisplayName` lost, so the app would introduce itself as "ghostcopy" |
+| `Release notes must be an HTML fragment` | A DOCTYPE or `<body>` would make the notes a link instead of embedded text |
+| `Release notes became a link` | Same cause; the dialog would try to load a URL that is never uploaded |
+| `No release notes are embedded in the appcast` | Publishing would ship an update whose dialog is blank |
 | `Eject the mounted GhostCopy disk image` | A stale `/Volumes/GhostCopy` would have its Finder window edited instead |
 
 ## Testing an update without publishing

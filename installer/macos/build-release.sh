@@ -38,6 +38,8 @@ codesign --sign 'Developer ID Application: Subaig Suri (R9TKT8U45R)' --timestamp
 xcrun notarytool submit "$output/GhostCopy.dmg" --keychain-profile "$profile" --wait
 xcrun stapler staple "$output/GhostCopy.dmg"
 xcrun stapler validate "$output/GhostCopy.dmg"
-"$script_dir/prepare-update.sh" "$output"
+# RELEASE_NOTES is an HTML fragment; without it the update dialog is blank
+# and publish-update.sh will refuse the candidate.
+"$script_dir/prepare-update.sh" "$output" ${RELEASE_NOTES:+"$RELEASE_NOTES"}
 echo "Signed and notarized: $output/GhostCopy.dmg"
 echo 'Still required: install from this DMG and run the LaunchServices smoke test (see README).'

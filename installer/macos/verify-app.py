@@ -39,6 +39,10 @@ def verify(app, require_updater=False):
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     bundle = info['CFBundleIdentifier']
     if require_updater:
+        # Sparkle's dialogs, notifications and Finder all read this first. It
+        # is easy to lose in a project regeneration, and a release that says
+        # "ghostcopy" everywhere is not worth notarizing.
+        check(info.get('CFBundleDisplayName') == 'GhostCopy', 'Display name is not GhostCopy')
         check(info.get('SUFeedURL') == 'https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml', 'Incorrect update feed URL')
         check(info.get('SUPublicEDKey') == '7u9K3OLvC/WnDejiCYfZCvqEooph4mz4nhpAIysobC0=', 'Incorrect Sparkle signing key')
         check(info.get('SUVerifyUpdateBeforeExtraction') is True, 'Update archive verification is disabled')

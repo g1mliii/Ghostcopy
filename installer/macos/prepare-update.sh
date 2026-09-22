@@ -1,12 +1,14 @@
 #!/bin/bash
 # Prepare a signed appcast + versioned DMG locally. This never publishes.
 set -euo pipefail
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 build/installer/RELEASE_DIRECTORY" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "Usage: $0 build/installer/RELEASE_DIRECTORY [RELEASE_NOTES_HTML]" >&2
     exit 1
 fi
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 release="$(cd "$1" && pwd)"
+notes="${2:-}"
+[[ -z "$notes" || -f "$notes" ]] || { echo "No such release notes file: $notes" >&2; exit 1; }
 app="$release/export/ghostcopy.app"
 python3 "$script_dir/verify-app.py" "$app" --require-updater
 xcrun stapler validate "$release/GhostCopy.dmg"
@@ -60,9 +62,21 @@ updates="$release/updates"
 [[ ! -e "$updates" ]] || { echo "Already prepared: $updates" >&2; exit 1; }
 mkdir -p "$updates"
 ditto "$release/GhostCopy.dmg" "$updates/GhostCopy-$version-$build.dmg"
+# Release notes reach the update dialog only as an HTML fragment named after
+# the archive. generate_appcast embeds such a fragment into the signed appcast;
+# a .md file or a full HTML document becomes a releaseNotesLink instead,
+# pointing at a URL nothing in this pipeline uploads.
+if [[ -n "$notes" ]]; then
+    if grep -qi '<!DOCTYPE\|<body' "$notes"; then
+        echo 'Release notes must be an HTML fragment: no DOCTYPE, no <body>.' >&2
+        exit 1
+    fi
+    cp "$notes" "$updates/GhostCopy-$version-$build.html"
+fi
 "$bin/generate_appcast" --account com.ghostcopy.ghostcopy --maximum-deltas 0 \
     --download-url-prefix "https://github.com/g1mliii/Ghostcopy/releases/download/$tag/" \
     "$updates"
+python3 "$script_dir/check-release-notes.py" "$updates/appcast.xml" --warn
 "$bin/sign_update" --account com.ghostcopy.ghostcopy --verify "$updates/appcast.xml"
 python3 - "$updates" <<'PY'
 import pathlib, sys, xml.etree.ElementTree as ET

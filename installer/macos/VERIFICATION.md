@@ -65,3 +65,35 @@ published to GitHub.
 Not covered by this run: the Sparkle update UI itself (gentle reminder, the
 menu bar "Update available…" item, and the dialog's Install button), which
 still needs one manual pass.
+
+## Update UI verification — 2026-09-22
+
+The same build 2 -> build 3 upgrade, this time through the Sparkle UI rather
+than the CLI, against the local feed.
+
+- Tray **Check for Updates…** against the real `SUFeedURL` reported "Update
+  Error! An error occurred when retrieving update information." Expected: the
+  `macos-updates` feed 404s because nothing has been published yet. It does
+  confirm the menu item is wired and that Sparkle's UI shows and takes focus
+  from this `LSUIElement` agent app.
+- Repointed at the local feed, the update dialog appeared with the embedded
+  release notes rendered, and the user installed from it. The feed log shows
+  the appcast fetch followed by the DMG download.
+- Sparkle quit the app, installed, and **relaunched it automatically**: the
+  process came back under a new PID and `/Applications/GhostCopy.app` is build
+  3 with a valid staple. For a tray app this reads as the menu bar icon briefly
+  disappearing and returning.
+- An automatic scheduled check also fired on launch, before any manual check.
+
+Found while setting this up: `prepare-update.sh` produced an appcast with no
+release notes at all, so the first published update would have shown a blank
+dialog. Notes now have to be an HTML fragment, are embedded into the signed
+appcast at prepare time, and `publish-update.sh` refuses a candidate without
+them.
+
+Also noted, not fixed: a stale `~/Library/Containers/com.ghostcopy.ghostcopy`
+sandbox container from before the sandbox was dropped still exists on this
+machine. It makes the plain `defaults` command target the container instead of
+`~/Library/Preferences/com.ghostcopy.ghostcopy.plist`, which is where the
+unsandboxed app actually reads and writes. Only affects machines that ran a
+sandboxed build.
