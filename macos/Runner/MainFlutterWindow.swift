@@ -3,6 +3,7 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
   // Keep strong reference to prevent deallocation
+  private var appUpdater: AppUpdater?
   private var powerMonitor: PowerMonitor?
   private var shareService: ShareService?
   private var clipboardChangeCount: ClipboardChangeCount?
@@ -20,6 +21,8 @@ class MainFlutterWindow: NSWindow {
     self.hasShadow = true // Allow Flutter to control shadows
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+
+    appUpdater = AppUpdater(messenger: flutterViewController.engine.binaryMessenger)
 
     // Initialize power monitor for system sleep/wake/lock events
     powerMonitor = PowerMonitor(messenger: flutterViewController.engine.binaryMessenger)

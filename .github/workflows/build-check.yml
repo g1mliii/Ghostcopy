@@ -105,7 +105,15 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      # super_native_extensions builds Rust through Cargokit, and a release
+      # profile that strips proc-macro dylibs fails to load them on newer macOS
+      # toolchains - Cargokit exits 101 before any Swift is compiled. The same
+      # two variables are exported by installer/macos/build-release.sh, which
+      # is why the release path works and a bare `flutter build macos` does not.
       - run: flutter build macos --release
+        env:
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG: 'true'
+          CARGO_PROFILE_RELEASE_STRIP: none
 
   ios:
     name: iOS (never verified by hand)

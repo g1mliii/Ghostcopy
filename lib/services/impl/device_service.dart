@@ -66,18 +66,21 @@ class DeviceService implements IDeviceService {
   /// Runs BEFORE the upsert, and that ordering is the whole point.
   /// `devices_fcm_token_global_unique` is a GLOBAL unique index on fcm_token,
   /// so inserting the renamed row while the old row still owns the token fails
-  /// with 23505 - and the cleanup that would have freed it used to sit after
-  /// the upsert, which the failure skipped. Registration then failed on every
-  /// launch after a rename, with nothing able to break the deadlock.
+  /// with 23505 - and this cleanup used to run after the upsert, which the
+  /// failure skipped. Adding the install id to the device name makes every
+  /// existing install a rename on first launch, so that deadlock would have
+  /// hit all of them: registration failing every time, with nothing able to
+  /// break it.
   ///
-  /// Matched on the token rather than the old generic name. The token is
-  /// globally unique, so a row carrying it can only be this installation -
-  /// narrower and safer than a name match, which could belong to another phone
-  /// of the same platform still on the previous build, and which misses a row
-  /// left under some other stale name.
+  /// Matched on the token rather than the old name. The token is globally
+  /// unique, so a row carrying it can only be this installation - narrower and
+  /// safer than a name match, which could belong to another phone still on the
+  /// previous build, and which misses rows left under any other stale name.
+  /// With the install id in play there are now two such names to outgrow: the
+  /// generic platform label, and the model-only name before it.
   ///
-  /// Rows already named for this device are left alone: the upsert updates
-  /// those in place, keeping their id and created_at.
+  /// Rows already named for this device are left alone, so the upsert updates
+  /// them in place and keeps their id.
   Future<void> _releaseTokenFromStaleRows({
     required String userId,
     required String currentName,
@@ -93,8 +96,8 @@ class DeviceService implements IDeviceService {
           .eq('fcm_token', fcmToken)
           .neq('device_name', currentName);
     } on Object catch (e) {
-      // Best effort. If it fails the upsert below will report the conflict,
-      // and registration is non-critical either way.
+      // Best effort. If it fails the upsert reports the conflict, and
+      // registration is non-critical either way.
       debugPrint('[DeviceService] Could not free the stale token row: $e');
     }
   }

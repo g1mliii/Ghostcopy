@@ -195,3 +195,53 @@ Each entry should include:
   for any launch failure on device, run with `--console` before forming a
   hypothesis - the engine usually says what is wrong in plain English, and a
   bare signal number invites blaming the most recent diff.
+
+### 2026-09-16 - Push died silently on a Supabase API key migration
+
+- **Date**: 2026-09-16 (diagnosed 2026-09-17)
+- **Failure Mode**: `send-clipboard-notification` returned 401 on every
+  invocation for a day. Supabase migrated the project to its current API key
+  scheme, so `SUPABASE_SERVICE_ROLE_KEY` became a 41-character `sb_secret_...`
+  key while the `fcm_service_role_key` vault secret stayed the 219-character
+  legacy JWT. The function compares them byte for byte to recognise its own
+  trigger, so every call fell through to `auth.getUser()`, 403'd, and returned
+  401 before reading the body. The same key change broke the devices query one
+  layer deeper: it ran through a client built from the anon key with the
+  caller's Authorization header forwarded, which worked only while that header
+  was a JWT PostgREST could decode. Opaque keys have nothing to decode, so the
+  query ran as anon against an RLS-protected table and 500'd.
+- **Detection Signal**: Nothing surfaced it. The trigger fired, the client saw
+  a successful send, the clip synced, and only the notification never arrived.
+  Diagnosing it from the client was impossible - the app was healthy at every
+  step because it was never the problem. What found it was a temporary
+  diagnostic returning key lengths in the 401 body, read back out of
+  `net._http_response`: pg_net records every response, and the dashboard logs
+  do not carry console output.
+- **Prevention Rule**: When a managed platform rotates or migrates key formats,
+  audit every place a key is *compared* or *decoded*, not just the places it is
+  read - a byte-for-byte comparison and a JWT decode both fail silently on an
+  opaque key. Any path that reaches an RLS table on behalf of a trigger uses
+  the admin client, never a forwarded Authorization header. And
+  `verify_jwt = false` stays pinned in `supabase/config.toml`: `deploy.yml`
+  deploys with no flags on every push to main, so without that file the next
+  merge silently turns the platform JWT gate back on and breaks push again.
+  For anything whose only symptom is silence, instrument the response body.
+
+### 2026-09-17 - A background-wake feature that works "sometimes" is worse than none
+
+- **Date**: 2026-09-17
+- **Failure Mode**: The notification long-press Copy action needed the clip
+  staged on the device by a background isolate woken by a `content-available`
+  push. On a real iPhone the isolate woke and wrote `pending_push.json` but
+  never staged the clip, and the fallback needs a network round trip a
+  background action does not reliably get time for.
+- **Detection Signal**: Worked on the simulator and failed on hardware, the
+  usual shape for background-execution assumptions.
+- **Prevention Rule**: Do not ship a control whose success depends on iOS
+  granting background execution. iOS throttles background wake-ups on battery,
+  Low Power Mode and usage, and refuses them outright for an app the user
+  swiped away. A button that copies instantly sometimes and silently does
+  nothing the rest of the time is worse than a tap that always behaves the same
+  way - so the action was dropped rather than chased. Android keeps the fast
+  path; its background execution is genuinely more permissive. When evaluating
+  a similar feature, decide by the worst case the OS permits, not the best.

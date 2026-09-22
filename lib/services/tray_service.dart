@@ -37,6 +37,16 @@ abstract class ITrayService {
   /// Set the context menu items
   Future<void> setContextMenu(List<TrayMenuItem> items);
 
+  /// Mark a pending update on the tray itself, without opening a window or
+  /// taking focus.
+  ///
+  /// On the interface rather than the macOS implementation alone. Reaching it
+  /// through a cast out of ITrayService threw for any injected fake, which is
+  /// the one thing the interface exists to allow, and the implementation
+  /// already no-ops where there is no native menu - so there is nothing
+  /// platform-specific for a caller to know.
+  Future<void> setUpdateAvailable({required bool available});
+
   /// Dispose of the service and clean up resources
   Future<void> dispose();
 }
