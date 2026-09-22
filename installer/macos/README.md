@@ -33,6 +33,10 @@ always contains the GhostCopy app icon.
 
 ## Sparkle updates
 
+The step-by-step release runbook - version numbering, publishing, local
+update testing and rollback - is [`docs/macos-releases.md`](../../docs/macos-releases.md).
+This section covers how the pieces are put together.
+
 The release app embeds Sparkle 2.10.0 and checks the signed appcast at
 `https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml`.
 The menu bar offers **Check for Updates…** and a preference for scheduled
