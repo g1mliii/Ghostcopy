@@ -609,12 +609,42 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         );
       }
     } on Object catch (e) {
+      // The check could not be completed - offline, or Supabase unreachable.
+      //
+      // showPassphraseDialog has already stored and activated the key by this
+      // point, so simply stopping the spinner left an UNVERIFIED key
+      // encrypting every clip sent afterwards, while the switch still read off.
+      // If it was mistyped, the history quietly splits across two keys and
+      // nothing says so until the user notices half their clips will not open.
+      //
+      // So it is rolled back. Re-entering a passphrase is a small cost; a
+      // fragmented history is not recoverable without knowing both.
       debugPrint('[MobileSettings] Restored passphrase check failed: $e');
+      var rolledBack = true;
+      try {
+        await _encryptionService!.clearPassphrase();
+      } on Object catch (e2) {
+        // clearPassphrase drops the in-memory key before reporting a storage
+        // failure, so the key is gone either way; only the stored copy may
+        // remain.
+        debugPrint('[MobileSettings] Could not roll it back cleanly: $e2');
+        rolledBack = false;
+      }
       if (!mounted) return;
-      setState(() => _encryptionLoading = false);
+
+      final stillEnabled = await _encryptionService!.isEnabled();
+      if (!mounted) return;
+      setState(() {
+        _encryptionEnabled = stillEnabled;
+        _encryptionLoading = false;
+      });
       showGhostToast(
         context,
-        'Could not check your passphrase - try again',
+        rolledBack
+            ? 'Could not check your passphrase - not saved, try again when '
+                  'you are back online'
+            : 'Could not check your passphrase, and it may still be stored on '
+                  'this device',
         type: GhostToastType.error,
       );
     }
