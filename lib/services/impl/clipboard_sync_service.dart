@@ -458,6 +458,23 @@ class ClipboardSyncService implements IClipboardSyncService {
         writtenContent.text ?? '',
         clipboardContent: writtenContent,
       );
+
+      // Received clips reach the integrations too. Text-like only, matching
+      // the send side: an image or a file has no readable body to post or to
+      // append to a note, and neither path has ever fired for them.
+      //
+      // item.content is already plaintext here - the repository decrypts
+      // before handing items over, which is why the copy above can write it
+      // straight to the clipboard.
+      if (item.contentType == ContentType.text ||
+          item.contentType == ContentType.html ||
+          item.contentType == ContentType.markdown) {
+        _fireIntegrations(
+          content: item.content,
+          deviceType: item.deviceType,
+          direction: 'received',
+        );
+      }
     } finally {
       _clipboardWritesInProgress--;
     }
@@ -787,9 +804,13 @@ class ClipboardSyncService implements IClipboardSyncService {
       message: (targets) => 'Auto-sent to $targets',
       failureMessage: 'Auto-send failed',
       afterInsert: (context) {
-        // Both non-blocking.
-        _fireWebhook(processedContent, context.deviceType);
-        _appendToObsidian(processedContent);
+        // Non-blocking. processedContent is plaintext - insert() encrypts
+        // inside the repository.
+        _fireIntegrations(
+          content: processedContent,
+          deviceType: context.deviceType,
+          direction: 'sent',
+        );
       },
     );
   }
@@ -998,7 +1019,32 @@ class ClipboardSyncService implements IClipboardSyncService {
   bool _isDisposed = false;
 
   /// Fire webhook (non-blocking with tracking for clean disposal - Fix #10)
-  void _fireWebhook(String content, String deviceType) {
+  /// Hand a clip to the external integrations.
+  ///
+  /// Both fire on clips this device SENDS and on clips it RECEIVES. They used
+  /// to hang off the auto-send path alone, so a clip sent from the Spotlight
+  /// by hand, or one arriving from the phone, reached neither - while the
+  /// settings toggle said "Send clipboard data to external services" and the
+  /// point of the Obsidian vault is to be a complete capture log.
+  ///
+  /// [content] must be plaintext. It is on both paths and neither needs
+  /// unwrapping: insert() encrypts inside the repository, so a caller on the
+  /// send side still holds the readable text, and items coming back out have
+  /// already been through _decryptItems(). Passing ciphertext here would fill
+  /// the vault with unreadable blobs.
+  ///
+  /// [deviceType] is whichever device the clip came from, so a received clip
+  /// is attributed to the phone that sent it rather than to this Mac.
+  void _fireIntegrations({
+    required String content,
+    required String deviceType,
+    required String direction,
+  }) {
+    _fireWebhook(content, deviceType, direction);
+    _appendToObsidian(content);
+  }
+
+  void _fireWebhook(String content, String deviceType, String direction) {
     if (_isDisposed) return;
     final webhook = _webhookService;
     if (webhook == null) return;
@@ -1021,6 +1067,10 @@ class ClipboardSyncService implements IClipboardSyncService {
         final payload = {
           'content': content,
           'deviceType': deviceType,
+          // Which way the clip was going. The hook fires on both now, and a
+          // consumer that only wants outbound clips cannot tell them apart
+          // from deviceType alone.
+          'direction': direction,
           'timestamp': DateTime.now().toIso8601String(),
         };
 
