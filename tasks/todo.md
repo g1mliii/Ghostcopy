@@ -415,6 +415,30 @@ Roughly by how long each takes to come back, not by how much work it is.
       released build carries it. Once builds are out, an update is the only way
       to change a compiled-in constant.
 
+### macOS installer and updater - verified 2026-09-22
+
+Both paths exercised end to end against a local feed; nothing published yet.
+Details in `installer/macos/VERIFICATION.md`, runbook in
+`docs/macos-releases.md`.
+
+- [x] Notarized drag-to-install DMG, installed and launch-tested
+- [x] Sparkle build 2 -> build 3 upgrade via the CLI and via the update dialog
+- [x] Install quits and relaunches the app by itself
+- [x] Release notes embedded in the signed appcast (they were missing; a
+      published update would have shown a blank dialog)
+- [x] `CFBundleDisplayName`, copyright and `pubspec` version corrected for
+      release, and `verify-app.py` now refuses an export missing the first
+- [ ] Publish the first release, then confirm **Check for Updates…** against
+      the live feed. It errors today, correctly: the `macos-updates` feed 404s
+      because nothing has been published.
+- [ ] Decide whether the gentle reminder is too quiet. A scheduled check shows
+      only a dot next to the menu bar icon and relabels the tray item; someone
+      who never opens that menu never updates.
+- [ ] A stale `~/Library/Containers/com.ghostcopy.ghostcopy` from the sandboxed
+      era still exists on dev machines and makes plain `defaults` target the
+      container rather than the prefs the unsandboxed app actually uses. Only
+      affects machines that ran a sandboxed build; delete it there.
+
 ### Distribution
 
 - [ ] **Binaries on GitHub Releases, not the site.** Cloudflare Pages caps
@@ -432,11 +456,10 @@ Roughly by how long each takes to come back, not by how much work it is.
 
 ### Unverified, worth knowing before the first archive
 
-- [ ] `macos/Runner.xcodeproj` carries 14 references to a `ShareExtension`
-      target, including `CODE_SIGN_ENTITLEMENTS =
-      ShareExtension/ShareExtension.entitlements`, but there is no
-      `macos/ShareExtension` directory. Ordinary builds pass, so this has not
-      mattered yet; an archive or a notarization run may disagree.
+- [x] `macos/Runner.xcodeproj` carried 14 references to a `ShareExtension`
+      target with no `macos/ShareExtension` directory. Removed in `469d1d8`,
+      and answered either way since: Release archive, Developer ID export and
+      notarization have all succeeded repeatedly (builds 1-3).
 - [ ] Windows and Linux `.ico` rendering has never been looked at on those
       platforms. The ICO writer was rewritten and `assets/icons/tray_icon.ico`
       - the file `tray_service.dart` actually loads on Windows - had not been
