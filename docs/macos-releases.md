@@ -118,21 +118,63 @@ that does not exist yet. It finishes by re-downloading the live feed and
 Point a test copy at a local feed. Nothing reaches GitHub.
 
 ```bash
-# 1. Serve the prepared update directory
-cd build/installer/YYYYMMDD-HHMMSS/updates
-python3 -m http.server 8765 &
-
-# 2. Regenerate the appcast with local download URLs
+# From the repo root, against a directory build-release.sh already prepared.
+release=build/installer/YYYYMMDD-HHMMSS
 bin="$(installer/macos/sparkle-tools.sh)"
-rm -f appcast.xml
+
+# 1. Re-sign the appcast with local download URLs
+rm -f "$release/updates/appcast.xml"
 "$bin/generate_appcast" --account com.ghostcopy.ghostcopy --maximum-deltas 0 \
-    --download-url-prefix "http://localhost:8765/" .
+    --download-url-prefix "http://localhost:8765/" "$release/updates"
+
+# 2. Serve it
+python3 -m http.server 8765 --directory "$release/updates" &
 
 # 3. Override the feed for the installed app only
 defaults write com.ghostcopy.ghostcopy SUFeedURL "http://localhost:8765/appcast.xml"
 ```
 
-Launch the older installed build and use **Check for Updates…**. Sparkle logs
+Launch the older installed build and use **Check for Updates…**.
+
+### Non-interactively
+
+Sparkle ships a CLI that drives the same updater without any UI, which is the
+fastest way to prove the feed, the signature and the install all work. Build it
+once from the package checkout the macOS project already resolved:
+
+```bash
+xcodebuild -project build/macos/SourcePackages/checkouts/Sparkle/Sparkle.xcodeproj \
+    -scheme sparkle-cli -configuration Release \
+    -derivedDataPath build/installer/sparkle-cli-build CODE_SIGNING_ALLOWED=NO build
+cli=build/installer/sparkle-cli-build/Build/Products/Release/sparkle.app/Contents/MacOS/sparkle
+```
+
+Then, with the local server running and the older build in `/Applications`:
+
+```bash
+# Is an update visible? Exit status 0 means yes.
+"$cli" /Applications/GhostCopy.app --probe \
+    --feed-url http://localhost:8765/appcast.xml --user-agent-name GhostCopyReleaseTest
+
+# Actually download, verify and install it.
+"$cli" /Applications/GhostCopy.app --check-immediately \
+    --feed-url http://localhost:8765/appcast.xml --user-agent-name GhostCopyReleaseTest --verbose
+```
+
+`--probe` cannot be combined with `--check-immediately`; run them separately.
+`--feed-url` is passed per invocation and does not persist, so this route needs
+no `defaults delete` afterwards. Confirm the result rather than trusting the
+exit status:
+
+```bash
+/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Applications/GhostCopy.app/Contents/Info.plist
+xcrun stapler validate /Applications/GhostCopy.app
+xcrun swift installer/macos/smoke-test.swift /Applications/GhostCopy.app
+```
+
+Remember to regenerate the appcast with the real GitHub prefix (or rerun
+`prepare-update.sh`) before publishing, otherwise the published feed points at
+a localhost URL. Sparkle logs
 the deprecation warning about a defaults-set feed URL; for testing it is
 expected. `SURequireSignedFeed` is on, so the local appcast still has to be
 EdDSA-signed — `generate_appcast` does that from the Keychain key.

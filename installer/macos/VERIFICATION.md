@@ -41,3 +41,27 @@ functional checks; notarization and the process smoke test do not establish them
 
 The delivery copy is `~/Desktop/ghostcopy-dist/GhostCopy-fixed.dmg`; the old
 Desktop artifacts were preserved. No release was published to GitHub or the site.
+
+## Update install verification — 2026-09-22
+
+Sparkle build 2 -> build 3 upgrade, exercised against a local feed; nothing was
+published to GitHub.
+
+- Candidate: `build/installer/20260919-200239`, source commit `59cf81e`, clean
+  tree. App and DMG both notarized (DMG submission `8a5d6685-1e2d-4aca-a407-5d2121e0cb02`,
+  Accepted) and stapled; `verify-app.py --require-updater` passed.
+- `generate_appcast` re-signed the feed with a `http://localhost:8765/` prefix;
+  `SURequireSignedFeed` is on and Sparkle accepted the signed local feed.
+- `sparkle --probe` from the installed build 2 reported an update available.
+- The full non-interactive run downloaded 24,161,234 bytes, verified, extracted
+  and installed. `/Applications/GhostCopy.app` is now 1.0.0 build 3, staple
+  validates, and Gatekeeper reports `accepted / Notarized Developer ID`.
+- The LaunchServices smoke test passed on the updated copy (PID 44320).
+- No feed override was left behind: `--feed-url` is per invocation, and the
+  installed app's `SUFeedURL` is still the GitHub `macos-updates` feed.
+- The candidate's `appcast.xml` was restored to the GitHub download prefix and
+  re-verified afterwards, so it remains publishable as `macos-v1.0.0-3`.
+
+Not covered by this run: the Sparkle update UI itself (gentle reminder, the
+menu bar "Update available…" item, and the dialog's Install button), which
+still needs one manual pass.
