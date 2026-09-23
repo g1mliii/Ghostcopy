@@ -25,14 +25,6 @@ resource baseline. Finished work is in git history and
 - [ ] **Decide whether the gentle update reminder is too quiet.** A scheduled
       check shows only a dot next to the menu bar icon and relabels the tray
       item; someone who never opens that menu never updates
-- [ ] **Delete the two sandbox-era containers by hand**:
-      `~/Library/Containers/com.ghostcopy.ghostcopy` and
-      `com.ghostcopy.ghostcopy.ShareExtension`. macOS container protection
-      refuses the terminal and scripted Finder alike; drag them to the Trash in
-      Finder. Left in place they make plain `defaults` target the container
-      instead of the prefs the unsandboxed app uses. Old app copies (build 1,
-      a build-5 test copy, stale release candidates) were already cleared
-      2026-09-22, so Spotlight finds only `/Applications/GhostCopy.app`
 - [ ] Later, optional: notarize in CI. Releases are cut locally with
       `installer/macos/build-release.sh` today; CI stops at
       `flutter build macos --release`
