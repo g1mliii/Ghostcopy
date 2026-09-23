@@ -277,10 +277,13 @@ class AuthService implements IAuthService {
   @override
   Future<bool> signInWithApple() async {
     try {
-      // Only iOS has the native sheet. Everywhere else - desktop and Android -
-      // Apple is the browser flow, so someone who signed up on an iPhone with
-      // Hide My Email still has a way into the account on every device.
-      if (!Platform.isIOS) return await _webOAuthSignIn(OAuthProvider.apple);
+      // iOS and macOS have the native sheet (Face ID / Touch ID and the
+      // device's Apple ID, no browser). Windows and Android get the browser
+      // flow, so someone who signed up on an iPhone with Hide My Email still
+      // has a way into the account on every device.
+      if (!_hasNativeAppleSignIn) {
+        return await _webOAuthSignIn(OAuthProvider.apple);
+      }
 
       final credential = await _appleCredential();
       if (credential == null) return false;
@@ -307,7 +310,7 @@ class AuthService implements IAuthService {
       throw Exception('User is already authenticated with a permanent account');
     }
     try {
-      if (!Platform.isIOS) return await _webOAuthLink(OAuthProvider.apple);
+      if (!_hasNativeAppleSignIn) return await _webOAuthLink(OAuthProvider.apple);
 
       final credential = await _appleCredential();
       if (credential == null) return false;
@@ -327,7 +330,12 @@ class AuthService implements IAuthService {
     }
   }
 
-  /// Ask iOS for an Apple ID credential. Null when the user cancels.
+  /// Apple's own sign-in sheet exists on iOS and macOS. Both authenticate as
+  /// the bundle ID, `com.ghostcopy.ghostcopy`, which is the first Client ID
+  /// on Supabase's Apple provider.
+  static bool get _hasNativeAppleSignIn => Platform.isIOS || Platform.isMacOS;
+
+  /// Ask the OS for an Apple ID credential. Null when the user cancels.
   ///
   /// Only the email scope: the app never shows a name, and Apple would hand
   /// it over only on the first authorization anyway.

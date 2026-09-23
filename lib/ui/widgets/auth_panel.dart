@@ -415,7 +415,7 @@ class _AuthPanelState extends State<AuthPanel> {
     );
   }
 
-  /// Desktop has no native Apple sheet, so this is the browser flow - the
+  /// Native sheet on macOS, the browser flow on Windows. Either way it is the
   /// only way onto this computer for someone who signed up on an iPhone with
   /// Apple and Hide My Email, since that account has no password.
   Widget _buildAppleSignInButton() {

@@ -38,7 +38,8 @@ abstract class IAuthService {
   Future<bool> signInWithGoogle();
 
   /// Sign in with Apple, replacing the current session the way
-  /// [signInWithGoogle] does. Native on iOS, the browser flow elsewhere.
+  /// [signInWithGoogle] does. Native on iOS and macOS, the browser flow
+  /// elsewhere.
   /// Returns true if successful, false if cancelled or failed
   Future<bool> signInWithApple();
 
@@ -62,7 +63,7 @@ abstract class IAuthService {
   Future<bool> linkGoogleIdentity();
 
   /// Link an Apple identity to the current anonymous user, preserving user_id
-  /// and clipboard data. Native on iOS, the browser flow elsewhere.
+  /// and clipboard data. Native on iOS and macOS, the browser flow elsewhere.
   /// Returns true if successful, false if cancelled or failed
   Future<bool> linkAppleIdentity();
 

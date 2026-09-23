@@ -125,7 +125,11 @@ to package - but everything below marked "verify" does need one.
       - **iOS: native.** "Continue with Apple" above Google on the welcome
         screen; Sign Up links in place (`linkIdentityWithIdToken`), Login
         switches accounts with the guest-clips warning. SHA-256 nonce.
-      - **Desktop: browser flow**, the same path Google uses (Supabase ->
+      - **macOS: native** too - the system sheet with Touch ID and the Mac's
+        Apple ID, no browser. Entitlement in both macOS entitlement files;
+        the profile refreshed with `-allowProvisioningUpdates` and
+        `verify-app.py` now refuses a release whose profile lacks it.
+      - **Windows: browser flow**, the same path Google uses (Supabase ->
         `ghostcopy.app/auth-callback` -> `ghostcopy://auth-callback`), button
         in the Spotlight auth panel.
       - **Android: not yet.** The browser flow's calls return when the browser
@@ -301,6 +305,13 @@ should start as early as a build allows.
 - [ ] `flutter build appbundle --release`, verify it is not debug-signed
 - [ ] Create the app in Console; privacy policy, data safety, content rating
 - [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
+- [ ] **Android Apple sign-in.** Hidden on Android for now. Apple is the
+      browser flow there, and its calls return when the browser opens, so the
+      welcome screen's `_handleProviderAuth` has to wait for the
+      non-anonymous session from `onAuthStateChange` before finishing. Then
+      show the button (remove the `Platform.isIOS` gate) and test on a device.
+      Supabase and Apple Developer need nothing more - it uses the same
+      Services ID as Windows
 
 ## Later: clipboard export and import
 
