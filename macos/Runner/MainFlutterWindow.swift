@@ -7,6 +7,7 @@ class MainFlutterWindow: NSWindow {
   private var powerMonitor: PowerMonitor?
   private var shareService: ShareService?
   private var clipboardChangeCount: ClipboardChangeCount?
+  private var launchAtStartup: LaunchAtStartup?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -32,6 +33,9 @@ class MainFlutterWindow: NSWindow {
 
     // Lets the auto-send monitor skip reading an unchanged clipboard
     clipboardChangeCount = ClipboardChangeCount(messenger: flutterViewController.engine.binaryMessenger)
+
+    // Answers the launch_at_startup package, which has no macOS code of its own
+    launchAtStartup = LaunchAtStartup(messenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
     
