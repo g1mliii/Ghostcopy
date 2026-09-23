@@ -16,6 +16,7 @@ import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
+import '../widgets/social_sign_in_buttons.dart';
 
 /// Mobile welcome/auth screen with QR code scanning and email/Google auth
 ///
@@ -404,19 +405,18 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           // Divider
           _buildDivider(),
           const SizedBox(height: 16),
-          // Apple first on iOS: App Review asks that it be at least as
-          // prominent as the other third-party option (guideline 4.8).
-          //
-          // Not on Android yet. There Apple is the browser flow, whose calls
-          // return when the browser opens rather than when sign-in finishes,
-          // and _handleProviderAuth would carry on to onAuthComplete with the
-          // old session. See tasks/todo.md before enabling it.
-          if (Platform.isIOS) ...[
-            RepaintBoundary(child: _buildAppleSignInButton()),
-            const SizedBox(height: 12),
-          ],
-          // Google sign in
-          RepaintBoundary(child: _buildGoogleSignInButton()),
+          // Apple is iOS-only on mobile for now. On Android it is the browser
+          // flow, whose calls return when the browser opens rather than when
+          // sign-in finishes, and _handleProviderAuth would carry on to
+          // onAuthComplete with the old session. See tasks/todo.md.
+          RepaintBoundary(
+            child: SocialSignInButtons(
+              enabled: !_authLoading,
+              showApple: Platform.isIOS,
+              onApple: _handleAppleAuth,
+              onGoogle: _handleGoogleAuth,
+            ),
+          ),
         ],
       ),
     );
@@ -605,47 +605,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         ),
         const Expanded(child: Divider(color: GhostColors.surface)),
       ],
-    );
-  }
-
-  /// White with black text and the Apple logo - one of the button styles
-  /// Apple's guidelines allow, and the one that reads on a dark background.
-  Widget _buildAppleSignInButton() {
-    return ElevatedButton.icon(
-      onPressed: _authLoading ? null : _handleAppleAuth,
-      icon: const Icon(Icons.apple, size: 20),
-      label: Text(
-        'Continue with Apple',
-        style: GhostTypography.body.copyWith(
-          fontWeight: FontWeight.w600,
-          color: Colors.black,
-        ),
-      ),
-      style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        disabledBackgroundColor: Colors.white.withValues(alpha: 0.5),
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
-  Widget _buildGoogleSignInButton() {
-    return OutlinedButton.icon(
-      onPressed: _authLoading ? null : _handleGoogleAuth,
-      icon: const Icon(Icons.login, size: 18),
-      label: Text(
-        'Continue with Google',
-        style: GhostTypography.body.copyWith(fontWeight: FontWeight.w600),
-      ),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        side: const BorderSide(color: GhostColors.surface),
-        foregroundColor: GhostColors.textPrimary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
     );
   }
 

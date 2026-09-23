@@ -10,6 +10,7 @@ import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import 'social_sign_in_buttons.dart';
 
 /// Auth panel for login, signup, and account management
 ///
@@ -190,9 +191,18 @@ class _AuthPanelState extends State<AuthPanel> {
           _buildDivider(),
           const SizedBox(height: 10),
           // Google sign in
-          RepaintBoundary(child: _buildGoogleSignInButton()),
-          const SizedBox(height: 8),
-          RepaintBoundary(child: _buildAppleSignInButton()),
+          // Apple: native sheet on macOS, the browser flow on Windows. Either
+          // way the only way onto this computer for someone who signed up on
+          // an iPhone with Apple and Hide My Email - that account has no
+          // password.
+          RepaintBoundary(
+            child: SocialSignInButtons(
+              enabled: !_authLoading,
+              onApple: _handleAppleAuth,
+              onGoogle: _handleGoogleAuth,
+              size: 44,
+            ),
+          ),
         ],
       ),
     );
@@ -399,35 +409,6 @@ class _AuthPanelState extends State<AuthPanel> {
         ),
         const Expanded(child: Divider(color: GhostColors.surface)),
       ],
-    );
-  }
-
-  Widget _buildGoogleSignInButton() {
-    return OutlinedButton.icon(
-      onPressed: _authLoading ? null : _handleGoogleAuth,
-      icon: const Icon(Icons.login, size: 18),
-      label: const Text('Continue with Google'),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        side: const BorderSide(color: GhostColors.surface),
-        foregroundColor: GhostColors.textPrimary,
-      ),
-    );
-  }
-
-  /// Native sheet on macOS, the browser flow on Windows. Either way it is the
-  /// only way onto this computer for someone who signed up on an iPhone with
-  /// Apple and Hide My Email, since that account has no password.
-  Widget _buildAppleSignInButton() {
-    return OutlinedButton.icon(
-      onPressed: _authLoading ? null : _handleAppleAuth,
-      icon: const Icon(Icons.apple, size: 18),
-      label: const Text('Continue with Apple'),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        side: const BorderSide(color: GhostColors.surface),
-        foregroundColor: GhostColors.textPrimary,
-      ),
     );
   }
 
