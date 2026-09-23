@@ -147,6 +147,13 @@ that does not exist yet. It finishes by re-downloading the live feed and
 **7. Confirm a real client sees it.** On a Mac running the previous build, use
 **Check for Updates…** from the tray menu and let it install.
 
+**8. Point the website at the new DMG.** The download page's button goes to
+`/download/macos`, a redirect in `website/_redirects`. Release assets are
+versioned and never `latest`, so GitHub has no stable URL for the newest DMG -
+bump the tag and filename on that line and merge it to `main`, which deploys
+the site. Forgetting costs little: whoever downloads the older DMG is offered
+this update the first time the app checks.
+
 ## What the scripts refuse, and why
 
 | Refusal | Cause |
