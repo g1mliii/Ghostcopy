@@ -103,7 +103,39 @@ to package - but everything below marked "verify" does need one.
 ## iOS: open
 
 - [ ] **TestFlight.** Signing is `Apple Development`; TestFlight needs Apple
-      Distribution
+      Distribution. `aps-environment` reads `development` in the entitlements;
+      the App Store export switches it, and the Firebase APNs key covers both
+- [x] **Privacy manifests** - `ios/Runner` and `ios/ShareExtension` now ship
+      `PrivacyInfo.xcprivacy` declaring their UserDefaults use; confirmed in a
+      release build. Branch `ios/app-store-prep`
+- [ ] **In-app account deletion** - App Review guideline 5.1.1(v), a likely
+      rejection without it. Settings button, an Edge Function that deletes the
+      auth user with the secret key (clips, devices and stored files cascade),
+      and the privacy policy then says it is in the app rather than by email
+- [ ] **Sign in with Apple** - guideline 4.8: offering Google sign-in means
+      also offering a privacy-focused login, and our own email/password
+      usually does not count. Supabase has an Apple provider; the anonymous
+      account must upgrade in place, as it does for Google
+- [ ] **Export compliance.** The app runs its own AES-256-GCM and
+      PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
+      "Apple's encryption only" exempt case - do not set
+      `ITSAppUsesNonExemptEncryption` to NO. Answer the questionnaire on the
+      first upload ("standard algorithms in addition to the OS"), then set
+      the Info.plist key(s) it points to so later uploads skip it
+- [ ] **Privacy policy fixes** (`website/privacy.html`), before submission:
+      it says the desktop app "does not watch your clipboard" - true only
+      while auto-send is off; it never mentions files and images going to
+      storage; nor that a webhook sends clips to a URL the user sets; and it
+      will need Apple sign-in and in-app deletion once those land
+- [ ] **App Store Connect listing.** Already have: privacy policy
+      (`/privacy`), support (`/faq` + support@ghostcopy.app), marketing URL,
+      terms (`/terms`), an opaque 1024 icon. Still to make: screenshots at
+      6.9" iPhone and 13" iPad (the app targets iPad too), name / subtitle /
+      description / keywords, category, age rating, and the App Privacy
+      answers - email (account), user content incl. photos and files, user
+      ID and device ID (push token), all app functionality, no tracking, no
+      analytics or crash SDKs. Review notes must explain that sync needs a
+      second device; attach a short screen recording
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the
       Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
