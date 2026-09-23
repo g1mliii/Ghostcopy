@@ -24,6 +24,14 @@ abstract class IEncryptionService {
   /// Clear passphrase (disables encryption)
   Future<void> clearPassphrase();
 
+  /// Erase this device's copy of the passphrase and drop the key from memory,
+  /// without touching the cloud backup.
+  ///
+  /// For after account deletion: the backup went with the account, and the
+  /// call [clearPassphrase] makes to remove it would fail and skip the local
+  /// erase. A no-op if encryption was never initialised here.
+  Future<void> forgetPassphraseLocally();
+
   /// Auto-restore passphrase from cloud backup (for Google OAuth sign-in)
   /// Returns true if passphrase was restored, false if no backup or restore failed
   Future<bool> autoRestoreFromCloud();

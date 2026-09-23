@@ -2,6 +2,16 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Abstract interface for authentication service
 /// Handles user authentication, session management, and account upgrades
+/// How a request to delete the account ended.
+enum AccountDeletionOutcome {
+  /// The account and everything in it are gone, and this device is back on a
+  /// fresh guest account.
+  deleted,
+
+  /// The user backed out of the Apple confirmation; nothing was deleted.
+  cancelled,
+}
+
 abstract class IAuthService {
   /// Initialize the auth service and check current auth state
   Future<void> initialize();
@@ -66,6 +76,15 @@ abstract class IAuthService {
   /// and clipboard data. Native on iOS and macOS, the browser flow elsewhere.
   /// Returns true if successful, false if cancelled or failed
   Future<bool> linkAppleIdentity();
+
+  /// Permanently delete the signed-in account and everything in it - clips,
+  /// stored files, devices - then leave this device on a fresh guest account.
+  ///
+  /// Apple accounts are asked to confirm with Apple first, where the native
+  /// sheet exists, so their Apple tokens can be revoked as Apple requires.
+  /// Throws if the server could not delete the account; nothing local is
+  /// cleared in that case.
+  Future<AccountDeletionOutcome> deleteAccount();
 
   /// Generate a time-limited token for mobile device linking
   /// Token expires after 5 minutes

@@ -108,15 +108,26 @@ to package - but everything below marked "verify" does need one.
 - [x] **Privacy manifests** - `ios/Runner` and `ios/ShareExtension` now ship
       `PrivacyInfo.xcprivacy` declaring their UserDefaults use; confirmed in a
       release build. Branch `ios/app-store-prep`
-- [ ] **In-app account deletion** - App Review guideline 5.1.1(v), a likely
-      rejection without it. Settings button, an Edge Function that deletes the
-      auth user with the secret key (clips, devices and stored files cascade),
-      and the privacy policy then says it is in the app rather than by email.
-      For Apple accounts Apple also requires revoking the Apple token: Supabase
-      keeps no Apple refresh token, so have the user re-authorize with Apple
-      at deletion and let the function exchange that `authorizationCode` and
-      call `appleid.apple.com/auth/revoke`, signing the client secret with the
-      `.p8` (a function secret) on each call
+- [ ] **In-app account deletion - built, deploy and test it.** Branch
+      `feat/account-deletion`. Settings > Delete Account (iOS and Android,
+      signed-in accounts), backed by the `delete-account` Edge Function: it
+      deletes the auth user - clips, devices, tokens cascade, the clipboard
+      trigger queues stored files for R2 removal, the passphrase backup lives
+      in the user record - and for Apple accounts first exchanges a fresh
+      authorization code (the app asks Apple once more) and revokes the Apple
+      token, as Apple requires. A failed revocation does not block deletion.
+      The device then wipes its copy (Keychain passphrase, caches, staged clip)
+      and lands on a guest account, as after sign-out.
+  - [ ] **Set the function secret** `APPLE_PRIVATE_KEY` to the `.p8`
+        contents, or Apple accounts are deleted without revocation (logged)
+  - [ ] Deploys with the merge to `main` (deploy workflow covers
+        `supabase/functions/**`)
+  - [ ] Test on the iPhone with an email account and an Apple account; check
+        Supabase > Users and the R2 bucket afterwards
+  - [ ] Desktop has no delete button yet - add to the settings panel if
+        wanted; the website page tells desktop-only users to email
+- [x] **Account deletion web page** for Google Play's data-deletion URL:
+      `website/delete-account.html`, linked from the privacy policy
 - [ ] **Sign in with Apple - built, test it.** Branch `ios/sign-in-with-apple`.
       Needed on every platform, not just iOS: an account made on an iPhone
       with Apple (and Hide My Email) has no password, and QR linking only
@@ -167,8 +178,8 @@ to package - but everything below marked "verify" does need one.
       once it exists; needs it signed in on the simulator
 - [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
       the listing doc
-- [ ] Update the privacy policy and listing when account deletion lands
-      (Apple sign-in is already in both)
+- [x] Privacy policy and listing updated for Apple sign-in and in-app
+      account deletion
 
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the

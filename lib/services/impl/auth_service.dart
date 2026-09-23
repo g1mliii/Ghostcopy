@@ -12,12 +12,36 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
 import '../device_service.dart';
+import '../encryption_service.dart';
 import 'encryption_service.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
 class AuthService implements IAuthService {
-  AuthService({SupabaseClient? client, this._deviceService, this._googleSignIn})
-    : _client = client ?? Supabase.instance.client;
+  AuthService({
+    SupabaseClient? client,
+    this._deviceService,
+    this._googleSignIn,
+    Future<String?> Function()? appleReauthorize,
+    IEncryptionService? encryptionService,
+    IClipboardRepository? clipboardRepository,
+  }) : _client = client ?? Supabase.instance.client,
+       _appleReauthorize = appleReauthorize ?? _nativeAppleAuthorizationCode,
+       _encryptionOverride = encryptionService,
+       _repositoryOverride = clipboardRepository;
+
+  // The app-wide singletons unless a test supplies its own: both reach for
+  // the global Supabase instance, which isolated tests never start.
+  final IEncryptionService? _encryptionOverride;
+  final IClipboardRepository? _repositoryOverride;
+  IEncryptionService get _encryption =>
+      _encryptionOverride ?? EncryptionService.instance;
+  IClipboardRepository get _repository =>
+      _repositoryOverride ?? ClipboardRepository.instance;
+
+  /// Asks Apple for a fresh authorization code before account deletion; null
+  /// when the user cancels. Injectable because the native sheet cannot run in
+  /// tests.
+  final Future<String?> Function() _appleReauthorize;
 
   /// Where Supabase sends the browser back to after Google sign-in.
   ///
@@ -189,7 +213,9 @@ class AuthService implements IAuthService {
             ? LaunchMode.platformDefault
             : LaunchMode.externalApplication,
       );
-      debugPrint('[AuthService] ${provider.name} sign in initiated (web OAuth)');
+      debugPrint(
+        '[AuthService] ${provider.name} sign in initiated (web OAuth)',
+      );
       return response;
     } on AuthException catch (e) {
       debugPrint('[AuthService] ${provider.name} sign in failed: ${e.message}');
@@ -310,7 +336,9 @@ class AuthService implements IAuthService {
       throw Exception('User is already authenticated with a permanent account');
     }
     try {
-      if (!_hasNativeAppleSignIn) return await _webOAuthLink(OAuthProvider.apple);
+      if (!_hasNativeAppleSignIn) {
+        return await _webOAuthLink(OAuthProvider.apple);
+      }
 
       final credential = await _appleCredential();
       if (credential == null) return false;
@@ -576,6 +604,93 @@ class AuthService implements IAuthService {
     }
   }
 
+  /// Drop everything this device holds for the account being left.
+  Future<void> _clearLocalAccountState() async {
+    // Reset encryption and repository state before signing out
+    _encryption.reset();
+    _repository.reset();
+
+    // Same for the clip staged for instant-copy by the FCM background
+    // isolate: it holds ONE clip's decrypted plaintext, and CopyActivity only
+    // deletes it when the notification is actually tapped. An untapped
+    // notification leaves it on disk indefinitely - across a sign-out too.
+    await _clearPendingCopy();
+
+    // And the home screen widget's thumbnail cache, which nothing else owns
+    // any more. WidgetService created and pruned widget_thumbnails/, and it
+    // was deleted along with the widget - but an install upgrading from a
+    // build that had one still has the directory, holding decrypted JPEG
+    // renderings of clips that are encrypted everywhere else. With no owner
+    // left they would outlive every account switch.
+    await _clearLegacyWidgetThumbnails();
+
+    debugPrint('[AuthService] Reset encryption and repository state');
+  }
+
+  @override
+  Future<AccountDeletionOutcome> deleteAccount() async {
+    final user = currentUser;
+    if (user == null) throw StateError('No signed-in account to delete');
+
+    // Apple requires revoking an Apple account's tokens when it is deleted,
+    // and Supabase keeps none to revoke, so ask Apple once more for a fresh
+    // code the server can exchange and revoke. Only where the native sheet
+    // exists; elsewhere the server deletes without it and logs the gap.
+    String? appleCode;
+    final usesApple =
+        user.identities?.any((identity) => identity.provider == 'apple') ??
+        false;
+    if (usesApple && _hasNativeAppleSignIn) {
+      appleCode = await _appleReauthorize();
+      if (appleCode == null) return AccountDeletionOutcome.cancelled;
+    }
+
+    // Throws on anything but success, before anything local is touched: a
+    // failed deletion must leave the user signed in with their data intact.
+    await _client.functions.invoke(
+      'delete-account',
+      body: {'apple_authorization_code': ?appleCode},
+    );
+    debugPrint('[AuthService] Account deleted on the server');
+
+    // From here the account no longer exists; the rest removes this device's
+    // copy of it. Nothing below can undo the deletion, so each step is best
+    // effort rather than a reason to report failure.
+    _pendingOAuthSession = null;
+    _pendingOAuthDeviceId = null;
+    try {
+      await _encryption.forgetPassphraseLocally();
+    } on Exception catch (e) {
+      debugPrint('[AuthService] Could not erase the local passphrase: $e');
+    }
+    await _clearLocalAccountState();
+
+    // Local scope (the default): the server would reject a global sign-out
+    // for a user it has just deleted.
+    try {
+      await _client.auth.signOut();
+    } on AuthException catch (e) {
+      debugPrint('[AuthService] Local sign-out after deletion: ${e.message}');
+    }
+    await _client.auth.signInAnonymously();
+    debugPrint('[AuthService] On a fresh guest account after deletion');
+    return AccountDeletionOutcome.deleted;
+  }
+
+  /// The native Apple sheet, asking only for a fresh authorization code.
+  static Future<String?> _nativeAppleAuthorizationCode() async {
+    try {
+      // No scopes: this only proves it is still the account holder.
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: const [],
+      );
+      return credential.authorizationCode;
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) return null;
+      rethrow;
+    }
+  }
+
   @override
   Future<void> signOut() async {
     try {
@@ -592,25 +707,7 @@ class AuthService implements IAuthService {
             .eq('id', deviceId)
             .eq('user_id', userId);
       }
-      // Reset encryption and repository state before signing out
-      EncryptionService.instance.reset();
-      ClipboardRepository.instance.reset();
-
-      // Same for the clip staged for instant-copy by the FCM background
-      // isolate: it holds ONE clip's decrypted plaintext, and CopyActivity only
-      // deletes it when the notification is actually tapped. An untapped
-      // notification leaves it on disk indefinitely - across a sign-out too.
-      await _clearPendingCopy();
-
-      // And the home screen widget's thumbnail cache, which nothing else owns
-      // any more. WidgetService created and pruned widget_thumbnails/, and it
-      // was deleted along with the widget - but an install upgrading from a
-      // build that had one still has the directory, holding decrypted JPEG
-      // renderings of clips that are encrypted everywhere else. With no owner
-      // left they would outlive every account switch.
-      await _clearLegacyWidgetThumbnails();
-
-      debugPrint('[AuthService] Reset encryption and repository state');
+      await _clearLocalAccountState();
 
       await _client.auth.signOut();
       debugPrint('[AuthService] Signed out successfully');

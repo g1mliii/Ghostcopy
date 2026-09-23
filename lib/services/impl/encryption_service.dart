@@ -369,6 +369,19 @@ class EncryptionService implements IEncryptionService {
   }
 
   @override
+  Future<void> forgetPassphraseLocally() async {
+    if (!_initialized) return;
+    for (final key in [_passphraseKey, _verificationHashKey]) {
+      try {
+        await _secureStorage.delete(key: key);
+      } on Exception catch (e) {
+        debugPrint('[EncryptionService] Could not delete $key: $e');
+      }
+    }
+    _setKeyBytes(null);
+  }
+
+  @override
   Future<void> clearPassphrase() async {
     if (!_initialized) {
       throw StateError('EncryptionService not initialized');

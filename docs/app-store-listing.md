@@ -19,7 +19,8 @@ Android. Windows is left out until it ships.
 | Secondary category | Productivity |
 | Price | Free |
 | Privacy policy URL | https://ghostcopy.app/privacy |
-| Support URL | https://ghostcopy.app/faq |
+| Support URL | https://ghostcopy.app/faq (has a contact section) |
+| Account deletion URL (Google Play) | https://ghostcopy.app/delete-account |
 | Marketing URL | https://ghostcopy.app |
 | Licence agreement | Apple's standard EULA. `/terms` covers the hosted service and can be added as a custom EULA later if wanted |
 | Copyright | 2026 *legal name or company* - fill in; it is shown publicly |
@@ -145,6 +146,10 @@ to show. The same account is what the screenshots are taken with.
 >
 > Encryption is optional and off by default. Setting a passphrase in Settings
 > encrypts clips on the device before upload.
+>
+> Account deletion is in the app: Settings > Delete Account. It removes the
+> account, its clips, stored files and linked devices, and for Sign in with
+> Apple accounts revokes the app's Apple tokens.
 >
 > Push notifications are used only to deliver clips the user sent to this
 > device. Tapping one copies the clip (text) or opens the share sheet (files).

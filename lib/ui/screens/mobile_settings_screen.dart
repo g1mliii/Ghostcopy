@@ -99,6 +99,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   Set<String> _defaultDevices = {};
   bool _urlShortenerLoading = false;
 
+  /// True while the account is being deleted, so the row cannot be tapped
+  /// twice and shows that something is happening.
+  bool _deletingAccount = false;
+
   // App info
   String _appVersion = '';
 
@@ -293,6 +297,67 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       if (mounted) {
         Navigator.of(context).pop();
       }
+    }
+  }
+
+  /// Delete the account and everything in it, from inside the app - App
+  /// Review requires this for any app where people create an account
+  /// (guideline 5.1.1(v)), and Google Play asks the same.
+  Future<void> _handleDeleteAccount() async {
+    final usesApple =
+        widget.authService.currentUser?.identities?.any(
+          (identity) => identity.provider == 'apple',
+        ) ??
+        false;
+    final confirmed = await _showConfirmDialog(
+      title: 'Delete Account?',
+      message:
+          'This permanently deletes your GhostCopy account and everything in '
+          'it: your clipboard history, the files and images you sent, and '
+          'your linked devices. It cannot be undone.'
+          '${usesApple && Platform.isIOS ? '\n\nYou will confirm with Apple next.' : ''}',
+      confirmText: 'Delete Account',
+      isDestructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _deletingAccount = true);
+    try {
+      final outcome = await widget.authService.deleteAccount();
+      if (outcome == AccountDeletionOutcome.cancelled) return;
+
+      // Like sign-out, the device is now on a fresh guest account, so it
+      // needs registering again for clips and push to reach it.
+      try {
+        await widget.deviceService.registerCurrentDevice();
+        final fcmToken = await FirebaseMessaging.instance.getToken();
+        if (fcmToken != null) {
+          await widget.deviceService.updateFcmToken(fcmToken);
+        }
+      } on Exception catch (e) {
+        debugPrint('[Settings] Could not re-register after deletion: $e');
+      }
+
+      if (!mounted) return;
+      showGhostToast(
+        context,
+        'Your account has been deleted',
+        type: GhostToastType.success,
+      );
+      Navigator.of(context).pop();
+    } on Exception catch (e) {
+      debugPrint('[Settings] Account deletion failed: $e');
+      if (mounted) {
+        showGhostToast(
+          context,
+          'Could not delete your account. Check your connection and try '
+          'again - nothing was deleted.',
+          type: GhostToastType.error,
+          duration: const Duration(seconds: 4),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deletingAccount = false);
     }
   }
 
@@ -888,6 +953,30 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 style: TextStyle(fontSize: 14, color: Colors.red.shade400),
               ),
               onTap: _handleSignOut,
+            ),
+
+          // Delete account (App Review 5.1.1(v)); guest accounts have nothing
+          // of the user's own to delete beyond what sign-out already leaves
+          // to the 90-day expiry.
+          if (!isAnonymous)
+            ListTile(
+              leading: _deletingAccount
+                  ? Adaptive.progressIndicator(color: Colors.red.shade400)
+                  : Icon(
+                      Icons.delete_forever_outlined,
+                      color: Colors.red.shade400,
+                      size: 20,
+                    ),
+              title: Text(
+                'Delete Account',
+                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
+              ),
+              subtitle: const Text(
+                'Permanently delete your account and all your clips',
+                style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+              ),
+              enabled: !_deletingAccount,
+              onTap: _handleDeleteAccount,
             ),
         ],
       ),
