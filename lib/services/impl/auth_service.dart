@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
@@ -242,6 +243,100 @@ class AuthService implements IAuthService {
       debugPrint('[AuthService] ❌ Native Google sign in failed: $e');
       return false;
     }
+  }
+
+  @override
+  Future<bool> signInWithApple() async {
+    if (!Platform.isIOS) return false;
+
+    try {
+      final credential = await _appleCredential();
+      if (credential == null) return false;
+
+      await _switchAccount(
+        () => _client.auth.signInWithIdToken(
+          provider: OAuthProvider.apple,
+          idToken: credential.idToken,
+          nonce: credential.nonce,
+        ),
+      );
+
+      debugPrint('[AuthService] ✅ Apple sign in successful');
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[AuthService] ❌ Apple sign in failed: $e');
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> linkAppleIdentity() async {
+    if (!isAnonymous) {
+      throw Exception('User is already authenticated with a permanent account');
+    }
+    if (!Platform.isIOS) return false;
+
+    try {
+      final credential = await _appleCredential();
+      if (credential == null) return false;
+
+      // Link to the current session rather than signing into a different user.
+      await _client.auth.linkIdentityWithIdToken(
+        provider: OAuthProvider.apple,
+        idToken: credential.idToken,
+        nonce: credential.nonce,
+      );
+
+      debugPrint('[AuthService] ✅ Apple identity linked (user_id preserved)');
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[AuthService] ❌ Apple identity linking failed: $e');
+      return false;
+    }
+  }
+
+  /// Ask iOS for an Apple ID credential. Null when the user cancels.
+  ///
+  /// Only the email scope: the app never shows a name, and Apple would hand
+  /// it over only on the first authorization anyway.
+  Future<({String idToken, String nonce})?> _appleCredential() async {
+    final nonce = appleNonce(_secureRandom);
+    try {
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: const [AppleIDAuthorizationScopes.email],
+        nonce: nonce.hashed,
+      );
+      final idToken = credential.identityToken;
+      if (idToken == null) {
+        debugPrint('[AuthService] No identity token from Apple');
+        return null;
+      }
+      return (idToken: idToken, nonce: nonce.raw);
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) {
+        debugPrint('[AuthService] Apple sign in cancelled by user');
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  /// A fresh nonce for one Sign in with Apple attempt.
+  ///
+  /// Apple is given the SHA-256 of [raw] and embeds it in the identity token;
+  /// Supabase is given [raw] and checks the token carries its hash. A token
+  /// lifted from some other sign-in therefore cannot be replayed here.
+  @visibleForTesting
+  static ({String raw, String hashed}) appleNonce(Random random) {
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
+    final raw = String.fromCharCodes(
+      List<int>.generate(
+        32,
+        (_) => charset.codeUnitAt(random.nextInt(charset.length)),
+      ),
+    );
+    return (raw: raw, hashed: sha256.convert(utf8.encode(raw)).toString());
   }
 
   @override

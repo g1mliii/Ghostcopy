@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -403,6 +404,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           // Divider
           _buildDivider(),
           const SizedBox(height: 16),
+          // Apple first on iOS: App Review asks that it be at least as
+          // prominent as the other third-party option (guideline 4.8).
+          if (Platform.isIOS) ...[
+            RepaintBoundary(child: _buildAppleSignInButton()),
+            const SizedBox(height: 12),
+          ],
           // Google sign in
           RepaintBoundary(child: _buildGoogleSignInButton()),
         ],
@@ -593,6 +600,30 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         ),
         const Expanded(child: Divider(color: GhostColors.surface)),
       ],
+    );
+  }
+
+  /// White with black text and the Apple logo - one of the button styles
+  /// Apple's guidelines allow, and the one that reads on a dark background.
+  Widget _buildAppleSignInButton() {
+    return ElevatedButton.icon(
+      onPressed: _authLoading ? null : _handleAppleAuth,
+      icon: const Icon(Icons.apple, size: 20),
+      label: Text(
+        'Continue with Apple',
+        style: GhostTypography.body.copyWith(
+          fontWeight: FontWeight.w600,
+          color: Colors.black,
+        ),
+      ),
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        disabledBackgroundColor: Colors.white.withValues(alpha: 0.5),
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
     );
   }
 
@@ -922,7 +953,25 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     }
   }
 
-  Future<void> _handleGoogleAuth() async {
+  Future<void> _handleGoogleAuth() => _handleProviderAuth(
+    provider: 'Google',
+    signIn: () => locator<IAuthService>().signInWithGoogle(),
+    link: () => locator<IAuthService>().linkGoogleIdentity(),
+  );
+
+  Future<void> _handleAppleAuth() => _handleProviderAuth(
+    provider: 'Apple',
+    signIn: () => locator<IAuthService>().signInWithApple(),
+    link: () => locator<IAuthService>().linkAppleIdentity(),
+  );
+
+  /// Sign in to an existing account ([signIn]) or, in Sign Up mode, upgrade
+  /// the anonymous account in place ([link]) with a third-party provider.
+  Future<void> _handleProviderAuth({
+    required String provider,
+    required Future<bool> Function() signIn,
+    required Future<bool> Function() link,
+  }) async {
     setState(() {
       _authLoading = true;
       _authError = null;
@@ -944,11 +993,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           return;
         }
 
-        // Sign in with Google
-        success = await locator<IAuthService>().signInWithGoogle();
+        success = await signIn();
       } else {
-        // Sign Up mode: Upgrade anonymous user to Google account
-        success = await locator<IAuthService>().linkGoogleIdentity();
+        // Sign Up mode: upgrade the anonymous user, keeping user_id and clips
+        success = await link();
       }
 
       if (mounted) {
@@ -984,7 +1032,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           if (fcmToken != null) {
             await locator<IDeviceService>().updateFcmToken(fcmToken);
             debugPrint(
-              '[Mobile] ✅ Device registered with FCM token after Google auth',
+              '[Mobile] ✅ Device registered with FCM token after $provider auth',
             );
           }
 

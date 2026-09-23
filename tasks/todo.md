@@ -111,11 +111,23 @@ to package - but everything below marked "verify" does need one.
 - [ ] **In-app account deletion** - App Review guideline 5.1.1(v), a likely
       rejection without it. Settings button, an Edge Function that deletes the
       auth user with the secret key (clips, devices and stored files cascade),
-      and the privacy policy then says it is in the app rather than by email
-- [ ] **Sign in with Apple** - guideline 4.8: offering Google sign-in means
-      also offering a privacy-focused login, and our own email/password
-      usually does not count. Supabase has an Apple provider; the anonymous
-      account must upgrade in place, as it does for Google
+      and the privacy policy then says it is in the app rather than by email.
+      For Apple accounts Apple also requires revoking the Apple token: Supabase
+      keeps no Apple refresh token, so have the user re-authorize with Apple
+      at deletion and let the function exchange that `authorizationCode` and
+      call `appleid.apple.com/auth/revoke`, signing the client secret with the
+      `.p8` (a function secret) on each call
+- [ ] **Sign in with Apple - built, test on the iPhone.** Branch
+      `ios/sign-in-with-apple`. "Continue with Apple" above Google on the iOS
+      welcome screen (hidden on Android); Sign Up mode links it to the
+      anonymous account in place with `linkIdentityWithIdToken`, Login mode
+      signs in and gets the same guest-clips warning as Google. Native only:
+      Supabase Apple provider has Client ID `com.ghostcopy.ghostcopy` and no
+      OAuth secret, so nothing expires every 6 months. Apple key for later
+      (revocation on account deletion): Key ID `Y8NRLTKXG3`, Team
+      `R9TKT8U45R`; the `.p8` is kept offline, never in the repo. Check on the
+      phone: Sign Up links (clips survive), Login signs in, cancel leaves the
+      screen as it was, and Hide My Email works
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set
@@ -135,8 +147,8 @@ to package - but everything below marked "verify" does need one.
       once it exists; needs it signed in on the simulator
 - [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
       the listing doc
-- [ ] Update the privacy policy and listing when Sign in with Apple and
-      account deletion land
+- [ ] Update the privacy policy and listing when account deletion lands
+      (Apple sign-in is already in both)
 
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the

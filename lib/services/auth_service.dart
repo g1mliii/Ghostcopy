@@ -37,6 +37,11 @@ abstract class IAuthService {
   /// Returns true if successful, false if cancelled or failed
   Future<bool> signInWithGoogle();
 
+  /// Sign in with Apple, replacing the current session the way
+  /// [signInWithGoogle] does. iOS only - returns false elsewhere.
+  /// Returns true if successful, false if cancelled or failed
+  Future<bool> signInWithApple();
+
   /// Establish a linked-device session using [refreshToken].
   /// Cleans up the previous account only after session establishment succeeds.
   Future<void> signInWithRefreshToken(String refreshToken);
@@ -55,6 +60,11 @@ abstract class IAuthService {
   /// Uses Supabase's linkIdentity() to preserve user_id
   /// Returns true if successful, false if cancelled or failed
   Future<bool> linkGoogleIdentity();
+
+  /// Link an Apple identity to the current anonymous user, preserving user_id
+  /// and clipboard data. iOS only - returns false elsewhere.
+  /// Returns true if successful, false if cancelled or failed
+  Future<bool> linkAppleIdentity();
 
   /// Generate a time-limited token for mobile device linking
   /// Token expires after 5 minutes

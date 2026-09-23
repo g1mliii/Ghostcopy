@@ -62,13 +62,12 @@ Clipboard" and "Handoff": they are Apple's feature names.
 > - Recent history on every device, so a clip you missed is still there.
 > - Text, links, images and files up to 10 MB.
 > - Choose which devices receive each clip.
-> - Start without an account; add an email or Google sign-in when you want to
->   keep your history across reinstalls.
+> - Sign in with Apple, Google or email to keep your history across devices
+>   and reinstalls.
 >
 > GhostCopy for Mac is a free download from ghostcopy.app.
 
-Update when they land: add Sign in with Apple to the account line, and Windows
-to the last line once it ships.
+Update when it ships: add Windows to the last line.
 
 ## Age rating
 
@@ -85,7 +84,7 @@ Tracking: **No**. The app has no advertising, analytics or crash-reporting SDK
 
 | Data type | Collected | Linked to user | Purpose | Why |
 |---|---|---|---|---|
-| Contact Info - Email Address | Yes | Yes | App Functionality | Account upgrade, email or Google sign-in |
+| Contact Info - Email Address | Yes | Yes | App Functionality | Account upgrade, email, Google or Apple sign-in (Apple may give a relay address) |
 | User Content - Photos or Videos | Yes | Yes | App Functionality | Images sent as clips |
 | User Content - Other User Content | Yes | Yes | App Functionality | Clip text and files |
 | Identifiers - User ID | Yes | Yes | App Functionality | Supabase account ID |
