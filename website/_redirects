@@ -5,3 +5,9 @@
 /docs           /faq   301
 /support.html   /faq   301
 /support        /faq   301
+
+# The current macOS installer. Release assets are versioned and published with
+# --latest=false, so GitHub has no stable URL for "the newest DMG". Bump this
+# line after each macOS release (docs/macos-releases.md). A stale target is
+# harmless: the app updates itself through Sparkle on first launch.
+/download/macos https://github.com/g1mliii/Ghostcopy/releases/download/macos-v1.0.0-5/GhostCopy-1.0.0-5.dmg 302

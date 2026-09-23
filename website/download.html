@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Download — GhostCopy</title>
     <meta name="description"
-        content="GhostCopy is in private beta. Windows and Android builds go out to the list first; macOS and iOS follow." />
+        content="GhostCopy for macOS is out now, signed and notarized. Windows, Android and iOS go out to the beta list next." />
     <meta name="theme-color" content="#0F0F13" />
     <link rel="canonical" href="https://ghostcopy.app/download" />
     <meta property="og:url" content="https://ghostcopy.app/download" />
@@ -15,8 +15,8 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Download — GhostCopy" />
     <meta property="og:description"
-        content="GhostCopy is in private beta. Windows and Android builds go out to the list first; macOS and iOS follow." />
-    <meta property="og:image" content="https://ghostcopy.app/icons/icon-512.png" />
+        content="GhostCopy for macOS is out now, signed and notarized. Windows, Android and iOS go out to the beta list next." />
+    <meta property="og:image" content="https://ghostcopy.app/icons/icon-512.png?v=2" />
     <meta name="twitter:card" content="summary" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -26,9 +26,9 @@
         rel="stylesheet" />
     <link rel="stylesheet" href="./output.css" />
 
-    <link rel="icon" href="/icons/ghost.svg" type="image/svg+xml" />
-    <link rel="alternate icon" href="/icons/favicon.ico" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" href="/icons/ghost.svg?v=2" type="image/svg+xml" />
+    <link rel="alternate icon" href="/icons/favicon.ico?v=2" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=2" />
     <link rel="manifest" href="/site.webmanifest" />
 </head>
 
@@ -52,19 +52,45 @@
 
         <section class="shell pt-16 sm:pt-24 lg:pt-28">
             <h1 class="font-bold leading-[1.02] tracking-display text-[38px] sm:text-6xl lg:text-7xl xl:text-[76px] max-w-[900px]">
-                <span class="block text-ink-1">Nothing to download</span>
-                <span class="block text-ink-4">yet.</span>
+                <span class="block text-ink-1">GhostCopy for Mac</span>
+                <span class="block text-ink-4">is out now.</span>
             </h1>
             <p class="mt-8 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-[600px]">
-                Builds go out to the beta list platform by platform, starting with the two that have had real hours on
-                real hardware.
+                The Mac build is signed and notarized by Apple, and updates itself. Windows, Android and iOS go out to
+                the beta list platform by platform.
             </p>
         </section>
 
-        <!-- Availability is encoded in brightness: the two that are not ready
-             are literally dimmer than the two that are. -->
+        <!-- Availability is encoded in brightness: what you can download now
+             is brighter than what is on the list, which is brighter than what
+             is still in testing. -->
         <section class="shell pt-16 sm:pt-24 lg:pt-28">
             <div class="h-px bg-line"></div>
+
+            <!-- macOS -->
+            <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
+                <div class="shrink-0 md:pt-1.5">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="#F5F6FA" aria-hidden="true">
+                        <path d="M16.3 12.7c0-2.2 1.8-3.3 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-2.9-.8-1.5 0-2.9.9-3.7 2.2-1.6 2.7-.4 6.7 1.1 8.9.7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 1.9-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.5-.1 0-2.3-.9-2.3-3.7zM14.1 5.9c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.3-.6.7-1.1 1.7-.9 2.7 1 .1 2-.4 2.6-1.1z" />
+                    </svg>
+                </div>
+                <div class="md:w-[240px] lg:w-[300px] shrink-0">
+                    <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-4">macOS</h2>
+                    <p class="label !text-accent-text mt-2">Available now</p>
+                </div>
+                <div class="grow max-w-[480px] md:pt-1">
+                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
+                        Lives in the menu bar; Option+Space opens it from anywhere, with no permissions to grant. Drag
+                        it into Applications and it keeps itself up to date from there.
+                    </p>
+                    <p class="font-mono text-xs text-ink-1 mt-2.5">MACOS 14 AND UP · APPLE SILICON AND INTEL</p>
+                </div>
+                <div class="shrink-0 md:pt-1.5">
+                    <!-- /download/macos is a redirect in _redirects to the
+                         current DMG on GitHub Releases. -->
+                    <a href="/download/macos" class="cta">Download .dmg <span aria-hidden="true">&darr;</span></a>
+                </div>
+            </article>
 
             <!-- Windows -->
             <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
@@ -75,12 +101,12 @@
                 </div>
                 <div class="md:w-[240px] lg:w-[300px] shrink-0">
                     <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-4">Windows</h2>
-                    <p class="label !text-accent-text mt-2">First wave</p>
+                    <p class="label mt-2">Next</p>
                 </div>
                 <div class="grow max-w-[480px] md:pt-1">
                     <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
-                        Hotkeys and the tray icon work with no extra permissions. This is the build with the most hours
-                        on it.
+                        Hotkeys and the tray icon work with no extra permissions. It will ship through the Microsoft
+                        Store, which signs it and keeps it updated.
                     </p>
                     <p class="font-mono text-xs text-ink-1 mt-2.5">WINDOWS 10 / 11 · 64-BIT</p>
                 </div>
@@ -100,39 +126,18 @@
                 </div>
                 <div class="md:w-[240px] lg:w-[300px] shrink-0">
                     <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-4">Android</h2>
-                    <p class="label !text-accent-text mt-2">First wave</p>
+                    <p class="label mt-2">Next</p>
                 </div>
                 <div class="grow max-w-[480px] md:pt-1">
                     <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
-                        Push notifications, tap&#8209;to&#8209;copy and the home screen widget. Sending is
-                        paste&#8209;then&#8209;send, because Android will not let an app watch the clipboard.
+                        Push notifications and tap&#8209;to&#8209;copy. Sending is paste&#8209;then&#8209;send, because
+                        Android will not let an app watch the clipboard.
                     </p>
                     <p class="font-mono text-xs text-ink-1 mt-2.5">ANDROID 8.0 AND UP</p>
                 </div>
                 <div class="shrink-0 md:pt-1.5">
                     <a href="#waitlist" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
                 </div>
-            </article>
-
-            <!-- macOS -->
-            <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
-                <div class="shrink-0 md:pt-1.5">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="#2A2A33" aria-hidden="true">
-                        <path d="M16.3 12.7c0-2.2 1.8-3.3 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-2.9-.8-1.5 0-2.9.9-3.7 2.2-1.6 2.7-.4 6.7 1.1 8.9.7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 1.9-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.5-.1 0-2.3-.9-2.3-3.7zM14.1 5.9c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.3-.6.7-1.1 1.7-.9 2.7 1 .1 2-.4 2.6-1.1z" />
-                    </svg>
-                </div>
-                <div class="md:w-[240px] lg:w-[300px] shrink-0">
-                    <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-0">macOS</h2>
-                    <p class="label mt-2">In development</p>
-                </div>
-                <div class="grow max-w-[480px] md:pt-1">
-                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-1">
-                        The code compiles but has not had real time on real hardware. Global hotkeys will need
-                        Accessibility permission the first time you press one.
-                    </p>
-                    <p class="font-mono text-xs text-ink-0 mt-2.5">APPLE SILICON AND INTEL</p>
-                </div>
-                <div class="shrink-0 md:pt-1.5 text-ink-0" aria-label="Not available">&mdash;</div>
             </article>
 
             <!-- iOS -->
@@ -146,15 +151,18 @@
                 </div>
                 <div class="md:w-[240px] lg:w-[300px] shrink-0">
                     <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-0">iOS</h2>
-                    <p class="label mt-2">In development</p>
+                    <p class="label mt-2">In testing</p>
                 </div>
                 <div class="grow max-w-[480px] md:pt-1">
                     <p class="text-base sm:text-[17px] leading-[1.65] text-ink-1">
-                        Same story as macOS. This one goes out through TestFlight, so the list is the only way onto it.
+                        Running on real iPhones now. It goes out through TestFlight first, so the list is the only way
+                        onto it.
                     </p>
-                    <p class="font-mono text-xs text-ink-0 mt-2.5">IOS 14 AND UP</p>
+                    <p class="font-mono text-xs text-ink-0 mt-2.5">IOS 16 AND UP</p>
                 </div>
-                <div class="shrink-0 md:pt-1.5 text-ink-0" aria-label="Not available">&mdash;</div>
+                <div class="shrink-0 md:pt-1.5">
+                    <a href="#waitlist" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
+                </div>
             </article>
         </section>
 
@@ -164,8 +172,8 @@
                 <p class="label !text-warning shrink-0 md:w-[140px] md:pt-1">Read this</p>
                 <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-[700px]">
                     This is beta software that moves your clipboard between machines. It has not had an independent
-                    security audit, and the desktop builds are not code&#8209;signed yet &mdash; Windows SmartScreen will
-                    warn you the first time you run one. Treat it accordingly until both of those change.
+                    security audit. Apple&rsquo;s notarization means the Mac build was scanned and is signed by us
+                    &mdash; not that anyone has reviewed the code. Treat it accordingly.
                 </p>
             </div>
         </section>
@@ -199,14 +207,6 @@
                                          hover:border-ink-1
                                          peer-checked:bg-accent-soft peer-checked:border-accent-border peer-checked:text-accent-text
                                          peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent peer-focus-visible:outline-offset-2">Android</span>
-                        </label>
-                        <label class="cursor-pointer">
-                            <input type="radio" name="platform" value="macos" class="sr-only peer" />
-                            <span class="inline-flex items-center h-10 px-4 font-mono text-xs tracking-[0.1em] uppercase
-                                         bg-elevated border border-line-strong text-ink-2 rounded-md transition-colors
-                                         hover:border-ink-1
-                                         peer-checked:bg-accent-soft peer-checked:border-accent-border peer-checked:text-accent-text
-                                         peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent peer-focus-visible:outline-offset-2">macOS</span>
                         </label>
                         <label class="cursor-pointer">
                             <input type="radio" name="platform" value="ios" class="sr-only peer" />
