@@ -39,7 +39,8 @@ Map<String, Object?> _session(String id) {
 http.Response _tokenTaken(http.Request request) => http.Response(
   jsonEncode({
     'code': '23505',
-    'message': 'duplicate key value violates unique constraint '
+    'message':
+        'duplicate key value violates unique constraint '
         '"devices_fcm_token_global_unique"',
   }),
   409,
@@ -96,8 +97,7 @@ void main() {
 
   tearDown(() => client.dispose());
 
-  Iterable<String> calls() =>
-      requests.map((r) => '${r.method} ${r.url.path}');
+  Iterable<String> calls() => requests.map((r) => '${r.method} ${r.url.path}');
 
   Map<String, Object?> claimParams() =>
       jsonDecode(
