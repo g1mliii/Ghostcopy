@@ -138,6 +138,36 @@ to package - but everything below marked "verify" does need one.
 - [ ] Update the privacy policy and listing when Sign in with Apple and
       account deletion land
 
+- [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
+      iPhone is expected around late October 2026; its simulator is in the
+      Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
+      already: the one/two-pane split in `mobile_main_screen.dart` keys on
+      aspect ratio in shared Flutter code (built for the Pixel Fold in
+      `554ed43`), and the app already targets iPad. Install the beta alongside,
+      never over, the release Xcode - uploads should stay on the release one -
+      and check folded, unfolded, and a live fold/unfold mid-compose
+- [ ] **Keychain migration on device.** The `first_unlock` migration
+      (`lib/services/impl/keychain_accessibility.dart`) still needs confirming
+      on a phone holding a passphrase written by an older build - a fresh
+      install cannot show it. Simulator Keychain items survive uninstalls,
+      which disguised this last time
+- [ ] **Device-name entitlement.** Request
+      `com.apple.developer.device-information.user-assigned-device-name` from
+      Apple (developer.apple.com, Contact -> Request). Cosmetic only: device
+      rows already stay unique via the `identifierForVendor` suffix, so a phone
+      reads "iPhone 15 Pro - a1b2c3d4" instead of "Subai's iPhone". The case
+      for it: clips are labelled by sending device and settings lists them, so
+      the owner's name for a device is the point. If granted, add the key to
+      `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
+      prefers `ios.name`
+- [ ] **`primary` as a foreground is 4.44:1 on `surface`**, just under AA.
+      Used as a foreground in ~104 places: either the token moves, or call
+      sites move to `accentText` (8.98:1) one at a time, as the email templates
+      did
+- [ ] `flutter logs` returns nothing from a profile build on device. The
+      background isolate is only observable by writing files to the app
+      container and reading them with `devicectl device info files`
+
 ## All platforms
 
 - [ ] **Do not disable legacy API keys** until every released build carries
