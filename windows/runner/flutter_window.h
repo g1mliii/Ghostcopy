@@ -31,6 +31,8 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
 
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> feedback_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      clipboard_change_channel_;
 
   // Power state monitor for sleep/wake/lock events
   std::unique_ptr<PowerMonitor> power_monitor_;

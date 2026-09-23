@@ -22,6 +22,13 @@ class _Notifier extends Mock implements INotificationService {}
 
 void _noop() {}
 
+/// Let platform-channel replies and the async steps behind them land.
+Future<void> settle(WidgetTester tester) async {
+  for (var i = 0; i < 5; i++) {
+    await tester.pump();
+  }
+}
+
 class _Obsidian extends Mock implements IObsidianService {}
 
 class _Repository extends Mock implements IClipboardRepository {}
@@ -39,6 +46,7 @@ class _Supabase extends Mock implements SupabaseClient {}
 class _Auth extends Mock implements GoTrueClient {}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late _Webhook webhook;
   late _Obsidian obsidian;
   late _Repository repository;
@@ -48,6 +56,14 @@ void main() {
   late _Auth auth;
   late ClipboardSyncService service;
   late ClipboardContent clipboardValue;
+
+  /// What the native clipboard counter reports. Every write asks for it
+  /// afterwards (to ignore GhostCopy's own write), and an unanswered channel
+  /// would leave that call hanging, so every test answers it.
+  late int pasteboard;
+  const clipboardChangeChannel = MethodChannel(
+    'com.ghostcopy.app/clipboard_change',
+  );
 
   ClipboardItem clip(
     String id, {
@@ -73,6 +89,12 @@ void main() {
   });
 
   setUp(() {
+    pasteboard = 1;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          clipboardChangeChannel,
+          (_) async => pasteboard,
+        );
     webhook = _Webhook();
     obsidian = _Obsidian();
     repository = _Repository();
@@ -129,7 +151,11 @@ void main() {
     );
   });
 
-  tearDown(() => service.dispose());
+  tearDown(() {
+    service.dispose();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(clipboardChangeChannel, null);
+  });
 
   testWidgets('manual text sends reach both integrations', (tester) async {
     service.notifyManualSend('manual clip');
@@ -253,7 +279,7 @@ void main() {
     testWidgets('an auto-copied clip says so', (tester) async {
       service.startPolling(interval: const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
-      await tester.pump();
+      await settle(tester);
 
       verify(() => clipboard.writeText('clip 1')).called(1);
       verify(
@@ -272,7 +298,7 @@ void main() {
 
       service.startPolling(interval: const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
-      await tester.pump();
+      await settle(tester);
 
       verifyNever(() => clipboard.writeText(any()));
       verify(
@@ -286,6 +312,102 @@ void main() {
       service.stopPolling();
     });
   });
+
+  group(
+    'smart auto-receive respects clipboard staleness',
+    () {
+      late _Notifier notifier;
+
+      setUp(() {
+        notifier = _Notifier();
+        service.attachNotificationService(notifier);
+        when(
+          settings.getAutoReceiveBehavior,
+        ).thenAnswer((_) async => AutoReceiveBehavior.smart);
+        // A real write bumps the counter, which is what the watch must not
+        // mistake for the user copying something.
+        when(() => clipboard.writeText(any())).thenAnswer((_) async {
+          pasteboard++;
+        });
+        when(repository.getLatestItemId).thenAnswer((_) async => '1');
+        when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+      });
+
+      Future<void> watch(WidgetTester tester) async {
+        service.startClipboardActivityWatch();
+        await settle(tester);
+      }
+
+      Future<void> receive(WidgetTester tester) async {
+        service.startPolling(interval: const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+        await settle(tester);
+      }
+
+      testWidgets('a clip does not overwrite what the user just copied', (
+        tester,
+      ) async {
+        await watch(tester);
+        pasteboard++; // the user copies something in another app
+        await tester.pump(const Duration(seconds: 5));
+        await settle(tester);
+
+        await receive(tester);
+
+        verifyNever(() => clipboard.writeText(any()));
+        verify(
+          () => notifier.showClickableToast(
+            message: any(named: 'message'),
+            actionLabel: 'Copy',
+            onAction: any(named: 'onAction'),
+            duration: any(named: 'duration'),
+          ),
+        ).called(1);
+        service
+          ..stopPolling()
+          ..stopClipboardActivityWatch();
+      });
+
+      testWidgets('a copy older than the stale window is overwritten', (
+        tester,
+      ) async {
+        await watch(tester);
+        pasteboard++;
+        await tester.pump(const Duration(seconds: 5));
+        await settle(tester);
+        await tester.pump(const Duration(minutes: 5));
+        await settle(tester);
+
+        await receive(tester);
+
+        verify(() => clipboard.writeText('clip 1')).called(1);
+        service
+          ..stopPolling()
+          ..stopClipboardActivityWatch();
+      });
+
+      testWidgets('two clips in a row are both copied', (tester) async {
+        await watch(tester);
+        await receive(tester);
+        verify(() => clipboard.writeText('clip 1')).called(1);
+
+        // GhostCopy's own write must not count as the user copying, or the
+        // second clip inside the window would be left uncopied.
+        await tester.pump(const Duration(seconds: 5));
+        await settle(tester);
+        when(repository.getLatestItemId).thenAnswer((_) async => '2');
+        when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+        await tester.pump(const Duration(seconds: 1));
+        await settle(tester);
+
+        verify(() => clipboard.writeText('clip 2')).called(1);
+        service
+          ..stopPolling()
+          ..stopClipboardActivityWatch();
+      });
+    },
+    skip: !(Platform.isMacOS || Platform.isWindows),
+  );
 
   testWidgets('polling leaves clips for other platforms untouched', (
     tester,

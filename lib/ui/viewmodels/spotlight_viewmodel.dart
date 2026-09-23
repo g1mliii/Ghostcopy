@@ -38,14 +38,17 @@ class SpotlightViewModel extends ChangeNotifier {
     required IClipboardSyncService clipboardSyncService,
     required this._transformerService,
     required this._notificationService,
+    IClipboardService? clipboardService,
   }) : _clipboardRepo = clipboardRepository,
-       _syncService = clipboardSyncService;
+       _syncService = clipboardSyncService,
+       _clipboardService = clipboardService ?? ClipboardService.instance;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
   final IClipboardSyncService _syncService;
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
+  final IClipboardService _clipboardService;
 
   // ========== SEND STATE ==========
 
@@ -227,7 +230,7 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Returns ClipboardContent if there's something to paste
   Future<ClipboardContent?> populateFromClipboard() async {
     try {
-      final clipboardService = ClipboardService.instance;
+      final clipboardService = _clipboardService;
       final content = await clipboardService.read();
 
       if (content.hasImage) {
@@ -445,7 +448,7 @@ class SpotlightViewModel extends ChangeNotifier {
     VoidCallback? onCopySuccess,
   }) async {
     try {
-      final clipboardService = ClipboardService.instance;
+      final clipboardService = _clipboardService;
 
       if (item.isImage) {
         // Download image and copy to clipboard
@@ -495,6 +498,11 @@ class SpotlightViewModel extends ChangeNotifier {
         await clipboardService.writeText(item.content);
         debugPrint('[SpotlightVM] Copied text to clipboard');
       }
+
+      // The user chose this copy, so a clip arriving in the next few minutes
+      // should not overwrite it under smart auto-receive. A refactor once
+      // dropped this call and staleness quietly stopped working.
+      _syncService.updateClipboardModificationTime();
 
       _notificationService.showToast(
         message: 'Copied to clipboard',

@@ -57,6 +57,26 @@ bool FlutterWindow::OnCreate() {
         result->Success();
       });
 
+  // The clipboard's change counter, the Windows twin of NSPasteboard's
+  // changeCount on macOS (ClipboardChangeCount.swift). One integer, no
+  // clipboard read: smart auto-receive uses it to tell when the user last
+  // copied something, and auto-send to skip reading an unchanged clipboard.
+  clipboard_change_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "com.ghostcopy.app/clipboard_change",
+          &flutter::StandardMethodCodec::GetInstance());
+  clipboard_change_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() != "changeCount") {
+          result->NotImplemented();
+          return;
+        }
+        result->Success(flutter::EncodableValue(
+            static_cast<int64_t>(GetClipboardSequenceNumber())));
+      });
+
   // Initialize power monitor for system sleep/wake/lock events
   power_monitor_ =
       std::make_unique<PowerMonitor>(flutter_controller_->engine());
@@ -88,6 +108,7 @@ void FlutterWindow::OnDestroy() {
   }
 
   feedback_channel_ = nullptr;
+  clipboard_change_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

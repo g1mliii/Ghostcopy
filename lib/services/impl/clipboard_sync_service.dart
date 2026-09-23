@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -103,8 +104,19 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Content deduplication
   String _lastSentContentHash = '';
 
-  // Smart auto-receive: Track clipboard staleness
+  /// When the user last changed the clipboard themselves, as far as this
+  /// service can tell. Smart auto-receive copies a received clip only once
+  /// this is older than the stale duration, so it never overwrites something
+  /// the user just copied. Null until a change has been seen, which counts as
+  /// stale.
   DateTime? _lastClipboardModificationTime;
+
+  /// Polls the pasteboard change counter; see [startClipboardActivityWatch].
+  Timer? _activityTimer;
+
+  /// The counter value last seen, including the one GhostCopy's own writes
+  /// leave behind - so only somebody else's change moves it.
+  int? _activityChangeCount;
 
   // Callbacks for UI updates
   @override
@@ -119,6 +131,8 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     // Subscribe to realtime updates
     _subscribeToRealtimeUpdates();
+
+    startClipboardActivityWatch();
 
     // Check if auto-send is enabled and start monitoring
     final autoSendEnabled = await _settingsService.getAutoSendEnabled();
@@ -245,7 +259,8 @@ class ClipboardSyncService implements IClipboardSyncService {
         );
       }
       final deviceType = item.deviceType;
-      final now = DateTime.now();
+      // clock rather than DateTime so tests can move time past the window.
+      final now = clock.now();
 
       // Load auto-receive behavior from settings
       final autoReceiveBehavior = await _settingsService
@@ -286,7 +301,10 @@ class ClipboardSyncService implements IClipboardSyncService {
             '[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType',
           );
 
-          _lastClipboardModificationTime = now;
+          // Deliberately not stamping _lastClipboardModificationTime: this
+          // is GhostCopy's write, not the user's. Counting it made a second
+          // clip sent within the stale window stay uncopied, because the
+          // first one's arrival looked like the user had just copied.
 
           // Show notification or queue if Game Mode active
           if (_gameModeService?.isActive ?? false) {
@@ -482,6 +500,10 @@ class ClipboardSyncService implements IClipboardSyncService {
         clipboardContent: writtenContent,
       );
     } finally {
+      // Absorb the counter bump this write caused, so the activity watch does
+      // not mistake GhostCopy's write for the user copying something.
+      _activityChangeCount =
+          await _readClipboardChangeCount() ?? _activityChangeCount;
       _clipboardWritesInProgress--;
     }
   }
@@ -513,11 +535,13 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Check clipboard and auto-send if changed
-  /// AppKit's pasteboard change counter, or null where it is unavailable.
+  /// The clipboard's change counter, or null where it is unavailable.
   ///
-  /// Reading the clipboard pulls the whole payload - a copied file or image is
-  /// re-read from disk in full - so on macOS this cheap integer gates that
-  /// read. Other platforms fall through and read as before.
+  /// NSPasteboard's changeCount on macOS, GetClipboardSequenceNumber on
+  /// Windows - both answered natively on this channel. Reading the clipboard
+  /// pulls the whole payload - a copied file or image is re-read from disk in
+  /// full - so this cheap integer gates that read. Linux has no counter and
+  /// reads as before.
   static const _clipboardChangeChannel = MethodChannel(
     'com.ghostcopy.app/clipboard_change',
   );
@@ -528,7 +552,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   int? _lastEmptyChangeCount;
 
   Future<int?> _readClipboardChangeCount() async {
-    if (!Platform.isMacOS) return null;
+    if (!Platform.isMacOS && !Platform.isWindows) return null;
     try {
       return await _clipboardChangeChannel.invokeMethod<int>('changeCount');
     } on PlatformException catch (e) {
@@ -893,7 +917,53 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Update clipboard modification time (called from UI when user manually copies)
   @override
   void updateClipboardModificationTime() {
-    _lastClipboardModificationTime = DateTime.now();
+    _lastClipboardModificationTime = clock.now();
+  }
+
+  /// Watch for the user changing the clipboard in any app, so smart
+  /// auto-receive knows whether a received clip would overwrite something
+  /// they just copied.
+  ///
+  /// Staleness was first measured from copies made in GhostCopy's history,
+  /// through [updateClipboardModificationTime]. A refactor dropped those
+  /// calls, after which only GhostCopy's own auto-copies set the time: smart
+  /// behaved like always, and a second clip inside the window stayed
+  /// uncopied. This reads the clipboard's change counter (see
+  /// [_readClipboardChangeCount]) - one integer, never the contents - every
+  /// five seconds, and stamps the time whenever it moves for any reason but
+  /// GhostCopy writing. That covers copies in every app, not only GhostCopy's,
+  /// on macOS and Windows; elsewhere only the history-copy hook applies.
+  @visibleForTesting
+  void startClipboardActivityWatch() {
+    if (_activityTimer != null ||
+        _isDisposed ||
+        !(Platform.isMacOS || Platform.isWindows)) {
+      return;
+    }
+    unawaited(_checkClipboardActivity());
+    _activityTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _checkClipboardActivity(),
+    );
+  }
+
+  @visibleForTesting
+  void stopClipboardActivityWatch() {
+    _activityTimer?.cancel();
+    _activityTimer = null;
+  }
+
+  Future<void> _checkClipboardActivity() async {
+    if (_clipboardWritesInProgress > 0 || _isDisposed) return;
+    final count = await _readClipboardChangeCount();
+    if (count == null || _clipboardWritesInProgress > 0 || _isDisposed) return;
+    final previous = _activityChangeCount;
+    _activityChangeCount = count;
+    // The first reading is only a baseline: a copy made before launch has an
+    // unknown age, and unknown counts as stale.
+    if (previous != null && count != previous) {
+      _lastClipboardModificationTime = clock.now();
+    }
   }
 
   /// Notify service that content was manually sent via UI
@@ -1158,6 +1228,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     // Cancel timers
     _clipboardMonitorTimer?.cancel();
     _clipboardMonitorTimer = null;
+
+    stopClipboardActivityWatch();
 
     _autoReceiveDebounceTimer?.cancel();
     _autoReceiveDebounceTimer = null;
