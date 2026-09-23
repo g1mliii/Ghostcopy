@@ -467,22 +467,27 @@ class ClipboardSyncService implements IClipboardSyncService {
     if (_isDisposed || !_canReceive(item)) return false;
     _clipboardWritesInProgress++;
     var writtenContent = const ClipboardContent.empty();
+    // Set the moment a clipboard write lands; see the finally block.
+    var wrote = false;
     try {
       switch (item.contentType) {
         case ContentType.text:
           // Plain text - copy directly
           await _clipboardService.writeText(item.content);
+          wrote = true;
           writtenContent = ClipboardContent.text(item.content);
 
         case ContentType.html:
           // HTML - copy with plain text fallback (super_clipboard handles both)
           await _clipboardService.writeHtml(item.content);
+          wrote = true;
           writtenContent = ClipboardContent.html(item.content);
           debugPrint('[ClipboardSyncService] Copied HTML to clipboard');
 
         case ContentType.markdown:
           // Markdown - copy as plain text (markdown isn't standard clipboard format)
           await _clipboardService.writeText(item.content);
+          wrote = true;
           writtenContent = ClipboardContent.text(item.content);
           debugPrint('[ClipboardSyncService] Copied Markdown as plain text');
 
@@ -507,6 +512,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
           // Copy image to clipboard using super_clipboard (full native support)
           await _clipboardService.writeImage(imageBytes);
+          wrote = true;
           writtenContent = ClipboardContent.image(
             imageBytes,
             item.mimeType ?? 'image/png',
@@ -544,6 +550,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
             // Copy file path to clipboard
             await _clipboardService.writeFilePath(tempFile.path);
+            wrote = true;
             writtenContent = ClipboardContent.file(
               fileBytes,
               filename,
@@ -573,9 +580,14 @@ class ClipboardSyncService implements IClipboardSyncService {
       return true;
     } finally {
       // Absorb the counter bump this write caused, so the activity watch does
-      // not mistake GhostCopy's write for the user copying something.
-      _activityChangeCount =
-          await _readClipboardChangeCount() ?? _activityChangeCount;
+      // not mistake GhostCopy's write for the user copying something - but
+      // only if a write landed. When the download, the temp save or the write
+      // failed, a change the user made meanwhile is the only change; absorbing
+      // it as ours meant it was never counted, and the next clip overwrote it.
+      if (wrote) {
+        _activityChangeCount =
+            await _readClipboardChangeCount() ?? _activityChangeCount;
+      }
       _clipboardWritesInProgress--;
     }
   }

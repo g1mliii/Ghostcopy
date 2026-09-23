@@ -418,6 +418,35 @@ void main() {
           ..stopClipboardActivityWatch();
       });
 
+      testWidgets(
+        'a copy made while a failed download ran is still protected',
+        (tester) async {
+          await watch(tester);
+          when(
+            () => repository.getById('1'),
+          ).thenAnswer((_) async => clip('1', type: ContentType.imagePng));
+          when(() => repository.downloadFile(any())).thenAnswer((_) async {
+            pasteboard++; // the user copies, then the download fails
+            return null;
+          });
+          await receive(tester);
+          verifyNever(() => clipboard.writeImage(any()));
+
+          // Nothing of ours was written, so that change is the user's: the next
+          // clip must not overwrite it.
+          when(repository.getLatestItemId).thenAnswer((_) async => '2');
+          when(
+            () => repository.getById('2'),
+          ).thenAnswer((_) async => clip('2'));
+          await tester.pump(const Duration(seconds: 1));
+          await settle(tester);
+          verifyNever(() => clipboard.writeText('clip 2'));
+          service
+            ..stopPolling()
+            ..stopClipboardActivityWatch();
+        },
+      );
+
       testWidgets('copying from a notification protects that copy', (
         tester,
       ) async {
