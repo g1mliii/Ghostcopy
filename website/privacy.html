@@ -55,7 +55,7 @@
                 <span class="block text-ink-1">What we hold, and</span>
                 <span class="block text-ink-4">what we cannot.</span>
             </h1>
-            <p class="label mt-8">Privacy policy · Last updated 14 September 2026</p>
+            <p class="label mt-8">Privacy policy · Last updated 22 September 2026</p>
         </section>
 
         <!-- summary -->
@@ -81,9 +81,21 @@
                         with Google &mdash; in which case we receive the address on that Google account.
                     </p>
                     <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
-                        For each clip you send we store its content, the type of device that sent it, the name you gave
-                        that device, and the time. Where encryption is on, the content field holds ciphertext. We also
-                        store one push notification token per mobile device, which is what lets a clip reach your phone.
+                        For each clip you send we store its content, the type of device that sent it, that device&rsquo;s
+                        name, and the time. Where encryption is on, the content field holds ciphertext. We also store one
+                        push notification token per mobile device, which is what lets a clip reach your phone.
+                    </p>
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        Files and images you send are stored as files, with the clip pointing at them. With a passphrase
+                        set they are encrypted on your device before upload, so what we store is ciphertext.
+                    </p>
+                    <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
+                        Two optional integrations send clips somewhere you choose, and are off until you set them up. A
+                        webhook posts each clip you send or receive &mdash; its text, the device type, which direction it
+                        went, and the time &mdash; from your device straight to the URL you enter. It does not pass through
+                        us, and it carries the decrypted text even when encryption is on, so the service at that URL
+                        handles it under its own terms. The Obsidian integration writes clips into a folder of your vault
+                        on your computer, and nothing leaves the machine.
                     </p>
                     <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2">
                         This website sets no cookies and runs no analytics. If you join the beta list we store the email
@@ -119,8 +131,10 @@
                     <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
                         <h3 class="sm:w-[210px] shrink-0 text-base sm:text-[17px] font-semibold text-ink-4">Anything
                             unsent</h3>
-                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">The desktop app does not watch
-                            your clipboard in the background. Nothing exists until you send it.</p>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Nothing reaches us until it is
+                            sent. The desktop app only reads your clipboard on its own if you turn on auto&#8209;send,
+                            which is off by default &mdash; then it notices each new copy and sends it to the devices you
+                            picked. Phones never read the clipboard in the background; you paste, then send.</p>
                     </div>
 
                     <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 pt-8">
@@ -156,8 +170,9 @@
 
                     <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
                         <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">Cloudflare</h3>
-                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Serves this website. It does
-                            not touch clip data at all.</p>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Serves this website, and
+                            stores the files and images you send (Cloudflare R2). With a passphrase set, those are
+                            ciphertext by the time they arrive.</p>
                     </div>
                 </div>
             </div>
@@ -168,8 +183,8 @@
             <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
                 <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">How long we keep it</h2>
                 <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
-                    Clips stay until you delete them or delete your account. Deleting a clip removes the row; there is no
-                    archive copy. Deleting your account removes the account and every clip attached to it. Backups taken
+                    Clips stay until you delete them or delete your account. Deleting a clip removes the row and any file it
+                    points at; there is no archive copy. Deleting your account removes the account and every clip attached to it. Backups taken
                     before a deletion roll off on their own schedule and are not queryable by us in the ordinary course.
                 </p>
             </div>
