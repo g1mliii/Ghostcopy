@@ -14,7 +14,7 @@ const pkcs8 = Buffer.from(await crypto.subtle.exportKey('pkcs8', keyPair.private
 const applePem = `-----BEGIN PRIVATE KEY-----\n${pkcs8.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----`;
 
 function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, deleteError = null,
-  appleKey = applePem, tokenStatus = 200, revokeStatus = 200 } = {}) {
+  appleKey = applePem, tokenStatus = 200, revokeStatus = 200, codeSubject = 'apple-sub' } = {}) {
   let handler;
   const deletedUsers = [];
   const appleCalls = [];
@@ -27,7 +27,10 @@ function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, d
   const fetch = async (url, init) => {
     appleCalls.push({ url, form: Object.fromEntries(new URLSearchParams(init.body)) });
     if (url.endsWith('/auth/token')) {
-      return { ok: tokenStatus === 200, status: tokenStatus, json: async () => ({ refresh_token: 'apple-refresh' }) };
+      // The id_token names the Apple ID the code was issued for.
+      const idToken = ['e30', Buffer.from(JSON.stringify({ sub: codeSubject })).toString('base64url'), 'sig'].join('.');
+      return { ok: tokenStatus === 200, status: tokenStatus,
+        json: async () => ({ refresh_token: 'apple-refresh', id_token: idToken }) };
     }
     return { ok: revokeStatus === 200, status: revokeStatus };
   };
@@ -90,7 +93,7 @@ test('only POST deletes', async () => {
 });
 
 test('an Apple account has its Apple token exchanged and revoked, then is deleted', async () => {
-  const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple' }] } });
+  const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] } });
   const response = await f.request({ apple_authorization_code: 'fresh-code' });
 
   assert.deepEqual(plain(response.body), { deleted: true, apple_revoked: true });
@@ -113,14 +116,14 @@ test('an Apple account has its Apple token exchanged and revoked, then is delete
 });
 
 test('a failed Apple revocation is reported but does not keep the data', async () => {
-  const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple' }] }, revokeStatus: 400 });
+  const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] }, revokeStatus: 400 });
   const response = await f.request({ apple_authorization_code: 'fresh-code' });
   assert.deepEqual(plain(response.body), { deleted: true, apple_revoked: false });
   assert.deepEqual(f.deletedUsers, ['user']);
 });
 
 test('an Apple account deleted without a code is still deleted, flagged unrevoked', async () => {
-  const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple' }] } });
+  const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] } });
   const response = await f.request();
   assert.deepEqual(plain(response.body), { deleted: true, apple_revoked: false });
   assert.equal(f.appleCalls.length, 0);
@@ -129,4 +132,17 @@ test('an Apple account deleted without a code is still deleted, flagged unrevoke
 test('a failed delete says so', async () => {
   const f = fixture({ deleteError: new Error('db down') });
   assert.equal((await f.request()).status, 500);
+});
+
+test('a code for a different Apple ID revokes nothing, and the account is still deleted', async () => {
+  // The device's Apple ID need not be the one on the GhostCopy account;
+  // revoking it would leave the deleted account's authorization active.
+  const f = fixture({
+    user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] },
+    codeSubject: 'someone-else',
+  });
+  const response = await f.request({ apple_authorization_code: 'fresh-code' });
+  assert.deepEqual(plain(response.body), { deleted: true, apple_revoked: false });
+  assert.deepEqual(f.appleCalls.map((c) => c.url), ['https://appleid.apple.com/auth/token']);
+  assert.deepEqual(f.deletedUsers, ['user']);
 });

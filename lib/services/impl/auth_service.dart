@@ -206,7 +206,12 @@ class AuthService implements IAuthService {
         _pendingOAuthDeviceId = null;
         unawaited(_cleanupPreviousSession(previous, next.user.id, deviceId));
       });
-      final response = await _client.auth.signInWithOAuth(
+      // Listen before the browser opens, so a quick callback is not missed.
+      final previousUserId = _client.auth.currentUser?.id;
+      final signedIn = awaitBrowserSession(
+        (session) => session.user.id != previousUserId,
+      );
+      final launched = await _client.auth.signInWithOAuth(
         provider,
         redirectTo: kIsWeb ? null : _oauthRedirect,
         authScreenLaunchMode: kIsWeb
@@ -216,7 +221,8 @@ class AuthService implements IAuthService {
       debugPrint(
         '[AuthService] ${provider.name} sign in initiated (web OAuth)',
       );
-      return response;
+      if (!launched) return false;
+      return await signedIn;
     } on AuthException catch (e) {
       debugPrint('[AuthService] ${provider.name} sign in failed: ${e.message}');
       return false;
@@ -225,9 +231,48 @@ class AuthService implements IAuthService {
 
   /// Link [provider] to the anonymous user through the browser, preserving
   /// user_id and clipboard data. Same return path as [_webOAuthSignIn].
+  /// How long a browser sign-in may take before it counts as abandoned.
+  static const _browserAuthTimeout = Duration(minutes: 3);
+
+  /// Resolves true once the browser flow's callback has installed a session
+  /// that satisfies [isDone], false if none does within [timeout].
+  ///
+  /// signInWithOAuth and linkIdentity return as soon as the browser opens.
+  /// Reporting that as success let the auth panel run its post-login work
+  /// against the old guest session and close - so the realtime subscription
+  /// stayed on the guest, and cancelling in the browser looked like success.
+  @visibleForTesting
+  Future<bool> awaitBrowserSession(
+    bool Function(Session session) isDone, {
+    Duration timeout = _browserAuthTimeout,
+  }) async {
+    try {
+      await _client.auth.onAuthStateChange
+          .where(
+            (state) =>
+                (state.event == AuthChangeEvent.signedIn ||
+                    state.event == AuthChangeEvent.userUpdated) &&
+                state.session != null &&
+                isDone(state.session!),
+          )
+          .first
+          .timeout(timeout);
+      return true;
+    } on TimeoutException {
+      debugPrint('[AuthService] Browser sign-in did not complete in time');
+      return false;
+    }
+  }
+
   Future<bool> _webOAuthLink(OAuthProvider provider) async {
     try {
-      final response = await _client.auth.linkIdentity(
+      // Linking keeps the user id; it is done when the account stops being a
+      // guest.
+      final userId = _client.auth.currentUser?.id;
+      final linked = awaitBrowserSession(
+        (session) => session.user.id == userId && !session.user.isAnonymous,
+      );
+      final launched = await _client.auth.linkIdentity(
         provider,
         redirectTo: kIsWeb ? null : _oauthRedirect,
         authScreenLaunchMode: kIsWeb
@@ -235,7 +280,8 @@ class AuthService implements IAuthService {
             : LaunchMode.externalApplication,
       );
       debugPrint('[AuthService] ${provider.name} identity link initiated');
-      return response;
+      if (!launched) return false;
+      return await linked;
     } on AuthException catch (e) {
       debugPrint('[AuthService] Link ${provider.name} failed: ${e.message}');
       return false;
@@ -672,8 +718,16 @@ class AuthService implements IAuthService {
     } on AuthException catch (e) {
       debugPrint('[AuthService] Local sign-out after deletion: ${e.message}');
     }
-    await _client.auth.signInAnonymously();
-    debugPrint('[AuthService] On a fresh guest account after deletion');
+    // The account is already gone. A failed guest sign-in here (network, rate
+    // limit) must not turn that into a reported failure - the settings screen
+    // would say nothing was deleted. The app signs in as a guest at its next
+    // launch anyway.
+    try {
+      await _client.auth.signInAnonymously();
+      debugPrint('[AuthService] On a fresh guest account after deletion');
+    } on Exception catch (e) {
+      debugPrint('[AuthService] Guest sign-in after deletion failed: $e');
+    }
     return AccountDeletionOutcome.deleted;
   }
 

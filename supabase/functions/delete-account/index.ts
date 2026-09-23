@@ -74,10 +74,34 @@ async function appleClientSecret(privateKeyPem: string): Promise<string> {
   return `${signingInput}.${base64url(new Uint8Array(signature))}`
 }
 
-/** Exchange the fresh authorization code, then revoke what it yields. */
+/** The `sub` claim of a JWT, without verifying it - see the caller. */
+function jwtSubject(jwt: unknown): string | null {
+  if (typeof jwt !== 'string') return null
+  try {
+    const payload = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, '=')))
+    return typeof claims.sub === 'string' ? claims.sub : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Exchange the fresh authorization code, then revoke what it yields - but
+ * only if it belongs to [expectedSubject], the Apple ID on the account being
+ * deleted.
+ *
+ * The code comes from whichever Apple ID the device is signed into, which
+ * need not be the one on this GhostCopy account. Revoking without checking
+ * would revoke the wrong Apple ID's authorization and leave the deleted
+ * account's still active. The id_token's subject is read without verifying
+ * its signature: it came straight from Apple's token endpoint, over TLS, in
+ * answer to our own client secret.
+ */
 async function revokeAppleTokens(
   authorizationCode: string,
   privateKeyPem: string,
+  expectedSubject: string,
 ): Promise<boolean> {
   const clientSecret = await appleClientSecret(privateKeyPem)
   const form = (fields: Record<string, string>) => ({
@@ -100,6 +124,11 @@ async function revokeAppleTokens(
     return false
   }
   const tokens = await tokenResponse.json()
+  const subject = jwtSubject(tokens.id_token)
+  if (subject !== expectedSubject) {
+    console.error('[delete-account] Apple code is for a different Apple ID - not revoking')
+    return false
+  }
   const token = tokens.refresh_token ?? tokens.access_token
   if (!token) return false
 
@@ -146,10 +175,13 @@ Deno.serve(async (req) => {
 
   // null: not an Apple account. false: it is, and revocation did not happen.
   let appleRevoked: boolean | null = null
-  const usesApple = (user.identities ?? []).some(
+  const appleIdentity = (user.identities ?? []).find(
     (identity: { provider?: string }) => identity.provider === 'apple',
-  )
-  if (usesApple) {
+  ) as { id?: string; identity_data?: { sub?: string } } | undefined
+  // Supabase keeps the Apple user ID as identity_data.sub (and as the
+  // identity's id); that is what the code's id_token must match.
+  const appleSubject = appleIdentity?.identity_data?.sub ?? appleIdentity?.id ?? ''
+  if (appleIdentity) {
     const privateKey = Deno.env.get('APPLE_PRIVATE_KEY') ?? ''
     if (!authorizationCode || !privateKey) {
       console.error(
@@ -159,7 +191,7 @@ Deno.serve(async (req) => {
       appleRevoked = false
     } else {
       try {
-        appleRevoked = await revokeAppleTokens(authorizationCode, privateKey)
+        appleRevoked = await revokeAppleTokens(authorizationCode, privateKey, appleSubject)
       } catch (e) {
         console.error('[delete-account] Apple revocation threw:', e)
         appleRevoked = false

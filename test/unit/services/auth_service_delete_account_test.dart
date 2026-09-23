@@ -67,6 +67,7 @@ void main() {
   late int reauthorizations;
   late String? appleCode;
   late _Encryption encryption;
+  late bool signupFails;
 
   Future<AuthService> signedInAs(Map<String, Object?> session) async {
     client = SupabaseClient(
@@ -84,7 +85,19 @@ void main() {
             request: request,
           );
         }
+        if (request.url.path == '/auth/v1/token') {
+          // The browser callback's code exchange emits signedIn with the new
+          // session; a password sign-in answered here emits the same event.
+          return http.Response(jsonEncode(_session('apple-user')), 200);
+        }
         if (request.url.path == '/auth/v1/signup') {
+          if (signupFails) {
+            return http.Response(
+              '{"msg":"rate limited","code":429}',
+              429,
+              request: request,
+            );
+          }
           return http.Response(
             jsonEncode(_session('guest', anonymous: true)),
             200,
@@ -111,6 +124,7 @@ void main() {
     deleteStatus = 200;
     reauthorizations = 0;
     appleCode = 'fresh-code';
+    signupFails = false;
     encryption = _Encryption();
     when(encryption.forgetPassphraseLocally).thenAnswer((_) async {});
   });
@@ -185,5 +199,43 @@ void main() {
     expect(client.auth.currentUser?.id, 'user');
     expect(requests.map((r) => r.url.path), isNot(contains('/auth/v1/signup')));
     verifyNever(encryption.forgetPassphraseLocally);
+  });
+
+  test(
+    'a failed guest sign-in afterwards still reports the deletion',
+    () async {
+      // The account is already gone by then; saying "nothing was deleted"
+      // would be false.
+      signupFails = true;
+      final service = await signedInAs(_session('user', provider: 'email'));
+
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+      verify(encryption.forgetPassphraseLocally).called(1);
+    },
+  );
+
+  group('browser sign-in waits for the callback', () {
+    test('resolves once the new session arrives', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+
+      await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
+
+      expect(await done, isTrue);
+    });
+
+    test('reports failure when the browser never comes back', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+
+      expect(
+        await service.awaitBrowserSession(
+          (session) => session.user.id != 'guest',
+          timeout: const Duration(milliseconds: 50),
+        ),
+        isFalse,
+      );
+    });
   });
 }
