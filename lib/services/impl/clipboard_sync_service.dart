@@ -53,7 +53,20 @@ class ClipboardSyncService implements IClipboardSyncService {
   final SupabaseClient _supabaseClient;
   final IClipboardService _clipboardService;
   final ITempFileService _tempFileService;
-  final INotificationService? _notificationService;
+  INotificationService? _notificationService;
+
+  /// Attach the notifier after construction.
+  ///
+  /// main.dart cannot pass it to the constructor: NotificationService needs
+  /// WindowService, which needs LifecycleController, which needs this service.
+  /// It used to be left null for that reason, with a note that notifications
+  /// would "just skip" - which meant every received clip was copied silently
+  /// and no desktop ever showed a notification for one. Only Game Mode's queue,
+  /// flushed through main.dart, got through.
+  void attachNotificationService(INotificationService service) {
+    if (_isDisposed) return;
+    _notificationService = service;
+  }
   final IGameModeService? _gameModeService;
   final IUrlShortenerService? _urlShortenerService;
   final IWebhookService? _webhookService;

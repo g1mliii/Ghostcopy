@@ -7,6 +7,7 @@ import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/impl/clipboard_sync_service.dart';
+import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/obsidian_service.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
@@ -16,6 +17,10 @@ import 'package:mocktail/mocktail.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _Webhook extends Mock implements IWebhookService {}
+
+class _Notifier extends Mock implements INotificationService {}
+
+void _noop() {}
 
 class _Obsidian extends Mock implements IObsidianService {}
 
@@ -63,6 +68,8 @@ void main() {
   setUpAll(() {
     registerFallbackValue(clip('fallback'));
     registerFallbackValue(Uint8List(0));
+    registerFallbackValue(Duration.zero);
+    registerFallbackValue(_noop);
   });
 
   setUp(() {
@@ -229,6 +236,55 @@ void main() {
     verifyNever(() => clipboard.writeText('clip 2'));
     verifyNever(() => repository.getHistory(limit: 1));
     service.stopPolling();
+  });
+
+  group('received clips notify', () {
+    late _Notifier notifier;
+
+    setUp(() {
+      // Built the way main.dart builds it: no notifier in the constructor,
+      // attached afterwards. That gap is what silenced every received clip.
+      notifier = _Notifier();
+      service.attachNotificationService(notifier);
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    });
+
+    testWidgets('an auto-copied clip says so', (tester) async {
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      verify(() => clipboard.writeText('clip 1')).called(1);
+      verify(
+        () => notifier.showToast(
+          message: 'Auto-copied content from android',
+          type: NotificationType.success,
+        ),
+      ).called(1);
+      service.stopPolling();
+    });
+
+    testWidgets('a clip left uncopied offers to copy it', (tester) async {
+      when(
+        settings.getAutoReceiveBehavior,
+      ).thenAnswer((_) async => AutoReceiveBehavior.never);
+
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      verifyNever(() => clipboard.writeText(any()));
+      verify(
+        () => notifier.showClickableToast(
+          message: 'New clip from android: "clip 1"',
+          actionLabel: 'Copy',
+          onAction: any(named: 'onAction'),
+          duration: any(named: 'duration'),
+        ),
+      ).called(1);
+      service.stopPolling();
+    });
   });
 
   testWidgets('polling leaves clips for other platforms untouched', (

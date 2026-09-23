@@ -453,8 +453,11 @@ Future<void> main(List<String> args) async {
     );
     locator.registerSingleton<INotificationService>(notificationService);
 
-    // Note: ClipboardSyncService was initialized with notificationService: null
-    // This is okay - the service will just skip notifications if null
+    // ClipboardSyncService was built before NotificationService existed - the
+    // two depend on each other through WindowService and LifecycleController -
+    // so hand it the notifier now. Without this every received clip was copied
+    // with no notification on desktop.
+    clipboardSyncService.attachNotificationService(notificationService);
 
     // Register ViewModels and other factories
     setupLocator();
