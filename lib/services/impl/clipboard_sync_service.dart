@@ -68,6 +68,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     if (_isDisposed) return;
     _notificationService = service;
   }
+
   final IGameModeService? _gameModeService;
   final IUrlShortenerService? _urlShortenerService;
   final IWebhookService? _webhookService;
