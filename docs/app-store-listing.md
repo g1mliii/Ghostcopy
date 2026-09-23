@@ -118,8 +118,16 @@ is a legal question - confirm rather than assume.
 
 ## Sign-in information for review
 
-Sign-in required: **No**. The app creates an anonymous account on first launch,
-so the reviewer can use everything without credentials.
+Sign-in required: **Yes** - provide a demo account. The iOS welcome screen has
+no guest path: a new user scans a QR code from the desktop app, signs in, or
+signs up, and email sign-up waits on a confirmation email the reviewer would
+not receive.
+
+Create it before submitting (for example `appreview@ghostcopy.app`, a real
+inbox you control), confirm the email, and leave it with no passphrase so the
+reviewer is not asked for one. Give it a few ordinary clips and a second
+device (the Mac, linked by QR) so history and device targeting have something
+to show. The same account is what the screenshots are taken with.
 
 ## Notes for the reviewer
 
@@ -127,8 +135,8 @@ so the reviewer can use everything without credentials.
 > feature needs a second device. The attached screen recording shows the full
 > round trip between GhostCopy for Mac and an iPhone.
 >
-> To try it on one device: open the app, paste text into the composer, and
-> send. It appears in the history below. Sharing a photo or file to GhostCopy
+> Sign in with the demo account above (Sign In > Login). To try it on one
+> device: paste text into the composer and send. It appears in the history below. Sharing a photo or file to GhostCopy
 > from the share sheet sends it the same way.
 >
 > The desktop app is a free download at https://ghostcopy.app/download. To pair
