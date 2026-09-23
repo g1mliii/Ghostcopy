@@ -25,11 +25,6 @@ resource baseline. Finished work is in git history and
 - [ ] **Decide whether the gentle update reminder is too quiet.** A scheduled
       check shows only a dot next to the menu bar icon and relabels the tray
       item; someone who never opens that menu never updates
-- [ ] **`website/download.html` is still a waitlist page** with no download
-      links. Link the DMG from GitHub Releases, not the site - Cloudflare Pages
-      caps file size (25 MiB, worth confirming). Detect the OS to emphasise a
-      store but never auto-redirect: iPadOS reports as macOS in desktop mode
-      and in-app browsers lie
 - [ ] **Delete the two sandbox-era containers by hand**:
       `~/Library/Containers/com.ghostcopy.ghostcopy` and
       `com.ghostcopy.ghostcopy.ShareExtension`. macOS container protection
