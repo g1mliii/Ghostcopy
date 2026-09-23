@@ -92,6 +92,20 @@ class WindowService implements IWindowService {
     // Hide to avoid warping during resize
     await windowManager.hide();
 
+    // Undo the tray menu's setAsFrameless(). On Windows that flag makes
+    // window_manager hand the whole window to Flutter, dropping the resize
+    // borders TitleBarStyle.hidden keeps - so after the first right-click on
+    // the tray the Spotlight came back a different size and could no longer
+    // be resized from its edges. setTitleBarStyle is the only call that
+    // clears the flag, and windowButtonVisibility must stay false or it
+    // brings the caption buttons back. A no-op when the flag was never set.
+    if (Platform.isWindows) {
+      await windowManager.setTitleBarStyle(
+        TitleBarStyle.hidden,
+        windowButtonVisibility: false,
+      );
+    }
+
     // Set to Spotlight size and center (do this while hidden)
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
     await windowManager.center();

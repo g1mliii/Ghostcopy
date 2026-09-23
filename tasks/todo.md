@@ -56,17 +56,41 @@ to package - but everything below marked "verify" does need one.
       at Company - a DUNS number or business documents, and a work email on the
       organisation's domain (contact address is anchored.site, product is
       ghostcopy.app). **Individual cannot be converted to Company later.**
-- [ ] **Package as MSIX** for the Store, replacing the Inno Setup script
+- [ ] **Package as MSIX** for the Store, replacing the Inno Setup script.
+      `msix_config` in `pubspec.yaml` is a placeholder: identity and publisher
+      come from Partner Center once the name is reserved, and it needs
+      `store: true`. Three things the app registers itself today break inside
+      a package, because MSIX virtualizes HKCU and AppData writes - checked
+      against the code 2026-09-22, not yet on a machine:
+  - [ ] **`ghostcopy://` sign-in callback.** `_registerWindowsUrlScheme` in
+        `lib/main.dart` writes `HKCU\Software\Classes\ghostcopy` with
+        `reg.exe`; packaged, that lands in the package's private hive and
+        Google sign-in never comes back. Declare `protocol_activation:
+        ghostcopy` in `msix_config` and skip the registry write when packaged
+  - [ ] **Launch at startup.** The registry Run key is virtualized, and
+        launch_at_startup's MSIX mode is no better: it drops a Startup-folder
+        shortcut to the versioned `WindowsApps` exe path, which every Store
+        update moves. Needs a `startup_task` in `msix_config` plus the WinRT
+        `StartupTask` API (`RequestEnableAsync`) behind a method channel in
+        the Windows runner - the same shape as the macOS fix
+  - [ ] **"Send with GhostCopy" in Explorer.** `_registerWindowsContextMenu`
+        writes `HKCU\Software\Classes\*\shell`, also virtualized. The
+        packaged route is `desktop4:FileExplorerContextMenus`, which needs a
+        native COM `IExplorerCommand` DLL (msix's `context_menu` config).
+        Decide whether it is worth that, or whether the Windows share target
+        covers it
 - [ ] **Store submission**
-- [ ] **Tray menu breaks window resizing (verify).** `_showTrayMenu` in
-      `lib/main.dart` calls `setAsFrameless()` and never restores it. A
-      frameless window has no non-client area, so this likely kills
-      edge-resizing after the first tray-menu open. The fix needs
-      `setWindowButtonVisibility(false)` alongside the restore
-- [ ] **Icons (verify).** `.ico` rendering has never been looked at on
-      Windows. The ICO writer was rewritten and `assets/icons/tray_icon.ico` -
-      the file `tray_service.dart` loads on Windows - has not been regenerated
-      since the rebrand
+- [ ] **Tray menu frameless leak - fixed 2026-09-22, verify.** `_showTrayMenu`
+      calls `setAsFrameless()`, and in window_manager's Windows code only
+      `setTitleBarStyle` clears that flag. Until then `WM_NCCALCSIZE` hands the
+      whole window to Flutter, so after the first tray right-click the
+      Spotlight lost its resize borders and came back ~16px wider and 8px
+      taller. `WindowService.showSpotlight` now restores
+      `TitleBarStyle.hidden` (buttons hidden) on Windows. Check: right-click
+      the tray, then open Spotlight - same size as before, edges resize
+- [ ] **Icons (look only).** All Windows `.ico` files are current - the
+      generator was re-run 2026-09-22 and reproduced them byte for byte. They
+      have just never been looked at on a real taskbar, light and dark
 - [ ] **System notifications (Windows half).** Toast and its Action Center
       entry, Game Mode suppression, tap opens/copies, fresh-install permission
 - [ ] **Launch at startup (verify).** Uses the package's registry path on
