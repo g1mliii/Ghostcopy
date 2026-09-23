@@ -390,6 +390,68 @@ void main() {
           ..stopClipboardActivityWatch();
       });
 
+      testWidgets('a copy made while an image downloads is not overwritten', (
+        tester,
+      ) async {
+        await watch(tester);
+        when(
+          () => repository.getById('1'),
+        ).thenAnswer((_) async => clip('1', type: ContentType.imagePng));
+        when(() => repository.downloadFile(any())).thenAnswer((_) async {
+          pasteboard++; // the user copies while the download runs
+          return Uint8List.fromList([1, 2, 3]);
+        });
+
+        await receive(tester);
+
+        verifyNever(() => clipboard.writeImage(any()));
+        verify(
+          () => notifier.showClickableToast(
+            message: any(named: 'message'),
+            actionLabel: 'Copy',
+            onAction: any(named: 'onAction'),
+            duration: any(named: 'duration'),
+          ),
+        ).called(1);
+        service
+          ..stopPolling()
+          ..stopClipboardActivityWatch();
+      });
+
+      testWidgets('copying from a notification protects that copy', (
+        tester,
+      ) async {
+        await watch(tester);
+        pasteboard++; // a fresh copy, so clip 1 is offered, not copied
+        await receive(tester);
+        final onAction =
+            verify(
+                  () => notifier.showClickableToast(
+                    message: any(named: 'message'),
+                    actionLabel: 'Copy',
+                    onAction: captureAny(named: 'onAction'),
+                    duration: any(named: 'duration'),
+                  ),
+                ).captured.single
+                as Future<void> Function();
+
+        // Six minutes on, the user's own copy is stale - then they click Copy.
+        await tester.pump(const Duration(minutes: 6));
+        await settle(tester);
+        await onAction();
+        verify(() => clipboard.writeText('clip 1')).called(1);
+
+        // The clip they chose now counts as theirs: the next one waits.
+        when(repository.getLatestItemId).thenAnswer((_) async => '2');
+        when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+        await tester.pump(const Duration(seconds: 1));
+        await settle(tester);
+        verifyNever(() => clipboard.writeText('clip 2'));
+        service
+          ..stopPolling()
+          ..stopClipboardActivityWatch();
+      });
+
       testWidgets('two clips in a row are both copied', (tester) async {
         await watch(tester);
         await receive(tester);

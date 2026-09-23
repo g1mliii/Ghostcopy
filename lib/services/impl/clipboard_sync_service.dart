@@ -324,9 +324,76 @@ class ClipboardSyncService implements IClipboardSyncService {
       );
       debugPrint('[ClipboardSyncService] Should Auto-Copy: $shouldAutoCopy');
 
+      // Not auto-copying - show notification with action
+      void offerCopy() {
+        debugPrint(
+          '[ClipboardSyncService] Not auto-copying (${autoReceiveBehavior.name})',
+        );
+
+        // Format message based on content type
+        String message;
+        if (item.isFile) {
+          final filename = item.metadata?.originalFilename ?? 'file';
+          message = 'New file from $deviceType: "$filename"';
+        } else if (item.isImage) {
+          final size = item.displaySize;
+          message = 'New image from $deviceType ($size)';
+        } else {
+          final truncated = item.content.length > 40
+              ? '${item.content.substring(0, 40)}...'
+              : item.content;
+          message = 'New clip from $deviceType: "$truncated"';
+        }
+
+        if (_gameModeService?.isActive ?? false) {
+          _gameModeService?.queueNotification(item);
+        } else {
+          _notify(
+            (n) => n.showClickableToast(
+              message: message,
+              actionLabel: 'Copy',
+              duration: const Duration(seconds: 5),
+              onAction: () async {
+                try {
+                  // The user picked this clip, so smart receive must now
+                  // guard it like any other copy of theirs.
+                  if (await _copyItemToClipboard(item)) {
+                    updateClipboardModificationTime();
+                  }
+                  debugPrint('[ClipboardSyncService] Copied from notification');
+                } on Exception catch (e) {
+                  debugPrint('[ClipboardSyncService] Failed to copy: $e');
+                  // Show error toast (analyzer knows notificationService can't be null here)
+                  // ignore: invalid_null_aware_operator
+                  _notificationService?.showToast(
+                    message: 'Failed to copy',
+                    type: NotificationType.error,
+                  );
+                }
+              },
+            ),
+          );
+        }
+      }
+
       if (shouldAutoCopy) {
         try {
-          await _copyItemToClipboard(item);
+          final copied = await _copyItemToClipboard(
+            item,
+            stillWanted: autoReceiveBehavior == AutoReceiveBehavior.smart
+                ? () async => !await _userCopiedSinceLastLook()
+                : null,
+          );
+          if (!copied) {
+            // The user copied something while the media downloaded: their
+            // copy stays, and the clip is offered instead.
+            debugPrint(
+              '[ClipboardSyncService] Clipboard changed during download - '
+              'offering the clip instead',
+            );
+            offerCopy();
+            return;
+          }
           debugPrint(
             '[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType',
           );
@@ -365,51 +432,7 @@ class ClipboardSyncService implements IClipboardSyncService {
           );
         }
       } else {
-        // Not auto-copying - show notification with action
-        debugPrint(
-          '[ClipboardSyncService] Not auto-copying (${autoReceiveBehavior.name})',
-        );
-
-        // Format message based on content type
-        String message;
-        if (item.isFile) {
-          final filename = item.metadata?.originalFilename ?? 'file';
-          message = 'New file from $deviceType: "$filename"';
-        } else if (item.isImage) {
-          final size = item.displaySize;
-          message = 'New image from $deviceType ($size)';
-        } else {
-          final truncated = item.content.length > 40
-              ? '${item.content.substring(0, 40)}...'
-              : item.content;
-          message = 'New clip from $deviceType: "$truncated"';
-        }
-
-        if (_gameModeService?.isActive ?? false) {
-          _gameModeService?.queueNotification(item);
-        } else {
-          _notify(
-            (n) => n.showClickableToast(
-              message: message,
-              actionLabel: 'Copy',
-              duration: const Duration(seconds: 5),
-              onAction: () async {
-                try {
-                  await _copyItemToClipboard(item);
-                  debugPrint('[ClipboardSyncService] Copied from notification');
-                } on Exception catch (e) {
-                  debugPrint('[ClipboardSyncService] Failed to copy: $e');
-                  // Show error toast (analyzer knows notificationService can't be null here)
-                  // ignore: invalid_null_aware_operator
-                  _notificationService?.showToast(
-                    message: 'Failed to copy',
-                    type: NotificationType.error,
-                  );
-                }
-              },
-            ),
-          );
-        }
+        offerCopy();
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-receive failed: $e');
@@ -432,8 +455,16 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// - Images (PNG/JPEG/GIF - downloaded from storage and copied as image)
   /// - Files (PDF, DOC, ZIP, etc. - downloaded to temp, path copied to clipboard)
   /// - Encrypted content (already decrypted by repository)
-  Future<void> _copyItemToClipboard(ClipboardItem item) async {
-    if (_isDisposed || !_canReceive(item)) return;
+  ///
+  /// [stillWanted] is asked right before a downloaded image or file is
+  /// written. The smart decision is taken before the download starts, and a
+  /// download can take seconds; a copy the user makes meanwhile must win.
+  /// Returns whether anything was written.
+  Future<bool> _copyItemToClipboard(
+    ClipboardItem item, {
+    Future<bool> Function()? stillWanted,
+  }) async {
+    if (_isDisposed || !_canReceive(item)) return false;
     _clipboardWritesInProgress++;
     var writtenContent = const ClipboardContent.empty();
     try {
@@ -472,6 +503,8 @@ class ClipboardSyncService implements IClipboardSyncService {
             );
           }
 
+          if (stillWanted != null && !await stillWanted()) return false;
+
           // Copy image to clipboard using super_clipboard (full native support)
           await _clipboardService.writeImage(imageBytes);
           writtenContent = ClipboardContent.image(
@@ -507,6 +540,8 @@ class ClipboardSyncService implements IClipboardSyncService {
               filename,
             );
 
+            if (stillWanted != null && !await stillWanted()) return false;
+
             // Copy file path to clipboard
             await _clipboardService.writeFilePath(tempFile.path);
             writtenContent = ClipboardContent.file(
@@ -535,6 +570,7 @@ class ClipboardSyncService implements IClipboardSyncService {
         writtenContent.text ?? '',
         clipboardContent: writtenContent,
       );
+      return true;
     } finally {
       // Absorb the counter bump this write caused, so the activity watch does
       // not mistake GhostCopy's write for the user copying something.
@@ -1016,6 +1052,21 @@ class ClipboardSyncService implements IClipboardSyncService {
     // The next start takes a fresh baseline: a change made while nothing was
     // watching has an unknown age, and unknown counts as stale.
     _activityChangeCount = null;
+  }
+
+  /// Whether the user changed the clipboard since the watch last looked.
+  ///
+  /// Unlike [_checkClipboardActivity] this runs while GhostCopy's own write is
+  /// marked in progress - it is asked just before that write lands, when the
+  /// counter cannot yet include it - and it stamps the change as a copy made
+  /// now.
+  Future<bool> _userCopiedSinceLastLook() async {
+    final count = await _readClipboardChangeCount();
+    final previous = _activityChangeCount;
+    if (count == null || previous == null || count == previous) return false;
+    _activityChangeCount = count;
+    _lastClipboardModificationTime = clock.now();
+    return true;
   }
 
   Future<void> _checkClipboardActivity() async {

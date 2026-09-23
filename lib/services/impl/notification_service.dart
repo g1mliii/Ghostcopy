@@ -142,6 +142,16 @@ class NotificationService implements INotificationService {
         _pendingActions.remove(id);
         _actionPayloads.remove(id);
         _actionTimestamps.remove(id);
+        // Take the notification down with its action. Left in Notification
+        // Center or Action Center it still said "Click to Copy", and clicking
+        // it did nothing once the callback was gone.
+        unawaited(
+          _flutterLocalNotificationsPlugin.cancel(id: id).catchError((
+            Object e,
+          ) {
+            debugPrint('[NotificationService] Could not remove $id: $e');
+          }),
+        );
       }
       debugPrint(
         '[NotificationService] Cleaned up ${staleIds.length} stale action(s)',
