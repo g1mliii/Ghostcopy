@@ -117,17 +117,33 @@ to package - but everything below marked "verify" does need one.
       at deletion and let the function exchange that `authorizationCode` and
       call `appleid.apple.com/auth/revoke`, signing the client secret with the
       `.p8` (a function secret) on each call
-- [ ] **Sign in with Apple - built, test on the iPhone.** Branch
-      `ios/sign-in-with-apple`. "Continue with Apple" above Google on the iOS
-      welcome screen (hidden on Android); Sign Up mode links it to the
-      anonymous account in place with `linkIdentityWithIdToken`, Login mode
-      signs in and gets the same guest-clips warning as Google. Native only:
-      Supabase Apple provider has Client ID `com.ghostcopy.ghostcopy` and no
-      OAuth secret, so nothing expires every 6 months. Apple key for later
-      (revocation on account deletion): Key ID `Y8NRLTKXG3`, Team
-      `R9TKT8U45R`; the `.p8` is kept offline, never in the repo. Check on the
-      phone: Sign Up links (clips survive), Login signs in, cancel leaves the
-      screen as it was, and Hide My Email works
+- [ ] **Sign in with Apple - built, test it.** Branch `ios/sign-in-with-apple`.
+      Needed on every platform, not just iOS: an account made on an iPhone
+      with Apple (and Hide My Email) has no password, and QR linking only
+      brings a phone into a desktop's account, never the reverse - so a new
+      computer has no other way in.
+      - **iOS: native.** "Continue with Apple" above Google on the welcome
+        screen; Sign Up links in place (`linkIdentityWithIdToken`), Login
+        switches accounts with the guest-clips warning. SHA-256 nonce.
+      - **Desktop: browser flow**, the same path Google uses (Supabase ->
+        `ghostcopy.app/auth-callback` -> `ghostcopy://auth-callback`), button
+        in the Spotlight auth panel.
+      - **Android: not yet.** The browser flow's calls return when the browser
+        opens, and the mobile welcome screen would go on to `onAuthComplete`
+        with the old session. Needs `_handleProviderAuth` to wait for the
+        non-anonymous session from `onAuthStateChange` before finishing, then
+        a device test. Do it in the Android phase.
+      - **Setup:** Supabase Apple provider Client IDs
+        `com.ghostcopy.ghostcopy,com.ghostcopy.web`; Services ID
+        `com.ghostcopy.web` with domain `xhbggxftvnlkotvehwmj.supabase.co`
+        and return URL `https://xhbggxftvnlkotvehwmj.supabase.co/auth/v1/callback`.
+        Key ID `Y8NRLTKXG3`, Team `R9TKT8U45R`; the `.p8` is kept offline.
+      - **Secret Key expires every 6 months.** `dart run
+        tool/apple_client_secret.dart <AuthKey.p8>` prints a new one and its
+        expiry. Lapsing breaks desktop Apple sign-in silently (iOS is native
+        and unaffected) - keep a calendar reminder
+      - Check on devices: Sign Up keeps the clips, Login switches, cancel
+        leaves the screen as it was, Hide My Email works, desktop round trip
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set

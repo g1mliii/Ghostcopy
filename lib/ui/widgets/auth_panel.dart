@@ -191,6 +191,8 @@ class _AuthPanelState extends State<AuthPanel> {
           const SizedBox(height: 10),
           // Google sign in
           RepaintBoundary(child: _buildGoogleSignInButton()),
+          const SizedBox(height: 8),
+          RepaintBoundary(child: _buildAppleSignInButton()),
         ],
       ),
     );
@@ -413,6 +415,22 @@ class _AuthPanelState extends State<AuthPanel> {
     );
   }
 
+  /// Desktop has no native Apple sheet, so this is the browser flow - the
+  /// only way onto this computer for someone who signed up on an iPhone with
+  /// Apple and Hide My Email, since that account has no password.
+  Widget _buildAppleSignInButton() {
+    return OutlinedButton.icon(
+      onPressed: _authLoading ? null : _handleAppleAuth,
+      icon: const Icon(Icons.apple, size: 18),
+      label: const Text('Continue with Apple'),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        side: const BorderSide(color: GhostColors.surface),
+        foregroundColor: GhostColors.textPrimary,
+      ),
+    );
+  }
+
   // Auth handlers
   Future<void> _handleEmailAuth() async {
     setState(() {
@@ -536,7 +554,22 @@ class _AuthPanelState extends State<AuthPanel> {
     }
   }
 
-  Future<void> _handleGoogleAuth() async {
+  Future<void> _handleGoogleAuth() => _handleProviderAuth(
+    signIn: widget.authService.signInWithGoogle,
+    link: widget.authService.linkGoogleIdentity,
+  );
+
+  Future<void> _handleAppleAuth() => _handleProviderAuth(
+    signIn: widget.authService.signInWithApple,
+    link: widget.authService.linkAppleIdentity,
+  );
+
+  /// Sign in to an existing account ([signIn]) or, in Sign Up mode, upgrade
+  /// the anonymous account in place ([link]) with a third-party provider.
+  Future<void> _handleProviderAuth({
+    required Future<bool> Function() signIn,
+    required Future<bool> Function() link,
+  }) async {
     setState(() {
       _authLoading = true;
       _authError = null;
@@ -546,8 +579,8 @@ class _AuthPanelState extends State<AuthPanel> {
       bool success;
 
       if (_isLogin) {
-        // Same guard as the email path. Without it, Continue with Google
-        // switched accounts directly and AuthService._cleanupPreviousSession
+        // Same guard as the email path. Without it, Continue with Google (or
+        // Apple) switched accounts directly and AuthService._cleanupPreviousSession
         // then ran cleanup_user_data against the anonymous account, deleting
         // its clipboard rows outright - so the Google button destroyed clips
         // that the email button stops to ask about.
@@ -563,11 +596,11 @@ class _AuthPanelState extends State<AuthPanel> {
           return;
         }
 
-        // Login mode: Sign in with existing Google account - check if switching accounts
+        // Login mode: sign in to an existing account - check if switching
         final currentUserId = widget.authService.currentUserId;
 
-        // Sign in with Google (app_links handles the callback)
-        success = await widget.authService.signInWithGoogle();
+        // app_links handles the callback
+        success = await signIn();
 
         // Reset local state if switching accounts
         if (success &&
@@ -579,8 +612,8 @@ class _AuthPanelState extends State<AuthPanel> {
           widget.clipboardSyncService.reinitializeForUser();
         }
       } else {
-        // Sign Up mode: Upgrade anonymous user to Google account
-        success = await widget.authService.linkGoogleIdentity();
+        // Sign Up mode: upgrade the anonymous user, keeping user_id and clips
+        success = await link();
       }
 
       if (mounted) {

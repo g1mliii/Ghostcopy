@@ -148,10 +148,23 @@ class AuthService implements IAuthService {
         return await _nativeGoogleSignIn();
       }
 
-      // Use web-based OAuth flow for desktop platforms
-      // Uses custom URL scheme (ghostcopy://) for deep linking
-      // macOS: Configured in Info.plist
-      // Windows: Handled by app_links package
+      return await _webOAuthSignIn(OAuthProvider.google);
+    } on Exception catch (e) {
+      debugPrint('[AuthService] Google sign in error: $e');
+      return false;
+    }
+  }
+
+  /// Sign in through the browser: desktop for every provider, and Android for
+  /// Apple, which has no native sheet there.
+  ///
+  /// Supabase sends the browser back to [_oauthRedirect], a page on the site
+  /// that forwards the PKCE code to `ghostcopy://auth-callback`; the app
+  /// redeems it there (desktop via _handleDeepLinkArgs, Android via
+  /// supabase_flutter's own link observer). Both check the URL with
+  /// isTrustedAuthCallback first.
+  Future<bool> _webOAuthSignIn(OAuthProvider provider) async {
+    try {
       // Launching a browser is not a completed sign-in. Keep the old session
       // until the SDK reports the actual OAuth callback.
       _pendingOAuthSession = _client.auth.currentSession;
@@ -170,19 +183,35 @@ class AuthService implements IAuthService {
         unawaited(_cleanupPreviousSession(previous, next.user.id, deviceId));
       });
       final response = await _client.auth.signInWithOAuth(
-        OAuthProvider.google,
+        provider,
         redirectTo: kIsWeb ? null : _oauthRedirect,
         authScreenLaunchMode: kIsWeb
             ? LaunchMode.platformDefault
             : LaunchMode.externalApplication,
       );
-      debugPrint('[AuthService] Google sign in initiated (web OAuth)');
+      debugPrint('[AuthService] ${provider.name} sign in initiated (web OAuth)');
       return response;
     } on AuthException catch (e) {
-      debugPrint('[AuthService] Google sign in failed: ${e.message}');
+      debugPrint('[AuthService] ${provider.name} sign in failed: ${e.message}');
       return false;
-    } on Exception catch (e) {
-      debugPrint('[AuthService] Google sign in error: $e');
+    }
+  }
+
+  /// Link [provider] to the anonymous user through the browser, preserving
+  /// user_id and clipboard data. Same return path as [_webOAuthSignIn].
+  Future<bool> _webOAuthLink(OAuthProvider provider) async {
+    try {
+      final response = await _client.auth.linkIdentity(
+        provider,
+        redirectTo: kIsWeb ? null : _oauthRedirect,
+        authScreenLaunchMode: kIsWeb
+            ? LaunchMode.platformDefault
+            : LaunchMode.externalApplication,
+      );
+      debugPrint('[AuthService] ${provider.name} identity link initiated');
+      return response;
+    } on AuthException catch (e) {
+      debugPrint('[AuthService] Link ${provider.name} failed: ${e.message}');
       return false;
     }
   }
@@ -247,9 +276,12 @@ class AuthService implements IAuthService {
 
   @override
   Future<bool> signInWithApple() async {
-    if (!Platform.isIOS) return false;
-
     try {
+      // Only iOS has the native sheet. Everywhere else - desktop and Android -
+      // Apple is the browser flow, so someone who signed up on an iPhone with
+      // Hide My Email still has a way into the account on every device.
+      if (!Platform.isIOS) return await _webOAuthSignIn(OAuthProvider.apple);
+
       final credential = await _appleCredential();
       if (credential == null) return false;
 
@@ -274,9 +306,9 @@ class AuthService implements IAuthService {
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
-    if (!Platform.isIOS) return false;
-
     try {
+      if (!Platform.isIOS) return await _webOAuthLink(OAuthProvider.apple);
+
       final credential = await _appleCredential();
       if (credential == null) return false;
 
@@ -384,22 +416,8 @@ class AuthService implements IAuthService {
         return await _nativeLinkGoogleIdentity();
       }
 
-      // Use linkIdentity to upgrade anonymous user to Google OAuth (desktop)
-      // This preserves the user_id and all clipboard data
-      // Opens browser/webview for Google authentication
-      // Uses custom URL scheme (ghostcopy://) for deep linking
-      final response = await _client.auth.linkIdentity(
-        OAuthProvider.google,
-        redirectTo: kIsWeb ? null : _oauthRedirect,
-        authScreenLaunchMode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-      );
-      debugPrint('[AuthService] Google identity linked (user_id preserved)');
-      return response;
-    } on AuthException catch (e) {
-      debugPrint('[AuthService] Link Google identity failed: ${e.message}');
-      return false;
+      // Desktop: link through the browser, preserving user_id and clips
+      return await _webOAuthLink(OAuthProvider.google);
     } on Exception catch (e) {
       debugPrint('[AuthService] Link Google identity error: $e');
       return false;

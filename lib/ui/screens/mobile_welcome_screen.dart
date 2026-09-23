@@ -406,6 +406,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           const SizedBox(height: 16),
           // Apple first on iOS: App Review asks that it be at least as
           // prominent as the other third-party option (guideline 4.8).
+          //
+          // Not on Android yet. There Apple is the browser flow, whose calls
+          // return when the browser opens rather than when sign-in finishes,
+          // and _handleProviderAuth would carry on to onAuthComplete with the
+          // old session. See tasks/todo.md before enabling it.
           if (Platform.isIOS) ...[
             RepaintBoundary(child: _buildAppleSignInButton()),
             const SizedBox(height: 12),
