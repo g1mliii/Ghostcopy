@@ -41,6 +41,14 @@ abstract class IClipboardSyncService {
   /// Called by UI when user manually copies/pastes to track clipboard staleness
   void updateClipboardModificationTime();
 
+  /// Start or stop the clipboard activity watch to match the auto-receive
+  /// setting: it runs only when the behavior is smart. Call after changing
+  /// that setting, and on resume.
+  Future<void> refreshClipboardActivityWatch();
+
+  /// Stop the clipboard activity watch, e.g. around screen lock and sleep.
+  void stopClipboardActivityWatch();
+
   /// Notify service that content was manually sent via UI
   /// This prevents the monitor from auto-sending the same content
   void notifyManualSend(String content, {ClipboardContent? clipboardContent});

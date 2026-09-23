@@ -33,6 +33,12 @@ class NotificationService implements INotificationService {
 
   // Track pending actions for system notifications
   final Map<int, VoidCallback> _pendingActions = {};
+
+  /// Completes once the local notifications plugin is initialized. That
+  /// happens in MyApp.initState and is not awaited, while ClipboardSyncService
+  /// can raise a notification as soon as it has a notifier - so a banner
+  /// shown first would reach an uninitialized plugin and be lost.
+  final Completer<void> _pluginReady = Completer<void>();
   final Map<int, String> _actionPayloads =
       {}; // Track payload for each action ID
   final Map<int, DateTime> _actionTimestamps =
@@ -111,6 +117,7 @@ class NotificationService implements INotificationService {
     );
 
     debugPrint('[NotificationService] Local notifications initialized');
+    if (!_pluginReady.isCompleted) _pluginReady.complete();
 
     // Start periodic cleanup of stale actions (every 5 minutes)
     // This prevents memory leaks from dismissed notifications
@@ -288,8 +295,11 @@ class NotificationService implements INotificationService {
       _pendingActions[id] = onAction;
       _actionTimestamps[id] = DateTime.now(); // Track creation time for cleanup
       if (actionLabel != null) {
-        _actionPayloads[id] =
-            actionLabel; // Store payload for Windows ID-less responses
+        // Windows answers a click with no notification id, only the payload,
+        // and the fallback below matches on it. A bare "Copy" was the same
+        // for every pending clip, so clicking a newer notification copied the
+        // oldest one. The id makes each payload name exactly one callback.
+        _actionPayloads[id] = _actionPayload(actionLabel, id);
       }
     }
 
@@ -347,6 +357,9 @@ class NotificationService implements INotificationService {
     }
 
     try {
+      if (!_pluginReady.isCompleted) {
+        await _pluginReady.future.timeout(const Duration(seconds: 10));
+      }
       debugPrint(
         '[NotificationService] Attempting to show system notification ID: $id',
       );
@@ -355,7 +368,7 @@ class NotificationService implements INotificationService {
         title: title,
         body: body,
         notificationDetails: details,
-        payload: actionLabel,
+        payload: actionLabel == null ? null : _actionPayload(actionLabel, id),
       );
       debugPrint(
         '[NotificationService] System notification command sent successfully for ID: $id',
@@ -367,6 +380,10 @@ class NotificationService implements INotificationService {
       debugPrintStack(stackTrace: stack);
     }
   }
+
+  /// The payload that identifies one notification's action.
+  static String _actionPayload(String actionLabel, int id) =>
+      '$actionLabel#$id';
 
   /// Show toast using Flutter overlay (when Spotlight is visible)
   void _showToastInOverlay(

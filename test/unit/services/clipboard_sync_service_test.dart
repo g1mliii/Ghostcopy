@@ -61,6 +61,9 @@ void main() {
   /// afterwards (to ignore GhostCopy's own write), and an unanswered channel
   /// would leave that call hanging, so every test answers it.
   late int pasteboard;
+
+  /// How many times the native counter was read - the watch's cost.
+  late int counterReads;
   const clipboardChangeChannel = MethodChannel(
     'com.ghostcopy.app/clipboard_change',
   );
@@ -90,11 +93,12 @@ void main() {
 
   setUp(() {
     pasteboard = 1;
+    counterReads = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          clipboardChangeChannel,
-          (_) async => pasteboard,
-        );
+        .setMockMethodCallHandler(clipboardChangeChannel, (_) async {
+          counterReads++;
+          return pasteboard;
+        });
     webhook = _Webhook();
     obsidian = _Obsidian();
     repository = _Repository();
@@ -344,13 +348,13 @@ void main() {
         await settle(tester);
       }
 
-      testWidgets('a clip does not overwrite what the user just copied', (
+      testWidgets('a copy made just before a clip arrives is not overwritten', (
         tester,
       ) async {
         await watch(tester);
-        pasteboard++; // the user copies something in another app
-        await tester.pump(const Duration(seconds: 5));
-        await settle(tester);
+        // The user copies in another app, and the clip arrives before the
+        // watch's next sample: the decision reads the counter itself.
+        pasteboard++;
 
         await receive(tester);
 
@@ -373,7 +377,7 @@ void main() {
       ) async {
         await watch(tester);
         pasteboard++;
-        await tester.pump(const Duration(seconds: 5));
+        await tester.pump(const Duration(seconds: 30)); // the watch samples it
         await settle(tester);
         await tester.pump(const Duration(minutes: 5));
         await settle(tester);
@@ -393,7 +397,7 @@ void main() {
 
         // GhostCopy's own write must not count as the user copying, or the
         // second clip inside the window would be left uncopied.
-        await tester.pump(const Duration(seconds: 5));
+        await tester.pump(const Duration(seconds: 30));
         await settle(tester);
         when(repository.getLatestItemId).thenAnswer((_) async => '2');
         when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
@@ -408,6 +412,64 @@ void main() {
     },
     skip: !(Platform.isMacOS || Platform.isWindows),
   );
+
+  group('the staleness watch runs only when something reads it', () {
+    testWidgets('not at all unless receive is smart', (tester) async {
+      when(
+        settings.getAutoReceiveBehavior,
+      ).thenAnswer((_) async => AutoReceiveBehavior.always);
+
+      await service.refreshClipboardActivityWatch();
+      await tester.pump(const Duration(minutes: 2));
+      await settle(tester);
+
+      expect(counterReads, 0);
+    });
+
+    testWidgets(
+      'every thirty seconds when smart, and not at all once stopped',
+      (tester) async {
+        when(
+          settings.getAutoReceiveBehavior,
+        ).thenAnswer((_) async => AutoReceiveBehavior.smart);
+
+        await service.refreshClipboardActivityWatch();
+        await settle(tester); // the baseline read
+        await tester.pump(const Duration(minutes: 1));
+        await settle(tester);
+        expect(counterReads, 3); // baseline plus two samples
+
+        // Screen lock / sleep: the lifecycle stops it with everything else.
+        service.stopClipboardActivityWatch();
+        await tester.pump(const Duration(minutes: 2));
+        await settle(tester);
+        expect(counterReads, 3);
+      },
+      skip: !(Platform.isMacOS || Platform.isWindows),
+    );
+  });
+
+  testWidgets('a clip that arrives before the notifier is attached is still '
+      'announced once it is', (tester) async {
+    // main.dart subscribes for clips before NotificationService exists.
+    when(repository.getLatestItemId).thenAnswer((_) async => '1');
+    when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    service.startPolling(interval: const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await settle(tester);
+    verify(() => clipboard.writeText('clip 1')).called(1);
+
+    final attachedLate = _Notifier();
+    service.attachNotificationService(attachedLate);
+
+    verify(
+      () => attachedLate.showToast(
+        message: 'Auto-copied content from android',
+        type: NotificationType.success,
+      ),
+    ).called(1);
+    service.stopPolling();
+  });
 
   testWidgets('polling leaves clips for other platforms untouched', (
     tester,

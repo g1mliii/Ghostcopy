@@ -69,6 +69,12 @@ class _TestClipboardSyncService implements IClipboardSyncService {
   void updateClipboardModificationTime() => modificationTimeUpdates++;
 
   @override
+  Future<void> refreshClipboardActivityWatch() async {}
+
+  @override
+  void stopClipboardActivityWatch() {}
+
+  @override
   void dispose() {}
 }
 
@@ -180,6 +186,41 @@ void main() {
 
     verify(() => clipboard.writeText('hello')).called(1);
     expect(clipboardSyncService.modificationTimeUpdates, 1);
+  });
+
+  test('a failed media download is not counted as a copy', () async {
+    // downloadFile answers null for a missing path, a failed download or a
+    // failed decrypt. Nothing reaches the clipboard, so smart receive must
+    // not start guarding it.
+    final clipboard = _MockClipboardService();
+    when(
+      () => clipboardRepository.downloadFile(any()),
+    ).thenAnswer((_) async => null);
+    final copying = SpotlightViewModel(
+      authService: authService,
+      clipboardRepository: clipboardRepository,
+      clipboardSyncService: clipboardSyncService,
+      transformerService: transformerService,
+      notificationService: notificationService,
+      clipboardService: clipboard,
+    );
+    addTearDown(copying.dispose);
+
+    await copying.handleHistoryItemCopy(
+      ClipboardItem(
+        id: 'img',
+        userId: 'user-123',
+        content: '',
+        deviceType: 'ios',
+        createdAt: DateTime(2026),
+        contentType: ContentType.imagePng,
+        storagePath: 'user-123/img',
+      ),
+    );
+
+    expect(clipboardSyncService.modificationTimeUpdates, 0);
+    expect(copying.errorMessage, isNotNull);
+    verifyNever(() => clipboard.writeImage(any()));
   });
 
   test('initialize loads history and attaches realtime callback', () async {

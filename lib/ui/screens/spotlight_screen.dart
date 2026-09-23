@@ -1678,6 +1678,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 },
                 onAutoReceiveBehaviorChanged: (value) {
                   setState(() => _autoReceiveBehavior = value);
+                  // The staleness watch runs only for smart receive.
+                  unawaited(_syncService.refreshClipboardActivityWatch());
                 },
               ),
             ),

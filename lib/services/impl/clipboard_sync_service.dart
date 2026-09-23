@@ -67,6 +67,26 @@ class ClipboardSyncService implements IClipboardSyncService {
   void attachNotificationService(INotificationService service) {
     if (_isDisposed) return;
     _notificationService = service;
+    // Anything raised in the gap between subscribing and this call - a clip
+    // that arrived during startup - is shown now rather than dropped.
+    final pending = List.of(_pendingNotices);
+    _pendingNotices.clear();
+    for (final show in pending) {
+      show(service);
+    }
+  }
+
+  /// Notices raised before [attachNotificationService], bounded so a burst
+  /// during startup cannot grow without limit.
+  final List<void Function(INotificationService)> _pendingNotices = [];
+
+  void _notify(void Function(INotificationService) show) {
+    final service = _notificationService;
+    if (service != null) {
+      show(service);
+    } else if (_pendingNotices.length < 10) {
+      _pendingNotices.add(show);
+    }
   }
 
   final IGameModeService? _gameModeService;
@@ -133,7 +153,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     // Subscribe to realtime updates
     _subscribeToRealtimeUpdates();
 
-    startClipboardActivityWatch();
+    await refreshClipboardActivityWatch();
 
     // Check if auto-send is enabled and start monitoring
     final autoSendEnabled = await _settingsService.getAutoSendEnabled();
@@ -270,6 +290,15 @@ class ClipboardSyncService implements IClipboardSyncService {
           .getClipboardStaleDurationMinutes();
       if (_isDisposed || !_canReceive(item)) return;
 
+      // The watch samples every 30 seconds, so a copy made since the last
+      // sample would otherwise be invisible here and get overwritten - the
+      // very thing smart receive exists to prevent. Read the counter now; a
+      // change since the last sample counts as a copy made this moment.
+      if (autoReceiveBehavior == AutoReceiveBehavior.smart) {
+        await _checkClipboardActivity();
+        if (_isDisposed || !_canReceive(item)) return;
+      }
+
       final shouldAutoCopy = switch (autoReceiveBehavior) {
         AutoReceiveBehavior.always => true,
         AutoReceiveBehavior.never => false,
@@ -319,16 +348,20 @@ class ClipboardSyncService implements IClipboardSyncService {
                 : item.isImage
                 ? 'image'
                 : 'content';
-            _notificationService?.showToast(
-              message: 'Auto-copied $contentTypeStr from $deviceType',
-              type: NotificationType.success,
+            _notify(
+              (n) => n.showToast(
+                message: 'Auto-copied $contentTypeStr from $deviceType',
+                type: NotificationType.success,
+              ),
             );
           }
         } on Exception catch (e) {
           debugPrint('[ClipboardSyncService] Failed to auto-copy: $e');
-          _notificationService?.showToast(
-            message: 'Failed to auto-copy from $deviceType',
-            type: NotificationType.error,
+          _notify(
+            (n) => n.showToast(
+              message: 'Failed to auto-copy from $deviceType',
+              type: NotificationType.error,
+            ),
           );
         }
       } else {
@@ -355,24 +388,26 @@ class ClipboardSyncService implements IClipboardSyncService {
         if (_gameModeService?.isActive ?? false) {
           _gameModeService?.queueNotification(item);
         } else {
-          _notificationService?.showClickableToast(
-            message: message,
-            actionLabel: 'Copy',
-            duration: const Duration(seconds: 5),
-            onAction: () async {
-              try {
-                await _copyItemToClipboard(item);
-                debugPrint('[ClipboardSyncService] Copied from notification');
-              } on Exception catch (e) {
-                debugPrint('[ClipboardSyncService] Failed to copy: $e');
-                // Show error toast (analyzer knows notificationService can't be null here)
-                // ignore: invalid_null_aware_operator
-                _notificationService?.showToast(
-                  message: 'Failed to copy',
-                  type: NotificationType.error,
-                );
-              }
-            },
+          _notify(
+            (n) => n.showClickableToast(
+              message: message,
+              actionLabel: 'Copy',
+              duration: const Duration(seconds: 5),
+              onAction: () async {
+                try {
+                  await _copyItemToClipboard(item);
+                  debugPrint('[ClipboardSyncService] Copied from notification');
+                } on Exception catch (e) {
+                  debugPrint('[ClipboardSyncService] Failed to copy: $e');
+                  // Show error toast (analyzer knows notificationService can't be null here)
+                  // ignore: invalid_null_aware_operator
+                  _notificationService?.showToast(
+                    message: 'Failed to copy',
+                    type: NotificationType.error,
+                  );
+                }
+              },
+            ),
           );
         }
       }
@@ -778,9 +813,11 @@ class ClipboardSyncService implements IClipboardSyncService {
       _lastSendTime = DateTime.now();
       onClipboardSent?.call(result);
 
-      _notificationService?.showToast(
-        message: message(_describeTargets(targetDevices)),
-        type: NotificationType.success,
+      _notify(
+        (n) => n.showToast(
+          message: message(_describeTargets(targetDevices)),
+          type: NotificationType.success,
+        ),
       );
 
       debugPrint(
@@ -789,9 +826,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       );
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-send $noun failed: $e');
-      _notificationService?.showToast(
-        message: failureMessage,
-        type: NotificationType.error,
+      _notify(
+        (n) =>
+            n.showToast(message: failureMessage, type: NotificationType.error),
       );
     }
   }
@@ -811,9 +848,11 @@ class ClipboardSyncService implements IClipboardSyncService {
       processedContent = await _applyUrlShortening(content);
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-send content failed: $e');
-      _notificationService?.showToast(
-        message: 'Auto-send failed',
-        type: NotificationType.error,
+      _notify(
+        (n) => n.showToast(
+          message: 'Auto-send failed',
+          type: NotificationType.error,
+        ),
       );
       return;
     }
@@ -931,9 +970,14 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// behaved like always, and a second clip inside the window stayed
   /// uncopied. This reads the clipboard's change counter (see
   /// [_readClipboardChangeCount]) - one integer, never the contents - every
-  /// five seconds, and stamps the time whenever it moves for any reason but
+  /// thirty seconds, and stamps the time whenever it moves for any reason but
   /// GhostCopy writing. That covers copies in every app, not only GhostCopy's,
   /// on macOS and Windows; elsewhere only the history-copy hook applies.
+  ///
+  /// Thirty, not five: the smart decision reads the counter again itself
+  /// before copying anything, so the sample only has to date a change to
+  /// within the stale window, which is minutes long. Runs only while
+  /// auto-receive is smart - see [refreshClipboardActivityWatch].
   @visibleForTesting
   void startClipboardActivityWatch() {
     if (_activityTimer != null ||
@@ -943,15 +987,35 @@ class ClipboardSyncService implements IClipboardSyncService {
     }
     unawaited(_checkClipboardActivity());
     _activityTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 30),
       (_) => _checkClipboardActivity(),
     );
   }
 
-  @visibleForTesting
+  /// Run the watch only when something reads it: auto-receive set to smart.
+  /// Always and never ignore staleness, and a timer waking the app every few
+  /// seconds for nothing is what the tray's near-zero-CPU rule forbids.
+  @override
+  Future<void> refreshClipboardActivityWatch() async {
+    if (_isDisposed) return;
+    final behavior = await _settingsService.getAutoReceiveBehavior();
+    if (_isDisposed) return;
+    if (behavior == AutoReceiveBehavior.smart) {
+      startClipboardActivityWatch();
+    } else {
+      stopClipboardActivityWatch();
+    }
+  }
+
+  /// Stopped around screen lock and system sleep, with everything else the
+  /// lifecycle pauses.
+  @override
   void stopClipboardActivityWatch() {
     _activityTimer?.cancel();
     _activityTimer = null;
+    // The next start takes a fresh baseline: a change made while nothing was
+    // watching has an unknown age, and unknown counts as stale.
+    _activityChangeCount = null;
   }
 
   Future<void> _checkClipboardActivity() async {

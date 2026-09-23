@@ -333,7 +333,8 @@ class LifecycleController implements ILifecycleController {
     _clipboardSyncService
       ..pauseRealtime()
       ..stopPolling()
-      ..stopClipboardMonitoring();
+      ..stopClipboardMonitoring()
+      ..stopClipboardActivityWatch();
   }
 
   Future<void> _resumeConnections() async {
@@ -341,6 +342,8 @@ class LifecycleController implements ILifecycleController {
 
     // Always resume to realtime (user just woke system/unlocked screen)
     switchToRealtime();
+
+    unawaited(_clipboardSyncService.refreshClipboardActivityWatch());
 
     // Only resume clipboard monitoring if user has auto-send enabled
     // Prevents overriding user preference after system wake/screen unlock

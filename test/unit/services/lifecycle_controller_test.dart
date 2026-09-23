@@ -56,6 +56,17 @@ class _RecordingSyncService implements IClipboardSyncService {
   @override
   void updateClipboardModificationTime() {}
 
+  /// How often the lifecycle stopped / re-checked the staleness watch.
+  int activityWatchStops = 0;
+  int activityWatchRefreshes = 0;
+
+  @override
+  Future<void> refreshClipboardActivityWatch() async =>
+      activityWatchRefreshes++;
+
+  @override
+  void stopClipboardActivityWatch() => activityWatchStops++;
+
   @override
   void dispose() {}
 }
@@ -75,6 +86,25 @@ void main() {
     sync = _RecordingSyncService();
     when(settings.isHybridModeEnabled).thenAnswer((_) async => true);
     when(settings.getAutoSendEnabled).thenAnswer((_) async => false);
+  });
+
+  test('screen lock stops the staleness watch and unlock restarts it', () {
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller.onScreenLock();
+      expect(sync.activityWatchStops, 1);
+
+      controller.onScreenUnlock();
+      async.elapse(const Duration(seconds: 1));
+      expect(sync.activityWatchRefreshes, 1);
+
+      controller.dispose();
+    });
   });
 
   test('switches to polling after idling in the tray with no activity', () {

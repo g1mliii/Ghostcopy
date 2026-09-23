@@ -449,12 +449,19 @@ class SpotlightViewModel extends ChangeNotifier {
   }) async {
     try {
       final clipboardService = _clipboardService;
+      // Media is downloaded first, and downloadFile returns null when the
+      // storage path is missing, the download fails or decryption does.
+      // Only a clipboard write that actually happened may count as the
+      // user's copy, or smart receive would guard a clipboard that never
+      // changed and refuse incoming clips for the whole stale window.
+      var copied = false;
 
       if (item.isImage) {
         // Download image and copy to clipboard
         final bytes = await _clipboardRepo.downloadFile(item);
         if (bytes != null) {
           await clipboardService.writeImage(bytes);
+          copied = true;
           debugPrint('[SpotlightVM] Copied image to clipboard');
         }
       } else if (item.isFile) {
@@ -481,6 +488,7 @@ class SpotlightViewModel extends ChangeNotifier {
           final tempPath = tempFile.path;
 
           await clipboardService.writeFilePath(tempPath);
+          copied = true;
           debugPrint('[SpotlightVM] Copied file path to clipboard: $tempPath');
 
           // Periodic cleanup retains the file while its URI is on the clipboard.
@@ -492,11 +500,18 @@ class SpotlightViewModel extends ChangeNotifier {
         } else {
           await clipboardService.writeText(item.content);
         }
+        copied = true;
         debugPrint('[SpotlightVM] Copied rich text to clipboard');
       } else {
         // Copy plain text
         await clipboardService.writeText(item.content);
+        copied = true;
         debugPrint('[SpotlightVM] Copied text to clipboard');
+      }
+
+      if (!copied) {
+        _setError('Could not copy - the file could not be downloaded');
+        return;
       }
 
       // The user chose this copy, so a clip arriving in the next few minutes
