@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.600.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
@@ -66,6 +66,45 @@ interface CleanupRow {
   owner_id: string;
   storage_path: string;
 }
+/** Per-request cap, so one slow answer from R2 cannot eat the caller's time. */
+const R2_REQUEST_TIMEOUT_MS = 8000;
+/**
+ * No new delete starts after this. pg_net gives the whole call 30 seconds;
+ * rows left unfinished keep their lease and are retried on the next run.
+ */
+const BATCH_BUDGET_MS = 20000;
+const DELETE_CONCURRENCY = 8;
+
+/**
+ * Delete one object: a presigned DELETE, sent with fetch.
+ *
+ * Not s3Client.send. In the Edge runtime that call never came back: every
+ * delete_queued run from the storage cleanup cron timed out at pg_net's 30
+ * seconds, so queued files were leased and retried every five minutes for
+ * days (1,091 attempts on the oldest by 2026-09-23) and nothing was ever
+ * removed from R2 - and the single-object 'delete' action made the same call.
+ * Signing does work here, uploads and downloads have always used it, and
+ * fetch is the runtime's own.
+ *
+ * Only a 2xx counts. DeleteObject is idempotent - R2, like S3, answers 204
+ * for a key that is already gone - so a 404 means something else is missing:
+ * the bucket, or the endpoint. Acknowledging those would drop the queue rows
+ * for good while the files stayed put, with no way to retry once the
+ * configuration was fixed.
+ */
+async function deleteObject(key: string): Promise<boolean> {
+  const url = await getSignedUrl(s3Client, new DeleteObjectCommand({
+    Bucket: R2_BUCKET_NAME,
+    Key: key
+  }), { expiresIn: 60 });
+  const response = await fetch(url, {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(R2_REQUEST_TIMEOUT_MS)
+  });
+  await response.body?.cancel();
+  return response.ok;
+}
+
 async function deleteQueuedObjects() {
   const client = serviceClient();
   // The database leases at most 500 rows. A failed invocation leaves them
@@ -77,14 +116,21 @@ async function deleteQueuedObjects() {
   const valid = rows.filter((row) => typeof row.storage_path === 'string' &&
     row.storage_path.startsWith(`${row.owner_id}/`));
   if (valid.length !== rows.length) throw new Error('Invalid cleanup owner prefix');
-  const result = await s3Client.send(new DeleteObjectsCommand({
-    Bucket: R2_BUCKET_NAME,
-    Delete: { Objects: valid.map((row) => ({ Key: row.storage_path })), Quiet: false }
-  }));
-  // A batch can return HTTP 200 with individual object errors. Acknowledge
-  // only explicit successes; every other row keeps its retry lease.
-  const deleted = new Set((result.Deleted ?? []).map((item) => item.Key));
-  const ids = valid.filter((row) => deleted.has(row.storage_path)).map((row) => row.id);
+  // Acknowledge only deletes R2 confirmed; every other row keeps its lease.
+  const started = Date.now();
+  const ids: number[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < valid.length && Date.now() - started < BATCH_BUDGET_MS) {
+      const row = valid[next++];
+      try {
+        if (await deleteObject(row.storage_path)) ids.push(row.id);
+      } catch (e) {
+        console.error('[storage-presign] R2 delete failed:', row.storage_path, e);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(DELETE_CONCURRENCY, valid.length) }, worker));
   if (ids.length) {
     const { error: ackError } = await client.rpc('acknowledge_storage_cleanup', { p_ids: ids });
     if (ackError) throw ackError;
@@ -176,10 +222,9 @@ Deno.serve(async (req)=>{
       return json({ downloadUrl, expiresIn: DOWNLOAD_URL_TTL_SECONDS });
     }
     if (action === 'delete') {
-      await s3Client.send(new DeleteObjectCommand({
-        Bucket: R2_BUCKET_NAME,
-        Key: path
-      }));
+      if (!await deleteObject(path)) {
+        return json({ error: 'Delete failed' }, 502);
+      }
       console.log(`[storage-presign] Deleted: ${path}`);
       return json({ success: true });
     }

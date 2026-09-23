@@ -20,7 +20,12 @@
 // Renaming discards every cached asset and forces one re-fetch. That is the
 // right trade for evicting a credential with certainty, rather than purging
 // selected keys and hoping the pattern matched every stored variant.
-const CACHE = 'ghostcopy-v3';
+//
+// v4 (2026-09-23): static assets are cache-first, so the icons this worker
+// precached before the rebrand and the icon resize kept being served to
+// returning visitors whatever the server had. The pages now link versioned
+// icon URLs (?v=2); renaming the cache drops the stale copies outright.
+const CACHE = 'ghostcopy-v4';
 
 // Extensionless, matching what the pages actually link to. Precaching
 // '/download.html' would have cached a 308 to '/download'.
@@ -32,7 +37,7 @@ const PRECACHE = [
     '/terms',
     '/output.css',
     '/waitlist.js',
-    '/icons/ghost.svg',
+    '/icons/ghost.svg?v=2',
 ];
 
 self.addEventListener('install', (event) => {

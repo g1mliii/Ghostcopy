@@ -51,13 +51,16 @@ def save(img: Image.Image, *parts: str) -> None:
     written.append(os.path.relpath(path, ROOT))
 
 
-def tile(px: int, *, inset: float = 0.72, radius: float | None = None,
+def tile(px: int, *, inset: float = 0.92, radius: float | None = None,
          bg=PRIMARY, opaque: bool = True) -> Image.Image:
     """The mark centred on a filled tile - what an app icon looks like.
 
-    `inset` is the share of the tile the mark occupies. 0.72 leaves the margin
-    Apple's grid expects; filling the square edge to edge reads as cramped
-    beside other icons.
+    `inset` is the share of the tile given to the master's square viewBox,
+    not to the ghost itself. The master pads the tall, narrow ghost inside
+    that square, so 0.72 - chosen as if the ghost filled it - drew the ghost
+    at 57% of the icon's height and a third of its width, visibly smaller
+    than the marks on neighbouring icons. 0.92 puts it at about 73% tall,
+    which matches their weight and still leaves clear space top and bottom.
 
     `opaque` matters: an iOS app icon with any alpha at all is rejected at
     upload, so the tile is flattened rather than merely looking solid.
