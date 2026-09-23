@@ -25,9 +25,13 @@ resource baseline. Finished work is in git history and
 - [ ] **Decide whether the gentle update reminder is too quiet.** A scheduled
       check shows only a dot next to the menu bar icon and relabels the tray
       item; someone who never opens that menu never updates
-- [ ] Later, optional: notarize in CI. Releases are cut locally with
-      `installer/macos/build-release.sh` today; CI stops at
-      `flutter build macos --release`
+- [x] **Notarize in CI - decided against.** Publishing needs three secrets in
+      one place: the Developer ID private key, notarization credentials, and
+      the Sparkle EdDSA key. That last one is unrecoverable - if it leaks,
+      anyone can sign an update every installed copy accepts and installs. Not
+      worth that to replace one local command. A workflow that *verifies* a
+      published feed (signature, checksums, feed matches release) is still
+      worth having; publishing stays manual
 
 ## Windows: next
 
@@ -138,6 +142,88 @@ to package - but everything below marked "verify" does need one.
 - [ ] Version scheme: `1.0.0+N`, build number bumped per release (at 5 now).
       TestFlight and Play reject a duplicate build number, so keep it
       monotonic across platforms
+- [ ] **Sentry in the client, before the first shipped build.** A hard
+      ordering constraint, not a preference: it has to be compiled into the
+      build that goes out. Ship without it and the first real crashes are
+      invisible, and seeing them costs another signed, notarized release per
+      platform. Scrub clipboard content from every event before sending. See
+      the monitoring section below.
+
+## Monitoring, error tracking and cost guards
+
+From a monitoring plan reviewed 2026-09-22. Most of its cost-control advice is
+already implemented here, and more strictly than it suggested - recorded below
+so nobody builds it twice.
+
+### Already in place
+
+| Recommendation | What the repo does |
+|---|---|
+| Tag origin device so B does not echo back to A | `isFromDifferentDevice = deviceName != currentDeviceName` (`clipboard_sync_service.dart:163`, `:345`) |
+| Debounce client clipboard events | 5-second poll (`clipboard_sync_service.dart:474`) |
+| Per-user rate limit, suggested 30/min | **10/min**, Postgres trigger `check_clipboard_rate_limit` (`schema.sql:152`) |
+| Payload cap, suggested 15-20 MB | 100 KB text (`maxContentLength`), 10 MB files (`ClipboardLimits.maxFileBytes`) |
+| Bounded retention and storage cleanup | `20260915000000_bound_cleanup_and_rate_limits.sql`, R2 deletion queue |
+
+The infinite-sync-loop footgun that plan leads with is therefore closed on the
+application side. What is left is outside the repo.
+
+### Now - dashboard only, no code, no dependency on any platform
+
+Worth being precise about what the exposure actually is, because on the plans
+this project is on it is mostly **not** a bill. Every quota below should be
+re-checked against current provider docs rather than trusted from here.
+
+- [ ] **Supabase (free plan).** Cannot be charged, so there is no bill to cap -
+      but that inverts the risk rather than removing it. Exceeding free limits
+      gets a project restricted or paused, and a paused project is the app
+      fully down for every user on every platform. That is worse than an
+      unexpected invoice, and it is the one to watch around a launch. Set usage
+      notifications on Database Egress and Database Size, and know in advance
+      what upgrading costs, so the answer to an outage is a plan rather than a
+      decision made under pressure
+- [ ] **Google Cloud / Firebase.** FCM messaging itself is free and not
+      metered, so "essentially free" holds for what this app uses it for.
+      Confirm which plan the project is on: on Spark nothing can bill, on Blaze
+      other services can. If Blaze, set Budgets & Alerts at 50/80/100%
+- [ ] **Cloudflare R2.** The only place real money can leak. The free
+      allowance is generous, but overage bills once a payment method is on
+      file, and R2 has no hard spend cap - notifications are the only guard, so
+      configure them on storage capacity and Class A/B operation counts. Worth
+      confirming what "limits already on it" means today: a Cloudflare
+      notification is an alert after the fact, not a ceiling
+- [ ] **Cloudflare 5xx rate spike notification.** Free, and the fastest signal
+      that image sync is broken for everyone rather than one device
+
+### With the first public build, not after it
+
+- [ ] **Sentry in the client.** Ordering matters: it has to be compiled into
+      the build that ships. Ship without it and the first real crashes are
+      invisible, and seeing them costs a whole new signed, notarized release.
+      Scrub clipboard content from every event before sending
+
+### After Windows, iOS and macOS are out
+
+Diagnostics for a system with real traffic. With no users they are scaffolding
+to maintain, not signal.
+
+- [ ] Sentry in the Supabase Edge Functions (`@sentry/deno`) - deploys are
+      instant, so this has no ordering constraint
+- [ ] A `sync_id` UUID generated per clipboard event, passed through the edge
+      function, R2 upload metadata and FCM payload, and attached to Sentry
+      tags. Turns "the image did not sync" into one query
+- [ ] A `/health` edge function doing `SELECT 1`, pinged every 60s by an
+      external monitor
+- [ ] Sync latency: log `receive_timestamp - create_timestamp` and watch P95.
+      A creeping P95 is the first sign of FCM backlog or a missing index
+
+### Decided against for now
+
+- Log drains to Axiom or Better Stack. Supabase's built-in log retention plus
+  Sentry covers this until retention expires before problems are noticed, or
+  alerting on raw log patterns is needed. The source plan reached the same
+  conclusion.
+
 
 ## Parallel track: Google Play
 
