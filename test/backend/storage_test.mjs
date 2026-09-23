@@ -7,7 +7,7 @@ import vm from 'node:vm';
 const source = stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, ''));
 class Command { constructor(input) { this.input = input; } }
-function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], failDelete = false } = {}) {
+function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], missingKeys = [], failDelete = false } = {}) {
   let handler;
   const acknowledged = [];
   const deleted = [];
@@ -33,17 +33,19 @@ function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKey
     DeleteObjectCommand: Command, DeleteObjectsCommand: Command,
     GetObjectCommand: Command, PutObjectCommand: Command,
     S3Client: class {
-      async send(command) {
-        if (failDelete) throw new Error('R2 unavailable');
-        const keys = command.input.Delete.Objects.map((o) => o.Key);
-        deleted.push(...keys);
-        return {
-          Deleted: keys.filter((key) => !failedKeys.includes(key)).map((Key) => ({ Key })),
-          Errors: failedKeys.map((Key) => ({ Key, Code: 'InternalError' })),
-        };
-      }
+      async send() { throw new Error('The function must not call R2 through the SDK - it hung in the Edge runtime'); }
     },
-    getSignedUrl: async () => { signed++; return 'https://example.com/signed'; },
+    AbortSignal,
+    // Deletes are presigned and sent with fetch; the URL carries the key.
+    getSignedUrl: async (_client, command) => { signed++; return `https://r2.example/${command.input.Key}`; },
+    fetch: async (url, init) => {
+      assert.equal(init.method, 'DELETE');
+      if (failDelete) throw new Error('R2 unavailable');
+      const key = url.slice('https://r2.example/'.length);
+      deleted.push(key);
+      if (missingKeys.includes(key)) return { ok: false, status: 404 };
+      return failedKeys.includes(key) ? { ok: false, status: 500 } : { ok: true, status: 204 };
+    },
     json: (body, status = 200) => ({ body, status }),
     corsPreflight: () => ({ status: 204 }),
     Deno: {
@@ -89,12 +91,12 @@ test('a partial R2 batch acknowledges only successful objects', async () => {
   const response = await f.request({ action: 'delete_queued' }, 'service-key');
   assert.equal(response.status, 502);
   assert.deepEqual(f.acknowledged, [1]);
-  assert.deepEqual(f.deleted, ['a/one', 'b/two']);
+  assert.deepEqual([...f.deleted].sort(), ['a/one', 'b/two']);
 });
 
 test('a network failure leaves every leased deletion retryable', async () => {
   const f = fixture({ rows: [{ id: 1, owner_id: 'a', storage_path: 'a/one' }], failDelete: true });
-  assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 500);
+  assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 502);
   assert.equal(f.acknowledged.length, 0);
 });
 
@@ -102,4 +104,19 @@ test('a queued owner mismatch cannot delete an unrelated object', async () => {
   const f = fixture({ rows: [{ id: 1, owner_id: 'a', storage_path: 'b/one' }] });
   assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 500);
   assert.equal(f.deleted.length, 0);
+});
+
+test('a full batch is deleted and acknowledged', async () => {
+  const rows = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, owner_id: 'a', storage_path: `a/file-${i}` }));
+  const f = fixture({ rows });
+  const response = await f.request({ action: 'delete_queued' }, 'service-key');
+  assert.equal(response.status, 200);
+  assert.deepEqual([...f.acknowledged].sort((x, y) => x - y), rows.map((r) => r.id));
+  assert.equal(f.deleted.length, 12);
+});
+
+test('an object already gone counts as deleted', async () => {
+  const f = fixture({ rows: [{ id: 1, owner_id: 'a', storage_path: 'a/gone' }], missingKeys: ['a/gone'] });
+  assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 200);
+  assert.deepEqual(f.acknowledged, [1]);
 });
