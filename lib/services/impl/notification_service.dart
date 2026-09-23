@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -340,7 +341,9 @@ class NotificationService implements INotificationService {
     // might not support buttons effectively or for clarity
     var body = message;
     if (actionLabel != null) {
-      body = '$message\n(Tap to $actionLabel)';
+      // Clicked on a desktop, tapped on a phone.
+      final verb = Platform.isAndroid || Platform.isIOS ? 'Tap' : 'Click';
+      body = '$message\n($verb to $actionLabel)';
     }
 
     try {
