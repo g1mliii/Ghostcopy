@@ -84,8 +84,13 @@ const DELETE_CONCURRENCY = 8;
  * days (1,091 attempts on the oldest by 2026-09-23) and nothing was ever
  * removed from R2 - and the single-object 'delete' action made the same call.
  * Signing does work here, uploads and downloads have always used it, and
- * fetch is the runtime's own. A missing object counts as deleted: the state
- * the caller wants already holds.
+ * fetch is the runtime's own.
+ *
+ * Only a 2xx counts. DeleteObject is idempotent - R2, like S3, answers 204
+ * for a key that is already gone - so a 404 means something else is missing:
+ * the bucket, or the endpoint. Acknowledging those would drop the queue rows
+ * for good while the files stayed put, with no way to retry once the
+ * configuration was fixed.
  */
 async function deleteObject(key: string): Promise<boolean> {
   const url = await getSignedUrl(s3Client, new DeleteObjectCommand({
@@ -97,7 +102,7 @@ async function deleteObject(key: string): Promise<boolean> {
     signal: AbortSignal.timeout(R2_REQUEST_TIMEOUT_MS)
   });
   await response.body?.cancel();
-  return response.ok || response.status === 404;
+  return response.ok;
 }
 
 async function deleteQueuedObjects() {

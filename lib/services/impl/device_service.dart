@@ -162,9 +162,10 @@ class DeviceService implements IDeviceService {
           '[DeviceService] ⚠️ Token held by another account - registering '
           'first, then reclaiming it',
         );
+        // Success means the token landed, not just the row: callers such as
+        // _reassertFcmToken stop retrying on true.
         final registered = await registerCurrentDevice();
-        if (registered) await updateFcmToken(fcmToken);
-        return registered;
+        return registered && await _applyFcmToken(fcmToken);
       }
       debugPrint(
         '[DeviceService] ❌ Postgres error registering device: ${e.message}',
@@ -224,6 +225,16 @@ class DeviceService implements IDeviceService {
 
   @override
   Future<void> updateFcmToken(String fcmToken) async {
+    await _applyFcmToken(fcmToken);
+  }
+
+  /// Put [fcmToken] on this device's row; true only if it is there after.
+  ///
+  /// Registration needs the answer, not just the attempt: when its upsert
+  /// hit a token conflict it used to report success whatever the reclaim
+  /// did, and MobileMainViewModel._reassertFcmToken - which retries only on
+  /// failure - then stopped trying for an hour with no token on the row.
+  Future<bool> _applyFcmToken(String fcmToken) async {
     _ensureInitialized();
     _ensureAuthenticated();
 
@@ -231,7 +242,7 @@ class DeviceService implements IDeviceService {
       debugPrint(
         '[DeviceService] ⚠️ Cannot update FCM token: device not registered',
       );
-      return;
+      return false;
     }
 
     try {
@@ -244,6 +255,7 @@ class DeviceService implements IDeviceService {
           .eq('id', _currentDeviceId!);
 
       debugPrint('[DeviceService] ✅ FCM token updated');
+      return true;
     } on PostgrestException catch (e) {
       if (e.code == '23505') {
         // devices_fcm_token_global_unique: this registration token is still
@@ -269,13 +281,13 @@ class DeviceService implements IDeviceService {
                 : '[DeviceService] ❌ FCM token not reclaimed - this device row '
                       'is not on the signed-in account',
           );
-          return;
+          return claimed;
         } on Exception catch (retryError) {
           debugPrint(
             '[DeviceService] ❌ Could not reclaim FCM token - push will not '
             'arrive on this device: $retryError',
           );
-          return;
+          return false;
         }
       }
       debugPrint(
@@ -284,6 +296,7 @@ class DeviceService implements IDeviceService {
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to update FCM token: $e');
     }
+    return false;
   }
 
   @override

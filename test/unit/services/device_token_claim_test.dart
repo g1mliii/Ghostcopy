@@ -133,6 +133,17 @@ void main() {
     },
   );
 
+  test(
+    'registration reports failure when the token could not be claimed',
+    () async {
+      // Otherwise _reassertFcmToken takes the true as a confirmed write and
+      // waits an hour before trying again, with no token on the row.
+      claimSucceeds = false;
+
+      expect(await devices.registerCurrentDevice(fcmToken: _token), isFalse);
+    },
+  );
+
   test('a refused claim does not throw', () async {
     claimSucceeds = false;
     await devices.registerCurrentDevice();
