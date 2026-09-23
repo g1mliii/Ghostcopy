@@ -115,8 +115,10 @@ test('a full batch is deleted and acknowledged', async () => {
   assert.equal(f.deleted.length, 12);
 });
 
-test('an object already gone counts as deleted', async () => {
-  const f = fixture({ rows: [{ id: 1, owner_id: 'a', storage_path: 'a/gone' }], missingKeys: ['a/gone'] });
-  assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 200);
-  assert.deepEqual(f.acknowledged, [1]);
+test('a 404 is left queued, since a missing key would answer 204', async () => {
+  // DeleteObject is idempotent: an absent key gets 204. A 404 is the bucket
+  // or endpoint, and acknowledging it would orphan the file for good.
+  const f = fixture({ rows: [{ id: 1, owner_id: 'a', storage_path: 'a/file' }], missingKeys: ['a/file'] });
+  assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 502);
+  assert.deepEqual(f.acknowledged, []);
 });
