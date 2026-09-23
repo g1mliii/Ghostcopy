@@ -122,49 +122,21 @@ to package - but everything below marked "verify" does need one.
       `ITSAppUsesNonExemptEncryption` to NO. Answer the questionnaire on the
       first upload ("standard algorithms in addition to the OS"), then set
       the Info.plist key(s) it points to so later uploads skip it
-- [ ] **Privacy policy fixes** (`website/privacy.html`), before submission:
-      it says the desktop app "does not watch your clipboard" - true only
-      while auto-send is off; it never mentions files and images going to
-      storage; nor that a webhook sends clips to a URL the user sets; and it
-      will need Apple sign-in and in-app deletion once those land
-- [ ] **App Store Connect listing.** Already have: privacy policy
-      (`/privacy`), support (`/faq` + support@ghostcopy.app), marketing URL,
-      terms (`/terms`), an opaque 1024 icon. Still to make: screenshots at
-      6.9" iPhone and 13" iPad (the app targets iPad too), name / subtitle /
-      description / keywords, category, age rating, and the App Privacy
-      answers - email (account), user content incl. photos and files, user
-      ID and device ID (push token), all app functionality, no tracking, no
-      analytics or crash SDKs. Review notes must explain that sync needs a
-      second device; attach a short screen recording
-- [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
-      iPhone is expected around late October 2026; its simulator is in the
-      Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
-      already: the one/two-pane split in `mobile_main_screen.dart` keys on
-      aspect ratio in shared Flutter code (built for the Pixel Fold in
-      `554ed43`), and the app already targets iPad. Install the beta alongside,
-      never over, the release Xcode - uploads should stay on the release one -
-      and check folded, unfolded, and a live fold/unfold mid-compose
-- [ ] **Keychain migration on device.** The `first_unlock` migration
-      (`lib/services/impl/keychain_accessibility.dart`) still needs confirming
-      on a phone holding a passphrase written by an older build - a fresh
-      install cannot show it. Simulator Keychain items survive uninstalls,
-      which disguised this last time
-- [ ] **Device-name entitlement.** Request
-      `com.apple.developer.device-information.user-assigned-device-name` from
-      Apple (developer.apple.com, Contact -> Request). Cosmetic only: device
-      rows already stay unique via the `identifierForVendor` suffix, so a phone
-      reads "iPhone 15 Pro - a1b2c3d4" instead of "Subai's iPhone". The case
-      for it: clips are labelled by sending device and settings lists them, so
-      the owner's name for a device is the point. If granted, add the key to
-      `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
-      prefers `ios.name`
-- [ ] **`primary` as a foreground is 4.44:1 on `surface`**, just under AA.
-      Used as a foreground in ~104 places: either the token moves, or call
-      sites move to `accentText` (8.98:1) one at a time, as the email templates
-      did
-- [ ] `flutter logs` returns nothing from a profile build on device. The
-      background isolate is only observable by writing files to the app
-      container and reading them with `devicectl device info files`
+- [x] **Privacy policy** matches the app now (R2 file storage, auto-send,
+      webhook, Obsidian) - `website/privacy.html`, deploys on merge to `main`
+- [x] **Listing drafted** in `docs/app-store-listing.md`: store text, age
+      rating, App Privacy answers, export compliance, review notes
+- [x] Display name was "Ghostcopy" on the home screen and in permission
+      prompts; now GhostCopy
+- [ ] **Demo account for App Review** - no guest path on the iOS welcome
+      screen and sign-up waits on a confirmation email. Create one on a real
+      inbox, no passphrase, a few clips, the Mac linked. See the listing doc
+- [ ] **Screenshots** (6.9" iPhone, 13" iPad) - taken with the demo account
+      once it exists; needs it signed in on the simulator
+- [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
+      the listing doc
+- [ ] Update the privacy policy and listing when Sign in with Apple and
+      account deletion land
 
 ## All platforms
 
