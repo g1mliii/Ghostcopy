@@ -79,7 +79,6 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   // Auto-receive debouncing
   Timer? _autoReceiveDebounceTimer;
-  Future<ClipboardItem?>? _pendingAutoReceiveItem;
 
   // Rate limiting for send operations
   DateTime? _lastSendTime;
@@ -155,6 +154,12 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// One clipboard row inserted for this account, as Realtime delivers it.
   @visibleForTesting
   void handleRealtimeInsert(Map<String, dynamic> record) {
+    // Realtime has seen this row, so the polling fallback must not treat it
+    // as new when it takes over - it would hand the clip to the integrations
+    // a second time.
+    final id = record['id']?.toString();
+    if (id != null) _lastPolledItemId = id;
+
     // Check if from another device.
     //
     // A plain inequality, deliberately: the null guards that used to be
@@ -212,13 +217,10 @@ class ClipboardSyncService implements IClipboardSyncService {
     final item = _receiveItem(id);
 
     _autoReceiveDebounceTimer?.cancel();
-    _pendingAutoReceiveItem = item;
-
-    _autoReceiveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-      final pending = _pendingAutoReceiveItem;
-      _pendingAutoReceiveItem = null;
-      if (pending != null) _handleSmartAutoReceive(pending);
-    });
+    _autoReceiveDebounceTimer = Timer(
+      const Duration(milliseconds: 500),
+      () => _handleSmartAutoReceive(item),
+    );
   }
 
   /// Fetch a received clip and deliver it to the integrations.
@@ -1031,7 +1033,6 @@ class ClipboardSyncService implements IClipboardSyncService {
     _realtimeChannel?.unsubscribe();
     _realtimeChannel = null;
     _autoReceiveDebounceTimer?.cancel();
-    _pendingAutoReceiveItem = null;
     _lastPolledItemId = null;
     _lastMonitoredClipboard = '';
     _lastClipboardChangeCount = null;
@@ -1074,7 +1075,6 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   bool _isDisposed = false;
 
-  /// Fire webhook (non-blocking with tracking for clean disposal - Fix #10)
   /// Hand a clip to the external integrations.
   ///
   /// Both fire on clips this device SENDS and on clips it RECEIVES. They used
@@ -1100,6 +1100,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _appendToObsidian(content, deviceType, direction);
   }
 
+  /// Fire webhook (non-blocking with tracking for clean disposal - Fix #10)
   void _fireWebhook(String content, String deviceType, String direction) {
     if (_isDisposed) return;
     final webhook = _webhookService;

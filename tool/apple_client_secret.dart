@@ -10,7 +10,6 @@
 //
 // The .p8 is read from disk and never written anywhere. Keep it out of the
 // repo: Apple will not let it be downloaded a second time.
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
@@ -34,29 +33,24 @@ void main(List<String> args) {
   }
 
   final pem = File(args.single).readAsStringSync().trim();
-  final secret = JWT(
-    const <String, dynamic>{},
-    issuer: _teamId,
-    subject: _servicesId,
-    audience: Audience.one('https://appleid.apple.com'),
-    header: const {'kid': _keyId},
-  ).sign(
-    ECPrivateKey(pem),
-    algorithm: JWTAlgorithm.ES256,
-    expiresIn: _lifetime,
-  );
+  // Taken before signing, so the printed date is never later than the real
+  // `exp` claim.
+  final expires = DateTime.now().toUtc().add(_lifetime);
+  final secret =
+      JWT(
+        const <String, dynamic>{},
+        issuer: _teamId,
+        subject: _servicesId,
+        audience: Audience.one('https://appleid.apple.com'),
+        header: const {'kid': _keyId},
+      ).sign(
+        ECPrivateKey(pem),
+        algorithm: JWTAlgorithm.ES256,
+        expiresIn: _lifetime,
+      );
 
   stdout.writeln(secret);
 
-  final claims =
-      jsonDecode(
-            utf8.decode(base64Url.decode(base64Url.normalize(secret.split('.')[1]))),
-          )
-          as Map<String, dynamic>;
-  final expires = DateTime.fromMillisecondsSinceEpoch(
-    (claims['exp'] as int) * 1000,
-    isUtc: true,
-  );
   stderr
     ..writeln()
     ..writeln('Paste the line above into Supabase > Authentication > Apple >')

@@ -188,7 +188,7 @@ class AuthService implements IAuthService {
   /// that forwards the PKCE code to `ghostcopy://auth-callback`; the app
   /// redeems it there (desktop via _handleDeepLinkArgs, Android via
   /// supabase_flutter's own link observer). Both check the URL with
-  /// isTrustedAuthCallback first.
+  /// AuthCallbackDecision first.
   Future<bool> _webOAuthSignIn(OAuthProvider provider) async {
     // Launching a browser is not a completed sign-in. Keep the old session
     // until the callback has actually installed the new one.
@@ -753,6 +753,11 @@ class AuthService implements IAuthService {
   }
 
   @override
+  bool get deletionNeedsAppleConfirmation =>
+      _hasNativeAppleSignIn &&
+      (currentUser?.identities?.any((i) => i.provider == 'apple') ?? false);
+
+  @override
   Future<AccountDeletionOutcome> deleteAccount() async {
     final user = currentUser;
     if (user == null) throw StateError('No signed-in account to delete');
@@ -762,10 +767,7 @@ class AuthService implements IAuthService {
     // code the server can exchange and revoke. Only where the native sheet
     // exists; elsewhere the server deletes without it and logs the gap.
     String? appleCode;
-    final usesApple =
-        user.identities?.any((identity) => identity.provider == 'apple') ??
-        false;
-    if (usesApple && _hasNativeAppleSignIn) {
+    if (deletionNeedsAppleConfirmation) {
       try {
         appleCode = await _appleReauthorize();
         if (appleCode == null) return AccountDeletionOutcome.cancelled;

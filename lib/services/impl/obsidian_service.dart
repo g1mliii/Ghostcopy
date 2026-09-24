@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 
+import '../../utils/platform_label.dart';
 import '../obsidian_service.dart';
 
 /// Singleton service for Obsidian vault integration
@@ -113,13 +114,9 @@ class ObsidianService implements IObsidianService {
       final period = now.hour < 12 ? 'AM' : 'PM';
       final timestamp =
           '${months[now.month - 1]} ${now.day}, ${now.year} · $hour:$minute $period';
-      final device = switch (deviceType) {
-        'macos' => 'macOS',
-        'ios' => 'iOS',
-        'windows' => 'Windows',
-        'android' => 'Android',
-        _ => 'device',
-      };
+      final device = deviceType == null || deviceType.isEmpty
+          ? 'device'
+          : platformLabel(deviceType);
       final action = direction == 'received' ? 'Received' : 'Sent';
       final entry =
           '\n### $timestamp\n*$action from $device*\n\n$content\n\n---\n';

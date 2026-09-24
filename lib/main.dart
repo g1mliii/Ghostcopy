@@ -1311,12 +1311,20 @@ Future<void> _registerSavedHotkey() async {
   }
 }
 
-/// supabase_flutter's deep-link observer consults this before redeeming a
-/// URL - on macOS and Android it is the route every callback takes.
+/// Whether [uri] is a callback this app asked for.
 ///
-/// Same rules as [isTrustedAuthCallback], plus one side effect: a provider
-/// error ends the browser sign-in waiting on it, where before the observer
-/// dropped the URL and the auth panel sat disabled until its timeout.
+/// Wired into `Supabase.initialize` as `detectSessionInUriPredicate`, because
+/// supabase_flutter runs its own deep-link observer (`AppLinks`) that is a
+/// second, parallel route to `getSessionFromUrl` - one that does not go through
+/// [_handleDeepLinkArgs] at all, and on macOS and Android is the route every
+/// callback takes. Its default heuristic accepts any URI merely carrying
+/// `access_token`, `code` or `error` in the query OR the fragment, which is
+/// exactly the URL an attacker sends. Validating both routes with the same
+/// [AuthCallbackDecision] rules is the point: fixing only the command-line one
+/// leaves the app wide open wherever AppLinks delivers the link.
+///
+/// One side effect: a provider error ends the browser sign-in waiting on it,
+/// where otherwise the auth panel sat disabled until its timeout.
 bool _acceptAuthCallbackUri(Uri uri) {
   final decision = AuthCallbackDecision.evaluate(uri.toString());
   _reportProviderError(decision);
@@ -1330,13 +1338,13 @@ void _reportProviderError(AuthCallbackDecision decision) {
   if (!locator.isRegistered<IAuthService>()) return;
   // Our own wording, never the URL's: anyone can open a ghostcopy:// link, so
   // its text is not something to put in front of the user.
-  final detail = (decision.detail ?? '').toLowerCase();
-  final message = detail.contains('already')
-      ? 'That account is already linked to another GhostCopy account. '
-            'Sign in to it instead.'
-      : detail.contains('denied') || detail.contains('cancel')
-      ? 'Sign-in was cancelled.'
-      : 'Sign-in did not complete. Please try again.';
+  final message = switch (decision.errorCode) {
+    'identity_already_exists' =>
+      'That account is already linked to another GhostCopy account. '
+          'Sign in to it instead.',
+    'access_denied' || 'user_cancelled_authorize' => 'Sign-in was cancelled.',
+    _ => 'Sign-in did not complete. Please try again.',
+  };
   locator<IAuthService>().failBrowserSignIn(message);
 }
 

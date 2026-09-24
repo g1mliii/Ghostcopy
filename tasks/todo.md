@@ -317,12 +317,12 @@ should start as early as a build allows.
 - [ ] Create the app in Console; privacy policy, data safety, content rating
 - [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
 - [ ] **Android Apple sign-in.** Hidden on Android for now. Apple is the
-      browser flow there, and its calls return when the browser opens, so the
-      welcome screen's `_handleProviderAuth` has to wait for the
-      non-anonymous session from `onAuthStateChange` before finishing. Then
-      show the button (remove the `Platform.isIOS` gate) and test on a device.
-      Supabase and Apple Developer need nothing more - it uses the same
-      Services ID as Windows
+      browser flow there; AuthService already waits for the callback's
+      session (`awaitBrowserSession`), so no UI-level wait is needed. Give the
+      welcome screen a Cancel while it waits (the desktop auth panel has one),
+      then show the button (remove the `Platform.isIOS` gate) and test on a
+      device. Supabase and Apple Developer need nothing more - it uses the
+      same Services ID as Windows
 
 ## Later: clipboard export and import
 

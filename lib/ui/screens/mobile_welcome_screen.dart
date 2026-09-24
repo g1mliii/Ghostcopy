@@ -405,10 +405,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           // Divider
           _buildDivider(),
           const SizedBox(height: 16),
-          // Apple is iOS-only on mobile for now. On Android it is the browser
-          // flow, whose calls return when the browser opens rather than when
-          // sign-in finishes, and _handleProviderAuth would carry on to
-          // onAuthComplete with the old session. See tasks/todo.md.
+          // Apple is iOS-only on mobile for now. On Android it would be the
+          // browser flow, which AuthService now waits on until the callback
+          // lands, but that has not been tested on a device yet and this
+          // screen has no Cancel for it. See tasks/todo.md.
           RepaintBoundary(
             child: SocialSignInButtons(
               enabled: !_authLoading,

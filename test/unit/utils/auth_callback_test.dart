@@ -208,29 +208,21 @@ void main() {
     });
   });
 
-  group('isTrustedAuthCallback - supabase_flutter deep-link observer', () {
+  group('deep-link observer predicate', () {
     // This predicate replaces supabase_flutter's default heuristic, which
     // accepts any URI merely carrying access_token/code/error and hands it to
     // getSessionFromUrl - a second route to the same hole that never touches
     // _handleDeepLinkArgs.
     test('lets a genuine PKCE callback through', () {
-      expect(
-        isTrustedAuthCallback(Uri.parse('ghostcopy://auth-callback?code=abc')),
-        isTrue,
-      );
-      expect(
-        isTrustedAuthCallback(Uri.parse('ghostcopy://reset-password?code=abc')),
-        isTrue,
-      );
+      expect(accepts('ghostcopy://auth-callback?code=abc'), isTrue);
+      expect(accepts('ghostcopy://reset-password?code=abc'), isTrue);
     });
 
     test('blocks the URL the default heuristic would have accepted', () {
       expect(
-        isTrustedAuthCallback(
-          Uri.parse(
-            'ghostcopy://auth-callback?access_token=attacker'
-            '&refresh_token=attacker',
-          ),
+        accepts(
+          'ghostcopy://auth-callback?access_token=attacker'
+          '&refresh_token=attacker',
         ),
         isFalse,
       );
@@ -238,18 +230,13 @@ void main() {
 
     test('blocks an access_token hidden in the fragment', () {
       expect(
-        isTrustedAuthCallback(
-          Uri.parse('ghostcopy://auth-callback#access_token=attacker'),
-        ),
+        accepts('ghostcopy://auth-callback#access_token=attacker'),
         isFalse,
       );
     });
 
     test('blocks a callback aimed at a host we never registered', () {
-      expect(
-        isTrustedAuthCallback(Uri.parse('ghostcopy://share/42?code=abc')),
-        isFalse,
-      );
+      expect(accepts('ghostcopy://share/42?code=abc'), isFalse);
     });
   });
 
@@ -263,6 +250,19 @@ void main() {
       expect(decision.isAccepted, isFalse);
       expect(decision.rejection, AuthCallbackRejection.providerError);
       expect(decision.detail, 'User declined');
+      expect(decision.errorCode, 'access_denied');
+    });
+
+    test("prefers Supabase's error_code over the OAuth error", () {
+      // The message the auth panel shows is chosen from this, so it must not
+      // depend on how the description happens to be worded.
+      final decision = AuthCallbackDecision.evaluate(
+        'ghostcopy://auth-callback?error=server_error'
+        '&error_code=identity_already_exists'
+        '&error_description=Identity+is+already+linked+to+another+user',
+      );
+
+      expect(decision.errorCode, 'identity_already_exists');
     });
 
     test('refuses a callback with nothing redeemable', () {
@@ -290,3 +290,6 @@ void main() {
     });
   });
 }
+
+/// The rule `Supabase.initialize` is given as its deep-link predicate.
+bool accepts(String link) => AuthCallbackDecision.evaluate(link).isAccepted;

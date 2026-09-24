@@ -176,6 +176,17 @@ void main() {
     service.stopPolling();
   });
 
+  void verifyVaultGot(String content, {String direction = 'received'}) =>
+      verify(
+        () => obsidian.appendToVault(
+          deviceType: any(named: 'deviceType'),
+          direction: direction,
+          vaultPath: '/vault',
+          fileName: 'clipboard.md',
+          content: content,
+        ),
+      ).called(1);
+
   testWidgets('manual text sends reach both integrations', (tester) async {
     service.notifyManualSend('manual clip');
     await tester.pump();
@@ -185,15 +196,7 @@ void main() {
         any(that: containsPair('direction', 'sent')),
       ),
     ).called(1);
-    verify(
-      () => obsidian.appendToVault(
-        deviceType: any(named: 'deviceType'),
-        direction: any(named: 'direction'),
-        vaultPath: '/vault',
-        fileName: 'clipboard.md',
-        content: 'manual clip',
-      ),
-    ).called(1);
+    verifyVaultGot('manual clip', direction: 'sent');
   });
 
   for (final behavior in AutoReceiveBehavior.values) {
@@ -213,15 +216,7 @@ void main() {
             any(that: containsPair('direction', 'received')),
           ),
         ).called(1);
-        verify(
-          () => obsidian.appendToVault(
-            deviceType: any(named: 'deviceType'),
-            direction: any(named: 'direction'),
-            vaultPath: '/vault',
-            fileName: 'clipboard.md',
-            content: 'clip 1',
-          ),
-        ).called(1);
+        verifyVaultGot('clip 1');
         if (behavior != AutoReceiveBehavior.always) {
           verifyNever(() => clipboard.writeText(any()));
         }
@@ -229,16 +224,6 @@ void main() {
       },
     );
   }
-
-  void verifyVaultGot(String content, {int times = 1}) => verify(
-    () => obsidian.appendToVault(
-      deviceType: any(named: 'deviceType'),
-      direction: 'received',
-      vaultPath: '/vault',
-      fileName: 'clipboard.md',
-      content: content,
-    ),
-  ).called(times);
 
   testWidgets('every clip in a burst reaches the integrations', (tester) async {
     // The 500ms debounce exists so the clipboard is not thrashed. It used to
@@ -264,6 +249,24 @@ void main() {
     // The clipboard itself still only takes the last one.
     verify(() => clipboard.writeText('clip 2')).called(1);
     verifyNever(() => clipboard.writeText('clip 1'));
+  });
+
+  testWidgets('polling does not deliver a clip realtime already delivered', (
+    tester,
+  ) async {
+    // The lifecycle controller swaps realtime for polling when idle. The first
+    // poll finds the newest row - the one realtime just handled.
+    when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    when(repository.getLatestItemId).thenAnswer((_) async => '1');
+
+    service.handleRealtimeInsert({'id': 1, 'device_name': 'remote-device'});
+    await tester.pump(const Duration(milliseconds: 600));
+    service.startPolling(interval: const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    verifyVaultGot('clip 1');
+    service.stopPolling();
   });
 
   testWidgets('a received HTML clip reaches the integrations as text', (

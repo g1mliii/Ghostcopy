@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -8,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
+import '../account_deletion_text.dart';
 import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -171,13 +170,9 @@ class _AuthPanelState extends State<AuthPanel> {
                   padding: const EdgeInsets.symmetric(vertical: 8),
                 ),
                 child: _deletingAccount
-                    ? SizedBox(
-                        height: 16,
-                        width: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.red.shade400,
-                        ),
+                    ? Adaptive.progressIndicator(
+                        size: 16,
+                        color: Colors.red.shade400,
                       )
                     : const Text('Delete Account'),
               ),
@@ -797,19 +792,12 @@ class _AuthPanelState extends State<AuthPanel> {
 
   /// Delete the account and everything in it, then carry on as a fresh guest.
   Future<void> _handleDeleteAccount() async {
-    final usesApple =
-        widget.authService.currentUser?.identities?.any(
-          (identity) => identity.provider == 'apple',
-        ) ??
-        false;
     final confirmed = await Adaptive.confirm(
       context,
-      title: 'Delete Account?',
-      message:
-          'This permanently deletes your GhostCopy account and everything in '
-          'it: your clipboard history, the files and images you sent, and '
-          'your linked devices. It cannot be undone.'
-          '${usesApple && Platform.isMacOS ? '\n\nYou will confirm with Apple next.' : ''}',
+      title: accountDeletionTitle,
+      message: accountDeletionWarning(
+        appleNext: widget.authService.deletionNeedsAppleConfirmation,
+      ),
       confirmText: 'Delete Account',
       isDestructive: true,
     );
@@ -830,9 +818,7 @@ class _AuthPanelState extends State<AuthPanel> {
     } on Exception catch (e) {
       debugPrint('[AuthPanel] Account deletion failed: $e');
       widget.notificationService.showToast(
-        message:
-            'Could not delete your account. Check your connection and try '
-            'again - nothing was deleted.',
+        message: accountDeletionFailed,
         type: NotificationType.error,
       );
     } finally {

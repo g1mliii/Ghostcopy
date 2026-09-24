@@ -18,6 +18,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
+import '../account_deletion_text.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -280,19 +281,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
     if (confirmed) {
       await widget.authService.signOut();
-
-      // Re-register device + FCM token for new anonymous user
       // signOut() signs in anonymously, so current user has a new user_id
-      try {
-        await widget.deviceService.registerCurrentDevice();
-        final fcmToken = await FirebaseMessaging.instance.getToken();
-        if (fcmToken != null) {
-          await widget.deviceService.updateFcmToken(fcmToken);
-        }
-        debugPrint('[Settings] ✅ Device re-registered after sign out');
-      } on Exception catch (e) {
-        debugPrint('[Settings] ⚠️ Failed to re-register device: $e');
-      }
+      await _reregisterDevice();
 
       if (mounted) {
         Navigator.of(context).pop();
@@ -300,22 +290,31 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     }
   }
 
+  /// Register this device, and its push token, for the fresh guest account
+  /// that sign-out and account deletion both leave behind - clips and push
+  /// only reach devices registered to the current user.
+  Future<void> _reregisterDevice() async {
+    try {
+      await widget.deviceService.registerCurrentDevice();
+      final fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken != null) {
+        await widget.deviceService.updateFcmToken(fcmToken);
+      }
+      debugPrint('[Settings] ✅ Device re-registered for the new guest');
+    } on Exception catch (e) {
+      debugPrint('[Settings] ⚠️ Failed to re-register device: $e');
+    }
+  }
+
   /// Delete the account and everything in it, from inside the app - App
   /// Review requires this for any app where people create an account
   /// (guideline 5.1.1(v)), and Google Play asks the same.
   Future<void> _handleDeleteAccount() async {
-    final usesApple =
-        widget.authService.currentUser?.identities?.any(
-          (identity) => identity.provider == 'apple',
-        ) ??
-        false;
     final confirmed = await _showConfirmDialog(
-      title: 'Delete Account?',
-      message:
-          'This permanently deletes your GhostCopy account and everything in '
-          'it: your clipboard history, the files and images you sent, and '
-          'your linked devices. It cannot be undone.'
-          '${usesApple && Platform.isIOS ? '\n\nYou will confirm with Apple next.' : ''}',
+      title: accountDeletionTitle,
+      message: accountDeletionWarning(
+        appleNext: widget.authService.deletionNeedsAppleConfirmation,
+      ),
       confirmText: 'Delete Account',
       isDestructive: true,
     );
@@ -326,17 +325,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       final outcome = await widget.authService.deleteAccount();
       if (outcome == AccountDeletionOutcome.cancelled) return;
 
-      // Like sign-out, the device is now on a fresh guest account, so it
-      // needs registering again for clips and push to reach it.
-      try {
-        await widget.deviceService.registerCurrentDevice();
-        final fcmToken = await FirebaseMessaging.instance.getToken();
-        if (fcmToken != null) {
-          await widget.deviceService.updateFcmToken(fcmToken);
-        }
-      } on Exception catch (e) {
-        debugPrint('[Settings] Could not re-register after deletion: $e');
-      }
+      await _reregisterDevice();
 
       if (!mounted) return;
       showGhostToast(
@@ -350,8 +339,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       if (mounted) {
         showGhostToast(
           context,
-          'Could not delete your account. Check your connection and try '
-          'again - nothing was deleted.',
+          accountDeletionFailed,
           type: GhostToastType.error,
           duration: const Duration(seconds: 4),
         );

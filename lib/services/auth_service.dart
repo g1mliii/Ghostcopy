@@ -1,7 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Abstract interface for authentication service
-/// Handles user authentication, session management, and account upgrades
 /// How a request to delete the account ended.
 enum AccountDeletionOutcome {
   /// The account and everything in it are gone, and this device is back on a
@@ -23,6 +21,8 @@ class BrowserSignInException implements Exception {
   String toString() => message;
 }
 
+/// Abstract interface for authentication service
+/// Handles user authentication, session management, and account upgrades
 abstract class IAuthService {
   /// Initialize the auth service and check current auth state
   Future<void> initialize();
@@ -107,6 +107,10 @@ abstract class IAuthService {
   /// Throws if the server could not delete the account; nothing local is
   /// cleared in that case.
   Future<AccountDeletionOutcome> deleteAccount();
+
+  /// Whether [deleteAccount] will ask the user to confirm with Apple first:
+  /// an Apple account, on a device with the native Apple sheet.
+  bool get deletionNeedsAppleConfirmation;
 
   /// Generate a time-limited token for mobile device linking
   /// Token expires after 5 minutes
