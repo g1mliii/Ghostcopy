@@ -23,5 +23,12 @@
 	<array>
 		<string>$(AppIdentifierPrefix)com.ghostcopy.ghostcopy</string>
 	</array>
+	<!-- Sign in with Apple, for the native sheet. A restricted entitlement:
+	     the provisioning profile must authorize it or the app will not
+	     launch, which verify-app.py checks before notarizing. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>
