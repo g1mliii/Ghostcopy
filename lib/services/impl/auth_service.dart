@@ -14,6 +14,7 @@ import '../auth_service.dart';
 import '../device_service.dart';
 import '../encryption_service.dart';
 import 'encryption_service.dart';
+import 'pkce_verifier_store.dart';
 
 /// Concrete implementation of IAuthService using Supabase Auth
 class AuthService implements IAuthService {
@@ -24,7 +25,7 @@ class AuthService implements IAuthService {
     Future<String?> Function()? appleReauthorize,
     IEncryptionService? encryptionService,
     IClipboardRepository? clipboardRepository,
-    this._pkceStorage,
+    this._pkceStore,
   }) : _client = client ?? Supabase.instance.client,
        _appleReauthorize = appleReauthorize ?? _nativeAppleAuthorizationCode,
        _encryptionOverride = encryptionService,
@@ -58,7 +59,11 @@ class AuthService implements IAuthService {
 
   final SupabaseClient _client;
   final IDeviceService? _deviceService;
-  final GotrueAsyncStorage? _pkceStorage;
+
+  /// The storage Supabase was given for PKCE verifiers - see
+  /// [PkceVerifierStore]. Without it an abandoned browser sign-in cannot
+  /// forget its verifier.
+  final PkceVerifierStore? _pkceStore;
   bool _initialized = false;
 
   // Lazy GoogleSignIn instance for native mobile auth (reused to prevent memory leaks)
@@ -227,12 +232,6 @@ class AuthService implements IAuthService {
   /// How long a browser sign-in may take before it counts as abandoned.
   static const _browserAuthTimeout = Duration(minutes: 3);
 
-  /// Where gotrue keeps the PKCE verifier of the flow in flight: its
-  /// `Constants.defaultStorageKey` plus a suffix, one slot overwritten by each
-  /// flow that starts. gotrue does not export the constant through
-  /// supabase_flutter, hence the literal.
-  static const _codeVerifierKey = 'supabase.auth.token-code-verifier';
-
   /// The browser sign-in being waited on, if any. Completed early by
   /// [cancelBrowserSignIn] and [failBrowserSignIn].
   Completer<bool>? _browserAuth;
@@ -325,8 +324,7 @@ class AuthService implements IAuthService {
 
   Future<void> _forgetCodeVerifier() async {
     try {
-      final storage = _pkceStorage ?? SharedPreferencesGotrueAsyncStorage();
-      await storage.removeItem(key: _codeVerifierKey);
+      await _pkceStore?.forget();
     } on Object catch (e) {
       debugPrint('[AuthService] Could not drop the PKCE verifier: $e');
     }

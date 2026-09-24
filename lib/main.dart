@@ -32,6 +32,7 @@ import 'services/impl/game_mode_service.dart';
 import 'services/impl/hotkey_service.dart';
 import 'services/impl/lifecycle_controller.dart';
 import 'services/impl/notification_service.dart';
+import 'services/impl/pkce_verifier_store.dart';
 import 'services/impl/security_service.dart';
 import 'services/impl/system_power_service.dart';
 import 'services/impl/transformer_service.dart';
@@ -308,6 +309,10 @@ Future<void> main(List<String> args) async {
     }),
   );
 
+  // Supabase keeps PKCE verifiers here rather than in storage of its own, so
+  // AuthService can forget one when a browser sign-in is abandoned.
+  final pkceStore = PkceVerifierStore();
+
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
     // Initialize Supabase with session persistence
@@ -318,8 +323,9 @@ Future<void> main(List<String> args) async {
       // getSessionFromUrl directly, bypassing _handleDeepLinkArgs. Its default
       // predicate accepts any URI carrying access_token, so without this the
       // session-injection hole stays open on that route.
-      authOptions: const FlutterAuthClientOptions(
+      authOptions: FlutterAuthClientOptions(
         detectSessionInUriPredicate: _acceptAuthCallbackUri,
+        pkceAsyncStorage: pkceStore,
       ),
     ),
 
@@ -330,7 +336,10 @@ Future<void> main(List<String> args) async {
 
   // Initialize services that depend on Supabase
   final deviceService = DeviceService();
-  final authService = AuthService(deviceService: deviceService);
+  final authService = AuthService(
+    deviceService: deviceService,
+    pkceStore: pkceStore,
+  );
 
   locator
     ..registerSingleton<IAuthService>(authService)
@@ -1055,7 +1064,7 @@ class _MyAppState extends State<MyApp> {
     if (!mounted) return;
     await locator<ITrayService>().setContextMenu([
       TrayMenuItem(
-        label: 'Show Spotlight',
+        label: 'Open GhostCopy',
         onTap: () => locator<IWindowService>().showSpotlight(),
       ),
       TrayMenuItem(

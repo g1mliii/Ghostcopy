@@ -6,6 +6,7 @@ import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/impl/auth_service.dart';
+import 'package:ghostcopy/services/impl/pkce_verifier_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:mocktail/mocktail.dart';
@@ -15,8 +16,8 @@ class _Encryption extends Mock implements IEncryptionService {}
 
 class _Repository extends Mock implements IClipboardRepository {}
 
-/// gotrue's PKCE verifier slot, in memory.
-class _PkceStorage extends GotrueAsyncStorage {
+/// What PkceVerifierStore stores into, in memory.
+class _MemoryStorage extends GotrueAsyncStorage {
   final items = <String, String>{};
 
   @override
@@ -29,8 +30,6 @@ class _PkceStorage extends GotrueAsyncStorage {
   @override
   Future<void> removeItem({required String key}) async => items.remove(key);
 }
-
-const _verifierKey = 'supabase.auth.token-code-verifier';
 
 Map<String, Object?> _session(
   String id, {
@@ -85,13 +84,15 @@ void main() {
   late String? appleCode;
   late _Encryption encryption;
   late bool signupFails;
-  late _PkceStorage pkce;
+  late _MemoryStorage pkceMemory;
+  late PkceVerifierStore pkceStore;
   late Exception? reauthorizeError;
 
   Future<AuthService> signedInAs(Map<String, Object?> session) async {
     client = SupabaseClient(
       'https://example.com',
       'anon-key',
+      authOptions: AuthClientOptions(pkceAsyncStorage: pkceStore),
       httpClient: MockClient((request) async {
         requests.add(request);
         if (request.url.path == '/functions/v1/delete-account') {
@@ -137,7 +138,7 @@ void main() {
         if (error != null) throw error;
         return appleCode;
       },
-      pkceStorage: pkce,
+      pkceStore: pkceStore,
     );
   }
 
@@ -147,7 +148,8 @@ void main() {
     reauthorizations = 0;
     appleCode = 'fresh-code';
     signupFails = false;
-    pkce = _PkceStorage();
+    pkceMemory = _MemoryStorage();
+    pkceStore = PkceVerifierStore(pkceMemory);
     reauthorizeError = null;
     encryption = _Encryption();
     when(
@@ -284,15 +286,23 @@ void main() {
     test('an abandoned wait forgets the PKCE verifier', () async {
       // So a callback that arrives after the panel reported failure cannot
       // still switch accounts behind it.
+      //
+      // gotrue writes the verifier itself, under whatever key it uses: the
+      // point is that forgetting does not depend on knowing that name.
       final service = await signedInAs(_session('guest', anonymous: true));
-      pkce.items[_verifierKey] = 'verifier';
+      await client.auth.getOAuthSignInUrl(provider: OAuthProvider.google);
+      expect(pkceMemory.items, isNotEmpty);
 
       await service.awaitBrowserSession(
         (session) => session.user.id != 'guest',
         timeout: const Duration(milliseconds: 50),
       );
 
-      expect(pkce.items, isNot(contains(_verifierKey)));
+      expect(pkceMemory.items, isEmpty);
+      await expectLater(
+        client.auth.exchangeCodeForSession('late-code'),
+        throwsA(isA<AuthException>()),
+      );
       expect(service.isAwaitingBrowserSignIn, isFalse);
     });
 
@@ -301,12 +311,12 @@ void main() {
       final done = service.awaitBrowserSession(
         (session) => session.user.id != 'guest',
       );
-      pkce.items[_verifierKey] = 'verifier';
+      await client.auth.getOAuthSignInUrl(provider: OAuthProvider.google);
 
       await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
 
       expect(await done, isTrue);
-      expect(pkce.items, contains(_verifierKey));
+      expect(pkceMemory.items, isNotEmpty);
     });
 
     test('cancelling ends the wait at once', () async {
