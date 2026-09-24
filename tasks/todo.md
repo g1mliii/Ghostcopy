@@ -219,6 +219,14 @@ to package - but everything below marked "verify" does need one.
 - [x] Privacy policy and listing updated for Apple sign-in and in-app
       account deletion
 
+- [x] **Resource baseline** in `docs/ios-performance.md` (2026-09-24). Found
+      and fixed the fading cursor (21% of a core with the composer focused),
+      the keyboard that would not close, and the clip list flashing on reopen
+- [ ] **Photos over 10 MB shared from the share sheet are refused.** The
+      gallery picker now scales a too-large JPEG/PNG/WebP down
+      (`lib/utils/image_shrink.dart`), but a photo shared into GhostCopy goes
+      through the shared-files path, which only checks the size. Route it
+      through the same shrink
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the
       Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
