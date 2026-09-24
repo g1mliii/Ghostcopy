@@ -126,7 +126,7 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
       // Same guard as the UI isolate: this one also starts a deep-link
       // observer, and it must not accept a session from a URL either.
       authOptions: const FlutterAuthClientOptions(
-        detectSessionInUriPredicate: isTrustedAuthCallback,
+        detectSessionInUriPredicate: _acceptAuthCallbackUri,
       ),
     );
 
@@ -319,7 +319,7 @@ Future<void> main(List<String> args) async {
       // predicate accepts any URI carrying access_token, so without this the
       // session-injection hole stays open on that route.
       authOptions: const FlutterAuthClientOptions(
-        detectSessionInUriPredicate: isTrustedAuthCallback,
+        detectSessionInUriPredicate: _acceptAuthCallbackUri,
       ),
     ),
 
@@ -1104,7 +1104,7 @@ class _MyAppState extends State<MyApp> {
     // Increase size to handling overflow issues on different DPIs
     await windowManager.setSize(const Size(320, 450));
     await windowManager.setBackgroundColor(Colors.transparent);
-    await windowManager.setAsFrameless();
+    await locator<IWindowService>().setFramelessForTrayMenu();
 
     // Wait for resize to complete
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1311,6 +1311,35 @@ Future<void> _registerSavedHotkey() async {
   }
 }
 
+/// supabase_flutter's deep-link observer consults this before redeeming a
+/// URL - on macOS and Android it is the route every callback takes.
+///
+/// Same rules as [isTrustedAuthCallback], plus one side effect: a provider
+/// error ends the browser sign-in waiting on it, where before the observer
+/// dropped the URL and the auth panel sat disabled until its timeout.
+bool _acceptAuthCallbackUri(Uri uri) {
+  final decision = AuthCallbackDecision.evaluate(uri.toString());
+  _reportProviderError(decision);
+  return decision.isAccepted;
+}
+
+/// Hand a provider's error redirect (declined consent, an identity that
+/// already belongs to another account) to the sign-in waiting on it.
+void _reportProviderError(AuthCallbackDecision decision) {
+  if (decision.rejection != AuthCallbackRejection.providerError) return;
+  if (!locator.isRegistered<IAuthService>()) return;
+  // Our own wording, never the URL's: anyone can open a ghostcopy:// link, so
+  // its text is not something to put in front of the user.
+  final detail = (decision.detail ?? '').toLowerCase();
+  final message = detail.contains('already')
+      ? 'That account is already linked to another GhostCopy account. '
+            'Sign in to it instead.'
+      : detail.contains('denied') || detail.contains('cancel')
+      ? 'Sign-in was cancelled.'
+      : 'Sign-in did not complete. Please try again.';
+  locator<IAuthService>().failBrowserSignIn(message);
+}
+
 /// Feed a ghostcopy:// callback URL to Supabase so the session is established.
 ///
 /// Handles both `ghostcopy://auth-callback` (Google OAuth) and
@@ -1336,6 +1365,7 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
       '[Main] ⛔ Refused deep link (${decision.rejection!.name}): '
       '${decision.detail ?? "no detail"}',
     );
+    _reportProviderError(decision);
     return;
   }
 

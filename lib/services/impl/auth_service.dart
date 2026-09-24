@@ -24,6 +24,7 @@ class AuthService implements IAuthService {
     Future<String?> Function()? appleReauthorize,
     IEncryptionService? encryptionService,
     IClipboardRepository? clipboardRepository,
+    this._pkceStorage,
   }) : _client = client ?? Supabase.instance.client,
        _appleReauthorize = appleReauthorize ?? _nativeAppleAuthorizationCode,
        _encryptionOverride = encryptionService,
@@ -57,9 +58,7 @@ class AuthService implements IAuthService {
 
   final SupabaseClient _client;
   final IDeviceService? _deviceService;
-  Session? _pendingOAuthSession;
-  String? _pendingOAuthDeviceId;
-  StreamSubscription<AuthState>? _authStateSubscription;
+  final GotrueAsyncStorage? _pkceStorage;
   bool _initialized = false;
 
   // Lazy GoogleSignIn instance for native mobile auth (reused to prevent memory leaks)
@@ -173,6 +172,9 @@ class AuthService implements IAuthService {
       }
 
       return await _webOAuthSignIn(OAuthProvider.google);
+    } on BrowserSignInException {
+      // The provider's own error, for the auth panel to show.
+      rethrow;
     } on Exception catch (e) {
       debugPrint('[AuthService] Google sign in error: $e');
       return false;
@@ -188,100 +190,168 @@ class AuthService implements IAuthService {
   /// supabase_flutter's own link observer). Both check the URL with
   /// isTrustedAuthCallback first.
   Future<bool> _webOAuthSignIn(OAuthProvider provider) async {
+    // Launching a browser is not a completed sign-in. Keep the old session
+    // until the callback has actually installed the new one.
+    final previous = _client.auth.currentSession;
+    final deviceId = _deviceService?.getCurrentDeviceId();
     try {
-      // Launching a browser is not a completed sign-in. Keep the old session
-      // until the SDK reports the actual OAuth callback.
-      _pendingOAuthSession = _client.auth.currentSession;
-      _pendingOAuthDeviceId = _deviceService?.getCurrentDeviceId();
-      _authStateSubscription ??= _client.auth.onAuthStateChange.listen((state) {
-        final previous = _pendingOAuthSession;
-        final next = state.session;
-        if (state.event != AuthChangeEvent.signedIn ||
-            previous == null ||
-            next == null) {
-          return;
-        }
-        final deviceId = _pendingOAuthDeviceId;
-        _pendingOAuthSession = null;
-        _pendingOAuthDeviceId = null;
-        unawaited(_cleanupPreviousSession(previous, next.user.id, deviceId));
-      });
-      // Listen before the browser opens, so a quick callback is not missed.
-      final previousUserId = _client.auth.currentUser?.id;
-      final signedIn = awaitBrowserSession(
-        (session) => session.user.id != previousUserId,
+      final signedIn = await _viaBrowser(
+        launch: () => _client.auth.signInWithOAuth(
+          provider,
+          redirectTo: kIsWeb ? null : _oauthRedirect,
+          authScreenLaunchMode: kIsWeb
+              ? LaunchMode.platformDefault
+              : LaunchMode.externalApplication,
+        ),
+        isDone: (session) => session.user.id != previous?.user.id,
       );
-      final launched = await _client.auth.signInWithOAuth(
-        provider,
-        redirectTo: kIsWeb ? null : _oauthRedirect,
-        authScreenLaunchMode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-      );
+      if (!signedIn) return false;
+      // Only on this path. It used to hang off a listener that stayed armed
+      // after the wait gave up, so a browser sign-in finished after the
+      // timeout still switched accounts and deleted the guest's clips while
+      // the panel had already reported failure.
+      final next = _client.auth.currentSession;
+      if (previous != null && next != null) {
+        await _cleanupPreviousSession(previous, next.user.id, deviceId);
+      }
       debugPrint(
-        '[AuthService] ${provider.name} sign in initiated (web OAuth)',
+        '[AuthService] ${provider.name} sign in completed (web OAuth)',
       );
-      if (!launched) return false;
-      return await signedIn;
+      return true;
     } on AuthException catch (e) {
       debugPrint('[AuthService] ${provider.name} sign in failed: ${e.message}');
       return false;
     }
   }
 
-  /// Link [provider] to the anonymous user through the browser, preserving
-  /// user_id and clipboard data. Same return path as [_webOAuthSignIn].
   /// How long a browser sign-in may take before it counts as abandoned.
   static const _browserAuthTimeout = Duration(minutes: 3);
 
+  /// Where gotrue keeps the PKCE verifier of the flow in flight: its
+  /// `Constants.defaultStorageKey` plus a suffix, one slot overwritten by each
+  /// flow that starts. gotrue does not export the constant through
+  /// supabase_flutter, hence the literal.
+  static const _codeVerifierKey = 'supabase.auth.token-code-verifier';
+
+  /// The browser sign-in being waited on, if any. Completed early by
+  /// [cancelBrowserSignIn] and [failBrowserSignIn].
+  Completer<bool>? _browserAuth;
+
+  @override
+  bool get isAwaitingBrowserSignIn => _browserAuth != null;
+
+  @override
+  void cancelBrowserSignIn() {
+    final pending = _browserAuth;
+    if (pending != null && !pending.isCompleted) pending.complete(false);
+  }
+
+  @override
+  void failBrowserSignIn(String message) {
+    final pending = _browserAuth;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(BrowserSignInException(message));
+    }
+  }
+
+  /// Open the browser with [launch] and wait for its callback.
+  ///
+  /// Listens before the browser opens, so a quick callback is not missed, and
+  /// stops waiting at once if the browser never opened.
+  Future<bool> _viaBrowser({
+    required Future<bool> Function() launch,
+    required bool Function(Session session) isDone,
+  }) async {
+    final result = awaitBrowserSession(isDone);
+    var launched = false;
+    try {
+      launched = await launch();
+    } finally {
+      if (!launched) cancelBrowserSignIn();
+    }
+    return result;
+  }
+
   /// Resolves true once the browser flow's callback has installed a session
-  /// that satisfies [isDone], false if none does within [timeout].
+  /// that satisfies [isDone]; false if none does within [timeout] or the user
+  /// cancels. Throws [BrowserSignInException] when the provider redirected
+  /// back with an error.
   ///
   /// signInWithOAuth and linkIdentity return as soon as the browser opens.
   /// Reporting that as success let the auth panel run its post-login work
   /// against the old guest session and close - so the realtime subscription
   /// stayed on the guest, and cancelling in the browser looked like success.
+  ///
+  /// A flow that ends any way but success forgets its PKCE verifier, so a
+  /// callback arriving after the wait gave up can no longer be redeemed. The
+  /// alternative is an account switch nobody is waiting for: the panel has
+  /// already said it failed and will not move the realtime subscription.
   @visibleForTesting
   Future<bool> awaitBrowserSession(
     bool Function(Session session) isDone, {
     Duration timeout = _browserAuthTimeout,
   }) async {
-    try {
-      await _client.auth.onAuthStateChange
-          .where(
-            (state) =>
-                (state.event == AuthChangeEvent.signedIn ||
-                    state.event == AuthChangeEvent.userUpdated) &&
-                state.session != null &&
-                isDone(state.session!),
-          )
-          .first
-          .timeout(timeout);
-      return true;
-    } on TimeoutException {
+    // A new flow replaces any older one still waiting.
+    cancelBrowserSignIn();
+    final outcome = Completer<bool>();
+    _browserAuth = outcome;
+
+    // Checks the live session rather than the event's: onAuthStateChange is
+    // an unbounded ReplaySubject, so a new subscriber is first handed every
+    // event this process has seen, including sign-ins of other accounts that
+    // would otherwise read as done.
+    final subscription = _client.auth.onAuthStateChange.listen((_) {
+      final live = _client.auth.currentSession;
+      if (live != null && isDone(live) && !outcome.isCompleted) {
+        outcome.complete(true);
+      }
+    }, onError: (Object _) {});
+    final timer = Timer(timeout, () {
+      if (outcome.isCompleted) return;
       debugPrint('[AuthService] Browser sign-in did not complete in time');
-      return false;
+      outcome.complete(false);
+    });
+
+    var succeeded = false;
+    try {
+      return succeeded = await outcome.future;
+    } finally {
+      timer.cancel();
+      unawaited(subscription.cancel());
+      if (identical(_browserAuth, outcome)) _browserAuth = null;
+      if (!succeeded) await _forgetCodeVerifier();
     }
   }
 
+  Future<void> _forgetCodeVerifier() async {
+    try {
+      final storage = _pkceStorage ?? SharedPreferencesGotrueAsyncStorage();
+      await storage.removeItem(key: _codeVerifierKey);
+    } on Object catch (e) {
+      debugPrint('[AuthService] Could not drop the PKCE verifier: $e');
+    }
+  }
+
+  /// Link [provider] to the anonymous user through the browser, preserving
+  /// user_id and clipboard data. Same return path as [_webOAuthSignIn].
   Future<bool> _webOAuthLink(OAuthProvider provider) async {
     try {
       // Linking keeps the user id; it is done when the account stops being a
       // guest.
       final userId = _client.auth.currentUser?.id;
-      final linked = awaitBrowserSession(
-        (session) => session.user.id == userId && !session.user.isAnonymous,
+      final linked = await _viaBrowser(
+        launch: () => _client.auth.linkIdentity(
+          provider,
+          redirectTo: kIsWeb ? null : _oauthRedirect,
+          authScreenLaunchMode: kIsWeb
+              ? LaunchMode.platformDefault
+              : LaunchMode.externalApplication,
+        ),
+        isDone: (session) =>
+            session.user.id == userId && !session.user.isAnonymous,
       );
-      final launched = await _client.auth.linkIdentity(
-        provider,
-        redirectTo: kIsWeb ? null : _oauthRedirect,
-        authScreenLaunchMode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-      );
-      debugPrint('[AuthService] ${provider.name} identity link initiated');
-      if (!launched) return false;
-      return await linked;
+      debugPrint('[AuthService] ${provider.name} identity link: $linked');
+      return linked;
     } on AuthException catch (e) {
       debugPrint('[AuthService] Link ${provider.name} failed: ${e.message}');
       return false;
@@ -370,6 +440,9 @@ class AuthService implements IAuthService {
 
       debugPrint('[AuthService] ✅ Apple sign in successful');
       return true;
+    } on BrowserSignInException {
+      // The provider's own error, for the auth panel to show.
+      rethrow;
     } on Exception catch (e) {
       debugPrint('[AuthService] ❌ Apple sign in failed: $e');
       return false;
@@ -398,6 +471,9 @@ class AuthService implements IAuthService {
 
       debugPrint('[AuthService] ✅ Apple identity linked (user_id preserved)');
       return true;
+    } on BrowserSignInException {
+      // The provider's own error, for the auth panel to show.
+      rethrow;
     } on Exception catch (e) {
       debugPrint('[AuthService] ❌ Apple identity linking failed: $e');
       return false;
@@ -500,6 +576,9 @@ class AuthService implements IAuthService {
 
       // Desktop: link through the browser, preserving user_id and clips
       return await _webOAuthLink(OAuthProvider.google);
+    } on BrowserSignInException {
+      // The provider's own error, for the auth panel to show.
+      rethrow;
     } on Exception catch (e) {
       debugPrint('[AuthService] Link Google identity error: $e');
       return false;
@@ -687,8 +766,16 @@ class AuthService implements IAuthService {
         user.identities?.any((identity) => identity.provider == 'apple') ??
         false;
     if (usesApple && _hasNativeAppleSignIn) {
-      appleCode = await _appleReauthorize();
-      if (appleCode == null) return AccountDeletionOutcome.cancelled;
+      try {
+        appleCode = await _appleReauthorize();
+        if (appleCode == null) return AccountDeletionOutcome.cancelled;
+      } on Exception catch (e) {
+        // No Apple ID signed in on this device, or Apple itself failed. Only
+        // an explicit cancel stops the deletion: revocation is best effort on
+        // the server too, and a user who cannot get a code here must still be
+        // able to delete the account in the app (App Review 5.1.1(v)).
+        debugPrint('[AuthService] No Apple code, deleting without one: $e');
+      }
     }
 
     // Throws on anything but success, before anything local is touched: a
@@ -702,10 +789,8 @@ class AuthService implements IAuthService {
     // From here the account no longer exists; the rest removes this device's
     // copy of it. Nothing below can undo the deletion, so each step is best
     // effort rather than a reason to report failure.
-    _pendingOAuthSession = null;
-    _pendingOAuthDeviceId = null;
     try {
-      await _encryption.forgetPassphraseLocally();
+      await _encryption.forgetPassphraseLocally(user.id);
     } on Exception catch (e) {
       debugPrint('[AuthService] Could not erase the local passphrase: $e');
     }
@@ -748,8 +833,6 @@ class AuthService implements IAuthService {
   @override
   Future<void> signOut() async {
     try {
-      _pendingOAuthSession = null;
-      _pendingOAuthDeviceId = null;
       final deviceId = _deviceService?.getCurrentDeviceId();
       final userId = currentUserId;
       if (deviceId != null && userId != null) {
@@ -818,8 +901,6 @@ class AuthService implements IAuthService {
   }
 
   Future<T> _switchAccount<T>(Future<T> Function() authenticate) async {
-    _pendingOAuthSession = null;
-    _pendingOAuthDeviceId = null;
     final previous = _client.auth.currentSession;
     final deviceId = _deviceService?.getCurrentDeviceId();
     final T result;
@@ -889,9 +970,8 @@ class AuthService implements IAuthService {
 
   @override
   void dispose() {
-    // Cancel auth state subscription if it exists
-    _authStateSubscription?.cancel();
-    _authStateSubscription = null;
+    // Nothing is left to wait for the browser.
+    cancelBrowserSignIn();
 
     // Dispose GoogleSignIn instance to prevent memory leaks
     _googleSignIn?.disconnect();

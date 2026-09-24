@@ -15,6 +15,23 @@ class _Encryption extends Mock implements IEncryptionService {}
 
 class _Repository extends Mock implements IClipboardRepository {}
 
+/// gotrue's PKCE verifier slot, in memory.
+class _PkceStorage extends GotrueAsyncStorage {
+  final items = <String, String>{};
+
+  @override
+  Future<String?> getItem({required String key}) async => items[key];
+
+  @override
+  Future<void> setItem({required String key, required String value}) async =>
+      items[key] = value;
+
+  @override
+  Future<void> removeItem({required String key}) async => items.remove(key);
+}
+
+const _verifierKey = 'supabase.auth.token-code-verifier';
+
 Map<String, Object?> _session(
   String id, {
   bool anonymous = false,
@@ -68,6 +85,8 @@ void main() {
   late String? appleCode;
   late _Encryption encryption;
   late bool signupFails;
+  late _PkceStorage pkce;
+  late Exception? reauthorizeError;
 
   Future<AuthService> signedInAs(Map<String, Object?> session) async {
     client = SupabaseClient(
@@ -114,8 +133,11 @@ void main() {
       clipboardRepository: _Repository(),
       appleReauthorize: () async {
         reauthorizations++;
+        final error = reauthorizeError;
+        if (error != null) throw error;
         return appleCode;
       },
+      pkceStorage: pkce,
     );
   }
 
@@ -125,8 +147,12 @@ void main() {
     reauthorizations = 0;
     appleCode = 'fresh-code';
     signupFails = false;
+    pkce = _PkceStorage();
+    reauthorizeError = null;
     encryption = _Encryption();
-    when(encryption.forgetPassphraseLocally).thenAnswer((_) async {});
+    when(
+      () => encryption.forgetPassphraseLocally(any()),
+    ).thenAnswer((_) async {});
   });
 
   tearDown(() => client.dispose());
@@ -150,7 +176,7 @@ void main() {
     expect(client.auth.currentUser?.isAnonymous, isTrue);
     // The passphrase for an account that no longer exists must not stay
     // in this device's Keychain.
-    verify(encryption.forgetPassphraseLocally).called(1);
+    verify(() => encryption.forgetPassphraseLocally('user')).called(1);
   });
 
   test(
@@ -190,6 +216,23 @@ void main() {
     skip: _nativeApple,
   );
 
+  test(
+    'an Apple account is still deleted when Apple cannot give a code',
+    () async {
+      // No Apple ID signed in on this device, or Apple failing: only an
+      // explicit cancel may stop the deletion (App Review 5.1.1(v)).
+      reauthorizeError = Exception('AuthorizationErrorCode.unknown');
+      final service = await signedInAs(_session('user', provider: 'apple'));
+
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+
+      expect(reauthorizations, 1);
+      expect(deleteBody(), isEmpty);
+      expect(client.auth.currentUser?.id, 'guest');
+    },
+    skip: !_nativeApple,
+  );
+
   test('a failed deletion keeps the account signed in', () async {
     deleteStatus = 500;
     final service = await signedInAs(_session('user', provider: 'email'));
@@ -198,7 +241,7 @@ void main() {
 
     expect(client.auth.currentUser?.id, 'user');
     expect(requests.map((r) => r.url.path), isNot(contains('/auth/v1/signup')));
-    verifyNever(encryption.forgetPassphraseLocally);
+    verifyNever(() => encryption.forgetPassphraseLocally(any()));
   });
 
   test(
@@ -210,7 +253,7 @@ void main() {
       final service = await signedInAs(_session('user', provider: 'email'));
 
       expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
-      verify(encryption.forgetPassphraseLocally).called(1);
+      verify(() => encryption.forgetPassphraseLocally('user')).called(1);
     },
   );
 
@@ -237,5 +280,88 @@ void main() {
         isFalse,
       );
     });
+
+    test('an abandoned wait forgets the PKCE verifier', () async {
+      // So a callback that arrives after the panel reported failure cannot
+      // still switch accounts behind it.
+      final service = await signedInAs(_session('guest', anonymous: true));
+      pkce.items[_verifierKey] = 'verifier';
+
+      await service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+        timeout: const Duration(milliseconds: 50),
+      );
+
+      expect(pkce.items, isNot(contains(_verifierKey)));
+      expect(service.isAwaitingBrowserSignIn, isFalse);
+    });
+
+    test('a completed sign-in leaves the verifier to gotrue', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+      pkce.items[_verifierKey] = 'verifier';
+
+      await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
+
+      expect(await done, isTrue);
+      expect(pkce.items, contains(_verifierKey));
+    });
+
+    test('cancelling ends the wait at once', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+      expect(service.isAwaitingBrowserSignIn, isTrue);
+
+      service.cancelBrowserSignIn();
+
+      expect(await done, isFalse);
+      expect(service.isAwaitingBrowserSignIn, isFalse);
+    });
+
+    test('a provider error ends the wait with that error', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+
+      service.failBrowserSignIn('That account is already linked');
+
+      await expectLater(
+        done,
+        throwsA(
+          isA<BrowserSignInException>().having(
+            (e) => e.message,
+            'message',
+            'That account is already linked',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'an earlier sign-in replayed by the auth stream does not count',
+      () async {
+        // onAuthStateChange replays every event this process has seen. A
+        // sign-in to another account earlier in the session must not read as
+        // this browser flow finishing.
+        final service = await signedInAs(_session('guest', anonymous: true));
+        await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
+        await client.auth.recoverSession(
+          jsonEncode(_session('guest', anonymous: true)),
+        );
+
+        expect(
+          await service.awaitBrowserSession(
+            (session) => session.user.id != 'guest',
+            timeout: const Duration(milliseconds: 50),
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 }

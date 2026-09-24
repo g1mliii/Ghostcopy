@@ -14,8 +14,9 @@
 // Sign in with Apple adds one step. Apple requires an app that offers it to
 // revoke the user's Apple tokens when the account is deleted, and Supabase
 // keeps no Apple refresh token to revoke. So the client has the user confirm
-// with Apple once more and sends the fresh authorization code; this function
-// exchanges it for a token and revokes that. A revocation that fails is logged
+// with Apple once more and sends the fresh authorization code; once the
+// account itself is gone, this function exchanges it for a token and revokes
+// that. A revocation that fails is logged
 // and does not stop the deletion: the user asked for their data to go, and
 // Apple being unreachable is not a reason to keep it.
 
@@ -30,6 +31,9 @@ const APPLE_KEY_ID = 'Y8NRLTKXG3'
  * from the app's re-authorization sheet belong to it, not the Services ID.
  */
 const APPLE_CLIENT_ID = 'com.ghostcopy.ghostcopy'
+
+/** How long each Apple call may take. Revocation is best effort. */
+const APPLE_TIMEOUT_MS = 5000
 
 function base64url(bytes: Uint8Array): string {
   let binary = ''
@@ -108,6 +112,10 @@ async function revokeAppleTokens(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(fields).toString(),
+    // Each call on its own clock: a stalled appleid.apple.com must not hold
+    // the response past the runtime's wall-clock limit, which the client
+    // would read as a failed deletion.
+    signal: AbortSignal.timeout(APPLE_TIMEOUT_MS),
   })
 
   const tokenResponse = await fetch(
@@ -181,6 +189,17 @@ Deno.serve(async (req) => {
   // Supabase keeps the Apple user ID as identity_data.sub (and as the
   // identity's id); that is what the code's id_token must match.
   const appleSubject = appleIdentity?.identity_data?.sub ?? appleIdentity?.id ?? ''
+
+  // Delete first. Revoking first meant a failed deleteUser left the account in
+  // place with its Apple authorization already gone, and a slow Apple call
+  // stood between the user and the deletion they asked for.
+  const admin = createClient(supabaseUrl, serviceRoleKey)
+  const { error: deleteError } = await admin.auth.admin.deleteUser(user.id)
+  if (deleteError) {
+    console.error('[delete-account] deleteUser failed:', deleteError)
+    return json({ error: 'delete_failed' }, 500)
+  }
+
   if (appleIdentity) {
     const privateKey = Deno.env.get('APPLE_PRIVATE_KEY') ?? ''
     if (!authorizationCode || !privateKey) {
@@ -193,17 +212,11 @@ Deno.serve(async (req) => {
       try {
         appleRevoked = await revokeAppleTokens(authorizationCode, privateKey, appleSubject)
       } catch (e) {
+        // Includes a timeout: AbortSignal.timeout rejects the fetch.
         console.error('[delete-account] Apple revocation threw:', e)
         appleRevoked = false
       }
     }
-  }
-
-  const admin = createClient(supabaseUrl, serviceRoleKey)
-  const { error: deleteError } = await admin.auth.admin.deleteUser(user.id)
-  if (deleteError) {
-    console.error('[delete-account] deleteUser failed:', deleteError)
-    return json({ error: 'delete_failed' }, 500)
   }
 
   return json({ deleted: true, apple_revoked: appleRevoked })

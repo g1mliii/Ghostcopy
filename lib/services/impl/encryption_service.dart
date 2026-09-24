@@ -369,16 +369,22 @@ class EncryptionService implements IEncryptionService {
   }
 
   @override
-  Future<void> forgetPassphraseLocally() async {
-    if (!_initialized) return;
-    for (final key in [_passphraseKey, _verificationHashKey]) {
+  Future<void> forgetPassphraseLocally(String userId) async {
+    // Keyed by the caller's id, not _userId: whatever this service last
+    // loaded - nothing, after a reset or a failed init, or another account -
+    // says nothing about which account was just deleted, and the Keychain
+    // entry outlives a reinstall on iOS.
+    for (final key in [
+      'encryption_passphrase_$userId',
+      'encryption_verification_hash_$userId',
+    ]) {
       try {
         await _secureStorage.delete(key: key);
       } on Exception catch (e) {
         debugPrint('[EncryptionService] Could not delete $key: $e');
       }
     }
-    _setKeyBytes(null);
+    if (_userId == userId) _setKeyBytes(null);
   }
 
   @override

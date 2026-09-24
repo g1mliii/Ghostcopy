@@ -12,6 +12,17 @@ enum AccountDeletionOutcome {
   cancelled,
 }
 
+/// The provider sent the browser back with an error instead of a sign-in -
+/// the user declined, or the identity already belongs to another account.
+class BrowserSignInException implements Exception {
+  const BrowserSignInException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 abstract class IAuthService {
   /// Initialize the auth service and check current auth state
   Future<void> initialize();
@@ -76,6 +87,17 @@ abstract class IAuthService {
   /// and clipboard data. Native on iOS and macOS, the browser flow elsewhere.
   /// Returns true if successful, false if cancelled or failed
   Future<bool> linkAppleIdentity();
+
+  /// Whether a sign-in or link is waiting for the browser to come back.
+  bool get isAwaitingBrowserSignIn;
+
+  /// Stop waiting for the browser; the pending sign-in or link resolves false
+  /// and a callback that arrives later is not redeemed.
+  void cancelBrowserSignIn();
+
+  /// End the pending browser sign-in or link with the provider's error
+  /// [message]. It throws [BrowserSignInException] to its caller.
+  void failBrowserSignIn(String message);
 
   /// Permanently delete the signed-in account and everything in it - clips,
   /// stored files, devices - then leave this device on a fresh guest account.

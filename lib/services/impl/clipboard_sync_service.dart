@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../utils/html_text.dart';
 import '../clipboard_service.dart';
 import '../clipboard_sync_service.dart';
 import '../file_type_service.dart';
@@ -76,7 +77,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   // Auto-receive debouncing
   Timer? _autoReceiveDebounceTimer;
-  Map<String, dynamic>? _pendingAutoReceiveRecord;
+  Future<ClipboardItem?>? _pendingAutoReceiveItem;
 
   // Rate limiting for send operations
   DateTime? _lastSendTime;
@@ -141,53 +142,7 @@ class ClipboardSyncService implements IClipboardSyncService {
             debugPrint(
               '[ClipboardSyncService] Realtime update received: ${payload.eventType}',
             );
-
-            // Check if from another device.
-            //
-            // A plain inequality, deliberately: the null guards that used to be
-            // here made this false whenever either side had no name, and mobile
-            // sends device_name: null on every path. That meant a clip sent
-            // from the phone never triggered auto-receive on the desktop -
-            // the Mobile -> Desktop half of sync - and it only appeared to work
-            // because the polling fallback (_pollForNewClipboards) compares the
-            // same two values WITHOUT the guards and takes over after 15
-            // minutes idle. Matching that comparison here keeps the two paths
-            // in agreement.
-            //
-            // Known limit: this identifies devices by name, so two machines
-            // sharing a hostname will not receive from each other. Fixing that
-            // needs a device id on the clipboard row.
-            final deviceName = payload.newRecord['device_name'] as String?;
-            final currentDeviceName =
-                ClipboardRepository.getCurrentDeviceName();
-            final isFromDifferentDevice = deviceName != currentDeviceName;
-
-            // Check if targeted to this device
-            final targetDeviceTypeJson =
-                payload.newRecord['target_device_type'];
-            final currentDeviceType =
-                ClipboardRepository.getCurrentDeviceType();
-
-            // Parse target device types (can be null, a list, or a single string)
-            List<String>? targetDeviceTypes;
-            if (targetDeviceTypeJson != null) {
-              if (targetDeviceTypeJson is List) {
-                targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
-              } else if (targetDeviceTypeJson is String) {
-                targetDeviceTypes = [targetDeviceTypeJson];
-              }
-            }
-
-            final isTargetedToMe =
-                targetDeviceTypes == null ||
-                targetDeviceTypes.contains(currentDeviceType);
-
-            if (isFromDifferentDevice && isTargetedToMe) {
-              _debouncedAutoReceive(payload.newRecord);
-            }
-
-            // Notify UI to refresh history
-            onClipboardReceived?.call();
+            handleRealtimeInsert(payload.newRecord);
           },
         )
         .subscribe();
@@ -195,42 +150,120 @@ class ClipboardSyncService implements IClipboardSyncService {
     debugPrint('[ClipboardSyncService] Realtime subscription active');
   }
 
-  /// Debounce auto-receive to prevent clipboard thrashing
+  /// One clipboard row inserted for this account, as Realtime delivers it.
+  @visibleForTesting
+  void handleRealtimeInsert(Map<String, dynamic> record) {
+    // Check if from another device.
+    //
+    // A plain inequality, deliberately: the null guards that used to be
+    // here made this false whenever either side had no name, and mobile
+    // sends device_name: null on every path. That meant a clip sent
+    // from the phone never triggered auto-receive on the desktop -
+    // the Mobile -> Desktop half of sync - and it only appeared to work
+    // because the polling fallback (_pollForNewClipboards) compares the
+    // same two values WITHOUT the guards and takes over after 15
+    // minutes idle. Matching that comparison here keeps the two paths
+    // in agreement.
+    //
+    // Known limit: this identifies devices by name, so two machines
+    // sharing a hostname will not receive from each other. Fixing that
+    // needs a device id on the clipboard row.
+    final deviceName = record['device_name'] as String?;
+    final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
+    final isFromDifferentDevice = deviceName != currentDeviceName;
+
+    // Check if targeted to this device
+    final targetDeviceTypeJson = record['target_device_type'];
+    final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
+
+    // Parse target device types (can be null, a list, or a single string)
+    List<String>? targetDeviceTypes;
+    if (targetDeviceTypeJson != null) {
+      if (targetDeviceTypeJson is List) {
+        targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
+      } else if (targetDeviceTypeJson is String) {
+        targetDeviceTypes = [targetDeviceTypeJson];
+      }
+    }
+
+    final isTargetedToMe =
+        targetDeviceTypes == null ||
+        targetDeviceTypes.contains(currentDeviceType);
+
+    if (isFromDifferentDevice && isTargetedToMe) {
+      _debouncedAutoReceive(record);
+    }
+
+    // Notify UI to refresh history
+    onClipboardReceived?.call();
+  }
+
+  /// Debounce auto-receive to prevent clipboard thrashing.
+  ///
+  /// Only the clipboard write is debounced. Every record is still fetched and
+  /// handed to the integrations as it arrives, because the Obsidian vault and
+  /// the webhook are meant to see every clip - two clips 300ms apart must both
+  /// land there even though only the second one is worth copying.
   void _debouncedAutoReceive(Map<String, dynamic> record) {
+    final id = record['id']?.toString();
+    if (id == null || _isDisposed) return;
+    final item = _receiveItem(id);
+
     _autoReceiveDebounceTimer?.cancel();
-    _pendingAutoReceiveRecord = record;
+    _pendingAutoReceiveItem = item;
 
     _autoReceiveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-      if (_pendingAutoReceiveRecord != null) {
-        _handleSmartAutoReceive(_pendingAutoReceiveRecord!);
-        _pendingAutoReceiveRecord = null;
-      }
+      final pending = _pendingAutoReceiveItem;
+      _pendingAutoReceiveItem = null;
+      if (pending != null) _handleSmartAutoReceive(pending);
     });
   }
 
-  /// Handle smart auto-receive logic with support for multiple content types
-  Future<void> _handleSmartAutoReceive(Map<String, dynamic> record) async {
+  /// Fetch a received clip and deliver it to the integrations.
+  ///
+  /// Resolves to null when the clip is not this device's to receive, or the
+  /// account changed while it was being fetched. Never throws: the result can
+  /// sit unawaited behind a debounce that gets cancelled.
+  Future<ClipboardItem?> _receiveItem(String id) async {
     try {
-      final id = record['id']?.toString();
       final userId = _supabaseClient.auth.currentUser?.id;
-      if (id == null || userId == null || _isDisposed) return;
+      if (userId == null || _isDisposed) return null;
       final item = await _clipboardRepository.getById(id);
       if (item == null ||
           _isDisposed ||
           _supabaseClient.auth.currentUser?.id != userId ||
           !_canReceive(item)) {
-        return;
+        return null;
       }
       // Delivery to integrations is independent of the clipboard copy policy.
-      if (item.contentType == ContentType.text ||
-          item.contentType == ContentType.html ||
-          item.contentType == ContentType.markdown) {
+      // HTML goes out as text, matching what the sending device delivered:
+      // its side hands over the clipboard's plain-text flavour, not markup.
+      final text = switch (item.contentType) {
+        ContentType.html => htmlToPlainText(item.content),
+        ContentType.text || ContentType.markdown => item.content,
+        _ => '',
+      };
+      if (text.isNotEmpty) {
         _fireIntegrations(
-          content: item.content,
+          content: text,
           deviceType: item.deviceType,
           direction: 'received',
         );
       }
+      return item;
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] Receive fetch failed: $e');
+      return null;
+    }
+  }
+
+  /// Handle smart auto-receive logic with support for multiple content types
+  Future<void> _handleSmartAutoReceive(
+    Future<ClipboardItem?> pendingItem,
+  ) async {
+    try {
+      final item = await pendingItem;
+      if (item == null || _isDisposed || !_canReceive(item)) return;
       final deviceType = item.deviceType;
       final now = DateTime.now();
 
@@ -989,7 +1022,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _realtimeChannel?.unsubscribe();
     _realtimeChannel = null;
     _autoReceiveDebounceTimer?.cancel();
-    _pendingAutoReceiveRecord = null;
+    _pendingAutoReceiveItem = null;
     _lastPolledItemId = null;
     _lastMonitoredClipboard = '';
     _lastClipboardChangeCount = null;
@@ -1017,7 +1050,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
       _lastPolledItemId = latestId;
-      await _handleSmartAutoReceive({'id': latestId});
+      await _handleSmartAutoReceive(_receiveItem(latestId));
 
       // Notify UI to refresh
       onClipboardReceived?.call();

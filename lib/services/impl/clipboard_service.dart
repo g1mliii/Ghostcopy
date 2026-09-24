@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
 import '../../models/clipboard_limits.dart';
+import '../../utils/html_text.dart';
 import '../clipboard_service.dart';
 
 /// Implementation of clipboard operations using super_clipboard
@@ -17,7 +18,6 @@ class ClipboardService implements IClipboardService {
   static final ClipboardService instance = ClipboardService._();
 
   // Compiled once: these run on every clipboard read, which polls every 5s.
-  static final _htmlTag = RegExp('<[^>]*>');
   static final _pathSeparator = RegExp(r'[/\\]');
   static final _unsafeFilenameChars = RegExp('[<>:"|?*]');
 
@@ -161,8 +161,7 @@ class ClipboardService implements IClipboardService {
   @override
   Future<void> writeHtml(String html) async {
     try {
-      // Strip HTML tags for plain text fallback
-      final plainText = html.replaceAll(_htmlTag, '');
+      final plainText = htmlToPlainText(html);
 
       final item = DataWriterItem()
         ..add(Formats.htmlText(html))

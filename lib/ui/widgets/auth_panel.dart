@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -42,6 +44,14 @@ class _AuthPanelState extends State<AuthPanel> {
   // Auth state
   bool _isLogin = true; // true = login, false = signup
   bool _authLoading = false;
+
+  /// A provider sign-in is waiting on the browser, which may never come back
+  /// (closed tab, declined consent), so the panel offers a way out.
+  bool _awaitingBrowser = false;
+
+  /// True while the account is being deleted, so the button cannot be pressed
+  /// twice and shows that something is happening.
+  bool _deletingAccount = false;
   String? _authError;
 
   // Repository instance (shared singleton)
@@ -50,6 +60,10 @@ class _AuthPanelState extends State<AuthPanel> {
 
   @override
   void dispose() {
+    // Nothing would be left to finish a browser sign-in that completes after
+    // the panel closes - no post-login work, no realtime move - so do not let
+    // one complete.
+    if (_awaitingBrowser) widget.authService.cancelBrowserSignIn();
     // Dispose all resources to prevent memory leaks
     try {
       _emailController.dispose();
@@ -145,6 +159,29 @@ class _AuthPanelState extends State<AuthPanel> {
                 child: const Text('Sign Out'),
               ),
             ),
+            const SizedBox(height: 4),
+            // In-app deletion, as on mobile: the privacy policy points every
+            // user at it, and App Review 5.1.1(v) covers the Mac app too.
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: _deletingAccount ? null : _handleDeleteAccount,
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade400,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+                child: _deletingAccount
+                    ? SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.red.shade400,
+                        ),
+                      )
+                    : const Text('Delete Account'),
+              ),
+            ),
           ],
         ),
       );
@@ -203,6 +240,7 @@ class _AuthPanelState extends State<AuthPanel> {
               size: 44,
             ),
           ),
+          if (_awaitingBrowser) _buildAwaitingBrowser(),
         ],
       ),
     );
@@ -368,6 +406,29 @@ class _AuthPanelState extends State<AuthPanel> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildAwaitingBrowser() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              'Finish signing in in your browser.',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textSecondary,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: widget.authService.cancelBrowserSignIn,
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -581,7 +642,7 @@ class _AuthPanelState extends State<AuthPanel> {
         final currentUserId = widget.authService.currentUserId;
 
         // app_links handles the callback
-        success = await signIn();
+        success = await _awaitProvider(signIn());
 
         // Reset local state if switching accounts
         if (success &&
@@ -594,7 +655,7 @@ class _AuthPanelState extends State<AuthPanel> {
         }
       } else {
         // Sign Up mode: upgrade the anonymous user, keeping user_id and clips
-        success = await link();
+        success = await _awaitProvider(link());
       }
 
       if (mounted) {
@@ -620,6 +681,22 @@ class _AuthPanelState extends State<AuthPanel> {
           _authError = e.toString().replaceAll('Exception: ', '');
           _authLoading = false;
         });
+      }
+    }
+  }
+
+  /// Wait for a provider sign-in, showing the Cancel row while it is out in
+  /// the browser. The flow has registered its wait by the time [pending] is
+  /// handed over, so checking straight away is enough.
+  Future<bool> _awaitProvider(Future<bool> pending) async {
+    if (widget.authService.isAwaitingBrowserSignIn && mounted) {
+      setState(() => _awaitingBrowser = true);
+    }
+    try {
+      return await pending;
+    } finally {
+      if (mounted && _awaitingBrowser) {
+        setState(() => _awaitingBrowser = false);
       }
     }
   }
@@ -716,6 +793,51 @@ class _AuthPanelState extends State<AuthPanel> {
       _emailController.clear();
       _passwordController.clear();
     });
+  }
+
+  /// Delete the account and everything in it, then carry on as a fresh guest.
+  Future<void> _handleDeleteAccount() async {
+    final usesApple =
+        widget.authService.currentUser?.identities?.any(
+          (identity) => identity.provider == 'apple',
+        ) ??
+        false;
+    final confirmed = await Adaptive.confirm(
+      context,
+      title: 'Delete Account?',
+      message:
+          'This permanently deletes your GhostCopy account and everything in '
+          'it: your clipboard history, the files and images you sent, and '
+          'your linked devices. It cannot be undone.'
+          '${usesApple && Platform.isMacOS ? '\n\nYou will confirm with Apple next.' : ''}',
+      confirmText: 'Delete Account',
+      isDestructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _deletingAccount = true);
+    try {
+      final outcome = await widget.authService.deleteAccount();
+      if (outcome == AccountDeletionOutcome.cancelled) return;
+
+      // The realtime channel is still on the account that no longer exists.
+      widget.clipboardSyncService.reinitializeForUser();
+      widget.notificationService.showToast(
+        message: 'Your account has been deleted',
+        type: NotificationType.success,
+      );
+      if (mounted) widget.onClose();
+    } on Exception catch (e) {
+      debugPrint('[AuthPanel] Account deletion failed: $e');
+      widget.notificationService.showToast(
+        message:
+            'Could not delete your account. Check your connection and try '
+            'again - nothing was deleted.',
+        type: NotificationType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _deletingAccount = false);
+    }
   }
 
   Future<void> _handleSignOut() async {

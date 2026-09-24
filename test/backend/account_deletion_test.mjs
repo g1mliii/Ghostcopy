@@ -14,10 +14,11 @@ const pkcs8 = Buffer.from(await crypto.subtle.exportKey('pkcs8', keyPair.private
 const applePem = `-----BEGIN PRIVATE KEY-----\n${pkcs8.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----`;
 
 function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, deleteError = null,
-  appleKey = applePem, tokenStatus = 200, revokeStatus = 200, codeSubject = 'apple-sub' } = {}) {
+  appleKey = applePem, tokenStatus = 200, revokeStatus = 200, codeSubject = 'apple-sub', appleHangs = false } = {}) {
   let handler;
   const deletedUsers = [];
   const appleCalls = [];
+  const timeouts = [];
   const client = {
     auth: {
       getUser: async () => (user ? { data: { user }, error: null } : { data: { user: null }, error: new Error('bad jwt') }),
@@ -25,7 +26,11 @@ function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, d
     },
   };
   const fetch = async (url, init) => {
-    appleCalls.push({ url, form: Object.fromEntries(new URLSearchParams(init.body)) });
+    appleCalls.push({ url, form: Object.fromEntries(new URLSearchParams(init.body)), deletedYet: deletedUsers.length > 0 });
+    if (appleHangs) {
+      // Never answers; only the abort signal ends it.
+      return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal.reason)));
+    }
     if (url.endsWith('/auth/token')) {
       // The id_token names the Apple ID the code was issued for.
       const idToken = ['e30', Buffer.from(JSON.stringify({ sub: codeSubject })).toString('base64url'), 'sig'].join('.');
@@ -37,6 +42,18 @@ function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, d
   vm.runInContext(source, vm.createContext({
     console: { error() {}, log() {} }, Date, Math, JSON, Uint8Array, String, TextEncoder, URLSearchParams,
     atob, btoa, crypto, fetch,
+    // The function's timeouts are recorded and shortened, so a hung Apple call
+    // is tested without waiting it out.
+    AbortSignal: {
+      timeout: (ms) => {
+        timeouts.push(ms);
+        // Not AbortSignal.timeout(1): its timer is unref'd, so the test
+        // process would exit while the hung fetch is still waiting on it.
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), 1);
+        return controller.signal;
+      },
+    },
     createClient: () => client,
     json: (body, status = 200) => ({ body, status }),
     corsPreflight: () => ({ status: 204 }),
@@ -46,7 +63,7 @@ function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, d
     },
   }));
   return {
-    deletedUsers, appleCalls,
+    deletedUsers, appleCalls, timeouts,
     request: (body = {}, method = 'POST') => handler({
       method, headers: new Headers({ Authorization: 'Bearer user-token' }), json: async () => body,
     }),
@@ -92,7 +109,7 @@ test('only POST deletes', async () => {
   assert.equal(f.deletedUsers.length, 0);
 });
 
-test('an Apple account has its Apple token exchanged and revoked, then is deleted', async () => {
+test('an Apple account is deleted, then has its Apple token exchanged and revoked', async () => {
   const f = fixture({ user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] } });
   const response = await f.request({ apple_authorization_code: 'fresh-code' });
 
@@ -105,6 +122,8 @@ test('an Apple account has its Apple token exchanged and revoked, then is delete
   assert.equal(revoke.url, 'https://appleid.apple.com/auth/revoke');
   assert.equal(revoke.form.token, 'apple-refresh');
   assert.equal(revoke.form.token_type_hint, 'refresh_token');
+  assert.ok(f.appleCalls.every((c) => c.deletedYet), 'revocation must follow the deletion');
+  assert.equal(f.timeouts.length, 2, 'both Apple calls must be bounded');
 
   const secret = await verifyClientSecret(exchange.form.client_secret);
   assert.ok(secret.valid, 'client secret must verify against the key');
@@ -144,5 +163,24 @@ test('a code for a different Apple ID revokes nothing, and the account is still 
   const response = await f.request({ apple_authorization_code: 'fresh-code' });
   assert.deepEqual(plain(response.body), { deleted: true, apple_revoked: false });
   assert.deepEqual(f.appleCalls.map((c) => c.url), ['https://appleid.apple.com/auth/token']);
+  assert.deepEqual(f.deletedUsers, ['user']);
+});
+
+test('a failed delete revokes nothing, so the account keeps its Apple authorization', async () => {
+  const f = fixture({
+    user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] },
+    deleteError: new Error('db down'),
+  });
+  assert.equal((await f.request({ apple_authorization_code: 'fresh-code' })).status, 500);
+  assert.equal(f.appleCalls.length, 0);
+});
+
+test('an Apple endpoint that never answers does not hold up the deletion', async () => {
+  const f = fixture({
+    user: { id: 'user', identities: [{ provider: 'apple', id: 'apple-sub', identity_data: { sub: 'apple-sub' } }] },
+    appleHangs: true,
+  });
+  const response = await f.request({ apple_authorization_code: 'fresh-code' });
+  assert.deepEqual(plain(response.body), { deleted: true, apple_revoked: false });
   assert.deepEqual(f.deletedUsers, ['user']);
 });
