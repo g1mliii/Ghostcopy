@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ghostcopy/models/clipboard_item.dart';
@@ -24,6 +25,7 @@ class _MockSecurityService extends Mock implements ISecurityService {}
 class _MockSettingsService extends Mock implements ISettingsService {}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() {
     registerFallbackValue(
       ClipboardItem(
@@ -68,6 +70,56 @@ void main() {
   tearDown(() {
     viewModel.dispose();
   });
+
+  for (final filename in ['original.png', 'original.heic']) {
+    test('gallery selection preserves $filename without compression', () async {
+      final bytes = filename.endsWith('.png')
+          ? Uint8List.fromList([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4])
+          : Uint8List.fromList([
+              0,
+              0,
+              0,
+              24,
+              102,
+              116,
+              121,
+              112,
+              104,
+              101,
+              105,
+              99,
+            ]);
+      const channel = MethodChannel('miguelruivo.flutter.plugins.filepicker');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            expect(call.method, 'image');
+            final arguments = call.arguments as Map<Object?, Object?>;
+            expect(arguments['compressionQuality'], 0);
+            expect(arguments['allowMultipleSelection'], isFalse);
+            return [
+              {'name': filename, 'size': bytes.length, 'bytes': bytes},
+            ];
+          });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+      String? error;
+      await viewModel.handleImageUpload(onError: (message) => error = message);
+      expect(error, isNull);
+      expect(viewModel.isUploadingImage, isFalse);
+      if (filename.endsWith('.png')) {
+        expect(viewModel.clipboardContent?.imageBytes, orderedEquals(bytes));
+        expect(viewModel.clipboardContent?.mimeType, 'image/png');
+      } else {
+        expect(viewModel.clipboardContent?.fileBytes, orderedEquals(bytes));
+        expect(viewModel.clipboardContent?.filename, filename);
+        expect(viewModel.clipboardContent?.mimeType, 'image/heic');
+      }
+      // Picking stages the original; sending remains an explicit action.
+      verifyZeroInteractions(clipboardRepository);
+    });
+  }
 
   test(
     'account switch cancels the old stream and receives new account clips',

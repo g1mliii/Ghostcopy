@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:ui' show Offset, PlatformDispatcher, Rect;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../locator.dart';
@@ -762,42 +761,47 @@ class MobileMainViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final picker = ImagePicker();
-      final image = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 2048,
-        maxHeight: 2048,
+      // The gallery picker must return the original asset representation.
+      // image_picker re-encodes iOS photos even without resize options;
+      // file_picker's zero-compression path copies the selected file instead.
+      final result = await FilePicker.pickFiles(
+        type: FileType.image,
+        // Pin original-quality selection even if the plugin default changes.
+        // ignore: avoid_redundant_argument_values
+        compressionQuality: 0,
       );
 
-      if (image == null) {
-        _isUploadingImage = false;
-        notifyListeners();
+      if (result == null) {
+        if (!_isDisposed) {
+          _isUploadingImage = false;
+          notifyListeners();
+        }
         return;
       }
 
-      final bytes = await image.readAsBytes();
-
-      // Only the mime type is needed now: _sendImage derives ContentType from
-      // it at send time.
-      String mimeType;
-
-      final path = image.path.toLowerCase();
-      if (path.endsWith('.png')) {
-        mimeType = 'image/png';
-      } else if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
-        mimeType = 'image/jpeg';
-      } else if (path.endsWith('.gif')) {
-        mimeType = 'image/gif';
-      } else {
-        mimeType = 'image/jpeg';
+      final image = result.files.single;
+      if (image.size > ClipboardLimits.maxFileBytes) {
+        throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
       }
+      final bytes = image.bytes ?? await File(image.path!).readAsBytes();
+      if (bytes.length > ClipboardLimits.maxFileBytes) {
+        throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
+      }
+      final typeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        image.name,
+      );
 
       // STAGE, don't send. Picking an image now behaves like pasting one:
       // it appears in the preview and the user presses Send. Sending straight
       // from the picker skipped the device chips entirely, so every picked
       // image went to all devices regardless of what was selected.
       if (!_isDisposed) {
-        _clipboardContent = ClipboardContent.image(bytes, mimeType);
+        // Formats without an image preview (for example HEIC) remain files;
+        // never convert them to JPEG just to make a thumbnail available.
+        _clipboardContent = typeInfo.contentType.isImage
+            ? ClipboardContent.image(bytes, typeInfo.mimeType)
+            : ClipboardContent.file(bytes, image.name, typeInfo.mimeType);
         _isUploadingImage = false;
         notifyListeners();
         onSuccess?.call();
