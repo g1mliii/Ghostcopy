@@ -19,9 +19,11 @@ resource baseline. Finished work is in git history and
       `build/` registers that path instead
 - [x] **Gentle update reminder - kept as it is.** The dot next to the menu
       bar icon and the relabelled tray item were judged noticeable enough
-- [ ] **Build 6.** From main once #19 and #25 are in: notification and staleness
-      fixes, Sign in with Apple, the larger icon. Then bump the
-      `/download/macos` redirect (runbook step 8)
+- [x] **Build 6 - published 2026-09-24** as `macos-v1.0.0-6`, feed and
+      `/download/macos` updated. Sign in with Apple on the Mac goes through the
+      browser: Apple issues no Developer ID profile carrying the
+      applesignin entitlement (only App Store/development profiles can), so
+      the native sheet is iOS-only
 - [x] **Notarize in CI - decided against.** Publishing needs three secrets in
       one place: the Developer ID private key, notarization credentials, and
       the Sparkle EdDSA key. That last one is unrecoverable - if it leaks,
