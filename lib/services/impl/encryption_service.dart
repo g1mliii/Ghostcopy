@@ -119,8 +119,12 @@ class EncryptionService implements IEncryptionService {
   }
 
   // Storage keys - user-specific to prevent cross-user passphrase leakage
-  String get _passphraseKey => 'encryption_passphrase_$_userId';
-  String get _verificationHashKey => 'encryption_verification_hash_$_userId';
+  static String _passphraseKeyFor(String? userId) =>
+      'encryption_passphrase_$userId';
+  static String _verificationHashKeyFor(String? userId) =>
+      'encryption_verification_hash_$userId';
+  String get _passphraseKey => _passphraseKeyFor(_userId);
+  String get _verificationHashKey => _verificationHashKeyFor(_userId);
 
   // PBKDF2 algorithm for key derivation is created in-isolate when needed
 
@@ -366,6 +370,25 @@ class EncryptionService implements IEncryptionService {
       // passphrase when nothing is wrong with it.
       throw PassphraseStorageException(e.toString());
     }
+  }
+
+  @override
+  Future<void> forgetPassphraseLocally(String userId) async {
+    // Keyed by the caller's id, not _userId: whatever this service last
+    // loaded - nothing, after a reset or a failed init, or another account -
+    // says nothing about which account was just deleted, and the Keychain
+    // entry outlives a reinstall on iOS.
+    for (final key in [
+      _passphraseKeyFor(userId),
+      _verificationHashKeyFor(userId),
+    ]) {
+      try {
+        await _secureStorage.delete(key: key);
+      } on Exception catch (e) {
+        debugPrint('[EncryptionService] Could not delete $key: $e');
+      }
+    }
+    if (_userId == userId) _setKeyBytes(null);
   }
 
   @override

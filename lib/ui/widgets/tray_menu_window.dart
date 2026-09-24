@@ -64,8 +64,8 @@ class TrayMenuWindow extends StatelessWidget {
           children: [
             RepaintBoundary(
               child: _buildMenuItem(
-                icon: Icons.visibility,
-                label: 'Show Spotlight',
+                icon: Icons.open_in_new,
+                label: 'Open GhostCopy',
                 onTap: () async {
                   onClose(); // Close tray first
                   // Wait for tray to close and state to update

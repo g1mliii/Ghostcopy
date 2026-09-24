@@ -120,7 +120,84 @@ to package - but everything below marked "verify" does need one.
 ## iOS: open
 
 - [ ] **TestFlight.** Signing is `Apple Development`; TestFlight needs Apple
-      Distribution
+      Distribution. `aps-environment` reads `development` in the entitlements;
+      the App Store export switches it, and the Firebase APNs key covers both
+- [x] **Privacy manifests** - `ios/Runner` and `ios/ShareExtension` now ship
+      `PrivacyInfo.xcprivacy` declaring their UserDefaults use; confirmed in a
+      release build. Branch `ios/app-store-prep`
+- [ ] **In-app account deletion - built, deploy and test it.** Branch
+      `feat/account-deletion`. Settings > Delete Account (iOS and Android,
+      signed-in accounts), backed by the `delete-account` Edge Function: it
+      deletes the auth user - clips, devices, tokens cascade, the clipboard
+      trigger queues stored files for R2 removal, the passphrase backup lives
+      in the user record - and for Apple accounts first exchanges a fresh
+      authorization code (the app asks Apple once more) and revokes the Apple
+      token, as Apple requires. A failed revocation does not block deletion.
+      The device then wipes its copy (Keychain passphrase, caches, staged clip)
+      and lands on a guest account, as after sign-out.
+  - [ ] **Set the function secret** `APPLE_PRIVATE_KEY` to the `.p8`
+        contents, or Apple accounts are deleted without revocation (logged)
+  - [ ] Deploys with the merge to `main` (deploy workflow covers
+        `supabase/functions/**`)
+  - [ ] Test on the iPhone with an email account and an Apple account; check
+        Supabase > Users and the R2 bucket afterwards
+  - [ ] Desktop has no delete button yet - add to the settings panel if
+        wanted; the website page tells desktop-only users to email
+- [x] **Account deletion web page** for Google Play's data-deletion URL:
+      `website/delete-account.html`, linked from the privacy policy
+- [ ] **Sign in with Apple - built, test it.** Branch `ios/sign-in-with-apple`.
+      Needed on every platform, not just iOS: an account made on an iPhone
+      with Apple (and Hide My Email) has no password, and QR linking only
+      brings a phone into a desktop's account, never the reverse - so a new
+      computer has no other way in.
+      - **iOS: native.** "Continue with Apple" above Google on the welcome
+        screen; Sign Up links in place (`linkIdentityWithIdToken`), Login
+        switches accounts with the guest-clips warning. SHA-256 nonce.
+      - **macOS: native** too - the system sheet with Touch ID and the Mac's
+        Apple ID, no browser. Entitlement in both macOS entitlement files;
+        the profile refreshed with `-allowProvisioningUpdates` and
+        `verify-app.py` now refuses a release whose profile lacks it.
+      - **Windows: browser flow**, the same path Google uses (Supabase ->
+        `ghostcopy.app/auth-callback` -> `ghostcopy://auth-callback`), button
+        in the Spotlight auth panel.
+      - **Android: not yet.** The browser flow's calls return when the browser
+        opens, and the mobile welcome screen would go on to `onAuthComplete`
+        with the old session. Needs `_handleProviderAuth` to wait for the
+        non-anonymous session from `onAuthStateChange` before finishing, then
+        a device test. Do it in the Android phase.
+      - **Setup:** Supabase Apple provider Client IDs
+        `com.ghostcopy.ghostcopy,com.ghostcopy.web`; Services ID
+        `com.ghostcopy.web` with domain `xhbggxftvnlkotvehwmj.supabase.co`
+        and return URL `https://xhbggxftvnlkotvehwmj.supabase.co/auth/v1/callback`.
+        Key ID `Y8NRLTKXG3`, Team `R9TKT8U45R`; the `.p8` is kept offline.
+      - **Secret Key expires every 6 months.** `dart run
+        tool/apple_client_secret.dart <AuthKey.p8>` prints a new one and its
+        expiry. Lapsing breaks desktop Apple sign-in silently (iOS is native
+        and unaffected) - keep a calendar reminder
+      - Check on devices: Sign Up keeps the clips, Login switches, cancel
+        leaves the screen as it was, Hide My Email works, desktop round trip
+- [ ] **Export compliance.** The app runs its own AES-256-GCM and
+      PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
+      "Apple's encryption only" exempt case - do not set
+      `ITSAppUsesNonExemptEncryption` to NO. Answer the questionnaire on the
+      first upload ("standard algorithms in addition to the OS"), then set
+      the Info.plist key(s) it points to so later uploads skip it
+- [x] **Privacy policy** matches the app now (R2 file storage, auto-send,
+      webhook, Obsidian) - `website/privacy.html`, deploys on merge to `main`
+- [x] **Listing drafted** in `docs/app-store-listing.md`: store text, age
+      rating, App Privacy answers, export compliance, review notes
+- [x] Display name was "Ghostcopy" on the home screen and in permission
+      prompts; now GhostCopy
+- [ ] **Demo account for App Review** - no guest path on the iOS welcome
+      screen and sign-up waits on a confirmation email. Create one on a real
+      inbox, no passphrase, a few clips, the Mac linked. See the listing doc
+- [ ] **Screenshots** (6.9" iPhone, 13" iPad) - taken with the demo account
+      once it exists; needs it signed in on the simulator
+- [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
+      the listing doc
+- [x] Privacy policy and listing updated for Apple sign-in and in-app
+      account deletion
+
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the
       Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
@@ -256,6 +333,13 @@ should start as early as a build allows.
 - [ ] `flutter build appbundle --release`, verify it is not debug-signed
 - [ ] Create the app in Console; privacy policy, data safety, content rating
 - [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
+- [ ] **Android Apple sign-in.** Hidden on Android for now. Apple is the
+      browser flow there; AuthService already waits for the callback's
+      session (`awaitBrowserSession`), so no UI-level wait is needed. Give the
+      welcome screen a Cancel while it waits (the desktop auth panel has one),
+      then show the button (remove the `Platform.isIOS` gate) and test on a
+      device. Supabase and Apple Developer need nothing more - it uses the
+      same Services ID as Windows
 
 ## Later: clipboard export and import
 

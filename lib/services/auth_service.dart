@@ -1,5 +1,26 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// How a request to delete the account ended.
+enum AccountDeletionOutcome {
+  /// The account and everything in it are gone, and this device is back on a
+  /// fresh guest account.
+  deleted,
+
+  /// The user backed out of the Apple confirmation; nothing was deleted.
+  cancelled,
+}
+
+/// The provider sent the browser back with an error instead of a sign-in -
+/// the user declined, or the identity already belongs to another account.
+class BrowserSignInException implements Exception {
+  const BrowserSignInException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Abstract interface for authentication service
 /// Handles user authentication, session management, and account upgrades
 abstract class IAuthService {
@@ -37,6 +58,12 @@ abstract class IAuthService {
   /// Returns true if successful, false if cancelled or failed
   Future<bool> signInWithGoogle();
 
+  /// Sign in with Apple, replacing the current session the way
+  /// [signInWithGoogle] does. Native on iOS and macOS, the browser flow
+  /// elsewhere.
+  /// Returns true if successful, false if cancelled or failed
+  Future<bool> signInWithApple();
+
   /// Establish a linked-device session using [refreshToken].
   /// Cleans up the previous account only after session establishment succeeds.
   Future<void> signInWithRefreshToken(String refreshToken);
@@ -55,6 +82,35 @@ abstract class IAuthService {
   /// Uses Supabase's linkIdentity() to preserve user_id
   /// Returns true if successful, false if cancelled or failed
   Future<bool> linkGoogleIdentity();
+
+  /// Link an Apple identity to the current anonymous user, preserving user_id
+  /// and clipboard data. Native on iOS and macOS, the browser flow elsewhere.
+  /// Returns true if successful, false if cancelled or failed
+  Future<bool> linkAppleIdentity();
+
+  /// Whether a sign-in or link is waiting for the browser to come back.
+  bool get isAwaitingBrowserSignIn;
+
+  /// Stop waiting for the browser; the pending sign-in or link resolves false
+  /// and a callback that arrives later is not redeemed.
+  void cancelBrowserSignIn();
+
+  /// End the pending browser sign-in or link with the provider's error
+  /// [message]. It throws [BrowserSignInException] to its caller.
+  void failBrowserSignIn(String message);
+
+  /// Permanently delete the signed-in account and everything in it - clips,
+  /// stored files, devices - then leave this device on a fresh guest account.
+  ///
+  /// Apple accounts are asked to confirm with Apple first, where the native
+  /// sheet exists, so their Apple tokens can be revoked as Apple requires.
+  /// Throws if the server could not delete the account; nothing local is
+  /// cleared in that case.
+  Future<AccountDeletionOutcome> deleteAccount();
+
+  /// Whether [deleteAccount] will ask the user to confirm with Apple first:
+  /// an Apple account, on a device with the native Apple sheet.
+  bool get deletionNeedsAppleConfirmation;
 
   /// Generate a time-limited token for mobile device linking
   /// Token expires after 5 minutes

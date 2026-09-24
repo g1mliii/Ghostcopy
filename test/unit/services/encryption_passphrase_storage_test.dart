@@ -120,4 +120,32 @@ void main() {
     verify(() => storage.delete(key: hashKey)).called(1);
     expect(await service.isEnabled(), isFalse);
   });
+
+  group('forgetting the passphrase after account deletion', () {
+    test('erases the deleted account even when nothing was loaded', () async {
+      // A reset, or an init that failed, left the service uninitialized. The
+      // Keychain entry outlives a reinstall on iOS, so returning early here
+      // kept a deleted account's passphrase on the device.
+      final service = EncryptionService(secureStorage: storage);
+
+      await service.forgetPassphraseLocally(userId);
+
+      verify(() => storage.delete(key: passphraseKey)).called(1);
+      verify(() => storage.delete(key: hashKey)).called(1);
+    });
+
+    test('erases the deleted account, not the one that is loaded', () async {
+      const otherKey = 'encryption_passphrase_someone-else';
+      when(
+        () => storage.read(key: any(named: 'key')),
+      ).thenAnswer((_) async => null);
+      final service = EncryptionService(secureStorage: storage);
+      await service.initialize('someone-else');
+
+      await service.forgetPassphraseLocally(userId);
+
+      verify(() => storage.delete(key: passphraseKey)).called(1);
+      verifyNever(() => storage.delete(key: otherKey));
+    });
+  });
 }
