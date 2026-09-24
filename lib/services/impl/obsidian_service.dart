@@ -47,8 +47,11 @@ class ObsidianService implements IObsidianService {
           normalizedVault.length - 1,
         );
       }
-      if (normalizedVault.startsWith('~/')) {
-        final home = Platform.environment['HOME'];
+      if (normalizedVault.startsWith('~/') ||
+          normalizedVault.startsWith(r'~\')) {
+        // Windows keeps the home folder in USERPROFILE; HOME is usually unset.
+        final home =
+            Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
         if (home != null) {
           normalizedVault = path.join(home, normalizedVault.substring(2));
         }

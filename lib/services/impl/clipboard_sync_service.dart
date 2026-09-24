@@ -249,23 +249,28 @@ class ClipboardSyncService implements IClipboardSyncService {
           !_canReceive(item)) {
         return null;
       }
-      // Delivery to integrations is independent of the clipboard copy policy.
-      // HTML goes out as text, matching what the sending device delivered:
-      // its side hands over the clipboard's plain-text flavour, not markup.
-      if (item.contentType == ContentType.html ||
-          item.contentType == ContentType.text ||
-          item.contentType == ContentType.markdown) {
-        _fireIntegrations(
-          content: item.content,
-          deviceType: item.deviceType,
-          direction: 'received',
-          isHtml: item.contentType == ContentType.html,
-        );
-      }
+      _deliverReceived(item);
       return item;
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Receive fetch failed: $e');
       return null;
+    }
+  }
+
+  /// Hand a received text clip to the integrations. Independent of the
+  /// clipboard copy policy. HTML goes out as text, matching what the sending
+  /// device delivered: its side hands over the clipboard's plain-text
+  /// flavour, not markup.
+  void _deliverReceived(ClipboardItem item) {
+    if (item.contentType == ContentType.html ||
+        item.contentType == ContentType.text ||
+        item.contentType == ContentType.markdown) {
+      _fireIntegrations(
+        content: item.content,
+        deviceType: item.deviceType,
+        direction: 'received',
+        isHtml: item.contentType == ContentType.html,
+      );
     }
   }
 
@@ -1347,7 +1352,11 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
+      final previousId = _lastPolledItemId;
       _lastPolledItemId = latestId;
+      if (previousId != null) {
+        await _deliverSkippedClips(after: previousId, latest: latestId);
+      }
       await _handleSmartAutoReceive(_receiveItem(latestId));
 
       // Notify UI to refresh
@@ -1356,6 +1365,33 @@ class ClipboardSyncService implements IClipboardSyncService {
       debugPrint('[ClipboardSync] ❌ Polling error: $e');
     } finally {
       _isPolling = false;
+    }
+  }
+
+  /// Clips that arrived between two polls, older than [latest] and newer than
+  /// [after]. Only the newest is worth copying, but the integrations are
+  /// meant to see every clip - as they do on the realtime path.
+  Future<void> _deliverSkippedClips({
+    required String after,
+    required String latest,
+  }) async {
+    final afterId = int.tryParse(after);
+    final latestId = int.tryParse(latest);
+    if (afterId == null || latestId == null) return;
+    try {
+      // Below the full-history limit, so the repository does not prune its
+      // media cache against this partial list.
+      final recent = await _clipboardRepository.getHistory(limit: 10);
+      final skipped = recent.where((item) {
+        final id = int.tryParse(item.id);
+        return id != null && id > afterId && id < latestId;
+      }).toList()..sort((a, b) => int.parse(a.id).compareTo(int.parse(b.id)));
+      for (final item in skipped) {
+        if (_isDisposed) return;
+        if (_canReceive(item)) _deliverReceived(item);
+      }
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSync] Could not deliver skipped clips: $e');
     }
   }
 

@@ -54,6 +54,8 @@ dependencies:
   google_sign_in: ^6.2.2
   hotkey_manager: ^0.2.0
   http: ^1.2.0
+  # Scales down a picked photo only when it is too big to send.
+  image: ^4.0.17
   launch_at_startup: ^0.5.1
   mobile_scanner: ^7.1.4
   package_info_plus: ^9.0.0
@@ -84,8 +86,6 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   glados: ^1.1.7  # Pinned version (was: any)
-  # Builds real PNG/JPEG fixtures for the media-quality tests.
-  image: ^4.0.17
   mocktail: ^1.0.0
   msix: ^3.18.0
 

@@ -119,9 +119,18 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   }
 
   void _onKeyRevisionChanged() {
-    if (widget.item.isEncrypted) {
-      unawaited(_resolveCanDecrypt());
+    if (!widget.item.isEncrypted) return;
+    // A new key may decrypt what the old one could not - the passphrase
+    // entered after this thumbnail first failed. Without this, a failed
+    // download stayed failed until the item was rebuilt with another source.
+    if (_fallbackFailed && mounted) {
+      setState(() {
+        _loadGeneration++;
+        _fallbackFailed = false;
+        _isLoadingFallback = false;
+      });
     }
+    unawaited(_resolveCanDecrypt());
   }
 
   Future<void> _resolveCanDecrypt() async {
