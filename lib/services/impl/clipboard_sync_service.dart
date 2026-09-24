@@ -1287,6 +1287,16 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
     _subscribeToRealtimeUpdates();
+
+    // A subscription only sees rows inserted after it opens. Anything that
+    // landed since the last poll - a file sent from Finder's context menu,
+    // which inserts straight through the repository, or a clip from the
+    // phone - was never delivered: not to the history, not to auto-receive,
+    // not to the integrations. It showed up only once some later clip made
+    // the history reload, minutes afterwards. One catch-up poll closes the
+    // gap. With no baseline yet, _subscribeToRealtimeUpdates seeds one and
+    // there is nothing to catch up on.
+    if (_lastPolledItemId != null) unawaited(_pollForNewClipboards());
   }
 
   /// Start polling mode
