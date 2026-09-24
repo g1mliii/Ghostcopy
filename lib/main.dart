@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -61,6 +60,7 @@ import 'ui/theme/app_theme.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
+import 'utils/file_picker_setup.dart';
 import 'utils/platform_label.dart';
 import 'utils/windows_registry.dart';
 
@@ -394,17 +394,9 @@ Future<void> main(List<String> args) async {
 
     if (Platform.isMacOS) {
       locator.registerSingleton<IAppUpdateService>(AppUpdateService());
-      // file_picker refuses to open a panel unless the app holds a
-      // user-selected-files entitlement. Those are sandbox permissions, and
-      // went with the sandbox, so every Attach and Save-as failed with
-      // ENTITLEMENT_NOT_FOUND. Unsandboxed, the panel needs no entitlement -
-      // this is the plugin's own switch for exactly that case.
-      unawaited(
-        FilePicker.skipEntitlementsChecks().catchError((Object e) {
-          debugPrint('[Main] Could not skip file_picker entitlement check: $e');
-        }),
-      );
     }
+    // Before any Attach or Save as: see prepareFilePicker.
+    unawaited(prepareFilePicker(isMacOS: Platform.isMacOS));
 
     // Initialize stateless utility services (singletons for consistency)
     final securityService = SecurityService();
