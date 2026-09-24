@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -54,7 +55,11 @@ class ClipboardSyncService implements IClipboardSyncService {
   final SupabaseClient _supabaseClient;
   final IClipboardService _clipboardService;
   final ITempFileService _tempFileService;
+
+  /// Built before this service in main.dart, so a clip that arrives during
+  /// startup is announced like any other; null only in tests.
   final INotificationService? _notificationService;
+
   final IGameModeService? _gameModeService;
   final IUrlShortenerService? _urlShortenerService;
   final IWebhookService? _webhookService;
@@ -75,7 +80,10 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Polling mode state
   Timer? _pollingTimer;
   bool _isPolling = false;
-  String? _lastPolledItemId; // Track last seen item to avoid duplicates
+
+  /// The newest clipboard row already seen, by realtime or by a poll, so a
+  /// poll never runs a clip through auto-receive a second time.
+  String? _lastPolledItemId;
 
   // Auto-receive debouncing
   Timer? _autoReceiveDebounceTimer;
@@ -92,8 +100,22 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Content deduplication
   String _lastSentContentHash = '';
 
-  // Smart auto-receive: Track clipboard staleness
+  /// When the user last changed the clipboard themselves, as far as this
+  /// service can tell. Smart auto-receive copies a received clip only once
+  /// this is older than the stale duration, so it never overwrites something
+  /// the user just copied. Null until a change has been seen, which counts as
+  /// stale.
   DateTime? _lastClipboardModificationTime;
+
+  /// Whether the activity watch is running; see [startClipboardActivityWatch].
+  bool _watching = false;
+
+  /// Samples the pasteboard change counter where it is not pushed (macOS).
+  Timer? _activityTimer;
+
+  /// The counter value last seen, including the one GhostCopy's own writes
+  /// leave behind - so only somebody else's change moves it.
+  int? _activityChangeCount;
 
   // Callbacks for UI updates
   @override
@@ -108,6 +130,8 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     // Subscribe to realtime updates
     _subscribeToRealtimeUpdates();
+
+    await refreshClipboardActivityWatch();
 
     // Check if auto-send is enabled and start monitoring
     final autoSendEnabled = await _settingsService.getAutoSendEnabled();
@@ -127,6 +151,11 @@ class ClipboardSyncService implements IClipboardSyncService {
       );
       return;
     }
+
+    // Nothing seen yet - launch, or an account switch: whatever is newest now
+    // predates this subscription and was never auto-received, so the first
+    // poll must not treat it as new either.
+    if (_lastPolledItemId == null) unawaited(_seedPollBaseline(userId));
 
     _realtimeChannel = _supabaseClient
         .channel('clipboard_changes')
@@ -149,6 +178,21 @@ class ClipboardSyncService implements IClipboardSyncService {
         .subscribe();
 
     debugPrint('[ClipboardSyncService] Realtime subscription active');
+  }
+
+  Future<void> _seedPollBaseline(String userId) async {
+    try {
+      final latest = await _clipboardRepository.getLatestItemId();
+      // A realtime insert or a poll that landed first is newer than this.
+      if (_isDisposed ||
+          _lastPolledItemId != null ||
+          _supabaseClient.auth.currentUser?.id != userId) {
+        return;
+      }
+      _lastPolledItemId = latest;
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] Could not seed poll baseline: $e');
+    }
   }
 
   /// One clipboard row inserted for this account, as Realtime delivers it.
@@ -269,7 +313,6 @@ class ClipboardSyncService implements IClipboardSyncService {
       final item = await pendingItem;
       if (item == null || _isDisposed || !_canReceive(item)) return;
       final deviceType = item.deviceType;
-      final now = DateTime.now();
 
       // Load auto-receive behavior from settings
       final autoReceiveBehavior = await _settingsService
@@ -278,66 +321,42 @@ class ClipboardSyncService implements IClipboardSyncService {
           .getClipboardStaleDurationMinutes();
       if (_isDisposed || !_canReceive(item)) return;
 
+      // Whether the user's own last copy is old enough to overwrite.
+      //
+      // On macOS the watch samples every 30 seconds, and on Windows a pushed
+      // change may still be on its way, so a copy made just now could be
+      // invisible here and get overwritten - the very thing smart receive
+      // exists to prevent. The counter is read now; a change not yet seen
+      // counts as a copy made this moment.
+      // clock rather than DateTime so tests can move time past the window.
+      Future<bool> smartAllowsCopy() async {
+        await _checkClipboardActivity();
+        final lastModified = _lastClipboardModificationTime;
+        final stale =
+            lastModified == null ||
+            clock.now().difference(lastModified) >=
+                Duration(minutes: staleDurationMinutes);
+        debugPrint(
+          '[ClipboardSyncService] Smart check: last user copy '
+          '$lastModified, window $staleDurationMinutes min, stale $stale',
+        );
+        return stale;
+      }
+
       final shouldAutoCopy = switch (autoReceiveBehavior) {
         AutoReceiveBehavior.always => true,
         AutoReceiveBehavior.never => false,
-        AutoReceiveBehavior.smart => () {
-          final staleDuration = Duration(minutes: staleDurationMinutes);
-          final isStale =
-              _lastClipboardModificationTime == null ||
-              now.difference(_lastClipboardModificationTime!) >= staleDuration;
-
-          debugPrint('[ClipboardSyncService] Smart Auto-Receive Check:');
-          debugPrint('  - Last Mod: $_lastClipboardModificationTime');
-          debugPrint('  - Stale Threshold: $staleDurationMinutes min');
-          debugPrint(
-            '  - Is Stale: $isStale (Diff: ${now.difference(_lastClipboardModificationTime ?? DateTime.fromMillisecondsSinceEpoch(0))})',
-          );
-
-          return isStale;
-        }(),
+        AutoReceiveBehavior.smart => await smartAllowsCopy(),
       };
+      if (_isDisposed || !_canReceive(item)) return;
 
       debugPrint(
         '[ClipboardSyncService] Auto-Receive Behavior: ${autoReceiveBehavior.name}',
       );
       debugPrint('[ClipboardSyncService] Should Auto-Copy: $shouldAutoCopy');
 
-      if (shouldAutoCopy) {
-        try {
-          await _copyItemToClipboard(item);
-          debugPrint(
-            '[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType',
-          );
-
-          _lastClipboardModificationTime = now;
-
-          // Show notification or queue if Game Mode active
-          if (_gameModeService?.isActive ?? false) {
-            _gameModeService?.queueNotification(item);
-            debugPrint(
-              '[ClipboardSyncService] Notification queued (Game Mode)',
-            );
-          } else {
-            final contentTypeStr = item.isFile
-                ? 'file'
-                : item.isImage
-                ? 'image'
-                : 'content';
-            _notificationService?.showToast(
-              message: 'Auto-copied $contentTypeStr from $deviceType',
-              type: NotificationType.success,
-            );
-          }
-        } on Exception catch (e) {
-          debugPrint('[ClipboardSyncService] Failed to auto-copy: $e');
-          _notificationService?.showToast(
-            message: 'Failed to auto-copy from $deviceType',
-            type: NotificationType.error,
-          );
-        }
-      } else {
-        // Not auto-copying - show notification with action
+      // Offer the clip through a clickable notification instead of copying it.
+      void offerCopy() {
         debugPrint(
           '[ClipboardSyncService] Not auto-copying (${autoReceiveBehavior.name})',
         );
@@ -366,13 +385,15 @@ class ClipboardSyncService implements IClipboardSyncService {
             duration: const Duration(seconds: 5),
             onAction: () async {
               try {
-                await _copyItemToClipboard(item);
+                // The user picked this clip, so smart receive must now
+                // guard it like any other copy of theirs.
+                if (await _copyItemToClipboard(item)) {
+                  updateClipboardModificationTime();
+                }
                 debugPrint('[ClipboardSyncService] Copied from notification');
               } on Exception catch (e) {
                 debugPrint('[ClipboardSyncService] Failed to copy: $e');
-                // Show error toast (analyzer knows notificationService can't be null here)
-                // ignore: invalid_null_aware_operator
-                _notificationService?.showToast(
+                _notificationService.showToast(
                   message: 'Failed to copy',
                   type: NotificationType.error,
                 );
@@ -380,6 +401,66 @@ class ClipboardSyncService implements IClipboardSyncService {
             },
           );
         }
+      }
+
+      if (shouldAutoCopy) {
+        try {
+          final copied = await _copyItemToClipboard(
+            item,
+            // The same decision, taken again right before the media is
+            // written: a copy the user made while it downloaded must win.
+            stillWanted: autoReceiveBehavior == AutoReceiveBehavior.smart
+                ? smartAllowsCopy
+                : null,
+          );
+          // Signed out, switched account or shut down meanwhile: the clip is
+          // no longer this session's to offer.
+          if (_isDisposed || !_canReceive(item)) return;
+          if (!copied) {
+            // The user copied something while the media downloaded: their
+            // copy stays, and the clip is offered instead.
+            debugPrint(
+              '[ClipboardSyncService] Clipboard changed during download - '
+              'offering the clip instead',
+            );
+            offerCopy();
+            return;
+          }
+          debugPrint(
+            '[ClipboardSyncService] Auto-copied ${item.contentType.value} from $deviceType',
+          );
+
+          // Deliberately not stamping _lastClipboardModificationTime: this
+          // is GhostCopy's write, not the user's. Counting it made a second
+          // clip sent within the stale window stay uncopied, because the
+          // first one's arrival looked like the user had just copied.
+
+          // Show notification or queue if Game Mode active
+          if (_gameModeService?.isActive ?? false) {
+            _gameModeService?.queueNotification(item);
+            debugPrint(
+              '[ClipboardSyncService] Notification queued (Game Mode)',
+            );
+          } else {
+            final contentTypeStr = item.isFile
+                ? 'file'
+                : item.isImage
+                ? 'image'
+                : 'content';
+            _notificationService?.showToast(
+              message: 'Auto-copied $contentTypeStr from $deviceType',
+              type: NotificationType.success,
+            );
+          }
+        } on Exception catch (e) {
+          debugPrint('[ClipboardSyncService] Failed to auto-copy: $e');
+          _notificationService?.showToast(
+            message: 'Failed to auto-copy from $deviceType',
+            type: NotificationType.error,
+          );
+        }
+      } else {
+        offerCopy();
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-receive failed: $e');
@@ -402,26 +483,42 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// - Images (PNG/JPEG/GIF - downloaded from storage and copied as image)
   /// - Files (PDF, DOC, ZIP, etc. - downloaded to temp, path copied to clipboard)
   /// - Encrypted content (already decrypted by repository)
-  Future<void> _copyItemToClipboard(ClipboardItem item) async {
-    if (_isDisposed || !_canReceive(item)) return;
+  ///
+  /// [stillWanted] is asked right before a downloaded image or file is
+  /// written. The smart decision is taken before the download starts, and a
+  /// download can take seconds; a copy the user makes meanwhile must win.
+  /// Returns whether anything was written - false also when the service was
+  /// disposed or the clip stopped being this account's, which callers check
+  /// for themselves before offering it instead.
+  Future<bool> _copyItemToClipboard(
+    ClipboardItem item, {
+    Future<bool> Function()? stillWanted,
+  }) async {
+    if (_isDisposed || !_canReceive(item)) return false;
+    // Asked again once a download finishes: signing out or switching account
+    // while it ran must not leave the old account's clip on the clipboard.
+    Future<bool> wanted() async =>
+        !_isDisposed &&
+        _canReceive(item) &&
+        (stillWanted == null || await stillWanted());
     _clipboardWritesInProgress++;
     var writtenContent = const ClipboardContent.empty();
     try {
       switch (item.contentType) {
         case ContentType.text:
           // Plain text - copy directly
-          await _clipboardService.writeText(item.content);
+          await _landWrite(() => _clipboardService.writeText(item.content));
           writtenContent = ClipboardContent.text(item.content);
 
         case ContentType.html:
           // HTML - copy with plain text fallback (super_clipboard handles both)
-          await _clipboardService.writeHtml(item.content);
+          await _landWrite(() => _clipboardService.writeHtml(item.content));
           writtenContent = ClipboardContent.html(item.content);
           debugPrint('[ClipboardSyncService] Copied HTML to clipboard');
 
         case ContentType.markdown:
           // Markdown - copy as plain text (markdown isn't standard clipboard format)
-          await _clipboardService.writeText(item.content);
+          await _landWrite(() => _clipboardService.writeText(item.content));
           writtenContent = ClipboardContent.text(item.content);
           debugPrint('[ClipboardSyncService] Copied Markdown as plain text');
 
@@ -442,8 +539,10 @@ class ClipboardSyncService implements IClipboardSyncService {
             );
           }
 
+          if (!await wanted()) return false;
+
           // Copy image to clipboard using super_clipboard (full native support)
-          await _clipboardService.writeImage(imageBytes);
+          await _landWrite(() => _clipboardService.writeImage(imageBytes));
           writtenContent = ClipboardContent.image(
             imageBytes,
             item.mimeType ?? 'image/png',
@@ -477,8 +576,12 @@ class ClipboardSyncService implements IClipboardSyncService {
               filename,
             );
 
+            if (!await wanted()) return false;
+
             // Copy file path to clipboard
-            await _clipboardService.writeFilePath(tempFile.path);
+            await _landWrite(
+              () => _clipboardService.writeFilePath(tempFile.path),
+            );
             writtenContent = ClipboardContent.file(
               fileBytes,
               filename,
@@ -505,8 +608,47 @@ class ClipboardSyncService implements IClipboardSyncService {
         writtenContent.text ?? '',
         clipboardContent: writtenContent,
       );
+      return true;
     } finally {
       _clipboardWritesInProgress--;
+    }
+  }
+
+  /// GhostCopy writes issued but whose counter bump is not yet absorbed. The
+  /// activity watch waits these out: a counter read in that gap cannot tell
+  /// GhostCopy's change from the user's.
+  final Set<Future<void>> _landingWrites = {};
+
+  /// Bumped as each write starts landing, so a counter read that raced one is
+  /// recognised and taken again.
+  int _writeEpoch = 0;
+
+  /// Run one clipboard write and absorb the counter bump it causes, so neither
+  /// the activity watch nor auto-send mistakes GhostCopy's write for the user
+  /// copying.
+  ///
+  /// The counter is read straight after the write, before anything else is
+  /// awaited. It used to be read at the very end, after the read-back - which
+  /// re-reads a whole file or image and can take hundreds of milliseconds -
+  /// so a copy the user made in that gap was absorbed as GhostCopy's own and
+  /// the next clip overwrote it. A write that throws absorbs nothing: a change
+  /// the user made meanwhile is then the only change, and must count.
+  Future<void> _landWrite(Future<void> Function() write) async {
+    final landed = Completer<void>();
+    _landingWrites.add(landed.future);
+    _writeEpoch++;
+    try {
+      await write();
+      final count = await _readClipboardChangeCount();
+      if (count != null) {
+        _activityChangeCount = count;
+        // Auto-send's gate too: the write's content is already recorded, so
+        // re-reading it - a whole image or file - on the next tick is waste.
+        _lastClipboardChangeCount = count;
+      }
+    } finally {
+      _landingWrites.remove(landed.future);
+      landed.complete();
     }
   }
 
@@ -537,22 +679,51 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Check clipboard and auto-send if changed
-  /// AppKit's pasteboard change counter, or null where it is unavailable.
+  /// The clipboard's change counter, or null where it is unavailable.
   ///
-  /// Reading the clipboard pulls the whole payload - a copied file or image is
-  /// re-read from disk in full - so on macOS this cheap integer gates that
-  /// read. Other platforms fall through and read as before.
+  /// NSPasteboard's changeCount on macOS, GetClipboardSequenceNumber on
+  /// Windows - both answered natively on this channel. Reading the clipboard
+  /// pulls the whole payload - a copied file or image is re-read from disk in
+  /// full - so this cheap integer gates that read. Linux has no counter and
+  /// reads as before.
   static const _clipboardChangeChannel = MethodChannel(
     'com.ghostcopy.app/clipboard_change',
   );
   int? _lastClipboardChangeCount;
 
-  /// The counter value whose read came back empty, so that exact pasteboard
-  /// state is not read again while it is still there.
-  int? _lastEmptyChangeCount;
+  /// The counter value the latest empty reads were taken at, and how many
+  /// strikes they have. Once there are [_maxFailedReads], that exact
+  /// pasteboard state is not read again while it is still there.
+  int? _emptyReadChangeCount;
+  int _emptyReads = 0;
+
+  /// How many failed reads retire a counter value. A genuinely empty read -
+  /// nothing read() can decode - retires it at once. A failed one does not:
+  /// on Windows the read fails whenever another process, a clipboard manager
+  /// or an RDP session, briefly holds the clipboard open, and retiring the
+  /// value then meant that copy was never auto-sent unless the user copied
+  /// something else. Three ticks ride out a transient lock, and still stop an
+  /// item whose read keeps failing from being re-read every tick.
+  static const _maxFailedReads = 3;
+
+  /// Whether this platform answers [_clipboardChangeChannel]. Tests set it so
+  /// the counter paths run on the Linux CI host.
+  @visibleForTesting
+  static bool? debugHasChangeCounter;
+
+  static bool get _hasChangeCounter =>
+      debugHasChangeCounter ?? (Platform.isMacOS || Platform.isWindows);
+
+  /// Whether the platform pushes "changed" when the counter moves, so the
+  /// activity watch needs no timer. Windows does; macOS cannot.
+  @visibleForTesting
+  static bool? debugCounterPushesChanges;
+
+  static bool get _counterPushesChanges =>
+      debugCounterPushesChanges ?? Platform.isWindows;
 
   Future<int?> _readClipboardChangeCount() async {
-    if (!Platform.isMacOS) return null;
+    if (!_hasChangeCounter) return null;
     try {
       return await _clipboardChangeChannel.invokeMethod<int>('changeCount');
     } on PlatformException catch (e) {
@@ -576,7 +747,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       final changeCount = await _readClipboardChangeCount();
       if (changeCount != null &&
           (changeCount == _lastClipboardChangeCount ||
-              changeCount == _lastEmptyChangeCount)) {
+              (changeCount == _emptyReadChangeCount &&
+                  _emptyReads >= _maxFailedReads))) {
         return;
       }
 
@@ -585,25 +757,31 @@ class ClipboardSyncService implements IClipboardSyncService {
       if (_clipboardWritesInProgress > 0 || _isDisposed) return;
 
       // The counter is committed only once the read has actually produced
-      // something. read() catches its own failures and returns empty - a
-      // provider that is briefly unavailable, an image callback that throws -
-      // and recording the counter before that point retired the tick anyway:
-      // every later tick saw the same counter, skipped the read, and that copy
-      // was never auto-sent unless the user copied something else. Leaving the
-      // counter alone keeps a failed read retryable on the next tick.
+      // something, so a read that failed - a clipboard briefly held open by
+      // another process, an image callback that throws - is retried on the
+      // next tick rather than that copy never being auto-sent.
       if (clipboardContent.isEmpty) {
-        // Remembered separately so an empty read is retried once per NEW
-        // counter value rather than never or forever. Leaving the counter
-        // untouched kept a genuinely undecodable clipboard item - a flavour
-        // read() cannot handle - doing the full pasteboard read, which for a
-        // copied file means re-reading it from disk, on every 5-second tick
-        // for as long as it stayed on the pasteboard.
-        _lastEmptyChangeCount = changeCount;
+        // Remembered separately so the same empty state is not read forever:
+        // a genuinely undecodable item - a flavour read() cannot handle - once,
+        // a failing read up to [_maxFailedReads] times. Otherwise a copied
+        // file read() could not use was re-read from disk every 5 seconds for
+        // as long as it stayed on the pasteboard.
+        if (changeCount != null) {
+          final strikes = changeCount == _emptyReadChangeCount
+              ? _emptyReads
+              : 0;
+          _emptyReads = clipboardContent.readFailed
+              ? strikes + 1
+              : _maxFailedReads;
+          _emptyReadChangeCount = changeCount;
+        }
         return;
       }
       if (changeCount != null) {
         _lastClipboardChangeCount = changeCount;
       }
+      _emptyReadChangeCount = null;
+      _emptyReads = 0;
 
       // Calculate hash for deduplication (works for text and images)
       final contentHash = _calculateClipboardContentHash(clipboardContent);
@@ -847,6 +1025,9 @@ class ClipboardSyncService implements IClipboardSyncService {
           content: processedContent,
           deviceType: context.deviceType,
           direction: 'sent',
+          // Auto-send screened the clipboard text before sending it; only a
+          // shortened URL is new text.
+          screened: processedContent == content,
         );
       },
     );
@@ -924,7 +1105,131 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Update clipboard modification time (called from UI when user manually copies)
   @override
   void updateClipboardModificationTime() {
-    _lastClipboardModificationTime = DateTime.now();
+    _lastClipboardModificationTime = clock.now();
+  }
+
+  /// Watch for the user changing the clipboard in any app, so smart
+  /// auto-receive knows whether a received clip would overwrite something
+  /// they just copied.
+  ///
+  /// Staleness was first measured from copies made in GhostCopy's history,
+  /// through [updateClipboardModificationTime]. A refactor dropped those
+  /// calls, after which only GhostCopy's own auto-copies set the time: smart
+  /// behaved like always, and a second clip inside the window stayed
+  /// uncopied. This reads the clipboard's change counter (see
+  /// [_readClipboardChangeCount]) - one integer, never the contents - and
+  /// stamps the time whenever it moves for any reason but GhostCopy writing.
+  /// That covers copies in every app, not only GhostCopy's, on macOS and
+  /// Windows; elsewhere only the history-copy hook applies.
+  ///
+  /// Windows tells us when the counter moves (WM_CLIPBOARDUPDATE, pushed as
+  /// "changed"), so there the watch has no timer at all and costs nothing
+  /// while the clipboard is left alone - in the tray or not. macOS has no
+  /// such notification, so it samples every thirty seconds: the smart
+  /// decision reads the counter again itself before copying anything, so a
+  /// sample only has to date a change to within the stale window, which is
+  /// minutes long. Runs only while auto-receive is smart - see
+  /// [refreshClipboardActivityWatch].
+  @visibleForTesting
+  void startClipboardActivityWatch() {
+    if (_watching || _isDisposed || !_hasChangeCounter) return;
+    _watching = true;
+    // A fresh baseline every start. A change made while nothing was watching
+    // has an unknown age, and unknown counts as stale - but the absorb after
+    // each write keeps updating the count while the watch is off, so without
+    // this, switching to smart hours after an auto-copy compared against that
+    // old value and dated the whole morning's copying to this moment.
+    _activityChangeCount = null;
+    if (_counterPushesChanges) {
+      _clipboardChangeChannel.setMethodCallHandler(_onClipboardChangePushed);
+    } else {
+      _activityTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => _checkClipboardActivity(),
+      );
+    }
+    unawaited(_checkClipboardActivity());
+  }
+
+  Future<void> _onClipboardChangePushed(MethodCall call) async {
+    if (call.method == 'changed') await _checkClipboardActivity();
+  }
+
+  /// Run the watch only when something reads it: auto-receive set to smart.
+  /// Always and never ignore staleness, and a timer waking the app for nothing
+  /// is what the tray's near-zero-CPU rule forbids.
+  @override
+  Future<void> refreshClipboardActivityWatch() async {
+    if (_isDisposed) return;
+    final generation = _watchGeneration;
+    final behavior = await _settingsService.getAutoReceiveBehavior();
+    // A stop that landed while settings were read wins: the lifecycle pauses
+    // the watch on screen lock, and a refresh started by the unlock just
+    // before must not restart it under the lock when it completes.
+    if (_isDisposed || generation != _watchGeneration) return;
+    if (behavior == AutoReceiveBehavior.smart) {
+      startClipboardActivityWatch();
+    } else {
+      stopClipboardActivityWatch();
+    }
+  }
+
+  /// Bumped by every stop, invalidating any refresh still reading settings.
+  int _watchGeneration = 0;
+
+  /// Stopped around screen lock and system sleep, with everything else the
+  /// lifecycle pauses.
+  @override
+  void stopClipboardActivityWatch() {
+    _watchGeneration++;
+    final wasRunning = _watching;
+    _watching = false;
+    _activityTimer?.cancel();
+    _activityTimer = null;
+    if (wasRunning && _counterPushesChanges) {
+      _clipboardChangeChannel.setMethodCallHandler(null);
+    }
+    // One last sample, so a copy made since the previous one - the address
+    // copied ten seconds before locking the screen - is dated now rather
+    // than lost, and a clip arriving right after unlock still leaves it be.
+    if (wasRunning && !_isDisposed) unawaited(_sampleClipboardActivity());
+  }
+
+  /// Sample the counter if the watch is running; see [_sampleClipboardActivity].
+  Future<void> _checkClipboardActivity() async {
+    if (_watching) await _sampleClipboardActivity();
+  }
+
+  /// Read the counter and stamp [_lastClipboardModificationTime] if somebody
+  /// other than GhostCopy moved it.
+  ///
+  /// A GhostCopy write that is landing is waited out rather than skipped:
+  /// this used to return early whenever any received clip was in progress,
+  /// so while an image downloaded, the next clip's staleness check did
+  /// nothing and its text replaced a copy the user had just made. A download
+  /// never touches the clipboard, so only the moment a write lands is
+  /// ambiguous, and [_landWrite] marks exactly that.
+  Future<void> _sampleClipboardActivity() async {
+    while (!_isDisposed) {
+      if (_landingWrites.isNotEmpty) {
+        await Future.wait(List.of(_landingWrites));
+        continue;
+      }
+      final epoch = _writeEpoch;
+      final count = await _readClipboardChangeCount();
+      if (count == null || _isDisposed) return;
+      // A write started while the counter was read: that reading may predate
+      // it, and storing it would undo the write's absorb. Read again.
+      if (epoch != _writeEpoch) continue;
+      final previous = _activityChangeCount;
+      _activityChangeCount = count;
+      // The first reading is only a baseline: a copy made before it has an
+      // unknown age, and unknown counts as stale.
+      if (previous != null && count != previous) {
+        _lastClipboardModificationTime = clock.now();
+      }
+      return;
+    }
   }
 
   /// Notify service that content was manually sent via UI
@@ -1036,7 +1341,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     _lastPolledItemId = null;
     _lastMonitoredClipboard = '';
     _lastClipboardChangeCount = null;
-    _lastEmptyChangeCount = null;
+    _emptyReadChangeCount = null;
+    _emptyReads = 0;
     _lastSentContentHash = '';
 
     // Subscribe with new user ID (no need to disconnect - auth token updates automatically)
@@ -1091,97 +1397,128 @@ class ClipboardSyncService implements IClipboardSyncService {
   ///
   /// [deviceType] is whichever device the clip came from, so a received clip
   /// is attributed to the phone that sent it rather than to this Mac.
+  ///
+  /// A clip detected as sensitive reaches neither. The integrations used to
+  /// see only auto-sent text, which had already passed the auto-send path's
+  /// check; the received and manual-send paths have no such check, so a
+  /// password sent from the phone or pasted into the Spotlight was written to
+  /// the vault in plaintext and POSTed to the webhook. The check fails closed.
+  ///
+  /// [screened] says the caller already ran this exact text through the
+  /// check, as auto-send does before it sends, so it is not run twice.
   void _fireIntegrations({
     required String content,
     required String deviceType,
     required String direction,
+    bool screened = false,
   }) {
-    _fireWebhook(content, deviceType, direction);
-    _appendToObsidian(content, deviceType, direction);
-  }
-
-  /// Fire webhook (non-blocking with tracking for clean disposal - Fix #10)
-  void _fireWebhook(String content, String deviceType, String direction) {
-    if (_isDisposed) return;
     final webhook = _webhookService;
-    if (webhook == null) return;
+    final obsidian = _obsidianService;
+    if (_isDisposed || (webhook == null && obsidian == null)) return;
 
-    // Track the future for clean disposal
-    final future = () async {
-      if (_isDisposed) return;
+    _track(() async {
       try {
-        final webhookEnabled = await _settingsService.getWebhookEnabled();
-        if (!webhookEnabled || _isDisposed) return;
+        final webhookOn =
+            webhook != null && await _settingsService.getWebhookEnabled();
+        final obsidianOn =
+            obsidian != null && await _settingsService.getObsidianEnabled();
+        // Nothing enabled means nothing to protect: skip the detection, which
+        // for long clips runs in an isolate.
+        if ((!webhookOn && !obsidianOn) || _isDisposed) return;
 
-        final webhookUrl = await _settingsService.getWebhookUrl();
-        if (webhookUrl == null || webhookUrl.isEmpty) {
-          debugPrint(
-            '[ClipboardSyncService] ⚠️  Webhook enabled but no URL configured',
+        if (!screened) {
+          final detection = await _securityService.detectSensitiveDataAsync(
+            content,
           );
-          return;
+          if (detection.isSensitive) {
+            debugPrint(
+              '[ClipboardSyncService] Integrations skipped: '
+              '${detection.type?.label} detected',
+            );
+            return;
+          }
+          if (_isDisposed) return;
         }
 
-        final payload = {
-          'content': content,
-          'deviceType': deviceType,
-          // Which way the clip was going. The hook fires on both now, and a
-          // consumer that only wants outbound clips cannot tell them apart
-          // from deviceType alone.
-          'direction': direction,
-          'timestamp': DateTime.now().toIso8601String(),
-        };
-
-        if (!_isDisposed) {
-          await webhook.sendWebhook(webhookUrl, payload);
-        }
+        await Future.wait([
+          if (webhookOn) _sendWebhook(webhook, content, deviceType, direction),
+          if (obsidianOn)
+            _appendToVault(obsidian, content, deviceType, direction),
+        ]);
       } on Exception catch (e) {
-        debugPrint('[ClipboardSyncService] ❌ Webhook error: $e');
+        debugPrint('[ClipboardSyncService] Integrations skipped: $e');
       }
-    }();
+    }());
+  }
 
+  /// Keep a background operation in [_pendingFutures] until it completes.
+  void _track(Future<void> future) {
     _pendingFutures.add(future);
     future.whenComplete(() => _pendingFutures.remove(future));
   }
 
-  /// Append to Obsidian vault (non-blocking with tracking - Fix #10)
-  void _appendToObsidian(String content, String deviceType, String direction) {
-    if (_isDisposed) return;
-    final obsidian = _obsidianService;
-    if (obsidian == null) return;
-
-    // Track the future for clean disposal
-    final future = () async {
-      if (_isDisposed) return;
-      try {
-        final obsidianEnabled = await _settingsService.getObsidianEnabled();
-        if (!obsidianEnabled || _isDisposed) return;
-
-        final vaultPath = await _settingsService.getObsidianVaultPath();
-        if (vaultPath == null || vaultPath.isEmpty) {
-          debugPrint(
-            '[ClipboardSyncService] ⚠️  Obsidian enabled but no vault path configured',
-          );
-          return;
-        }
-
-        final fileName = await _settingsService.getObsidianFileName();
-
-        if (!_isDisposed) {
-          await obsidian.appendToVault(
-            deviceType: deviceType,
-            direction: direction,
-            vaultPath: vaultPath,
-            fileName: fileName,
-            content: content,
-          );
-        }
-      } on Exception catch (e) {
-        debugPrint('[ClipboardSyncService] ❌ Obsidian error: $e');
+  Future<void> _sendWebhook(
+    IWebhookService webhook,
+    String content,
+    String deviceType,
+    String direction,
+  ) async {
+    try {
+      final webhookUrl = await _settingsService.getWebhookUrl();
+      if (webhookUrl == null || webhookUrl.isEmpty) {
+        debugPrint(
+          '[ClipboardSyncService] ⚠️  Webhook enabled but no URL configured',
+        );
+        return;
       }
-    }();
 
-    _pendingFutures.add(future);
-    future.whenComplete(() => _pendingFutures.remove(future));
+      final payload = {
+        'content': content,
+        'deviceType': deviceType,
+        // Which way the clip was going. The hook fires on both now, and a
+        // consumer that only wants outbound clips cannot tell them apart
+        // from deviceType alone.
+        'direction': direction,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      if (!_isDisposed) {
+        await webhook.sendWebhook(webhookUrl, payload);
+      }
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] ❌ Webhook error: $e');
+    }
+  }
+
+  Future<void> _appendToVault(
+    IObsidianService obsidian,
+    String content,
+    String deviceType,
+    String direction,
+  ) async {
+    try {
+      final vaultPath = await _settingsService.getObsidianVaultPath();
+      if (vaultPath == null || vaultPath.isEmpty) {
+        debugPrint(
+          '[ClipboardSyncService] ⚠️  Obsidian enabled but no vault path configured',
+        );
+        return;
+      }
+
+      final fileName = await _settingsService.getObsidianFileName();
+
+      if (!_isDisposed) {
+        await obsidian.appendToVault(
+          deviceType: deviceType,
+          direction: direction,
+          vaultPath: vaultPath,
+          fileName: fileName,
+          content: content,
+        );
+      }
+    } on Exception catch (e) {
+      debugPrint('[ClipboardSyncService] ❌ Obsidian error: $e');
+    }
   }
 
   @override
@@ -1192,6 +1529,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     // Cancel timers
     _clipboardMonitorTimer?.cancel();
     _clipboardMonitorTimer = null;
+
+    stopClipboardActivityWatch();
 
     _autoReceiveDebounceTimer?.cancel();
     _autoReceiveDebounceTimer = null;

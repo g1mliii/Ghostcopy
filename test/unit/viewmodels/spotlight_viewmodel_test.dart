@@ -20,6 +20,8 @@ class _MockClipboardRepository extends Mock implements IClipboardRepository {}
 
 class _MockTransformerService extends Mock implements ITransformerService {}
 
+class _MockClipboardService extends Mock implements IClipboardService {}
+
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
   bool get isMonitoring => false;
@@ -61,8 +63,16 @@ class _TestClipboardSyncService implements IClipboardSyncService {
   @override
   void stopPolling() {}
 
+  int modificationTimeUpdates = 0;
+
   @override
-  void updateClipboardModificationTime() {}
+  void updateClipboardModificationTime() => modificationTimeUpdates++;
+
+  @override
+  Future<void> refreshClipboardActivityWatch() async {}
+
+  @override
+  void stopClipboardActivityWatch() {}
 
   @override
   void dispose() {}
@@ -153,6 +163,64 @@ void main() {
 
   tearDown(() {
     viewModel.dispose();
+  });
+
+  test('copying from history marks the clipboard as freshly changed', () async {
+    // Smart auto-receive reads this to avoid overwriting a copy the user
+    // just made. A refactor once dropped the call and nothing noticed.
+    final clipboard = _MockClipboardService();
+    when(() => clipboard.writeText(any())).thenAnswer((_) async {});
+    final copying = SpotlightViewModel(
+      authService: authService,
+      clipboardRepository: clipboardRepository,
+      clipboardSyncService: clipboardSyncService,
+      transformerService: transformerService,
+      notificationService: notificationService,
+      clipboardService: clipboard,
+    );
+    addTearDown(copying.dispose);
+
+    await copying.handleHistoryItemCopy(
+      _clipboardItem(id: '1', content: 'hello'),
+    );
+
+    verify(() => clipboard.writeText('hello')).called(1);
+    expect(clipboardSyncService.modificationTimeUpdates, 1);
+  });
+
+  test('a failed media download is not counted as a copy', () async {
+    // downloadFile answers null for a missing path, a failed download or a
+    // failed decrypt. Nothing reaches the clipboard, so smart receive must
+    // not start guarding it.
+    final clipboard = _MockClipboardService();
+    when(
+      () => clipboardRepository.downloadFile(any()),
+    ).thenAnswer((_) async => null);
+    final copying = SpotlightViewModel(
+      authService: authService,
+      clipboardRepository: clipboardRepository,
+      clipboardSyncService: clipboardSyncService,
+      transformerService: transformerService,
+      notificationService: notificationService,
+      clipboardService: clipboard,
+    );
+    addTearDown(copying.dispose);
+
+    await copying.handleHistoryItemCopy(
+      ClipboardItem(
+        id: 'img',
+        userId: 'user-123',
+        content: '',
+        deviceType: 'ios',
+        createdAt: DateTime(2026),
+        contentType: ContentType.imagePng,
+        storagePath: 'user-123/img',
+      ),
+    );
+
+    expect(clipboardSyncService.modificationTimeUpdates, 0);
+    expect(copying.errorMessage, isNotNull);
+    verifyNever(() => clipboard.writeImage(any()));
   });
 
   testWidgets('plain typing pauses do not repeatedly rebuild the window', (

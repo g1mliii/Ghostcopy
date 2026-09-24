@@ -38,14 +38,17 @@ class SpotlightViewModel extends ChangeNotifier {
     required IClipboardSyncService clipboardSyncService,
     required this._transformerService,
     required this._notificationService,
+    IClipboardService? clipboardService,
   }) : _clipboardRepo = clipboardRepository,
-       _syncService = clipboardSyncService;
+       _syncService = clipboardSyncService,
+       _clipboardService = clipboardService ?? ClipboardService.instance;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
   final IClipboardSyncService _syncService;
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
+  final IClipboardService _clipboardService;
 
   // ========== SEND STATE ==========
 
@@ -227,8 +230,7 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Returns ClipboardContent if there's something to paste
   Future<ClipboardContent?> populateFromClipboard() async {
     try {
-      final clipboardService = ClipboardService.instance;
-      final content = await clipboardService.read();
+      final content = await _clipboardService.read();
 
       if (content.hasImage) {
         _clipboardContent = content;
@@ -445,56 +447,71 @@ class SpotlightViewModel extends ChangeNotifier {
     VoidCallback? onCopySuccess,
   }) async {
     try {
-      final clipboardService = ClipboardService.instance;
+      // Media is downloaded first, and downloadFile returns null when the
+      // storage path is missing, the download fails or decryption does.
+      // Nothing is written then, so this returns before the copy is counted
+      // as the user's: smart receive would otherwise guard a clipboard that
+      // never changed and refuse incoming clips for the whole stale window.
+      const downloadFailed =
+          'Could not copy - the file could not be downloaded';
 
       if (item.isImage) {
         // Download image and copy to clipboard
         final bytes = await _clipboardRepo.downloadFile(item);
-        if (bytes != null) {
-          await clipboardService.writeImage(bytes);
-          debugPrint('[SpotlightVM] Copied image to clipboard');
+        if (bytes == null) {
+          _setError(downloadFailed);
+          return;
         }
+        await _clipboardService.writeImage(bytes);
+        debugPrint('[SpotlightVM] Copied image to clipboard');
       } else if (item.isFile) {
         // Download file to temp location and copy path
         final bytes = await _clipboardRepo.downloadFile(item);
-        if (bytes != null) {
-          // Sniffed extension rather than a bare 'file': this path is written
-          // to the clipboard, and a name with nothing after the dot gives the
-          // receiving app no way to tell what it just pasted.
-          // Shared with the mobile share paths. This copy never grew the
-          // `image.*` case they have, which is the drift that comes of writing
-          // the same naming rule out four times.
-          final filename = FileTypeService.instance
-              .resolveFilename(
-                bytes,
-                originalFilename: item.metadata?.originalFilename,
-                isImage: item.isImage,
-              )
-              .name;
-          final tempFile = await TempFileService.instance.saveTempFile(
-            bytes,
-            filename,
-          );
-          final tempPath = tempFile.path;
-
-          await clipboardService.writeFilePath(tempPath);
-          debugPrint('[SpotlightVM] Copied file path to clipboard: $tempPath');
-
-          // Periodic cleanup retains the file while its URI is on the clipboard.
+        if (bytes == null) {
+          _setError(downloadFailed);
+          return;
         }
+        // Sniffed extension rather than a bare 'file': this path is written
+        // to the clipboard, and a name with nothing after the dot gives the
+        // receiving app no way to tell what it just pasted.
+        // Shared with the mobile share paths. This copy never grew the
+        // `image.*` case they have, which is the drift that comes of writing
+        // the same naming rule out four times.
+        final filename = FileTypeService.instance
+            .resolveFilename(
+              bytes,
+              originalFilename: item.metadata?.originalFilename,
+              isImage: item.isImage,
+            )
+            .name;
+        final tempFile = await TempFileService.instance.saveTempFile(
+          bytes,
+          filename,
+        );
+        final tempPath = tempFile.path;
+
+        await _clipboardService.writeFilePath(tempPath);
+        debugPrint('[SpotlightVM] Copied file path to clipboard: $tempPath');
+
+        // Periodic cleanup retains the file while its URI is on the clipboard.
       } else if (item.isRichText) {
         // Copy rich text with format
         if (item.richTextFormat == RichTextFormat.html) {
-          await clipboardService.writeHtml(item.content);
+          await _clipboardService.writeHtml(item.content);
         } else {
-          await clipboardService.writeText(item.content);
+          await _clipboardService.writeText(item.content);
         }
         debugPrint('[SpotlightVM] Copied rich text to clipboard');
       } else {
         // Copy plain text
-        await clipboardService.writeText(item.content);
+        await _clipboardService.writeText(item.content);
         debugPrint('[SpotlightVM] Copied text to clipboard');
       }
+
+      // The user chose this copy, so a clip arriving in the next few minutes
+      // should not overwrite it under smart auto-receive. A refactor once
+      // dropped this call and staleness quietly stopped working.
+      _syncService.updateClipboardModificationTime();
 
       _notificationService.showToast(
         message: 'Copied to clipboard',

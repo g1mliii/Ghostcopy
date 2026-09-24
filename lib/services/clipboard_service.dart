@@ -12,10 +12,16 @@ class ClipboardContent {
     this.fileBytes,
     this.filename,
     this.mimeType,
+    this.readFailed = false,
   });
 
   /// Create empty clipboard content
   const ClipboardContent.empty() : this._();
+
+  /// Nothing was read because reading failed - on Windows, typically another
+  /// process holding the clipboard open. Empty to every caller, but unlike
+  /// [ClipboardContent.empty] the same clipboard may read fine a moment later.
+  const ClipboardContent.unavailable() : this._(readFailed: true);
 
   /// Create text-only clipboard content
   factory ClipboardContent.text(String text) {
@@ -52,6 +58,9 @@ class ClipboardContent {
   final String? filename;
   final String? mimeType;
 
+  /// See [ClipboardContent.unavailable].
+  final bool readFailed;
+
   bool get hasText => text != null && text!.isNotEmpty;
   bool get hasHtml => html != null && html!.isNotEmpty;
   bool get hasImage => imageBytes != null && imageBytes!.isNotEmpty;
@@ -68,7 +77,9 @@ class ClipboardContent {
     }
     if (hasHtml) return 'ClipboardContent(html: ${html!.length} chars)';
     if (hasText) return 'ClipboardContent(text: ${text!.length} chars)';
-    return 'ClipboardContent(empty)';
+    return readFailed
+        ? 'ClipboardContent(unavailable)'
+        : 'ClipboardContent(empty)';
   }
 }
 
@@ -77,7 +88,8 @@ abstract class IClipboardService {
   /// Read clipboard content (file, image, HTML, or text)
   ///
   /// Priority: File > Image > HTML > Text
-  /// Returns ClipboardContent with available formats
+  /// Returns ClipboardContent with available formats. Never throws: a failed
+  /// read returns [ClipboardContent.unavailable].
   Future<ClipboardContent> read();
 
   /// Write plain text to clipboard
