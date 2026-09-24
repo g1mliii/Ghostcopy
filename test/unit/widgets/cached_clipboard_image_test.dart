@@ -7,12 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/ui/widgets/cached_clipboard_image.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _Repository extends Mock implements IClipboardRepository {}
+
+class _Encryption extends Mock implements IEncryptionService {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -129,5 +132,62 @@ void main() {
     expect(created, isNotEmpty);
     expect(disposed, containsAll(created));
     expect(tester.takeException(), isNull);
+  });
+  testWidgets('a failed encrypted image retries once a new key loads', (
+    tester,
+  ) async {
+    // Downloaded before the passphrase was in: decryption failed and the
+    // thumbnail showed the error. Entering it changes the key revision, and
+    // that must bring the image back without rebuilding the list item.
+    final repository = _Repository();
+    final encryption = _Encryption();
+    final revision = ValueNotifier<int>(0);
+    addTearDown(revision.dispose);
+    when(() => encryption.keyRevision).thenReturn(revision);
+    when(encryption.isEnabled).thenAnswer((_) async => true);
+    final item = ClipboardItem(
+      id: 'secret',
+      userId: 'test',
+      content: '',
+      deviceType: 'macos',
+      createdAt: DateTime(2026),
+      contentType: ContentType.imagePng,
+      storagePath: 'test/secret',
+      isEncrypted: true,
+    );
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+    );
+    var keyLoaded = false;
+    when(
+      () => repository.downloadFile(item),
+    ).thenAnswer((_) async => keyLoaded ? png : null);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CachedClipboardImage(
+          item: item,
+          clipboardRepository: repository,
+          encryptionService: encryption,
+          width: 40,
+          height: 40,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+
+    keyLoaded = true;
+    revision.value++;
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+    expect(find.byType(FutureBuilder<ui.Image>), findsOneWidget);
+    verify(() => repository.downloadFile(item)).called(2);
+    await tester.pumpWidget(const SizedBox());
   });
 }

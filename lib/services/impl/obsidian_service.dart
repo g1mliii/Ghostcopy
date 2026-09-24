@@ -28,6 +28,30 @@ class ObsidianService implements IObsidianService {
   // Performance: Saves ~1-5ms per append when vault path is reused
   final Map<String, String> _canonicalVaultCache = {};
 
+  /// The vault folder the user typed, made usable: surrounding quotes (a
+  /// path pasted from Finder or Explorer) dropped, and a leading `~/` or `~\`
+  /// expanded from [environment] - HOME, or USERPROFILE on Windows, where
+  /// HOME is usually unset.
+  @visibleForTesting
+  static String normalizeVaultPath(
+    String vaultPath,
+    Map<String, String> environment,
+  ) {
+    var normalized = vaultPath.trim();
+    if (normalized.length >= 2 &&
+        ((normalized.startsWith("'") && normalized.endsWith("'")) ||
+            (normalized.startsWith('"') && normalized.endsWith('"')))) {
+      normalized = normalized.substring(1, normalized.length - 1);
+    }
+    if (normalized.startsWith('~/') || normalized.startsWith(r'~\')) {
+      final home = environment['HOME'] ?? environment['USERPROFILE'];
+      if (home != null) {
+        normalized = path.join(home, normalized.substring(2));
+      }
+    }
+    return normalized;
+  }
+
   @override
   Future<void> appendToVault({
     required String vaultPath,
@@ -37,25 +61,10 @@ class ObsidianService implements IObsidianService {
     String? direction,
   }) async {
     try {
-      var normalizedVault = vaultPath.trim();
-      if (normalizedVault.length >= 2 &&
-          ((normalizedVault.startsWith("'") && normalizedVault.endsWith("'")) ||
-              (normalizedVault.startsWith('"') &&
-                  normalizedVault.endsWith('"')))) {
-        normalizedVault = normalizedVault.substring(
-          1,
-          normalizedVault.length - 1,
-        );
-      }
-      if (normalizedVault.startsWith('~/') ||
-          normalizedVault.startsWith(r'~\')) {
-        // Windows keeps the home folder in USERPROFILE; HOME is usually unset.
-        final home =
-            Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
-        if (home != null) {
-          normalizedVault = path.join(home, normalizedVault.substring(2));
-        }
-      }
+      final normalizedVault = normalizeVaultPath(
+        vaultPath,
+        Platform.environment,
+      );
       if (!path.isAbsolute(normalizedVault) ||
           !Directory(normalizedVault).existsSync()) {
         throw const FileSystemException(

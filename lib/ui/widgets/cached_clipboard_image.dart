@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -37,6 +38,7 @@ class CachedClipboardImage extends StatefulWidget {
     this.height,
     this.fit = BoxFit.cover,
     this.borderRadius = 8.0,
+    this.encryptionService,
     super.key,
   });
 
@@ -47,11 +49,20 @@ class CachedClipboardImage extends StatefulWidget {
   final BoxFit fit;
   final double borderRadius;
 
+  /// Whose key decrypts the image; the app-wide service unless a test
+  /// supplies one.
+  final IEncryptionService? encryptionService;
+
   @override
   State<CachedClipboardImage> createState() => _CachedClipboardImageState();
 }
 
 class _CachedClipboardImageState extends State<CachedClipboardImage> {
+  // Fixed for the widget's life: the listener is added to and removed from
+  // this one service.
+  late final IEncryptionService _encryption =
+      widget.encryptionService ?? EncryptionService.instance;
+
   /// Whether this device holds a passphrase, so an encrypted image can be
   /// shown rather than reported as a load failure. Resolved asynchronously
   /// because build() cannot await, and re-resolved whenever the source or the
@@ -112,7 +123,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     // before EncryptionService.initialize() has derived the key, so isEnabled()
     // answers false and, cached, would lock every encrypted image for the life
     // of the screen.
-    EncryptionService.instance.keyRevision.addListener(_onKeyRevisionChanged);
+    _encryption.keyRevision.addListener(_onKeyRevisionChanged);
     if (widget.item.isEncrypted) {
       unawaited(_resolveCanDecrypt());
     }
@@ -134,7 +145,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   }
 
   Future<void> _resolveCanDecrypt() async {
-    final enabled = await EncryptionService.instance.isEnabled();
+    final enabled = await _encryption.isEnabled();
     if (mounted && enabled != _canDecrypt) {
       setState(() => _canDecrypt = enabled);
     }
@@ -175,7 +186,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   @override
   void dispose() {
-    EncryptionService.instance.keyRevision.removeListener(
+    _encryption.keyRevision.removeListener(
       _onKeyRevisionChanged,
     );
     _resetDecodedImageState();
