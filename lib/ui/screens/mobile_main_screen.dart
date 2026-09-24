@@ -964,6 +964,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             onNotification: _isPullFromDrag,
             child: CustomScrollView(
               physics: Adaptive.scrollPhysics,
+              // Scrolling the page puts the keyboard away.
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               slivers: [
                 SliverPadding(
                   // One padded column for the whole page, so the composer, chips,
@@ -1013,6 +1015,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           width: _composePaneWidth,
           child: SingleChildScrollView(
             physics: Adaptive.scrollPhysics,
+            // Scrolling the page puts the keyboard away.
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: EdgeInsets.fromLTRB(
               GhostSpacing.gutter,
               8,
@@ -1046,6 +1050,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               onNotification: _isPullFromDrag,
               child: CustomScrollView(
                 physics: Adaptive.scrollPhysics,
+                // Scrolling the page puts the keyboard away.
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 slivers: [
                   SliverPadding(
                     padding: EdgeInsets.fromLTRB(
@@ -1255,43 +1262,56 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               if (_viewModel.clipboardContent?.hasImage ?? false)
                 _buildImagePreview(),
             ],
-            TextField(
-              controller: _pasteController,
-              focusNode: _pasteFocusNode,
-              // minLines sets the empty composer's height directly. Expanded
-              // cannot: this lives in a sliver, so incoming height is
-              // unbounded and a flex child has nothing to expand into.
-              minLines: 3,
-              maxLines: 5,
-              keyboardType: TextInputType.multiline,
-              style: const TextStyle(
-                fontSize: 16,
-                color: GhostColors.textPrimary,
+            // Its own layer: the cursor repaints this and nothing else.
+            RepaintBoundary(
+              child: TextField(
+                controller: _pasteController,
+                focusNode: _pasteFocusNode,
+                // Blink, don't fade. The iOS default animates the cursor's
+                // opacity, which asks for a frame continuously - up to 120 a
+                // second on a ProMotion screen - for as long as the field has
+                // focus. Measured on an iPhone 15 Pro: 21% of a core with the
+                // keyboard up and nothing typed, against ~0% once dismissed.
+                // A plain blink repaints twice a second.
+                cursorOpacityAnimates: false,
+                // Phones do not unfocus on a tap elsewhere by default, so there was
+                // no way to put the keyboard away and stay on this screen.
+                onTapOutside: (_) => _pasteFocusNode.unfocus(),
+                // minLines sets the empty composer's height directly. Expanded
+                // cannot: this lives in a sliver, so incoming height is
+                // unbounded and a flex child has nothing to expand into.
+                minLines: 3,
+                maxLines: 5,
+                keyboardType: TextInputType.multiline,
+                style: const TextStyle(
+                  fontSize: 16,
+                  color: GhostColors.textPrimary,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Paste or type something…',
+                  hintStyle: TextStyle(color: GhostColors.textMuted),
+                  contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                ),
+                onChanged: (value) {
+                  if (_viewModel.sendErrorMessage != null) {
+                    _viewModel.clearSendError();
+                  }
+                  // Nothing else needed here: _syncComposerHasText is driven by
+                  // the controller, so it covers typing and the programmatic
+                  // paths (auto-paste, clear after send) alike.
+                  //
+                  // This used to be setState(), which rebuilt the entire screen
+                  // on every keystroke - and the history list is built eagerly,
+                  // so that reconstructed every _HistoryRow (each doing
+                  // decryption and content detection) per character typed.
+                },
               ),
-              decoration: const InputDecoration(
-                hintText: 'Paste or type something…',
-                hintStyle: TextStyle(color: GhostColors.textMuted),
-                contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
-                filled: false,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                errorBorder: InputBorder.none,
-                focusedErrorBorder: InputBorder.none,
-              ),
-              onChanged: (value) {
-                if (_viewModel.sendErrorMessage != null) {
-                  _viewModel.clearSendError();
-                }
-                // Nothing else needed here: _syncComposerHasText is driven by
-                // the controller, so it covers typing and the programmatic
-                // paths (auto-paste, clear after send) alike.
-                //
-                // This used to be setState(), which rebuilt the entire screen
-                // on every keystroke - and the history list is built eagerly,
-                // so that reconstructed every _HistoryRow (each doing
-                // decryption and content detection) per character typed.
-              },
             ),
             const Divider(height: 1, color: GhostColors.border),
             _buildComposerToolbar(hasAttachment: hasAttachment),
@@ -1425,6 +1445,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               : ListView.separated(
                   scrollDirection: Axis.horizontal,
                   physics: Adaptive.scrollPhysics,
+                  // Scrolling the page puts the keyboard away.
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   itemCount: targets.length + 1,
                   separatorBuilder: (context, index) =>
                       const SizedBox(width: 8),
@@ -1688,46 +1711,52 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Widget _buildHistorySearch() {
-    return TextField(
-      controller: _historySearchController,
-      onChanged: _viewModel.filterHistoryDebounced,
-      style: const TextStyle(fontSize: 16, color: GhostColors.textPrimary),
-      decoration: InputDecoration(
-        hintText: 'Search clips…',
-        hintStyle: const TextStyle(color: GhostColors.textMuted),
-        prefixIcon: const Icon(
-          Icons.search_rounded,
-          size: 18,
-          color: GhostColors.textMuted,
-        ),
-        suffixIcon: _viewModel.historySearchQuery.isEmpty
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.close_rounded, size: 17),
-                color: GhostColors.textMuted,
-                tooltip: 'Clear search',
-                onPressed: () {
-                  _historySearchController.clear();
-                  _viewModel.filterHistory('');
-                },
-              ),
-        filled: true,
-        fillColor: GhostColors.surface,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 12,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-          borderSide: const BorderSide(color: GhostColors.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-          borderSide: const BorderSide(color: GhostColors.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-          borderSide: const BorderSide(color: GhostColors.accentBorder),
+    return RepaintBoundary(
+      child: TextField(
+        controller: _historySearchController,
+        // Same as the composer: a fading cursor keeps frames coming while the
+        // search box has focus.
+        cursorOpacityAnimates: false,
+        onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+        onChanged: _viewModel.filterHistoryDebounced,
+        style: const TextStyle(fontSize: 16, color: GhostColors.textPrimary),
+        decoration: InputDecoration(
+          hintText: 'Search clips…',
+          hintStyle: const TextStyle(color: GhostColors.textMuted),
+          prefixIcon: const Icon(
+            Icons.search_rounded,
+            size: 18,
+            color: GhostColors.textMuted,
+          ),
+          suffixIcon: _viewModel.historySearchQuery.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 17),
+                  color: GhostColors.textMuted,
+                  tooltip: 'Clear search',
+                  onPressed: () {
+                    _historySearchController.clear();
+                    _viewModel.filterHistory('');
+                  },
+                ),
+          filled: true,
+          fillColor: GhostColors.surface,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 12,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+            borderSide: const BorderSide(color: GhostColors.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+            borderSide: const BorderSide(color: GhostColors.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
+            borderSide: const BorderSide(color: GhostColors.accentBorder),
+          ),
         ),
       ),
     );
@@ -2310,6 +2339,9 @@ class _HistoryRowState extends State<_HistoryRow> {
                   Flexible(
                     child: SingleChildScrollView(
                       physics: Adaptive.scrollPhysics,
+                      // Scrolling the page puts the keyboard away.
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
                       child: SelectableText(
                         widget.item.content,
                         style: const TextStyle(
