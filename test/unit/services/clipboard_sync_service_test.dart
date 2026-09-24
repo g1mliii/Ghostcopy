@@ -473,6 +473,72 @@ void main() {
       verifyVaultGot('clip 2');
     });
 
+    testWidgets('a catch-up whose fetch failed is retried, not lost', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.reinitializeForUser();
+      await settle(tester);
+      service.pauseRealtime();
+
+      // The first fetch of the missed row fails; the next one works.
+      var fetches = 0;
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async {
+        if (fetches++ == 0) throw Exception('network blip');
+        return clip('2');
+      });
+      service.resumeRealtime();
+      await settle(tester);
+
+      // Idle again, then back: the row is tried again rather than treated as
+      // already seen.
+      service
+        ..pauseRealtime()
+        ..resumeRealtime();
+      await settle(tester);
+
+      verify(() => repository.getById('2')).called(2);
+      verifyVaultGot('clip 2');
+    });
+
+    testWidgets('a catch-up queued for one account does not run for the next', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.reinitializeForUser();
+      await settle(tester);
+      service.pauseRealtime();
+
+      final slow = Completer<String?>();
+      when(repository.getLatestItemId).thenAnswer((_) => slow.future);
+      service.resumeRealtime();
+      await tester.pump();
+      service
+        ..pauseRealtime()
+        ..resumeRealtime(); // queued behind the slow poll
+
+      // Switch accounts before the slow poll finishes. The new account's
+      // baseline query is slow; anything after it answers at once - so a
+      // leftover queued poll would read the newest row before the baseline
+      // exists.
+      final seed = Completer<String?>();
+      var calls = 0;
+      when(
+        repository.getLatestItemId,
+      ).thenAnswer((_) => calls++ == 0 ? seed.future : Future.value('9'));
+      when(() => repository.getById(any())).thenAnswer((_) async => null);
+      service.reinitializeForUser();
+      slow.complete(null);
+      await settle(tester);
+      seed.complete('9');
+      await settle(tester);
+
+      // The new account's existing newest row predates this session and must
+      // not be received as new.
+      verifyNever(() => repository.getById('9'));
+    });
+
     testWidgets('resuming with nothing new fetches nothing', (tester) async {
       when(repository.getLatestItemId).thenAnswer((_) async => '1');
       service.reinitializeForUser();

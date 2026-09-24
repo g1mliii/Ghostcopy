@@ -106,6 +106,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   final _claimedIds = <String>{};
   static const _maxClaimedIds = 64;
 
+  /// Ids whose fetch threw, for the poll that asked to wind back and retry.
+  final _failedFetchIds = <String>{};
+
   /// Claim [id] for delivery. False if the other path already has it.
   bool _claim(String id) {
     if (!_claimedIds.add(id)) return false;
@@ -292,6 +295,11 @@ class ClipboardSyncService implements IClipboardSyncService {
       return item;
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Receive fetch failed: $e');
+      // Not delivered, so not claimed: the other path, or the next poll, may
+      // still try it. A claim held through a failed fetch lost the clip for
+      // good, since the competing path had already stepped aside.
+      _claimedIds.remove(id);
+      _failedFetchIds.add(id);
       return null;
     }
   }
@@ -1376,6 +1384,10 @@ class ClipboardSyncService implements IClipboardSyncService {
     _lastPolledItemId = null;
     _baselineReady = false;
     _claimedIds.clear();
+    _failedFetchIds.clear();
+    // A catch-up queued for the account just left must not run against this
+    // one before its baseline is taken.
+    _pollRequested = false;
     _lastMonitoredClipboard = '';
     _lastClipboardChangeCount = null;
     _emptyReadChangeCount = null;
@@ -1426,6 +1438,12 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Realtime delivered it while the id was being read.
       if (_claim(latestId)) {
         await _handleSmartAutoReceive(_receiveItem(latestId));
+        // The fetch failed: wind the baseline back so the next poll - or the
+        // next resume's catch-up - tries this row again instead of treating
+        // it as seen.
+        if (_failedFetchIds.remove(latestId) && _lastPolledItemId == latestId) {
+          _lastPolledItemId = previousId;
+        }
       }
 
       // Notify UI to refresh
