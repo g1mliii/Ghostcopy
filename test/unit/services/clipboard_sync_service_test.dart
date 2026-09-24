@@ -370,6 +370,43 @@ void main() {
       service.stopPolling();
     });
 
+    testWidgets('a clip that landed while polling arrives when realtime '
+        'resumes', (tester) async {
+      // Idle in the tray, the lifecycle had dropped realtime for polling. A
+      // file sent from Finder's context menu - or a clip from the phone -
+      // landed between two polls, and opening the Spotlight resumed
+      // realtime, which only sees rows inserted after it subscribes. The clip
+      // stayed out of the history until some later clip reloaded it.
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.reinitializeForUser();
+      await settle(tester);
+      service.pauseRealtime();
+
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      var historyReloads = 0;
+      service
+        ..onClipboardReceived = (() => historyReloads++)
+        ..resumeRealtime();
+      await settle(tester);
+
+      expect(historyReloads, 1);
+      verify(() => repository.getById('2')).called(1);
+      verifyVaultGot('clip 2');
+    });
+
+    testWidgets('resuming with nothing new fetches nothing', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.reinitializeForUser();
+      await settle(tester);
+      service
+        ..pauseRealtime()
+        ..resumeRealtime();
+      await settle(tester);
+
+      verifyNever(() => repository.getById(any()));
+    });
+
     testWidgets('when it was already newest as the subscription opened', (
       tester,
     ) async {
