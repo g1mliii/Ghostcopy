@@ -11,6 +11,7 @@ const source = (await readFile(new URL('../../supabase/functions/send-clipboard-
 function fixture(count = 10, sendResult = null) {
   let handler;
   const messages = [];
+  const updates = [];
   const client = {
     auth: { getUser: async () => ({ data: { user: { id: 'user' } }, error: null }) },
     from(table) {
@@ -23,7 +24,7 @@ function fixture(count = 10, sendResult = null) {
       });
       return {
         select() { return this; }, lt() { return this; }, eq() { return this; }, neq() { return this; }, in() { return this; },
-        update() { updating = true; return this; },
+        update(payload) { updating = true; updates.push({ table, payload }); return this; },
         async maybeSingle() { return result(); },
         then(resolve, reject) { return Promise.resolve(result()).then(resolve, reject); },
       };
@@ -51,6 +52,7 @@ function fixture(count = 10, sendResult = null) {
   vm.runInContext(source, context);
   return {
     messages,
+    updates,
     request: (token, id = 10, owner = 'user') => handler({
       method: 'POST', headers: new Headers({ Authorization: `Bearer ${token}` }),
       json: async () => ({ record: { id, user_id: owner, device_type: 'windows', content_type: 'text' } }),
@@ -106,4 +108,34 @@ test('a failed send reports FCM\'s reason, never the token', async () => {
     message: 'Auth error from APNS or Web Push Service',
   }]);
   assert.ok(!JSON.stringify(response.body).includes('phone-token'));
+});
+
+const clearedTokens = (f) => f.updates.filter(
+  (u) => u.table === 'devices' && 'fcm_token' in u.payload && u.payload.fcm_token === null,
+);
+
+test('an APNs token Apple rejects is cleared, not retried forever', async () => {
+  const f = fixture(10, {
+    successCount: 0,
+    failureCount: 1,
+    responses: [{
+      success: false,
+      error: { code: 'messaging/invalid-argument', message: 'APNs device token is invalid.' },
+    }],
+  });
+  await f.request('service-secret');
+  assert.equal(clearedTokens(f).length, 1);
+});
+
+test('an invalid-argument for any other reason keeps the token', async () => {
+  const f = fixture(10, {
+    successCount: 0,
+    failureCount: 1,
+    responses: [{
+      success: false,
+      error: { code: 'messaging/invalid-argument', message: 'Invalid value at message.data' },
+    }],
+  });
+  await f.request('service-secret');
+  assert.equal(clearedTokens(f).length, 0);
 });

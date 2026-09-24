@@ -144,6 +144,18 @@ void main() {
     },
   );
 
+  test('registering without a token keeps the one already stored', () async {
+    // A launch that has not got its token yet - a slow FCM answer, or iOS
+    // still waiting on APNs - registered with fcm_token: null, and the
+    // upsert wiped the working token until a later launch put it back.
+    await devices.registerCurrentDevice();
+
+    final upsert = requests.singleWhere(
+      (r) => r.method == 'POST' && r.url.path == '/rest/v1/devices',
+    );
+    expect(jsonDecode(upsert.body) as Map, isNot(contains('fcm_token')));
+  });
+
   test('a refused claim does not throw', () async {
     claimSucceeds = false;
     await devices.registerCurrentDevice();
