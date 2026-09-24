@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -123,6 +124,55 @@ void main() {
   });
 
   tearDown(() => service.dispose());
+
+  testWidgets('slow clipboard reads do not overlap timer ticks', (
+    tester,
+  ) async {
+    const channel = MethodChannel('com.ghostcopy.app/clipboard_change');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (_) async => 1,
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
+    });
+    final pending = Completer<ClipboardContent>();
+    when(clipboard.read).thenAnswer((_) => pending.future);
+    service.startClipboardMonitoring();
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(seconds: 5));
+    }
+    verify(clipboard.read).called(1);
+    pending.completeError(Exception('Temporary read failure'));
+    await tester.pump();
+    when(
+      clipboard.read,
+    ).thenAnswer((_) async => const ClipboardContent.empty());
+    await tester.pump(const Duration(seconds: 5));
+    verify(clipboard.read).called(1);
+    service.stopClipboardMonitoring();
+  });
+
+  testWidgets('slow history polls do not overlap and recover after failure', (
+    tester,
+  ) async {
+    final pending = Completer<String?>();
+    when(repository.getLatestItemId).thenAnswer((_) => pending.future);
+    service.startPolling(interval: const Duration(seconds: 1));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    verify(repository.getLatestItemId).called(1);
+    pending.completeError(Exception('Temporary network failure'));
+    await tester.pump();
+    when(repository.getLatestItemId).thenAnswer((_) async => null);
+    await tester.pump(const Duration(seconds: 1));
+    verify(repository.getLatestItemId).called(1);
+    service.stopPolling();
+  });
 
   testWidgets('manual text sends reach both integrations', (tester) async {
     service.notifyManualSend('manual clip');

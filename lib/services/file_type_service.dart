@@ -138,6 +138,8 @@ class FileTypeService {
 
   FileTypeInfo detectFromExtension(String filename) {
     final extension = filename.split('.').last.toLowerCase();
+    final originalImage = _originalImageType(extension);
+    if (originalImage != null) return originalImage;
 
     // Image types
     if (extension == 'png') {
@@ -367,12 +369,24 @@ class FileTypeService {
       );
     }
 
-    // MP4: ftyp at bytes 4-8
+    // ISO base-media containers share "ftyp". Preserve still-image formats
+    // as files instead of incorrectly labelling HEIC/HEIF/AVIF as MP4 video.
     if (bytes.length >= 8 &&
         bytes[4] == 0x66 &&
         bytes[5] == 0x74 &&
         bytes[6] == 0x79 &&
         bytes[7] == 0x70) {
+      if (bytes.length >= 12) {
+        final brand = String.fromCharCodes(bytes.sublist(8, 12));
+        final extension = switch (brand) {
+          'heic' || 'heix' || 'hevc' || 'hevx' => 'heic',
+          'mif1' || 'msf1' => 'heif',
+          'avif' || 'avis' => 'avif',
+          _ => '',
+        };
+        final originalImage = _originalImageType(extension);
+        if (originalImage != null) return originalImage;
+      }
       return const FileTypeInfo(
         contentType: ContentType.fileMp4,
         mimeType: 'video/mp4',
@@ -427,5 +441,18 @@ class FileTypeService {
     }
 
     return null;
+  }
+
+  /// These assets have no portable thumbnail renderer, but can be transferred
+  /// unchanged using the generic file path and their actual MIME/extension.
+  FileTypeInfo? _originalImageType(String extension) {
+    if (extension != 'heic' && extension != 'heif' && extension != 'avif') {
+      return null;
+    }
+    return FileTypeInfo(
+      contentType: ContentType.fileOther,
+      mimeType: 'image/$extension',
+      extension: extension,
+    );
   }
 }
