@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -10,8 +11,28 @@ import '../fcm_service.dart';
 /// Manages FCM token lifecycle for mobile push notifications.
 /// Desktop platforms should not use this service.
 class FcmService implements IFcmService {
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  FcmService({
+    FirebaseMessaging? messaging,
+    bool? isIOS,
+    Future<void> Function(Duration)? delay,
+  }) : _messagingOverride = messaging,
+       _isIOS = isIOS ?? Platform.isIOS,
+       _delay = delay ?? Future<void>.delayed;
+
+  final FirebaseMessaging? _messagingOverride;
+  // Resolved on first use, so constructing the service does not touch
+  // Firebase before Firebase.initializeApp.
+  FirebaseMessaging get _messaging =>
+      _messagingOverride ?? FirebaseMessaging.instance;
+  final bool _isIOS;
+  final Future<void> Function(Duration) _delay;
   bool _initialized = false;
+
+  /// How long to wait for iOS to hand over the APNs token, and how many
+  /// times to ask FCM before giving up until the next launch or resume.
+  static const _apnsWait = Duration(milliseconds: 500);
+  static const _apnsAttempts = 20;
+  static const _tokenRetryDelays = [Duration(seconds: 2), Duration(seconds: 5)];
 
   // Stream controller for token refresh events
   final StreamController<String> _tokenRefreshController =
@@ -31,9 +52,7 @@ class FcmService implements IFcmService {
       debugPrint('[FcmService] Starting initialization...');
 
       // Listen for token refresh events (store subscription for cleanup)
-      _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((
-        newToken,
-      ) {
+      _tokenRefreshSubscription = _messaging.onTokenRefresh.listen((newToken) {
         // Length only. An FCM token is a credential for pushing to this
         // device, so it does not belong in logs - and substring(0, 20) threw
         // RangeError (an Error, which `on Exception` below would not catch) on
@@ -64,20 +83,49 @@ class FcmService implements IFcmService {
         return null;
       }
 
-      // Get the FCM token
-      final token = await _messaging.getToken();
-
-      if (token != null) {
-        debugPrint('[FcmService] ✅ Got FCM token (${token.length} chars)');
-      } else {
-        debugPrint('[FcmService] ⚠️ FCM token is null');
+      // On iOS an FCM token exists only once APNs has given the app its
+      // device token, which arrives a moment after permission is granted.
+      // Asking before then fails (apns-token-not-set), and a first launch
+      // asks straight after the permission prompt: the device registered with
+      // no token and push stayed off until the next launch. Wait for it.
+      if (_isIOS && !await _waitForApnsToken()) {
+        debugPrint('[FcmService] ⚠️ No APNs token yet - asking FCM anyway');
       }
 
-      return token;
+      // A network blip on a cold start cost the same. Retry briefly; a
+      // failure after that is picked up by onTokenRefresh, or the next
+      // resume's re-assert.
+      for (var attempt = 0; ; attempt++) {
+        try {
+          final token = await _messaging.getToken();
+          if (token != null && token.isNotEmpty) {
+            debugPrint('[FcmService] ✅ Got FCM token (${token.length} chars)');
+            return token;
+          }
+          debugPrint('[FcmService] ⚠️ FCM token is null');
+        } on Exception catch (e) {
+          debugPrint('[FcmService] ⚠️ FCM token attempt failed: $e');
+        }
+        if (attempt >= _tokenRetryDelays.length) return null;
+        await _delay(_tokenRetryDelays[attempt]);
+      }
     } on Exception catch (e) {
       debugPrint('[FcmService] ❌ Failed to get FCM token: $e');
       return null;
     }
+  }
+
+  /// Poll for the APNs token for up to [_apnsAttempts] x [_apnsWait].
+  Future<bool> _waitForApnsToken() async {
+    for (var i = 0; i < _apnsAttempts; i++) {
+      try {
+        if (await _messaging.getAPNSToken() != null) return true;
+      } on Exception catch (e) {
+        debugPrint('[FcmService] APNs token not readable yet: $e');
+      }
+      await _delay(_apnsWait);
+    }
+    return false;
   }
 
   @override

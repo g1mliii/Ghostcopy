@@ -132,12 +132,14 @@ class DeviceService implements IDeviceService {
             'user_id': userId,
             'device_type': deviceType,
             'device_name': deviceName,
-            // Upsert writes every column, so this CLEARS any stored token
-            // unless one is supplied. Mobile callers pass their token here so
-            // registration is a single write; previously they followed this
-            // with updateFcmToken(), which cost a second round-trip and left a
-            // window in between where push was broken for the device.
-            'fcm_token': fcmToken,
+            // Only with a token. An upsert updates every column it is given,
+            // so sending null wiped the stored token whenever this launch had
+            // not got one yet - a slow FCM answer, or iOS still waiting on
+            // APNs - and push stayed off until a later launch put it back.
+            // Left out, an existing row keeps its token and a new row starts
+            // without one. Mobile callers pass their token here so
+            // registration is a single write.
+            if (fcmToken != null && fcmToken.isNotEmpty) 'fcm_token': fcmToken,
             'last_active': DateTime.now().toUtc().toIso8601String(),
           }, onConflict: 'user_id,device_type,device_name')
           .select('id')

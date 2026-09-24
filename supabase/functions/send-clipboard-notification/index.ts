@@ -373,7 +373,17 @@ Deno.serve(async (req)=>{
                   // APNs auth failure, a sender mismatch) but never the token.
                   message: String(resp.error.message ?? '').slice(0, 200),
                 });
-                if (errorCode === 'messaging/registration-token-not-registered' || errorCode === 'messaging/invalid-registration-token') {
+                // Android reports a dead token as not-registered. iOS reports
+                // an APNs token Apple rejects - an app reinstalled, or its
+                // registration replaced - as invalid-argument with this
+                // message; it was never cleared, so every later push to that
+                // device failed the same way, and the device's list entry
+                // stayed a push target that could never receive. The message
+                // is checked because invalid-argument alone also covers a
+                // malformed payload, which is no reason to drop a token.
+                const deadApnsToken = errorCode === 'messaging/invalid-argument' &&
+                  /APNs device token/i.test(String(resp.error.message ?? ''));
+                if (errorCode === 'messaging/registration-token-not-registered' || errorCode === 'messaging/invalid-registration-token' || deadApnsToken) {
                   staleDeviceIds.push(validDevices[idx].id);
                 }
               }
