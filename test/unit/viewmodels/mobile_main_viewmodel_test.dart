@@ -295,6 +295,46 @@ void main() {
       expect(viewModel.historyError, isNull);
     });
 
+    test('the first load shows loading while nothing is on screen', () async {
+      final request = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) => request.future);
+
+      final loading = viewModel.loadHistory();
+      expect(viewModel.historyLoading, isTrue);
+
+      request.complete([item('1')]);
+      await loading;
+      expect(viewModel.historyLoading, isFalse);
+    });
+
+    test('reopening the app refreshes the clips without hiding them', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+      await viewModel.loadHistory();
+
+      // Back from the background, the reload is in flight.
+      final request = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) => request.future);
+      viewModel.onAppResumed();
+      await Future<void>.delayed(Duration.zero);
+
+      // The regression: loading was flagged on every resume, and the screen
+      // shows the spinner instead of the list whenever it is - so the clips
+      // flashed out and back in each time the app was reopened.
+      expect(viewModel.historyLoading, isFalse);
+      expect(viewModel.filteredHistoryItems, hasLength(2));
+
+      request.complete([item('3'), item('1'), item('2')]);
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.historyLoading, isFalse);
+      expect(viewModel.filteredHistoryItems.map((i) => i.id), ['3', '1', '2']);
+    });
+
     test('an active search survives a reload', () async {
       when(
         () => clipboardRepository.getHistory(),
