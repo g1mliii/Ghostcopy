@@ -101,12 +101,14 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
   bool _isMonitoring = false;
+  bool _isCheckingClipboard = false;
 
   @override
   bool get isMonitoring => _isMonitoring;
 
   // Polling mode state
   Timer? _pollingTimer;
+  bool _isPolling = false;
 
   /// The newest clipboard row already seen, by realtime or by a poll, so a
   /// poll never runs a clip through auto-receive a second time.
@@ -738,7 +740,12 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   Future<void> _checkClipboardForAutoSend() async {
-    if (_clipboardWritesInProgress > 0 || _isDisposed) return;
+    if (_clipboardWritesInProgress > 0 || _isDisposed || _isCheckingClipboard) {
+      return;
+    }
+    // A slow native read/upload can outlive the timer interval. Keep only one
+    // payload in flight instead of accumulating reads and duplicate work.
+    _isCheckingClipboard = true;
     try {
       // Nothing written to the pasteboard since the last tick means the
       // payload cannot have changed, so the full read is skipped entirely.
@@ -843,6 +850,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Clipboard check failed: $e');
+    } finally {
+      _isCheckingClipboard = false;
     }
   }
 
@@ -1339,6 +1348,8 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   /// Poll for new clipboard items
   Future<void> _pollForNewClipboards() async {
+    if (_isDisposed || _isPolling) return;
+    _isPolling = true;
     try {
       debugPrint('[ClipboardSync] 🔍 Polling for new items...');
 
@@ -1360,6 +1371,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       onClipboardReceived?.call();
     } on Exception catch (e) {
       debugPrint('[ClipboardSync] ❌ Polling error: $e');
+    } finally {
+      _isPolling = false;
     }
   }
 

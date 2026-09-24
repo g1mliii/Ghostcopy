@@ -597,21 +597,29 @@ class SpotlightViewModel extends ChangeNotifier {
       return;
     }
 
+    final content = _content;
     try {
-      final result = await _transformerService.detectContentType(_content);
+      final result = await _transformerService.detectContentType(content);
+      if (_isDisposed || content != _content) return;
+      final previous = _detectedContentType;
       _detectedContentType = result;
 
       // For JWT, prefetch transformation for instant display
       if (result.type == TransformerContentType.jwt) {
         _jwtTransformFuture = _transformerService.transform(
-          _content,
+          content,
           TransformerContentType.jwt,
         );
       } else {
         _jwtTransformFuture = null;
       }
 
-      notifyListeners();
+      // Plain text has no preview that changes with each edit. The field
+      // already paints its own edits; avoid rebuilding the whole spotlight.
+      if (previous?.type != result.type ||
+          result.type != TransformerContentType.plainText) {
+        notifyListeners();
+      }
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Content detection failed: $e');
     }

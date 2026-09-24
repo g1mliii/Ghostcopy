@@ -92,13 +92,16 @@ to package - but everything below marked "verify" does need one.
       Received clips never notified on any desktop until 2026-09-22 - the sync
       service was built without its notifier - so this is the first real test
 - [ ] **Clipboard staleness (verify).** New native channel in
-      `windows/runner/flutter_window.cpp` answers `changeCount` with
-      `GetClipboardSequenceNumber()`, written but not yet compiled. Check: the
-      app builds; with auto-receive on smart, copy something in another app,
-      send a clip from the phone within the stale window - it is NOT copied
-      and a "Copy" notification appears instead; after the window it is
+      `windows/runner/flutter_window.cpp` answers `changeCount` from
+      `GetClipboardSequenceNumber()`, counting a change only when the
+      clipboard changes hands (so OLE delayed renders do not count), written
+      but not yet compiled. Check: the app builds; with auto-receive on smart,
+      copy something in another app, send a clip from the phone within the
+      stale window - it is NOT copied and a "Copy" notification appears
+      instead; after the window it is
       copied; two clips sent back to back are both copied; copying from
-      GhostCopy's history also counts. Auto-send now skips reading an
+      GhostCopy's history also counts; pasting an auto-copied clip into Word
+      does NOT make the next clip wait. Auto-send now skips reading an
       unchanged clipboard on Windows too, via the same counter
 - [ ] **Launch at startup (verify).** Uses the package's registry path on
       Windows, unlike macOS; check it survives a reboot

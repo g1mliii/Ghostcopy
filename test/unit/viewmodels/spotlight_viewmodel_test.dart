@@ -223,6 +223,101 @@ void main() {
     verifyNever(() => clipboard.writeImage(any()));
   });
 
+  testWidgets('plain typing pauses do not repeatedly rebuild the window', (
+    tester,
+  ) async {
+    var notifications = 0;
+    viewModel.addListener(() => notifications++);
+    for (var i = 0; i < 20; i++) {
+      viewModel.updateContent('ordinary text $i');
+      await tester.pump(const Duration(milliseconds: 301));
+    }
+    expect(notifications, 1);
+    expect(viewModel.content, 'ordinary text 19');
+    viewModel.updateContent('');
+    await tester.pump(const Duration(milliseconds: 301));
+    expect(notifications, 2);
+    expect(viewModel.detectedContentType, isNull);
+  });
+
+  testWidgets('outdated detection cannot overwrite newer input', (
+    tester,
+  ) async {
+    final pending = Completer<ContentDetectionResult>();
+    when(
+      () => transformerService.detectContentType('old'),
+    ).thenAnswer((_) => pending.future);
+    viewModel.updateContent('old');
+    await tester.pump(const Duration(milliseconds: 301));
+    viewModel.updateContent('new');
+    await tester.pump(const Duration(milliseconds: 301));
+    pending.complete(
+      const ContentDetectionResult(type: TransformerContentType.json),
+    );
+    await tester.pump();
+    expect(
+      viewModel.detectedContentType?.type,
+      TransformerContentType.plainText,
+    );
+  });
+
+  testWidgets('continuous typing runs detection once after the final key', (
+    tester,
+  ) async {
+    var notifications = 0;
+    viewModel.addListener(() => notifications++);
+    for (var i = 1; i <= 100; i++) {
+      viewModel.updateContent('a' * i);
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    verifyNever(() => transformerService.detectContentType(any()));
+    expect(notifications, 0);
+
+    await tester.pump(const Duration(milliseconds: 201));
+    verify(() => transformerService.detectContentType('a' * 100)).called(1);
+    expect(notifications, 1);
+
+    // Once settled, no recurring detection, transform or window rebuild work.
+    await tester.pump(const Duration(seconds: 30));
+    verifyNoMoreInteractions(transformerService);
+    expect(notifications, 1);
+  });
+
+  testWidgets('selection-only changes do not restart content detection', (
+    tester,
+  ) async {
+    viewModel.updateContent('ordinary text');
+    await tester.pump(const Duration(milliseconds: 200));
+    // The controller listener also runs for caret/selection changes, but the
+    // text is unchanged. Detection should retain its original deadline.
+    viewModel.updateContent('ordinary text');
+    await tester.pump(const Duration(milliseconds: 101));
+    verify(
+      () => transformerService.detectContentType('ordinary text'),
+    ).called(1);
+    await tester.pump(const Duration(seconds: 1));
+    verifyNoMoreInteractions(transformerService);
+  });
+
+  testWidgets('rich previews still refresh while their type stays the same', (
+    tester,
+  ) async {
+    var notifications = 0;
+    viewModel.addListener(() => notifications++);
+    when(() => transformerService.detectContentType(any())).thenAnswer(
+      (invocation) async => ContentDetectionResult(
+        type: TransformerContentType.hexColor,
+        metadata: {'color': invocation.positionalArguments.first as String},
+      ),
+    );
+    for (final color in ['#fff', '#000']) {
+      viewModel.updateContent(color);
+      await tester.pump(const Duration(milliseconds: 301));
+    }
+    expect(notifications, 2);
+    expect(viewModel.detectedContentType?.metadata?['color'], '#000');
+  });
+
   test('initialize loads history and attaches realtime callback', () async {
     final history = <ClipboardItem>[_clipboardItem(id: '1', content: 'hello')];
 
