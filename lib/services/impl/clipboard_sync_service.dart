@@ -82,9 +82,38 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _pollingTimer;
   bool _isPolling = false;
 
+  /// A poll asked for while one was running - the catch-up on resume, say.
+  /// Run once the current one finishes rather than dropped: the running poll
+  /// may already have read the newest id, and a row after it would otherwise
+  /// wait for the next timer tick, or forever once realtime has taken over.
+  bool _pollRequested = false;
+
   /// The newest clipboard row already seen, by realtime or by a poll, so a
   /// poll never runs a clip through auto-receive a second time.
   String? _lastPolledItemId;
+
+  /// Whether [_lastPolledItemId] has been established for this account,
+  /// including as "no clips at all". Null alone cannot say: an empty account
+  /// looked exactly like a baseline never taken, so a first clip that landed
+  /// while realtime was paused was adopted as the baseline on resume and
+  /// never delivered.
+  bool _baselineReady = false;
+
+  /// Rows already handed to auto-receive, by realtime or by a poll. Around a
+  /// switch back to realtime the catch-up poll and the new subscription can
+  /// both see the same row; whichever claims it first delivers it. Bounded:
+  /// only the handoff needs it.
+  final _claimedIds = <String>{};
+  static const _maxClaimedIds = 64;
+
+  /// Claim [id] for delivery. False if the other path already has it.
+  bool _claim(String id) {
+    if (!_claimedIds.add(id)) return false;
+    if (_claimedIds.length > _maxClaimedIds) {
+      _claimedIds.remove(_claimedIds.first);
+    }
+    return true;
+  }
 
   // Auto-receive debouncing
   Timer? _autoReceiveDebounceTimer;
@@ -155,7 +184,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     // Nothing seen yet - launch, or an account switch: whatever is newest now
     // predates this subscription and was never auto-received, so the first
     // poll must not treat it as new either.
-    if (_lastPolledItemId == null) unawaited(_seedPollBaseline(userId));
+    if (!_baselineReady) unawaited(_seedPollBaseline(userId));
 
     _realtimeChannel = _supabaseClient
         .channel('clipboard_changes')
@@ -185,11 +214,13 @@ class ClipboardSyncService implements IClipboardSyncService {
       final latest = await _clipboardRepository.getLatestItemId();
       // A realtime insert or a poll that landed first is newer than this.
       if (_isDisposed ||
+          _baselineReady ||
           _lastPolledItemId != null ||
           _supabaseClient.auth.currentUser?.id != userId) {
         return;
       }
       _lastPolledItemId = latest;
+      _baselineReady = true;
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Could not seed poll baseline: $e');
     }
@@ -202,7 +233,15 @@ class ClipboardSyncService implements IClipboardSyncService {
     // as new when it takes over - it would hand the clip to the integrations
     // a second time.
     final id = record['id']?.toString();
-    if (id != null) _lastPolledItemId = id;
+    if (id != null) {
+      _lastPolledItemId = id;
+      _baselineReady = true;
+      // The catch-up poll got here first: it is already being delivered.
+      if (!_claim(id)) {
+        onClipboardReceived?.call();
+        return;
+      }
+    }
 
     if (_isForThisDevice(
       record['device_name'] as String?,
@@ -1295,8 +1334,9 @@ class ClipboardSyncService implements IClipboardSyncService {
     // not to the integrations. It showed up only once some later clip made
     // the history reload, minutes afterwards. One catch-up poll closes the
     // gap. With no baseline yet, _subscribeToRealtimeUpdates seeds one and
-    // there is nothing to catch up on.
-    if (_lastPolledItemId != null) unawaited(_pollForNewClipboards());
+    // there is nothing to catch up on - but an empty account's baseline is
+    // ready, and its first clip may be exactly what was missed.
+    if (_baselineReady) unawaited(_pollForNewClipboards(queueIfBusy: true));
   }
 
   /// Start polling mode
@@ -1334,6 +1374,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     _realtimeChannel = null;
     _autoReceiveDebounceTimer?.cancel();
     _lastPolledItemId = null;
+    _baselineReady = false;
+    _claimedIds.clear();
     _lastMonitoredClipboard = '';
     _lastClipboardChangeCount = null;
     _emptyReadChangeCount = null;
@@ -1345,8 +1387,17 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Poll for new clipboard items
-  Future<void> _pollForNewClipboards() async {
-    if (_isDisposed || _isPolling) return;
+  ///
+  /// [queueIfBusy] is for the resume catch-up, which must not be lost to a
+  /// poll already running. Timer ticks are not queued: the timer comes round
+  /// again anyway, and queueing them stacked a burst of polls behind one slow
+  /// request.
+  Future<void> _pollForNewClipboards({bool queueIfBusy = false}) async {
+    if (_isDisposed) return;
+    if (_isPolling) {
+      if (queueIfBusy) _pollRequested = true;
+      return;
+    }
     _isPolling = true;
     try {
       debugPrint('[ClipboardSync] 🔍 Polling for new items...');
@@ -1363,11 +1414,19 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
       final previousId = _lastPolledItemId;
+      final wasReady = _baselineReady;
       _lastPolledItemId = latestId;
-      if (previousId != null) {
-        await _deliverSkippedClips(after: previousId, latest: latestId);
+      _baselineReady = true;
+      // An account that had no clips at all: everything before the newest is
+      // new too.
+      final after = previousId ?? (wasReady ? '0' : null);
+      if (after != null) {
+        await _deliverSkippedClips(after: after, latest: latestId);
       }
-      await _handleSmartAutoReceive(_receiveItem(latestId));
+      // Realtime delivered it while the id was being read.
+      if (_claim(latestId)) {
+        await _handleSmartAutoReceive(_receiveItem(latestId));
+      }
 
       // Notify UI to refresh
       onClipboardReceived?.call();
@@ -1375,6 +1434,10 @@ class ClipboardSyncService implements IClipboardSyncService {
       debugPrint('[ClipboardSync] ❌ Polling error: $e');
     } finally {
       _isPolling = false;
+      if (_pollRequested && !_isDisposed) {
+        _pollRequested = false;
+        unawaited(_pollForNewClipboards());
+      }
     }
   }
 
@@ -1398,7 +1461,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       }).toList()..sort((a, b) => int.parse(a.id).compareTo(int.parse(b.id)));
       for (final item in skipped) {
         if (_isDisposed) return;
-        if (_canReceive(item)) _deliverReceived(item);
+        if (_canReceive(item) && _claim(item.id)) _deliverReceived(item);
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSync] Could not deliver skipped clips: $e');

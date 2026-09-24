@@ -395,6 +395,84 @@ void main() {
       verifyVaultGot('clip 2');
     });
 
+    testWidgets("an empty account's first clip is caught up on resume", (
+      tester,
+    ) async {
+      // No clips at all when the baseline was taken: null, but established.
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.reinitializeForUser();
+      await settle(tester);
+      service.pauseRealtime();
+
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(
+        () => repository.getHistory(limit: 10),
+      ).thenAnswer((_) async => [clip('1')]);
+      service.resumeRealtime();
+      await settle(tester);
+
+      verify(() => repository.getById('1')).called(1);
+      verifyVaultGot('clip 1');
+    });
+
+    testWidgets('a catch-up is queued behind a poll already running', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.reinitializeForUser();
+      await settle(tester);
+      service.pauseRealtime();
+
+      // A resume's catch-up is still waiting on the server...
+      final slow = Completer<String?>();
+      when(repository.getLatestItemId).thenAnswer((_) => slow.future);
+      service.resumeRealtime();
+      await tester.pump();
+
+      // ...when the app idles and resumes again, and a newer row lands.
+      service.pauseRealtime();
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+      service.resumeRealtime();
+      slow.complete('2');
+      await settle(tester);
+
+      verify(() => repository.getById('2')).called(1);
+      verify(() => repository.getById('3')).called(1);
+    });
+
+    testWidgets('a row seen by both the catch-up and realtime is delivered '
+        'once', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.reinitializeForUser();
+      await settle(tester);
+      service.pauseRealtime();
+
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      service.resumeRealtime();
+      // The catch-up reads the newest id first...
+      await tester.pump();
+      // ...then the new subscription delivers that same row.
+      onInsert(
+        PostgresChangePayload(
+          schema: 'public',
+          table: 'clipboard',
+          commitTimestamp: DateTime(2026),
+          eventType: PostgresChangeEvent.insert,
+          newRecord: {'id': 2, 'device_name': 'remote-device'},
+          oldRecord: const {},
+          errors: null,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await settle(tester);
+
+      verify(() => repository.getById('2')).called(1);
+      verifyVaultGot('clip 2');
+    });
+
     testWidgets('resuming with nothing new fetches nothing', (tester) async {
       when(repository.getLatestItemId).thenAnswer((_) async => '1');
       service.reinitializeForUser();
