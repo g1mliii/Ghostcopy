@@ -74,8 +74,9 @@ Map<String, Object?> _session(
 }
 
 /// Whether this host has the native Apple sheet, which decides whether an
-/// Apple account is asked to confirm before deletion.
-final _nativeApple = Platform.isIOS || Platform.isMacOS;
+/// Apple account is asked to confirm before deletion. iOS only: the Mac signs
+/// in with Apple through the browser.
+final _nativeApple = Platform.isIOS;
 
 /// Whether this host counts as desktop, where AuthService registers the
 /// device itself after an account change.
