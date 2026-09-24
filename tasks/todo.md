@@ -24,6 +24,21 @@ resource baseline. Finished work is in git history and
       browser: Apple issues no Developer ID profile carrying the
       applesignin entitlement (only App Store/development profiles can), so
       the native sheet is iOS-only
+- [ ] **Build 7: file upload and Save as.** Broken since build 5: dropping
+      the sandbox also dropped the user-selected-files entitlement, which
+      file_picker checks before opening any panel (ENTITLEMENT_NOT_FOUND).
+      Fixed with `prepareFilePicker` (the plugin's skip switch) plus a
+      regression test tied to the entitlements. Audit of what else the
+      sandbox removal touched: no other plugin checks entitlements
+      (package_info_plus only uses it for an install date the app never
+      reads); keychain group, launch at startup, Sparkle, hotkey and network
+      all verified unaffected; folder-access prompts now carry usage strings.
+      Test Attach and Save as from the build 7 DMG before publishing
+- [ ] **Sandbox - only if the Mac app goes to the Mac App Store.** Required
+      there, optional for Developer ID. It would mean Sparkle's XPC
+      services (or dropping Sparkle for store updates), an Obsidian folder
+      picker with security-scoped bookmarks, and migrating preferences into
+      the container; it would also bring back the native Apple sign-in sheet
 - [x] **Notarize in CI - decided against.** Publishing needs three secrets in
       one place: the Developer ID private key, notarization credentials, and
       the Sparkle EdDSA key. That last one is unrecoverable - if it leaks,

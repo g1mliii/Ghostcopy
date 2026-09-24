@@ -61,6 +61,16 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<!-- Not sandboxed, so macOS privacy protection asks before GhostCopy
+	     touches these folders: when auto-send reads a file copied in Finder,
+	     or the Obsidian integration writes to a vault there. Without these
+	     strings the prompt says only that GhostCopy wants access. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>GhostCopy reads files you copy from your Desktop so it can send them to your other devices.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>GhostCopy reads files you copy from Documents so it can send them to your other devices, and writes to your Obsidian vault if you keep it there.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>GhostCopy reads files you copy from Downloads so it can send them to your other devices.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<!-- The Finder context-menu entry, alongside the Share extension. Blip and

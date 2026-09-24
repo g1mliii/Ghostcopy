@@ -60,6 +60,7 @@ import 'ui/theme/app_theme.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
+import 'utils/file_picker_setup.dart';
 import 'utils/platform_label.dart';
 import 'utils/windows_registry.dart';
 
@@ -394,6 +395,8 @@ Future<void> main(List<String> args) async {
     if (Platform.isMacOS) {
       locator.registerSingleton<IAppUpdateService>(AppUpdateService());
     }
+    // Before any Attach or Save as: see prepareFilePicker.
+    unawaited(prepareFilePicker(isMacOS: Platform.isMacOS));
 
     // Initialize stateless utility services (singletons for consistency)
     final securityService = SecurityService();
