@@ -475,10 +475,17 @@ class AuthService implements IAuthService {
     }
   }
 
-  /// Apple's own sign-in sheet exists on iOS and macOS. Both authenticate as
-  /// the bundle ID, `com.ghostcopy.ghostcopy`, which is the first Client ID
-  /// on Supabase's Apple provider.
-  static bool get _hasNativeAppleSignIn => Platform.isIOS || Platform.isMacOS;
+  /// Apple's own sign-in sheet, used on iOS, where it authenticates as the
+  /// bundle ID, `com.ghostcopy.ghostcopy` - the first Client ID on Supabase's
+  /// Apple provider.
+  ///
+  /// Not on macOS, although the sheet exists there: it needs the
+  /// com.apple.developer.applesignin entitlement, and Apple will not issue a
+  /// Developer ID provisioning profile that carries it - the export of the
+  /// notarized build fails outright. The Mac signs in with Apple through the
+  /// browser instead, the same flow as Google on the Mac and everything on
+  /// Windows.
+  static bool get _hasNativeAppleSignIn => Platform.isIOS;
 
   /// Ask the OS for an Apple ID credential. Null when the user cancels.
   ///

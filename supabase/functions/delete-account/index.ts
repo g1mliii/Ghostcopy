@@ -27,8 +27,9 @@ const APPLE_TEAM_ID = 'R9TKT8U45R'
 const APPLE_KEY_ID = 'Y8NRLTKXG3'
 
 /**
- * Native sign-in on iOS and macOS authenticates as the bundle ID, so codes
- * from the app's re-authorization sheet belong to it, not the Services ID.
+ * Native sign-in - iOS only; the Mac uses the browser - authenticates as the
+ * bundle ID, so codes from the app's re-authorization sheet belong to it, not
+ * the Services ID.
  */
 const APPLE_CLIENT_ID = 'com.ghostcopy.ghostcopy'
 
