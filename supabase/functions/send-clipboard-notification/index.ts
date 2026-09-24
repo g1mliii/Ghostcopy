@@ -278,6 +278,12 @@ Deno.serve(async (req)=>{
     // ------------------------------------------------------------------
     let successCount = 0;
     let failureCount = 0;
+    // Why each failed send failed, by device - FCM's error code only, never
+    // the token. Returned in the response because that is what pg_net keeps
+    // in net._http_response; console output does not reach it. Without this
+    // an iPhone that stopped receiving showed only devices_failed: 1, with
+    // nothing to tell an APNs credential problem from a dead token.
+    const failures = [];
     if (admin.apps.length > 0) {
       // Filter out devices without tokens
       const validDevices = devices.filter((device)=>typeof device.fcm_token === 'string' && device.fcm_token.length > 0);
@@ -359,6 +365,14 @@ Deno.serve(async (req)=>{
             batchResponse.responses.forEach((resp, idx)=>{
               if (!resp.success && resp.error) {
                 const errorCode = resp.error.code;
+                failures.push({
+                  device_type: validDevices[idx].device_type,
+                  device_name: validDevices[idx].device_name ?? null,
+                  code: errorCode ?? 'unknown',
+                  // FCM's own wording, cut short; it names the cause (an
+                  // APNs auth failure, a sender mismatch) but never the token.
+                  message: String(resp.error.message ?? '').slice(0, 200),
+                });
                 if (errorCode === 'messaging/registration-token-not-registered' || errorCode === 'messaging/invalid-registration-token') {
                   staleDeviceIds.push(validDevices[idx].id);
                 }
@@ -399,6 +413,7 @@ Deno.serve(async (req)=>{
       is_image: isImage,
       devices_notified: successCount,
       devices_failed: failureCount,
+      failures,
       warnings,
       devices: devices.map((d)=>({
           device_type: d.device_type,
