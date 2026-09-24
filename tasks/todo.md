@@ -130,31 +130,28 @@ to package - but everything below marked "verify" does need one.
 
 - [ ] **TestFlight.** Signing is `Apple Development`; TestFlight needs Apple
       Distribution. `aps-environment` reads `development` in the entitlements;
-      the App Store export switches it, and the Firebase APNs key covers both
+      the App Store export switches it, and the Firebase APNs key covers both.
+      Confirm in Firebase (Project settings > Cloud Messaging > Apple app)
+      that it is an APNs Authentication Key (.p8), not a development-only
+      certificate, or push stops in App Store builds
+- [ ] **Decide: iPad at launch, or iPhone-only.** The app targets iPad, so the
+      listing needs 13" iPad screenshots and review tests it there. Dropping
+      iPad for 1.0 (TARGETED_DEVICE_FAMILY = 1) skips both; it can come back
+      in an update
 - [x] **Privacy manifests** - `ios/Runner` and `ios/ShareExtension` now ship
       `PrivacyInfo.xcprivacy` declaring their UserDefaults use; confirmed in a
       release build. Branch `ios/app-store-prep`
-- [ ] **In-app account deletion - built, deploy and test it.** Branch
-      `feat/account-deletion`. Settings > Delete Account (iOS and Android,
-      signed-in accounts), backed by the `delete-account` Edge Function: it
-      deletes the auth user - clips, devices, tokens cascade, the clipboard
-      trigger queues stored files for R2 removal, the passphrase backup lives
-      in the user record - and for Apple accounts first exchanges a fresh
-      authorization code (the app asks Apple once more) and revokes the Apple
-      token, as Apple requires. A failed revocation does not block deletion.
-      The device then wipes its copy (Keychain passphrase, caches, staged clip)
-      and lands on a guest account, as after sign-out.
-  - [ ] **Set the function secret** `APPLE_PRIVATE_KEY` to the `.p8`
-        contents, or Apple accounts are deleted without revocation (logged)
-  - [ ] Deploys with the merge to `main` (deploy workflow covers
-        `supabase/functions/**`)
-  - [ ] Test on the iPhone with an email account and an Apple account; check
-        Supabase > Users and the R2 bucket afterwards
+- [x] **In-app account deletion - live and tested on the iPhone.**
+      Settings > Delete Account, backed by the `delete-account` Edge Function
+      (deployed, `APPLE_PRIVATE_KEY` set). Apple accounts are asked for a fresh
+      code on iOS so the server can revoke Apple's token; the Mac and Windows
+      delete without revoking (logged) - see the macOS note on Sign in with
+      Apple
   - [ ] Desktop has no delete button yet - add to the settings panel if
         wanted; the website page tells desktop-only users to email
 - [x] **Account deletion web page** for Google Play's data-deletion URL:
       `website/delete-account.html`, linked from the privacy policy
-- [ ] **Sign in with Apple - built, test it.** Branch `ios/sign-in-with-apple`.
+- [x] **Sign in with Apple - live on iOS, macOS and Windows.**
       Needed on every platform, not just iOS: an account made on an iPhone
       with Apple (and Hide My Email) has no password, and QR linking only
       brings a phone into a desktop's account, never the reverse - so a new
@@ -162,10 +159,11 @@ to package - but everything below marked "verify" does need one.
       - **iOS: native.** "Continue with Apple" above Google on the welcome
         screen; Sign Up links in place (`linkIdentityWithIdToken`), Login
         switches accounts with the guest-clips warning. SHA-256 nonce.
-      - **macOS: native** too - the system sheet with Touch ID and the Mac's
-        Apple ID, no browser. Entitlement in both macOS entitlement files;
-        the profile refreshed with `-allowProvisioningUpdates` and
-        `verify-app.py` now refuses a release whose profile lacks it.
+      - **macOS: browser flow**, like Google on the Mac. Apple issues no
+        Developer ID provisioning profile carrying the applesignin
+        entitlement (only App Store and development profiles), so the
+        notarized build cannot have the native sheet - found when build 6's
+        export failed.
       - **Windows: browser flow**, the same path Google uses (Supabase ->
         `ghostcopy.app/auth-callback` -> `ghostcopy://auth-callback`), button
         in the Spotlight auth panel.
@@ -183,8 +181,6 @@ to package - but everything below marked "verify" does need one.
         tool/apple_client_secret.dart <AuthKey.p8>` prints a new one and its
         expiry. Lapsing breaks desktop Apple sign-in silently (iOS is native
         and unaffected) - keep a calendar reminder
-      - Check on devices: Sign Up keeps the clips, Login switches, cancel
-        leaves the screen as it was, Hide My Email works, desktop round trip
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set

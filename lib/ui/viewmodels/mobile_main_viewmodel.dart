@@ -376,8 +376,16 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Load history (one-shot fetch)
   Future<void> loadHistory() async {
     final revision = _accountRevision;
-    _historyLoading = true;
-    notifyListeners();
+    // Loading is only worth showing when there is nothing to look at. Every
+    // resume reloads (see onAppResumed), and flagging that as loading swapped
+    // the clips on screen for the spinner and back: the list flashed out and
+    // in on each return to the app, and every row - thumbnails included - was
+    // rebuilt from scratch. With clips already showing, the reload updates
+    // them in place.
+    if (_historyItems.isEmpty && !_historyLoading) {
+      _historyLoading = true;
+      notifyListeners();
+    }
 
     try {
       final items = await _clipboardRepo.getHistory();
