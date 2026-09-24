@@ -406,11 +406,20 @@ Future<void> main(List<String> args) async {
     // Initialize settings service first (required by other services)
     await settingsService.initialize();
 
+    // Before the sync service, which announces received clips from the moment
+    // it subscribes. The window service it also uses depends on the sync
+    // service through LifecycleController, so it is attached further down.
+    final notificationService = NotificationService(
+      gameModeService: gameModeService,
+    );
+    locator.registerSingleton<INotificationService>(notificationService);
+
     // Initialize background clipboard sync service
     final clipboardSyncService = ClipboardSyncService(
       clipboardRepository: clipboardRepository,
       settingsService: settingsService,
       securityService: securityService,
+      notificationService: notificationService,
       gameModeService: gameModeService,
       urlShortenerService: urlShortenerService,
       webhookService: webhookService,
@@ -447,17 +456,7 @@ Future<void> main(List<String> args) async {
       lifecycleController: lifecycleController,
     );
     locator.registerSingleton<IWindowService>(windowService);
-    final notificationService = NotificationService(
-      windowService: windowService,
-      gameModeService: gameModeService,
-    );
-    locator.registerSingleton<INotificationService>(notificationService);
-
-    // ClipboardSyncService was built before NotificationService existed - the
-    // two depend on each other through WindowService and LifecycleController -
-    // so hand it the notifier now. Without this every received clip was copied
-    // with no notification on desktop.
-    clipboardSyncService.attachNotificationService(notificationService);
+    notificationService.attachWindowService(windowService);
 
     // Register ViewModels and other factories
     setupLocator();

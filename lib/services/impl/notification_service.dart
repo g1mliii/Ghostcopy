@@ -22,7 +22,19 @@ import '../window_service.dart';
 class NotificationService implements INotificationService {
   NotificationService({this._windowService, this._gameModeService});
 
-  final IWindowService? _windowService;
+  /// Read only to choose between the in-window overlay and a system
+  /// notification. main.dart builds this service before the window service -
+  /// the clipboard sync service it depends on needs a notifier from the
+  /// start - so the window arrives through [attachWindowService]. Until then
+  /// every notice is a system notification, which is right while no window
+  /// has been shown yet.
+  IWindowService? _windowService;
+
+  // ignore: use_setters_to_change_properties - named for what it wires up
+  void attachWindowService(IWindowService windowService) {
+    _windowService = windowService;
+  }
+
   final IGameModeService? _gameModeService;
   final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();

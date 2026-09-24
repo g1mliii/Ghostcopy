@@ -39,6 +39,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     SupabaseClient? supabaseClient,
     IClipboardService? clipboardService,
     ITempFileService? tempFileService,
+    this._notificationService,
     this._gameModeService,
     this._urlShortenerService,
     this._webhookService,
@@ -53,40 +54,10 @@ class ClipboardSyncService implements IClipboardSyncService {
   final SupabaseClient _supabaseClient;
   final IClipboardService _clipboardService;
   final ITempFileService _tempFileService;
-  INotificationService? _notificationService;
 
-  /// Attach the notifier after construction.
-  ///
-  /// main.dart cannot pass it to the constructor: NotificationService needs
-  /// WindowService, which needs LifecycleController, which needs this service.
-  /// It used to be left null for that reason, with a note that notifications
-  /// would "just skip" - which meant every received clip was copied silently
-  /// and no desktop ever showed a notification for one. Only Game Mode's queue,
-  /// flushed through main.dart, got through.
-  void attachNotificationService(INotificationService service) {
-    if (_isDisposed) return;
-    _notificationService = service;
-    // Anything raised in the gap between subscribing and this call - a clip
-    // that arrived during startup - is shown now rather than dropped.
-    final pending = List.of(_pendingNotices);
-    _pendingNotices.clear();
-    for (final show in pending) {
-      show(service);
-    }
-  }
-
-  /// Notices raised before [attachNotificationService], bounded so a burst
-  /// during startup cannot grow without limit.
-  final List<void Function(INotificationService)> _pendingNotices = [];
-
-  void _notify(void Function(INotificationService) show) {
-    final service = _notificationService;
-    if (service != null) {
-      show(service);
-    } else if (_pendingNotices.length < 10) {
-      _pendingNotices.add(show);
-    }
-  }
+  /// Built before this service in main.dart, so a clip that arrives during
+  /// startup is announced like any other; null only in tests.
+  final INotificationService? _notificationService;
 
   final IGameModeService? _gameModeService;
   final IUrlShortenerService? _urlShortenerService;
@@ -136,7 +107,10 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// stale.
   DateTime? _lastClipboardModificationTime;
 
-  /// Polls the pasteboard change counter; see [startClipboardActivityWatch].
+  /// Whether the activity watch is running; see [startClipboardActivityWatch].
+  bool _watching = false;
+
+  /// Samples the pasteboard change counter where it is not pushed (macOS).
   Timer? _activityTimer;
 
   /// The counter value last seen, including the one GhostCopy's own writes
@@ -322,10 +296,11 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Whether the user's own last copy is old enough to overwrite.
       //
-      // The watch samples every 30 seconds, so a copy made since the last
-      // sample would otherwise be invisible here and get overwritten - the
-      // very thing smart receive exists to prevent. The counter is read now;
-      // a change since the last sample counts as a copy made this moment.
+      // On macOS the watch samples every 30 seconds, and on Windows a pushed
+      // change may still be on its way, so a copy made just now could be
+      // invisible here and get overwritten - the very thing smart receive
+      // exists to prevent. The counter is read now; a change not yet seen
+      // counts as a copy made this moment.
       // clock rather than DateTime so tests can move time past the window.
       Future<bool> smartAllowsCopy() async {
         await _checkClipboardActivity();
@@ -377,28 +352,26 @@ class ClipboardSyncService implements IClipboardSyncService {
         if (_gameModeService?.isActive ?? false) {
           _gameModeService?.queueNotification(item);
         } else {
-          _notify(
-            (n) => n.showClickableToast(
-              message: message,
-              actionLabel: 'Copy',
-              duration: const Duration(seconds: 5),
-              onAction: () async {
-                try {
-                  // The user picked this clip, so smart receive must now
-                  // guard it like any other copy of theirs.
-                  if (await _copyItemToClipboard(item)) {
-                    updateClipboardModificationTime();
-                  }
-                  debugPrint('[ClipboardSyncService] Copied from notification');
-                } on Exception catch (e) {
-                  debugPrint('[ClipboardSyncService] Failed to copy: $e');
-                  n.showToast(
-                    message: 'Failed to copy',
-                    type: NotificationType.error,
-                  );
+          _notificationService?.showClickableToast(
+            message: message,
+            actionLabel: 'Copy',
+            duration: const Duration(seconds: 5),
+            onAction: () async {
+              try {
+                // The user picked this clip, so smart receive must now
+                // guard it like any other copy of theirs.
+                if (await _copyItemToClipboard(item)) {
+                  updateClipboardModificationTime();
                 }
-              },
-            ),
+                debugPrint('[ClipboardSyncService] Copied from notification');
+              } on Exception catch (e) {
+                debugPrint('[ClipboardSyncService] Failed to copy: $e');
+                _notificationService.showToast(
+                  message: 'Failed to copy',
+                  type: NotificationType.error,
+                );
+              }
+            },
           );
         }
       }
@@ -447,20 +420,16 @@ class ClipboardSyncService implements IClipboardSyncService {
                 : item.isImage
                 ? 'image'
                 : 'content';
-            _notify(
-              (n) => n.showToast(
-                message: 'Auto-copied $contentTypeStr from $deviceType',
-                type: NotificationType.success,
-              ),
+            _notificationService?.showToast(
+              message: 'Auto-copied $contentTypeStr from $deviceType',
+              type: NotificationType.success,
             );
           }
         } on Exception catch (e) {
           debugPrint('[ClipboardSyncService] Failed to auto-copy: $e');
-          _notify(
-            (n) => n.showToast(
-              message: 'Failed to auto-copy from $deviceType',
-              type: NotificationType.error,
-            ),
+          _notificationService?.showToast(
+            message: 'Failed to auto-copy from $deviceType',
+            type: NotificationType.error,
           );
         }
       } else {
@@ -696,19 +665,19 @@ class ClipboardSyncService implements IClipboardSyncService {
   int? _lastClipboardChangeCount;
 
   /// The counter value the latest empty reads were taken at, and how many
-  /// there have been in a row. Once there are [_maxEmptyReads], that exact
+  /// strikes they have. Once there are [_maxFailedReads], that exact
   /// pasteboard state is not read again while it is still there.
   int? _emptyReadChangeCount;
   int _emptyReads = 0;
 
-  /// How many empty reads retire a counter value. One was enough on macOS,
-  /// where an empty read means a flavour read() cannot decode, but on Windows
-  /// read() also comes back empty whenever another process - a clipboard
-  /// manager, an RDP session - briefly holds the clipboard open. Retiring the
-  /// value on the first of those meant that copy was never auto-sent unless
-  /// the user copied something else. Three ticks ride out a transient lock
-  /// and still stop an undecodable item from being re-read every tick.
-  static const _maxEmptyReads = 3;
+  /// How many failed reads retire a counter value. A genuinely empty read -
+  /// nothing read() can decode - retires it at once. A failed one does not:
+  /// on Windows the read fails whenever another process, a clipboard manager
+  /// or an RDP session, briefly holds the clipboard open, and retiring the
+  /// value then meant that copy was never auto-sent unless the user copied
+  /// something else. Three ticks ride out a transient lock, and still stop an
+  /// item whose read keeps failing from being re-read every tick.
+  static const _maxFailedReads = 3;
 
   /// Whether this platform answers [_clipboardChangeChannel]. Tests set it so
   /// the counter paths run on the Linux CI host.
@@ -717,6 +686,14 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   static bool get _hasChangeCounter =>
       debugHasChangeCounter ?? (Platform.isMacOS || Platform.isWindows);
+
+  /// Whether the platform pushes "changed" when the counter moves, so the
+  /// activity watch needs no timer. Windows does; macOS cannot.
+  @visibleForTesting
+  static bool? debugCounterPushesChanges;
+
+  static bool get _counterPushesChanges =>
+      debugCounterPushesChanges ?? Platform.isWindows;
 
   Future<int?> _readClipboardChangeCount() async {
     if (!_hasChangeCounter) return null;
@@ -744,7 +721,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       if (changeCount != null &&
           (changeCount == _lastClipboardChangeCount ||
               (changeCount == _emptyReadChangeCount &&
-                  _emptyReads >= _maxEmptyReads))) {
+                  _emptyReads >= _maxFailedReads))) {
         return;
       }
 
@@ -753,23 +730,22 @@ class ClipboardSyncService implements IClipboardSyncService {
       if (_clipboardWritesInProgress > 0 || _isDisposed) return;
 
       // The counter is committed only once the read has actually produced
-      // something. read() catches its own failures and returns empty - a
-      // provider that is briefly unavailable, an image callback that throws -
-      // and recording the counter before that point retired the tick anyway:
-      // every later tick saw the same counter, skipped the read, and that copy
-      // was never auto-sent unless the user copied something else. Leaving the
-      // counter alone keeps a failed read retryable on the next tick.
+      // something, so a read that failed - a clipboard briefly held open by
+      // another process, an image callback that throws - is retried on the
+      // next tick rather than that copy never being auto-sent.
       if (clipboardContent.isEmpty) {
-        // Remembered separately so an empty read is retried a few times per
-        // NEW counter value rather than never or forever. Leaving the counter
-        // untouched kept a genuinely undecodable clipboard item - a flavour
-        // read() cannot handle - doing the full pasteboard read, which for a
-        // copied file means re-reading it from disk, on every 5-second tick
-        // for as long as it stayed on the pasteboard.
+        // Remembered separately so the same empty state is not read forever:
+        // a genuinely undecodable item - a flavour read() cannot handle - once,
+        // a failing read up to [_maxFailedReads] times. Otherwise a copied
+        // file read() could not use was re-read from disk every 5 seconds for
+        // as long as it stayed on the pasteboard.
         if (changeCount != null) {
-          _emptyReads = changeCount == _emptyReadChangeCount
-              ? _emptyReads + 1
-              : 1;
+          final strikes = changeCount == _emptyReadChangeCount
+              ? _emptyReads
+              : 0;
+          _emptyReads = clipboardContent.readFailed
+              ? strikes + 1
+              : _maxFailedReads;
           _emptyReadChangeCount = changeCount;
         }
         return;
@@ -959,11 +935,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       _lastSendTime = DateTime.now();
       onClipboardSent?.call(result);
 
-      _notify(
-        (n) => n.showToast(
-          message: message(_describeTargets(targetDevices)),
-          type: NotificationType.success,
-        ),
+      _notificationService?.showToast(
+        message: message(_describeTargets(targetDevices)),
+        type: NotificationType.success,
       );
 
       debugPrint(
@@ -972,9 +946,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       );
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-send $noun failed: $e');
-      _notify(
-        (n) =>
-            n.showToast(message: failureMessage, type: NotificationType.error),
+      _notificationService?.showToast(
+        message: failureMessage,
+        type: NotificationType.error,
       );
     }
   }
@@ -994,11 +968,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       processedContent = await _applyUrlShortening(content);
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-send content failed: $e');
-      _notify(
-        (n) => n.showToast(
-          message: 'Auto-send failed',
-          type: NotificationType.error,
-        ),
+      _notificationService?.showToast(
+        message: 'Auto-send failed',
+        type: NotificationType.error,
       );
       return;
     }
@@ -1118,31 +1090,42 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// calls, after which only GhostCopy's own auto-copies set the time: smart
   /// behaved like always, and a second clip inside the window stayed
   /// uncopied. This reads the clipboard's change counter (see
-  /// [_readClipboardChangeCount]) - one integer, never the contents - every
-  /// thirty seconds, and stamps the time whenever it moves for any reason but
-  /// GhostCopy writing. That covers copies in every app, not only GhostCopy's,
-  /// on macOS and Windows; elsewhere only the history-copy hook applies.
+  /// [_readClipboardChangeCount]) - one integer, never the contents - and
+  /// stamps the time whenever it moves for any reason but GhostCopy writing.
+  /// That covers copies in every app, not only GhostCopy's, on macOS and
+  /// Windows; elsewhere only the history-copy hook applies.
   ///
-  /// Thirty, not five: the smart decision reads the counter again itself
-  /// before copying anything, so the sample only has to date a change to
-  /// within the stale window, which is minutes long. Runs only while
-  /// auto-receive is smart - see [refreshClipboardActivityWatch].
+  /// Windows tells us when the counter moves (WM_CLIPBOARDUPDATE, pushed as
+  /// "changed"), so there the watch has no timer at all and costs nothing
+  /// while the clipboard is left alone - in the tray or not. macOS has no
+  /// such notification, so it samples every thirty seconds: the smart
+  /// decision reads the counter again itself before copying anything, so a
+  /// sample only has to date a change to within the stale window, which is
+  /// minutes long. Runs only while auto-receive is smart - see
+  /// [refreshClipboardActivityWatch].
   @visibleForTesting
   void startClipboardActivityWatch() {
-    if (_activityTimer != null || _isDisposed || !_hasChangeCounter) {
-      return;
-    }
+    if (_watching || _isDisposed || !_hasChangeCounter) return;
+    _watching = true;
     // A fresh baseline every start. A change made while nothing was watching
     // has an unknown age, and unknown counts as stale - but the absorb after
     // each write keeps updating the count while the watch is off, so without
     // this, switching to smart hours after an auto-copy compared against that
     // old value and dated the whole morning's copying to this moment.
     _activityChangeCount = null;
-    _activityTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => _checkClipboardActivity(),
-    );
+    if (_counterPushesChanges) {
+      _clipboardChangeChannel.setMethodCallHandler(_onClipboardChangePushed);
+    } else {
+      _activityTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => _checkClipboardActivity(),
+      );
+    }
     unawaited(_checkClipboardActivity());
+  }
+
+  Future<void> _onClipboardChangePushed(MethodCall call) async {
+    if (call.method == 'changed') await _checkClipboardActivity();
   }
 
   /// Run the watch only when something reads it: auto-receive set to smart.
@@ -1172,9 +1155,13 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void stopClipboardActivityWatch() {
     _watchGeneration++;
-    final wasRunning = _activityTimer != null;
+    final wasRunning = _watching;
+    _watching = false;
     _activityTimer?.cancel();
     _activityTimer = null;
+    if (wasRunning && _counterPushesChanges) {
+      _clipboardChangeChannel.setMethodCallHandler(null);
+    }
     // One last sample, so a copy made since the previous one - the address
     // copied ten seconds before locking the screen - is dated now rather
     // than lost, and a clip arriving right after unlock still leaves it be.
@@ -1183,7 +1170,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   /// Sample the counter if the watch is running; see [_sampleClipboardActivity].
   Future<void> _checkClipboardActivity() async {
-    if (_activityTimer != null) await _sampleClipboardActivity();
+    if (_watching) await _sampleClipboardActivity();
   }
 
   /// Read the counter and stamp [_lastClipboardModificationTime] if somebody

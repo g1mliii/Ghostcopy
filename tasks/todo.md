@@ -94,15 +94,18 @@ to package - but everything below marked "verify" does need one.
 - [ ] **Clipboard staleness (verify).** New native channel in
       `windows/runner/flutter_window.cpp` answers `changeCount` from
       `GetClipboardSequenceNumber()`, counting a change only when the
-      clipboard changes hands (so OLE delayed renders do not count), written
-      but not yet compiled. Check: the app builds; with auto-receive on smart,
+      clipboard changes hands (so OLE delayed renders do not count), and
+      pushes "changed" on every `WM_CLIPBOARDUPDATE` so the smart watch runs
+      no timer on Windows. Written but not yet compiled. Check: the app builds; with auto-receive on smart,
       copy something in another app, send a clip from the phone within the
       stale window - it is NOT copied and a "Copy" notification appears
       instead; after the window it is
       copied; two clips sent back to back are both copied; copying from
       GhostCopy's history also counts; pasting an auto-copied clip into Word
       does NOT make the next clip wait. Auto-send now skips reading an
-      unchanged clipboard on Windows too, via the same counter
+      unchanged clipboard on Windows too, via the same counter, and a copy
+      made while a clipboard manager briefly holds the clipboard open is
+      still auto-sent a tick or two later
 - [ ] **Launch at startup (verify).** Uses the package's registry path on
       Windows, unlike macOS; check it survives a reboot
 - [ ] **Encryption after reinstall/account switch.** Install over an existing

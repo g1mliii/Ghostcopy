@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart' show MethodChannel;
+import 'package:flutter/services.dart'
+    show MethodCall, MethodChannel, StandardMethodCodec;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
@@ -59,6 +60,7 @@ void main() {
   late _Auth auth;
   late _Supabase client;
   late _Security security;
+  late _Notifier notifier;
   late ClipboardSyncService service;
   late ClipboardContent clipboardValue;
 
@@ -109,6 +111,8 @@ void main() {
     // CI runs on Linux, which has no counter; answer it as macOS and Windows
     // do so the paths built on it are exercised there too.
     ClipboardSyncService.debugHasChangeCounter = true;
+    // Sampled, as on macOS, unless a test opts into Windows' pushed changes.
+    ClipboardSyncService.debugCounterPushesChanges = false;
     pasteboard = 1;
     counterReads = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -164,6 +168,7 @@ void main() {
     when(
       () => security.detectSensitiveDataAsync(any()),
     ).thenAnswer((_) async => DetectionResult.safe);
+    notifier = _Notifier();
     service = ClipboardSyncService(
       clipboardRepository: repository,
       settingsService: settings,
@@ -171,6 +176,7 @@ void main() {
       supabaseClient: client,
       clipboardService: clipboard,
       tempFileService: tempFiles,
+      notificationService: notifier,
       webhookService: webhook,
       obsidianService: obsidian,
     );
@@ -179,6 +185,7 @@ void main() {
   tearDown(() {
     service.dispose();
     ClipboardSyncService.debugHasChangeCounter = null;
+    ClipboardSyncService.debugCounterPushesChanges = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(clipboardChangeChannel, null);
   });
@@ -372,11 +379,10 @@ void main() {
     });
   });
 
-  testWidgets('empty reads at one counter value are retried, then retired', (
-    tester,
-  ) async {
-    // Windows returns an empty read while another process has the clipboard
-    // open; the copy underneath must still be read on a later tick.
+  testWidgets('a failed read is retried, then retired', (tester) async {
+    // Windows fails the read while another process has the clipboard open;
+    // the copy underneath must still be read on a later tick.
+    clipboardValue = const ClipboardContent.unavailable();
     service.startClipboardMonitoring();
     for (var tick = 0; tick < 5; tick++) {
       await tester.pump(const Duration(seconds: 5));
@@ -386,10 +392,18 @@ void main() {
     service.stopClipboardMonitoring();
   });
 
+  testWidgets('a genuinely empty read is not repeated', (tester) async {
+    service.startClipboardMonitoring();
+    for (var tick = 0; tick < 5; tick++) {
+      await tester.pump(const Duration(seconds: 5));
+      await settle(tester);
+    }
+    verify(clipboard.read).called(1);
+    service.stopClipboardMonitoring();
+  });
+
   testWidgets('a clip whose account signed out during its download is neither '
       'written nor offered', (tester) async {
-    final notifier = _Notifier();
-    service.attachNotificationService(notifier);
     final download = Completer<Uint8List?>();
     when(repository.getLatestItemId).thenAnswer((_) async => '1');
     when(
@@ -504,13 +518,7 @@ void main() {
   });
 
   group('received clips notify', () {
-    late _Notifier notifier;
-
     setUp(() {
-      // Built the way main.dart builds it: no notifier in the constructor,
-      // attached afterwards. That gap is what silenced every received clip.
-      notifier = _Notifier();
-      service.attachNotificationService(notifier);
       when(repository.getLatestItemId).thenAnswer((_) async => '1');
       when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
     });
@@ -553,11 +561,7 @@ void main() {
   });
 
   group('smart auto-receive respects clipboard staleness', () {
-    late _Notifier notifier;
-
     setUp(() {
-      notifier = _Notifier();
-      service.attachNotificationService(notifier);
       when(
         settings.getAutoReceiveBehavior,
       ).thenAnswer((_) async => AutoReceiveBehavior.smart);
@@ -862,6 +866,83 @@ void main() {
     );
   });
 
+  group('where the counter is pushed (Windows)', () {
+    setUp(() {
+      ClipboardSyncService.debugCounterPushesChanges = true;
+      when(
+        settings.getAutoReceiveBehavior,
+      ).thenAnswer((_) async => AutoReceiveBehavior.smart);
+      when(() => clipboard.writeText(any())).thenAnswer((_) async {
+        pasteboard++;
+      });
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    });
+
+    /// The runner's WM_CLIPBOARDUPDATE handler, as Dart sees it.
+    Future<void> pushChanged(WidgetTester tester) async {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        'com.ghostcopy.app/clipboard_change',
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('changed'),
+        ),
+        (_) {},
+      );
+      await settle(tester);
+    }
+
+    testWidgets('the watch runs no timer', (tester) async {
+      await service.refreshClipboardActivityWatch();
+      await settle(tester); // the baseline read
+      await tester.pump(const Duration(hours: 1));
+      await settle(tester);
+      expect(counterReads, 1);
+    });
+
+    testWidgets('a pushed change dates the copy to when it happened', (
+      tester,
+    ) async {
+      await service.refreshClipboardActivityWatch();
+      await settle(tester);
+
+      pasteboard++; // the user copies in another app, and Windows says so
+      await pushChanged(tester);
+      await tester.pump(const Duration(minutes: 6)); // then it goes stale
+
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verify(() => clipboard.writeText('clip 1')).called(1);
+      service.stopPolling();
+    });
+
+    testWidgets('a fresh pushed change is not overwritten', (tester) async {
+      await service.refreshClipboardActivityWatch();
+      await settle(tester);
+
+      pasteboard++;
+      await pushChanged(tester);
+
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verifyNever(() => clipboard.writeText(any()));
+      service.stopPolling();
+    });
+
+    testWidgets('pushes are ignored once the watch stops', (tester) async {
+      await service.refreshClipboardActivityWatch();
+      await settle(tester);
+      service.stopClipboardActivityWatch();
+      await settle(tester);
+      final reads = counterReads;
+
+      pasteboard++;
+      await pushChanged(tester);
+      expect(counterReads, reads);
+    });
+  });
+
   testWidgets('a lock during a refresh keeps the watch stopped', (
     tester,
   ) async {
@@ -876,28 +957,6 @@ void main() {
     await settle(tester);
 
     expect(counterReads, 0);
-  });
-
-  testWidgets('a clip that arrives before the notifier is attached is still '
-      'announced once it is', (tester) async {
-    // main.dart subscribes for clips before NotificationService exists.
-    when(repository.getLatestItemId).thenAnswer((_) async => '1');
-    when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
-    service.startPolling(interval: const Duration(seconds: 1));
-    await tester.pump(const Duration(seconds: 1));
-    await settle(tester);
-    verify(() => clipboard.writeText('clip 1')).called(1);
-
-    final attachedLate = _Notifier();
-    service.attachNotificationService(attachedLate);
-
-    verify(
-      () => attachedLate.showToast(
-        message: 'Auto-copied content from android',
-        type: NotificationType.success,
-      ),
-    ).called(1);
-    service.stopPolling();
   });
 
   testWidgets('polling leaves clips for other platforms untouched', (

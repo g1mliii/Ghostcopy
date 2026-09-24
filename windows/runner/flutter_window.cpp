@@ -62,6 +62,8 @@ bool FlutterWindow::OnCreate() {
   // clipboard read: smart auto-receive uses it to tell when the user last
   // copied something, and auto-send to skip reading an unchanged clipboard.
   // See ClipboardChangeCount() for why it is not the raw sequence number.
+  // Unlike macOS it is also pushed: WM_CLIPBOARDUPDATE below sends "changed"
+  // whenever it moves, so Dart needs no timer to notice a copy.
   clipboard_change_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           flutter_controller_->engine()->messenger(),
@@ -85,6 +87,9 @@ bool FlutterWindow::OnCreate() {
   // Register for session change notifications (lock/unlock)
   WTSRegisterSessionNotification(GetHandle(), NOTIFY_FOR_THIS_SESSION);
 
+  // WM_CLIPBOARDUPDATE on every clipboard change; see MessageHandler.
+  AddClipboardFormatListener(GetHandle());
+
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     if (flutter_controller_) {
       this->Show();
@@ -107,8 +112,10 @@ bool FlutterWindow::OnCreate() {
 // moves when the clipboard changes hands: a sequence change while the same
 // window of this process still owns it is that owner rendering, not new
 // content. A new copy in any other app, or a GhostCopy write that takes the
-// clipboard over, changes the owner and counts. The cost is that two copies in
-// a row from the same GhostCopy window read as one.
+// clipboard over, changes the owner and counts. It is evaluated on every
+// WM_CLIPBOARDUPDATE, so each change is judged against the owner of the one
+// before it. The cost is that two copies in a row from the same GhostCopy
+// window read as one.
 int64_t FlutterWindow::ClipboardChangeCount() {
   const DWORD sequence = GetClipboardSequenceNumber();
   if (sequence == last_clipboard_sequence_) return clipboard_change_count_;
@@ -128,6 +135,7 @@ int64_t FlutterWindow::ClipboardChangeCount() {
 void FlutterWindow::OnDestroy() {
   // Unregister from session change notifications
   WTSUnRegisterSessionNotification(GetHandle());
+  RemoveClipboardFormatListener(GetHandle());
 
   // Clean up power monitor
   if (power_monitor_) {
@@ -175,6 +183,16 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
         power_monitor_->HandleSessionChange(wparam);
       }
       break;
+
+    case WM_CLIPBOARDUPDATE: {
+      // Dart reads the counter itself when told, and ignores the call while
+      // nothing is watching it.
+      const int64_t before = clipboard_change_count_;
+      if (ClipboardChangeCount() != before && clipboard_change_channel_) {
+        clipboard_change_channel_->InvokeMethod("changed", nullptr);
+      }
+      break;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
