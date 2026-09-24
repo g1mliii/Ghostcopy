@@ -452,25 +452,20 @@ class SpotlightViewModel extends ChangeNotifier {
       // Nothing is written then, so this returns before the copy is counted
       // as the user's: smart receive would otherwise guard a clipboard that
       // never changed and refuse incoming clips for the whole stale window.
-      const downloadFailed =
-          'Could not copy - the file could not be downloaded';
+      final bytes = item.isImage || item.isFile
+          ? await _clipboardRepo.downloadFile(item)
+          : null;
+      if ((item.isImage || item.isFile) && bytes == null) {
+        _setError('Could not copy - the file could not be downloaded');
+        return;
+      }
 
       if (item.isImage) {
-        // Download image and copy to clipboard
-        final bytes = await _clipboardRepo.downloadFile(item);
-        if (bytes == null) {
-          _setError(downloadFailed);
-          return;
-        }
-        await _clipboardService.writeImage(bytes);
+        await _clipboardService.writeImage(bytes!);
         debugPrint('[SpotlightVM] Copied image to clipboard');
       } else if (item.isFile) {
-        // Download file to temp location and copy path
-        final bytes = await _clipboardRepo.downloadFile(item);
-        if (bytes == null) {
-          _setError(downloadFailed);
-          return;
-        }
+        // Written to a temp file, whose path goes on the clipboard.
+        final fileBytes = bytes!;
         // Sniffed extension rather than a bare 'file': this path is written
         // to the clipboard, and a name with nothing after the dot gives the
         // receiving app no way to tell what it just pasted.
@@ -479,13 +474,13 @@ class SpotlightViewModel extends ChangeNotifier {
         // the same naming rule out four times.
         final filename = FileTypeService.instance
             .resolveFilename(
-              bytes,
+              fileBytes,
               originalFilename: item.metadata?.originalFilename,
               isImage: item.isImage,
             )
             .name;
         final tempFile = await TempFileService.instance.saveTempFile(
-          bytes,
+          fileBytes,
           filename,
         );
         final tempPath = tempFile.path;

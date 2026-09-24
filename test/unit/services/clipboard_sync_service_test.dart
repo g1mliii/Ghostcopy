@@ -600,7 +600,7 @@ void main() {
       verify(() => clipboard.writeText('clip 1')).called(1);
       verify(
         () => notifier.showToast(
-          message: 'Auto-copied content from android',
+          message: 'Auto-copied content from Android',
           type: NotificationType.success,
         ),
       ).called(1);
@@ -619,7 +619,7 @@ void main() {
       verifyNever(() => clipboard.writeText(any()));
       verify(
         () => notifier.showClickableToast(
-          message: 'New clip from android: "clip 1"',
+          message: 'New clip from Android: "clip 1"',
           actionLabel: 'Copy',
           onAction: any(named: 'onAction'),
           duration: any(named: 'duration'),

@@ -13,6 +13,7 @@ import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../utils/html_text.dart';
+import '../../utils/platform_label.dart';
 import '../clipboard_service.dart';
 import '../clipboard_sync_service.dart';
 import '../file_type_service.dart';
@@ -95,7 +96,6 @@ class ClipboardSyncService implements IClipboardSyncService {
   int _clipboardWritesInProgress = 0;
 
   // Pending background operations for clean shutdown (Fix #10)
-  final Set<Future<void>> _pendingFutures = {};
 
   // Content deduplication
   String _lastSentContentHash = '';
@@ -204,44 +204,10 @@ class ClipboardSyncService implements IClipboardSyncService {
     final id = record['id']?.toString();
     if (id != null) _lastPolledItemId = id;
 
-    // Check if from another device.
-    //
-    // A plain inequality, deliberately: the null guards that used to be
-    // here made this false whenever either side had no name, and mobile
-    // sends device_name: null on every path. That meant a clip sent
-    // from the phone never triggered auto-receive on the desktop -
-    // the Mobile -> Desktop half of sync - and it only appeared to work
-    // because the polling fallback (_pollForNewClipboards) compares the
-    // same two values WITHOUT the guards and takes over after 15
-    // minutes idle. Matching that comparison here keeps the two paths
-    // in agreement.
-    //
-    // Known limit: this identifies devices by name, so two machines
-    // sharing a hostname will not receive from each other. Fixing that
-    // needs a device id on the clipboard row.
-    final deviceName = record['device_name'] as String?;
-    final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-    final isFromDifferentDevice = deviceName != currentDeviceName;
-
-    // Check if targeted to this device
-    final targetDeviceTypeJson = record['target_device_type'];
-    final currentDeviceType = ClipboardRepository.getCurrentDeviceType();
-
-    // Parse target device types (can be null, a list, or a single string)
-    List<String>? targetDeviceTypes;
-    if (targetDeviceTypeJson != null) {
-      if (targetDeviceTypeJson is List) {
-        targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
-      } else if (targetDeviceTypeJson is String) {
-        targetDeviceTypes = [targetDeviceTypeJson];
-      }
-    }
-
-    final isTargetedToMe =
-        targetDeviceTypes == null ||
-        targetDeviceTypes.contains(currentDeviceType);
-
-    if (isFromDifferentDevice && isTargetedToMe) {
+    if (_isForThisDevice(
+      record['device_name'] as String?,
+      ClipboardItem.parseTargetDeviceTypes(record['target_device_type']),
+    )) {
       _debouncedAutoReceive(record);
     }
 
@@ -286,16 +252,14 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Delivery to integrations is independent of the clipboard copy policy.
       // HTML goes out as text, matching what the sending device delivered:
       // its side hands over the clipboard's plain-text flavour, not markup.
-      final text = switch (item.contentType) {
-        ContentType.html => htmlToPlainText(item.content),
-        ContentType.text || ContentType.markdown => item.content,
-        _ => '',
-      };
-      if (text.isNotEmpty) {
+      if (item.contentType == ContentType.html ||
+          item.contentType == ContentType.text ||
+          item.contentType == ContentType.markdown) {
         _fireIntegrations(
-          content: text,
+          content: item.content,
           deviceType: item.deviceType,
           direction: 'received',
+          isHtml: item.contentType == ContentType.html,
         );
       }
       return item;
@@ -312,7 +276,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     try {
       final item = await pendingItem;
       if (item == null || _isDisposed || !_canReceive(item)) return;
-      final deviceType = item.deviceType;
+      // Product names in what the user reads: "macOS", not "macos".
+      final deviceType = platformLabel(item.deviceType);
 
       // Load auto-receive behavior from settings
       final autoReceiveBehavior = await _settingsService
@@ -467,13 +432,28 @@ class ClipboardSyncService implements IClipboardSyncService {
     }
   }
 
-  bool _canReceive(ClipboardItem item) {
-    final targets = item.targetDeviceTypes;
-    return item.userId == _supabaseClient.auth.currentUser?.id &&
-        item.deviceName != ClipboardRepository.getCurrentDeviceName() &&
-        (targets == null ||
-            targets.contains(ClipboardRepository.getCurrentDeviceType()));
-  }
+  bool _canReceive(ClipboardItem item) =>
+      item.userId == _supabaseClient.auth.currentUser?.id &&
+      _isForThisDevice(item.deviceName, item.targetDeviceTypes);
+
+  /// Whether a clip sent by [senderName] to [targets] is this device's to
+  /// receive. The realtime filter and [_canReceive] share it, so the two
+  /// paths cannot drift apart again.
+  ///
+  /// The sender check is a plain inequality, deliberately: null guards that
+  /// used to be here made it false whenever either side had no name, and
+  /// mobile sends device_name: null on every path. That meant a clip sent
+  /// from the phone never triggered auto-receive on the desktop - the
+  /// Mobile -> Desktop half of sync - and it only appeared to work because
+  /// the polling fallback compared the same two values without the guards.
+  ///
+  /// Known limit: this identifies devices by name, so two machines sharing a
+  /// hostname will not receive from each other. Fixing that needs a device id
+  /// on the clipboard row.
+  static bool _isForThisDevice(String? senderName, List<String>? targets) =>
+      senderName != ClipboardRepository.getCurrentDeviceName() &&
+      (targets == null ||
+          targets.contains(ClipboardRepository.getCurrentDeviceType()));
 
   /// Copy a clipboard item to the system clipboard, supporting multiple content types
   ///
@@ -1406,17 +1386,21 @@ class ClipboardSyncService implements IClipboardSyncService {
   ///
   /// [screened] says the caller already ran this exact text through the
   /// check, as auto-send does before it sends, so it is not run twice.
+  ///
+  /// [isHtml] marks [content] as markup, delivered as its readable text -
+  /// what the sending device's own plain-text flavour would have been.
   void _fireIntegrations({
     required String content,
     required String deviceType,
     required String direction,
     bool screened = false,
+    bool isHtml = false,
   }) {
     final webhook = _webhookService;
     final obsidian = _obsidianService;
     if (_isDisposed || (webhook == null && obsidian == null)) return;
 
-    _track(() async {
+    unawaited(() async {
       try {
         final webhookOn =
             webhook != null && await _settingsService.getWebhookEnabled();
@@ -1426,9 +1410,14 @@ class ClipboardSyncService implements IClipboardSyncService {
         // for long clips runs in an isolate.
         if ((!webhookOn && !obsidianOn) || _isDisposed) return;
 
+        // Converted only now, once something will use it: a web page's HTML
+        // can run to megabytes, and the default is both integrations off.
+        final text = isHtml ? htmlToPlainText(content) : content;
+        if (text.isEmpty) return;
+
         if (!screened) {
           final detection = await _securityService.detectSensitiveDataAsync(
-            content,
+            text,
           );
           if (detection.isSensitive) {
             debugPrint(
@@ -1441,20 +1430,13 @@ class ClipboardSyncService implements IClipboardSyncService {
         }
 
         await Future.wait([
-          if (webhookOn) _sendWebhook(webhook, content, deviceType, direction),
-          if (obsidianOn)
-            _appendToVault(obsidian, content, deviceType, direction),
+          if (webhookOn) _sendWebhook(webhook, text, deviceType, direction),
+          if (obsidianOn) _appendToVault(obsidian, text, deviceType, direction),
         ]);
       } on Exception catch (e) {
         debugPrint('[ClipboardSyncService] Integrations skipped: $e');
       }
     }());
-  }
-
-  /// Keep a background operation in [_pendingFutures] until it completes.
-  void _track(Future<void> future) {
-    _pendingFutures.add(future);
-    future.whenComplete(() => _pendingFutures.remove(future));
   }
 
   Future<void> _sendWebhook(
@@ -1538,9 +1520,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     _pollingTimer?.cancel();
     _pollingTimer = null;
 
-    // Note: _pendingFutures are tracked but not awaited in dispose()
-    // since dispose() is sync. The _isDisposed flag prevents new work.
-    // In a real async dispose, we would: await Future.wait(_pendingFutures);
+    // Integration deliveries still in flight are not awaited - dispose() is
+    // sync - but each one checks _isDisposed before doing more work.
 
     // Unsubscribe from realtime
     _realtimeChannel?.unsubscribe();

@@ -166,7 +166,6 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   @override
   void dispose() {
-    _loadGeneration++;
     EncryptionService.instance.keyRevision.removeListener(
       _onKeyRevisionChanged,
     );

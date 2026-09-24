@@ -378,6 +378,14 @@ class EncryptionService implements IEncryptionService {
     // loaded - nothing, after a reset or a failed init, or another account -
     // says nothing about which account was just deleted, and the Keychain
     // entry outlives a reinstall on iOS.
+    await _deleteStoredPassphrase(userId);
+    if (_userId == userId) _setKeyBytes(null);
+  }
+
+  /// Delete [userId]'s stored passphrase and verification hash, each
+  /// attempted whatever happens to the other. Returns the first failure.
+  Future<Exception?> _deleteStoredPassphrase(String? userId) async {
+    Exception? undeleted;
     for (final key in [
       _passphraseKeyFor(userId),
       _verificationHashKeyFor(userId),
@@ -386,9 +394,10 @@ class EncryptionService implements IEncryptionService {
         await _secureStorage.delete(key: key);
       } on Exception catch (e) {
         debugPrint('[EncryptionService] Could not delete $key: $e');
+        undeleted ??= e;
       }
     }
-    if (_userId == userId) _setKeyBytes(null);
+    return undeleted;
   }
 
   @override
@@ -409,15 +418,7 @@ class EncryptionService implements IEncryptionService {
       // half the entries on disk - the worst outcome for something whose whole
       // job is to make the key unavailable. Failing to erase is worth logging,
       // never worth abandoning the rest of the teardown for.
-      Exception? undeleted;
-      for (final key in [_passphraseKey, _verificationHashKey]) {
-        try {
-          await _secureStorage.delete(key: key);
-        } on Exception catch (e) {
-          debugPrint('[EncryptionService] Could not delete $key: $e');
-          undeleted ??= e;
-        }
-      }
+      final undeleted = await _deleteStoredPassphrase(_userId);
 
       // Clear from memory
       _setKeyBytes(null);

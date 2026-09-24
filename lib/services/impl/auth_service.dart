@@ -215,11 +215,7 @@ class AuthService implements IAuthService {
       // after the wait gave up, so a browser sign-in finished after the
       // timeout still switched accounts and deleted the guest's clips while
       // the panel had already reported failure.
-      final next = _client.auth.currentSession;
-      if (previous != null && next != null) {
-        await _cleanupPreviousSession(previous, next.user.id, deviceId);
-      }
-      await _registerThisDesktop();
+      await _finishAccountSwitch(previous, deviceId);
       debugPrint(
         '[AuthService] ${provider.name} sign in completed (web OAuth)',
       );
@@ -490,23 +486,34 @@ class AuthService implements IAuthService {
   /// it over only on the first authorization anyway.
   Future<({String idToken, String nonce})?> _appleCredential() async {
     final nonce = appleNonce(_secureRandom);
+    final credential = await _requestAppleCredential(
+      scopes: const [AppleIDAuthorizationScopes.email],
+      nonce: nonce.hashed,
+    );
+    if (credential == null) return null;
+    final idToken = credential.identityToken;
+    if (idToken == null) {
+      debugPrint('[AuthService] No identity token from Apple');
+      return null;
+    }
+    return (idToken: idToken, nonce: nonce.raw);
+  }
+
+  /// The native Apple sheet. Null when the user cancels it; any other
+  /// failure is rethrown.
+  static Future<AuthorizationCredentialAppleID?> _requestAppleCredential({
+    required List<AppleIDAuthorizationScopes> scopes,
+    String? nonce,
+  }) async {
     try {
-      final credential = await SignInWithApple.getAppleIDCredential(
-        scopes: const [AppleIDAuthorizationScopes.email],
-        nonce: nonce.hashed,
+      return await SignInWithApple.getAppleIDCredential(
+        scopes: scopes,
+        nonce: nonce,
       );
-      final idToken = credential.identityToken;
-      if (idToken == null) {
-        debugPrint('[AuthService] No identity token from Apple');
-        return null;
-      }
-      return (idToken: idToken, nonce: nonce.raw);
     } on SignInWithAppleAuthorizationException catch (e) {
-      if (e.code == AuthorizationErrorCode.canceled) {
-        debugPrint('[AuthService] Apple sign in cancelled by user');
-        return null;
-      }
-      rethrow;
+      if (e.code != AuthorizationErrorCode.canceled) rethrow;
+      debugPrint('[AuthService] Apple sheet cancelled by user');
+      return null;
     }
   }
 
@@ -819,18 +826,9 @@ class AuthService implements IAuthService {
   }
 
   /// The native Apple sheet, asking only for a fresh authorization code.
-  static Future<String?> _nativeAppleAuthorizationCode() async {
-    try {
-      // No scopes: this only proves it is still the account holder.
-      final credential = await SignInWithApple.getAppleIDCredential(
-        scopes: const [],
-      );
-      return credential.authorizationCode;
-    } on SignInWithAppleAuthorizationException catch (e) {
-      if (e.code == AuthorizationErrorCode.canceled) return null;
-      rethrow;
-    }
-  }
+  // No scopes: this only proves it is still the account holder.
+  static Future<String?> _nativeAppleAuthorizationCode() async =>
+      (await _requestAppleCredential(scopes: const []))?.authorizationCode;
 
   @override
   Future<void> signOut() async {
@@ -921,6 +919,14 @@ class AuthService implements IAuthService {
       }
       rethrow;
     }
+    await _finishAccountSwitch(previous, deviceId);
+    return result;
+  }
+
+  /// Tidy up after the session moved from [previous] to the current one:
+  /// clean up the account left behind, then register this computer under the
+  /// new one.
+  Future<void> _finishAccountSwitch(Session? previous, String? deviceId) async {
     final next = _client.auth.currentSession;
     if (previous != null && next != null) {
       await _cleanupPreviousSession(previous, next.user.id, deviceId);
@@ -928,7 +934,6 @@ class AuthService implements IAuthService {
     if (next != null && next.user.id != previous?.user.id) {
       await _registerThisDesktop();
     }
-    return result;
   }
 
   /// Register this computer under the account it has just moved to.
