@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
@@ -39,8 +41,10 @@ class _RecordingSyncService implements IClipboardSyncService {
   @override
   void resumeRealtime() => realtimePaused = false;
 
+  int monitoringStarts = 0;
+
   @override
-  void startClipboardMonitoring() {}
+  void startClipboardMonitoring() => monitoringStarts++;
 
   @override
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
@@ -103,6 +107,28 @@ void main() {
       async.elapse(const Duration(seconds: 1));
       expect(sync.activityWatchRefreshes, 1);
 
+      controller.dispose();
+    });
+  });
+
+  test('a lock during the unlock resume does not restart monitoring', () {
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller.onScreenLock();
+      final autoSend = Completer<bool>();
+      when(settings.getAutoSendEnabled).thenAnswer((_) => autoSend.future);
+      controller
+        ..onScreenUnlock()
+        ..onScreenLock();
+      autoSend.complete(true);
+      async.elapse(const Duration(seconds: 1));
+
+      expect(sync.monitoringStarts, 0);
       controller.dispose();
     });
   });

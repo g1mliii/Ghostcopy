@@ -343,13 +343,18 @@ class LifecycleController implements ILifecycleController {
     // Always resume to realtime (user just woke system/unlocked screen)
     switchToRealtime();
 
+    // Not awaited, but safe against a lock that lands while it reads
+    // settings: the stop that lock makes invalidates this refresh, so it
+    // cannot restart the watch under the lock.
     unawaited(_clipboardSyncService.refreshClipboardActivityWatch());
 
     // Only resume clipboard monitoring if user has auto-send enabled
     // Prevents overriding user preference after system wake/screen unlock
     try {
       final autoSendEnabled = await _settingsService.getAutoSendEnabled();
-      if (_isDisposed) return; // Check after async gap
+      // Check after async gap. Locked or asleep again by now means the pause
+      // already ran, and starting the monitor would undo it.
+      if (_isDisposed || _powerState != PowerState.awake) return;
       if (autoSendEnabled && !_clipboardSyncService.isMonitoring) {
         _clipboardSyncService.startClipboardMonitoring();
       }
