@@ -32,6 +32,7 @@ import 'services/impl/game_mode_service.dart';
 import 'services/impl/hotkey_service.dart';
 import 'services/impl/lifecycle_controller.dart';
 import 'services/impl/notification_service.dart';
+import 'services/impl/pkce_verifier_store.dart';
 import 'services/impl/security_service.dart';
 import 'services/impl/system_power_service.dart';
 import 'services/impl/transformer_service.dart';
@@ -126,7 +127,7 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
       // Same guard as the UI isolate: this one also starts a deep-link
       // observer, and it must not accept a session from a URL either.
       authOptions: const FlutterAuthClientOptions(
-        detectSessionInUriPredicate: isTrustedAuthCallback,
+        detectSessionInUriPredicate: _acceptAuthCallbackUri,
       ),
     );
 
@@ -308,6 +309,10 @@ Future<void> main(List<String> args) async {
     }),
   );
 
+  // Supabase keeps PKCE verifiers here rather than in storage of its own, so
+  // AuthService can forget one when a browser sign-in is abandoned.
+  final pkceStore = PkceVerifierStore();
+
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
     // Initialize Supabase with session persistence
@@ -318,8 +323,9 @@ Future<void> main(List<String> args) async {
       // getSessionFromUrl directly, bypassing _handleDeepLinkArgs. Its default
       // predicate accepts any URI carrying access_token, so without this the
       // session-injection hole stays open on that route.
-      authOptions: const FlutterAuthClientOptions(
-        detectSessionInUriPredicate: isTrustedAuthCallback,
+      authOptions: FlutterAuthClientOptions(
+        detectSessionInUriPredicate: _acceptAuthCallbackUri,
+        pkceAsyncStorage: pkceStore,
       ),
     ),
 
@@ -330,7 +336,10 @@ Future<void> main(List<String> args) async {
 
   // Initialize services that depend on Supabase
   final deviceService = DeviceService();
-  final authService = AuthService(deviceService: deviceService);
+  final authService = AuthService(
+    deviceService: deviceService,
+    pkceStore: pkceStore,
+  );
 
   locator
     ..registerSingleton<IAuthService>(authService)
@@ -406,11 +415,20 @@ Future<void> main(List<String> args) async {
     // Initialize settings service first (required by other services)
     await settingsService.initialize();
 
+    // Before the sync service, which announces received clips from the moment
+    // it subscribes. The window service it also uses depends on the sync
+    // service through LifecycleController, so it is attached further down.
+    final notificationService = NotificationService(
+      gameModeService: gameModeService,
+    );
+    locator.registerSingleton<INotificationService>(notificationService);
+
     // Initialize background clipboard sync service
     final clipboardSyncService = ClipboardSyncService(
       clipboardRepository: clipboardRepository,
       settingsService: settingsService,
       securityService: securityService,
+      notificationService: notificationService,
       gameModeService: gameModeService,
       urlShortenerService: urlShortenerService,
       webhookService: webhookService,
@@ -447,14 +465,7 @@ Future<void> main(List<String> args) async {
       lifecycleController: lifecycleController,
     );
     locator.registerSingleton<IWindowService>(windowService);
-    final notificationService = NotificationService(
-      windowService: windowService,
-      gameModeService: gameModeService,
-    );
-    locator.registerSingleton<INotificationService>(notificationService);
-
-    // Note: ClipboardSyncService was initialized with notificationService: null
-    // This is okay - the service will just skip notifications if null
+    notificationService.attachWindowService(windowService);
 
     // Register ViewModels and other factories
     setupLocator();
@@ -1055,7 +1066,7 @@ class _MyAppState extends State<MyApp> {
     if (!mounted) return;
     await locator<ITrayService>().setContextMenu([
       TrayMenuItem(
-        label: 'Show Spotlight',
+        label: 'Open GhostCopy',
         onTap: () => locator<IWindowService>().showSpotlight(),
       ),
       TrayMenuItem(
@@ -1104,7 +1115,7 @@ class _MyAppState extends State<MyApp> {
     // Increase size to handling overflow issues on different DPIs
     await windowManager.setSize(const Size(320, 450));
     await windowManager.setBackgroundColor(Colors.transparent);
-    await windowManager.setAsFrameless();
+    await locator<IWindowService>().setFramelessForTrayMenu();
 
     // Wait for resize to complete
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1311,6 +1322,43 @@ Future<void> _registerSavedHotkey() async {
   }
 }
 
+/// Whether [uri] is a callback this app asked for.
+///
+/// Wired into `Supabase.initialize` as `detectSessionInUriPredicate`, because
+/// supabase_flutter runs its own deep-link observer (`AppLinks`) that is a
+/// second, parallel route to `getSessionFromUrl` - one that does not go through
+/// [_handleDeepLinkArgs] at all, and on macOS and Android is the route every
+/// callback takes. Its default heuristic accepts any URI merely carrying
+/// `access_token`, `code` or `error` in the query OR the fragment, which is
+/// exactly the URL an attacker sends. Validating both routes with the same
+/// [AuthCallbackDecision] rules is the point: fixing only the command-line one
+/// leaves the app wide open wherever AppLinks delivers the link.
+///
+/// One side effect: a provider error ends the browser sign-in waiting on it,
+/// where otherwise the auth panel sat disabled until its timeout.
+bool _acceptAuthCallbackUri(Uri uri) {
+  final decision = AuthCallbackDecision.evaluate(uri.toString());
+  _reportProviderError(decision);
+  return decision.isAccepted;
+}
+
+/// Hand a provider's error redirect (declined consent, an identity that
+/// already belongs to another account) to the sign-in waiting on it.
+void _reportProviderError(AuthCallbackDecision decision) {
+  if (decision.rejection != AuthCallbackRejection.providerError) return;
+  if (!locator.isRegistered<IAuthService>()) return;
+  // Our own wording, never the URL's: anyone can open a ghostcopy:// link, so
+  // its text is not something to put in front of the user.
+  final message = switch (decision.errorCode) {
+    'identity_already_exists' =>
+      'That account is already linked to another GhostCopy account. '
+          'Sign in to it instead.',
+    'access_denied' || 'user_cancelled_authorize' => 'Sign-in was cancelled.',
+    _ => 'Sign-in did not complete. Please try again.',
+  };
+  locator<IAuthService>().failBrowserSignIn(message);
+}
+
 /// Feed a ghostcopy:// callback URL to Supabase so the session is established.
 ///
 /// Handles both `ghostcopy://auth-callback` (Google OAuth) and
@@ -1336,6 +1384,7 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
       '[Main] ⛔ Refused deep link (${decision.rejection!.name}): '
       '${decision.detail ?? "no detail"}',
     );
+    _reportProviderError(decision);
     return;
   }
 

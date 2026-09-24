@@ -9,6 +9,10 @@ abstract class IWindowService {
   /// Hide the Spotlight window
   Future<void> hideSpotlight();
 
+  /// Make the window frameless for the Windows tray menu. [showSpotlight]
+  /// restores the Spotlight's frame the next time it runs, and only then.
+  Future<void> setFramelessForTrayMenu();
+
   /// Center the window on the screen
   Future<void> centerWindow();
 

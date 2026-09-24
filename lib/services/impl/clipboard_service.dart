@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
 import '../../models/clipboard_limits.dart';
+import '../../utils/html_text.dart';
 import '../clipboard_service.dart';
 
 /// Implementation of clipboard operations using super_clipboard
@@ -17,7 +18,6 @@ class ClipboardService implements IClipboardService {
   static final ClipboardService instance = ClipboardService._();
 
   // Compiled once: these run on every clipboard read, which polls every 5s.
-  static final _htmlTag = RegExp('<[^>]*>');
   static final _pathSeparator = RegExp(r'[/\\]');
   static final _unsafeFilenameChars = RegExp('[<>:"|?*]');
 
@@ -26,7 +26,12 @@ class ClipboardService implements IClipboardService {
 
   @override
   Future<ClipboardContent> read() async {
+    // Set when a format the clipboard offers could not be read, so a read that
+    // finds nothing else reports that rather than an empty clipboard.
+    var failed = false;
     try {
+      // Throws while another process has the clipboard open: on Windows,
+      // OleGetClipboard fails with CLIPBRD_E_CANT_OPEN.
       final reader = await SystemClipboard.instance?.read();
       if (reader == null) return const ClipboardContent.empty();
 
@@ -67,6 +72,7 @@ class ClipboardService implements IClipboardService {
           }
         } on Exception catch (e) {
           debugPrint('[ClipboardService] ✗ File URI read failed: $e');
+          failed = true;
           // Continue to next format
         }
       }
@@ -83,10 +89,12 @@ class ClipboardService implements IClipboardService {
               final bytes = await file.readAll();
               completer.complete(ClipboardContent.image(bytes, 'image/png'));
             } on Exception catch (_) {
+              failed = true;
               completer.complete(null);
             }
           },
           onError: (e) {
+            failed = true;
             completer.complete(null);
           },
         );
@@ -107,10 +115,12 @@ class ClipboardService implements IClipboardService {
               final bytes = await file.readAll();
               completer.complete(ClipboardContent.image(bytes, 'image/jpeg'));
             } on Exception catch (_) {
+              failed = true;
               completer.complete(null);
             }
           },
           onError: (e) {
+            failed = true;
             completer.complete(null);
           },
         );
@@ -137,11 +147,12 @@ class ClipboardService implements IClipboardService {
         }
       }
 
+      if (failed) return const ClipboardContent.unavailable();
       debugPrint('[ClipboardService] ○ Clipboard is empty');
       return const ClipboardContent.empty();
     } on Exception catch (e) {
       debugPrint('[ClipboardService] ✗ Read failed: $e');
-      return const ClipboardContent.empty();
+      return const ClipboardContent.unavailable();
     }
   }
 
@@ -161,8 +172,7 @@ class ClipboardService implements IClipboardService {
   @override
   Future<void> writeHtml(String html) async {
     try {
-      // Strip HTML tags for plain text fallback
-      final plainText = html.replaceAll(_htmlTag, '');
+      final plainText = htmlToPlainText(html);
 
       final item = DataWriterItem()
         ..add(Formats.htmlText(html))

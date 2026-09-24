@@ -129,13 +129,17 @@ RELEASE_NOTES=release-notes.html \
 ```
 
 Notes are embedded at prepare time, so they cannot be added at publish time.
-`publish-update.sh` refuses a candidate whose dialog would be blank.
+`publish-update.sh` refuses a candidate whose dialog would be blank, and takes
+no notes argument: it publishes the text out of the signed appcast. This step
+used to accept a second notes file, and the example here passed a .md while the
+appcast had been built from an .html - two files saying the same thing, with
+nothing checking they agreed.
 
 **6. Publish.**
 
 ```bash
 installer/macos/publish-update.sh build/installer/YYYYMMDD-HHMMSS \
-  "$(git rev-parse HEAD)" release-notes.md
+  "$(git rev-parse HEAD)"
 ```
 
 This creates the versioned release as a **draft** with the DMG attached, flips

@@ -1,0 +1,436 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/auth_service.dart';
+import 'package:ghostcopy/services/device_service.dart';
+import 'package:ghostcopy/services/encryption_service.dart';
+import 'package:ghostcopy/services/impl/auth_service.dart';
+import 'package:ghostcopy/services/impl/pkce_verifier_store.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class _Encryption extends Mock implements IEncryptionService {}
+
+class _Repository extends Mock implements IClipboardRepository {}
+
+class _Devices extends Mock implements IDeviceService {}
+
+/// What PkceVerifierStore stores into, in memory.
+class _MemoryStorage extends GotrueAsyncStorage {
+  final items = <String, String>{};
+
+  @override
+  Future<String?> getItem({required String key}) async => items[key];
+
+  @override
+  Future<void> setItem({required String key, required String value}) async =>
+      items[key] = value;
+
+  @override
+  Future<void> removeItem({required String key}) async => items.remove(key);
+}
+
+Map<String, Object?> _session(
+  String id, {
+  bool anonymous = false,
+  String? provider,
+}) {
+  final expires =
+      DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
+      1000;
+  final payload = base64Url
+      .encode(utf8.encode(jsonEncode({'sub': id, 'exp': expires})))
+      .replaceAll('=', '');
+  return {
+    'access_token': 'e30.$payload.signature',
+    'refresh_token': 'refresh-$id',
+    'token_type': 'bearer',
+    'expires_in': 3600,
+    'expires_at': expires,
+    'user': {
+      'id': id,
+      'aud': 'authenticated',
+      'role': 'authenticated',
+      'email': anonymous ? '' : '$id@example.com',
+      'created_at': '2026-01-01T00:00:00Z',
+      'is_anonymous': anonymous,
+      'app_metadata': <String, Object?>{},
+      'user_metadata': <String, Object?>{},
+      'identities': [
+        if (provider != null)
+          {
+            'id': '$id-$provider',
+            'user_id': id,
+            'identity_data': <String, Object?>{},
+            'provider': provider,
+          },
+      ],
+    },
+  };
+}
+
+/// Whether this host has the native Apple sheet, which decides whether an
+/// Apple account is asked to confirm before deletion.
+final _nativeApple = Platform.isIOS || Platform.isMacOS;
+
+/// Whether this host counts as desktop, where AuthService registers the
+/// device itself after an account change.
+final _desktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  late SupabaseClient client;
+  late List<http.Request> requests;
+  late int deleteStatus;
+  late int reauthorizations;
+  late String? appleCode;
+  late _Encryption encryption;
+  late bool signupFails;
+  late _MemoryStorage pkceMemory;
+  late PkceVerifierStore pkceStore;
+  late Exception? reauthorizeError;
+
+  Future<AuthService> signedInAs(
+    Map<String, Object?> session, {
+    IDeviceService? devices,
+  }) async {
+    client = SupabaseClient(
+      'https://example.com',
+      'anon-key',
+      authOptions: AuthClientOptions(pkceAsyncStorage: pkceStore),
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        if (request.url.path == '/functions/v1/delete-account') {
+          return http.Response(
+            deleteStatus == 200
+                ? '{"deleted":true,"apple_revoked":null}'
+                : '{"error":"delete_failed"}',
+            deleteStatus,
+            headers: {'content-type': 'application/json'},
+            request: request,
+          );
+        }
+        if (request.url.path == '/auth/v1/token') {
+          // The browser callback's code exchange emits signedIn with the new
+          // session; a password sign-in answered here emits the same event.
+          return http.Response(jsonEncode(_session('apple-user')), 200);
+        }
+        if (request.url.path == '/auth/v1/signup') {
+          if (signupFails) {
+            return http.Response(
+              '{"msg":"rate limited","code":429}',
+              429,
+              request: request,
+            );
+          }
+          return http.Response(
+            jsonEncode(_session('guest', anonymous: true)),
+            200,
+          );
+        }
+        return http.Response('', 204, request: request);
+      }),
+    );
+    await client.auth.recoverSession(jsonEncode(session));
+    requests.clear();
+    return AuthService(
+      client: client,
+      deviceService: devices,
+      encryptionService: encryption,
+      clipboardRepository: _Repository(),
+      appleReauthorize: () async {
+        reauthorizations++;
+        final error = reauthorizeError;
+        if (error != null) throw error;
+        return appleCode;
+      },
+      pkceStore: pkceStore,
+    );
+  }
+
+  setUp(() {
+    requests = [];
+    deleteStatus = 200;
+    reauthorizations = 0;
+    appleCode = 'fresh-code';
+    signupFails = false;
+    pkceMemory = _MemoryStorage();
+    pkceStore = PkceVerifierStore(pkceMemory);
+    reauthorizeError = null;
+    encryption = _Encryption();
+    when(
+      () => encryption.forgetPassphraseLocally(any()),
+    ).thenAnswer((_) async {});
+  });
+
+  tearDown(() => client.dispose());
+
+  Map<String, Object?> deleteBody() =>
+      jsonDecode(
+            requests
+                .singleWhere((r) => r.url.path.endsWith('/delete-account'))
+                .body,
+          )
+          as Map<String, Object?>;
+
+  test('an email account is deleted and the device moves to a guest', () async {
+    final service = await signedInAs(_session('user', provider: 'email'));
+
+    expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+
+    expect(reauthorizations, 0);
+    expect(deleteBody(), isEmpty);
+    expect(client.auth.currentUser?.id, 'guest');
+    expect(client.auth.currentUser?.isAnonymous, isTrue);
+    // The passphrase for an account that no longer exists must not stay
+    // in this device's Keychain.
+    verify(() => encryption.forgetPassphraseLocally('user')).called(1);
+  });
+
+  test(
+    'an Apple account confirms with Apple and sends the fresh code',
+    () async {
+      final service = await signedInAs(_session('user', provider: 'apple'));
+
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+
+      expect(reauthorizations, 1);
+      expect(deleteBody(), {'apple_authorization_code': 'fresh-code'});
+      expect(client.auth.currentUser?.id, 'guest');
+    },
+    skip: !_nativeApple,
+  );
+
+  test('backing out of the Apple sheet deletes nothing', () async {
+    appleCode = null;
+    final service = await signedInAs(_session('user', provider: 'apple'));
+
+    expect(await service.deleteAccount(), AccountDeletionOutcome.cancelled);
+
+    expect(requests, isEmpty);
+    expect(client.auth.currentUser?.id, 'user');
+  }, skip: !_nativeApple);
+
+  test(
+    'without the native sheet an Apple account is deleted without a code',
+    () async {
+      final service = await signedInAs(_session('user', provider: 'apple'));
+
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+
+      expect(reauthorizations, 0);
+      expect(deleteBody(), isEmpty);
+    },
+    skip: _nativeApple,
+  );
+
+  test(
+    'an Apple account is still deleted when Apple cannot give a code',
+    () async {
+      // No Apple ID signed in on this device, or Apple failing: only an
+      // explicit cancel may stop the deletion (App Review 5.1.1(v)).
+      reauthorizeError = Exception('AuthorizationErrorCode.unknown');
+      final service = await signedInAs(_session('user', provider: 'apple'));
+
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+
+      expect(reauthorizations, 1);
+      expect(deleteBody(), isEmpty);
+      expect(client.auth.currentUser?.id, 'guest');
+    },
+    skip: !_nativeApple,
+  );
+
+  test('a failed deletion keeps the account signed in', () async {
+    deleteStatus = 500;
+    final service = await signedInAs(_session('user', provider: 'email'));
+
+    await expectLater(service.deleteAccount(), throwsA(isA<Exception>()));
+
+    expect(client.auth.currentUser?.id, 'user');
+    expect(requests.map((r) => r.url.path), isNot(contains('/auth/v1/signup')));
+    verifyNever(() => encryption.forgetPassphraseLocally(any()));
+  });
+
+  test(
+    'a failed guest sign-in afterwards still reports the deletion',
+    () async {
+      // The account is already gone by then; saying "nothing was deleted"
+      // would be false.
+      signupFails = true;
+      final service = await signedInAs(_session('user', provider: 'email'));
+
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+      verify(() => encryption.forgetPassphraseLocally('user')).called(1);
+    },
+  );
+
+  group('this desktop is registered to the account it moves to', () {
+    // Desktop registered only at launch, so the new account's device list -
+    // what the phone reads to show and target it - missed this computer until
+    // a restart.
+    late _Devices devices;
+
+    setUp(() {
+      devices = _Devices();
+      when(devices.getCurrentDeviceId).thenReturn(null);
+      when(devices.registerCurrentDevice).thenAnswer((_) async => true);
+    });
+
+    test('after deleting the account', () async {
+      final service = await signedInAs(
+        _session('user', provider: 'email'),
+        devices: devices,
+      );
+
+      await service.deleteAccount();
+
+      expect(client.auth.currentUser?.id, 'guest');
+      verify(devices.registerCurrentDevice).called(1);
+    }, skip: !_desktop);
+
+    test('after signing in to another account', () async {
+      final service = await signedInAs(
+        _session('guest', anonymous: true),
+        devices: devices,
+      );
+
+      await service.signInWithEmail('a@b.c', 'x');
+
+      expect(client.auth.currentUser?.id, 'apple-user');
+      verify(devices.registerCurrentDevice).called(1);
+    }, skip: !_desktop);
+
+    test('not when the account did not change', () async {
+      final service = await signedInAs(
+        _session('apple-user', provider: 'email'),
+        devices: devices,
+      );
+
+      await service.signInWithEmail('a@b.c', 'x');
+
+      verifyNever(devices.registerCurrentDevice);
+    }, skip: !_desktop);
+  });
+
+  group('browser sign-in waits for the callback', () {
+    test('resolves once the new session arrives', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+
+      await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
+
+      expect(await done, isTrue);
+    });
+
+    test('reports failure when the browser never comes back', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+
+      expect(
+        await service.awaitBrowserSession(
+          (session) => session.user.id != 'guest',
+          timeout: const Duration(milliseconds: 50),
+        ),
+        isFalse,
+      );
+    });
+
+    test('an abandoned wait forgets the PKCE verifier', () async {
+      // So a callback that arrives after the panel reported failure cannot
+      // still switch accounts behind it.
+      //
+      // gotrue writes the verifier itself, under whatever key it uses: the
+      // point is that forgetting does not depend on knowing that name.
+      final service = await signedInAs(_session('guest', anonymous: true));
+      await client.auth.getOAuthSignInUrl(provider: OAuthProvider.google);
+      expect(pkceMemory.items, isNotEmpty);
+
+      await service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+        timeout: const Duration(milliseconds: 50),
+      );
+
+      expect(pkceMemory.items, isEmpty);
+      await expectLater(
+        client.auth.exchangeCodeForSession('late-code'),
+        throwsA(isA<AuthException>()),
+      );
+      expect(service.isAwaitingBrowserSignIn, isFalse);
+    });
+
+    test('a completed sign-in leaves the verifier to gotrue', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+      await client.auth.getOAuthSignInUrl(provider: OAuthProvider.google);
+
+      await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
+
+      expect(await done, isTrue);
+      expect(pkceMemory.items, isNotEmpty);
+    });
+
+    test('cancelling ends the wait at once', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+      expect(service.isAwaitingBrowserSignIn, isTrue);
+
+      service.cancelBrowserSignIn();
+
+      expect(await done, isFalse);
+      expect(service.isAwaitingBrowserSignIn, isFalse);
+    });
+
+    test('a provider error ends the wait with that error', () async {
+      final service = await signedInAs(_session('guest', anonymous: true));
+      final done = service.awaitBrowserSession(
+        (session) => session.user.id != 'guest',
+      );
+
+      service.failBrowserSignIn('That account is already linked');
+
+      await expectLater(
+        done,
+        throwsA(
+          isA<BrowserSignInException>().having(
+            (e) => e.message,
+            'message',
+            'That account is already linked',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'an earlier sign-in replayed by the auth stream does not count',
+      () async {
+        // onAuthStateChange replays every event this process has seen. A
+        // sign-in to another account earlier in the session must not read as
+        // this browser flow finishing.
+        final service = await signedInAs(_session('guest', anonymous: true));
+        await client.auth.signInWithPassword(email: 'a@b.c', password: 'x');
+        await client.auth.recoverSession(
+          jsonEncode(_session('guest', anonymous: true)),
+        );
+
+        expect(
+          await service.awaitBrowserSession(
+            (session) => session.user.id != 'guest',
+            timeout: const Duration(milliseconds: 50),
+          ),
+          isFalse,
+        );
+      },
+    );
+  });
+}

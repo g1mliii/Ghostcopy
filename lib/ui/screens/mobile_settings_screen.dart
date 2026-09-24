@@ -18,6 +18,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
+import '../account_deletion_text.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -98,6 +99,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   bool _autoShortenUrls = false;
   Set<String> _defaultDevices = {};
   bool _urlShortenerLoading = false;
+
+  /// True while the account is being deleted, so the row cannot be tapped
+  /// twice and shows that something is happening.
+  bool _deletingAccount = false;
 
   // App info
   String _appVersion = '';
@@ -276,23 +281,75 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
     if (confirmed) {
       await widget.authService.signOut();
-
-      // Re-register device + FCM token for new anonymous user
       // signOut() signs in anonymously, so current user has a new user_id
-      try {
-        await widget.deviceService.registerCurrentDevice();
-        final fcmToken = await FirebaseMessaging.instance.getToken();
-        if (fcmToken != null) {
-          await widget.deviceService.updateFcmToken(fcmToken);
-        }
-        debugPrint('[Settings] ✅ Device re-registered after sign out');
-      } on Exception catch (e) {
-        debugPrint('[Settings] ⚠️ Failed to re-register device: $e');
-      }
+      await _reregisterDevice();
 
       if (mounted) {
         Navigator.of(context).pop();
       }
+    }
+  }
+
+  /// Register this device, and its push token, for the fresh guest account
+  /// that sign-out and account deletion both leave behind - clips and push
+  /// only reach devices registered to the current user.
+  Future<void> _reregisterDevice() async {
+    String? fcmToken;
+    try {
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } on Exception catch (e) {
+      debugPrint('[Settings] No push token to register: $e');
+    }
+    try {
+      // One write carrying the token: registering without it clears the
+      // stored token, leaving push off until a second write lands.
+      await widget.deviceService.registerCurrentDevice(fcmToken: fcmToken);
+      debugPrint('[Settings] ✅ Device re-registered for the new guest');
+    } on Exception catch (e) {
+      debugPrint('[Settings] ⚠️ Failed to re-register device: $e');
+    }
+  }
+
+  /// Delete the account and everything in it, from inside the app - App
+  /// Review requires this for any app where people create an account
+  /// (guideline 5.1.1(v)), and Google Play asks the same.
+  Future<void> _handleDeleteAccount() async {
+    final confirmed = await _showConfirmDialog(
+      title: accountDeletionTitle,
+      message: accountDeletionWarning(
+        appleNext: widget.authService.deletionNeedsAppleConfirmation,
+      ),
+      confirmText: 'Delete Account',
+      isDestructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _deletingAccount = true);
+    try {
+      final outcome = await widget.authService.deleteAccount();
+      if (outcome == AccountDeletionOutcome.cancelled) return;
+
+      await _reregisterDevice();
+
+      if (!mounted) return;
+      showGhostToast(
+        context,
+        'Your account has been deleted',
+        type: GhostToastType.success,
+      );
+      Navigator.of(context).pop();
+    } on Exception catch (e) {
+      debugPrint('[Settings] Account deletion failed: $e');
+      if (mounted) {
+        showGhostToast(
+          context,
+          accountDeletionFailed,
+          type: GhostToastType.error,
+          duration: const Duration(seconds: 4),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deletingAccount = false);
     }
   }
 
@@ -888,6 +945,30 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 style: TextStyle(fontSize: 14, color: Colors.red.shade400),
               ),
               onTap: _handleSignOut,
+            ),
+
+          // Delete account (App Review 5.1.1(v)); guest accounts have nothing
+          // of the user's own to delete beyond what sign-out already leaves
+          // to the 90-day expiry.
+          if (!isAnonymous)
+            ListTile(
+              leading: _deletingAccount
+                  ? Adaptive.progressIndicator(color: Colors.red.shade400)
+                  : Icon(
+                      Icons.delete_forever_outlined,
+                      color: Colors.red.shade400,
+                      size: 20,
+                    ),
+              title: Text(
+                'Delete Account',
+                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
+              ),
+              subtitle: const Text(
+                'Permanently delete your account and all your clips',
+                style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+              ),
+              enabled: !_deletingAccount,
+              onTap: _handleDeleteAccount,
             ),
         ],
       ),

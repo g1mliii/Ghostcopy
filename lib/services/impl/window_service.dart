@@ -75,6 +75,16 @@ class WindowService implements IWindowService {
     await windowManager.hide();
   }
 
+  /// Set by [setFramelessForTrayMenu], cleared once [showSpotlight] has put
+  /// the frame back.
+  bool _framelessForTrayMenu = false;
+
+  @override
+  Future<void> setFramelessForTrayMenu() async {
+    _framelessForTrayMenu = true;
+    await windowManager.setAsFrameless();
+  }
+
   @override
   Future<void> showSpotlight() async {
     if (!_isDesktop()) {
@@ -91,6 +101,24 @@ class WindowService implements IWindowService {
 
     // Hide to avoid warping during resize
     await windowManager.hide();
+
+    // Undo the tray menu's setAsFrameless(). On Windows that flag makes
+    // window_manager hand the whole window to Flutter, dropping the resize
+    // borders TitleBarStyle.hidden keeps - so after the first right-click on
+    // the tray the Spotlight came back a different size and could no longer
+    // be resized from its edges. setTitleBarStyle is the only call that
+    // clears the flag, and windowButtonVisibility must stay false or it
+    // brings the caption buttons back. Here rather than when the menu closes
+    // because the menu has several exits (Settings, the hotkey) that go
+    // straight to this method; gated so an ordinary hotkey press does not
+    // pay for a frame change.
+    if (_framelessForTrayMenu) {
+      _framelessForTrayMenu = false;
+      await windowManager.setTitleBarStyle(
+        TitleBarStyle.hidden,
+        windowButtonVisibility: false,
+      );
+    }
 
     // Set to Spotlight size and center (do this while hidden)
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));

@@ -11,7 +11,6 @@ import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
 import '../../services/clipboard_cache_manager.dart';
-import '../../services/compression_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_disk_cache.dart';
@@ -39,18 +38,13 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
-    ICompressionService? compressionService,
   }) {
     // For testing with custom dependencies, create a new instance
-    if (client != null ||
-        encryptionService != null ||
-        storageService != null ||
-        compressionService != null) {
+    if (client != null || encryptionService != null || storageService != null) {
       return ClipboardRepository._internal(
         client: client,
         encryptionService: encryptionService,
         storageService: storageService,
-        compressionService: compressionService,
       );
     }
     // Otherwise, return singleton
@@ -61,11 +55,9 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
-    ICompressionService? compressionService,
   }) : _client = client ?? Supabase.instance.client,
        _encryptionService = encryptionService ?? EncryptionService.instance,
-       _storageService = storageService ?? StorageService.instance,
-       _compressionService = compressionService ?? CompressionService.instance;
+       _storageService = storageService ?? StorageService.instance;
 
   // Singleton instance
   static final ClipboardRepository instance = ClipboardRepository._internal();
@@ -73,7 +65,6 @@ class ClipboardRepository implements IClipboardRepository {
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
   final IStorageService _storageService;
-  final ICompressionService _compressionService;
   bool _encryptionInitialized = false;
 
   /// User the loaded encryption state belongs to, so a sign-in as someone
@@ -232,30 +223,10 @@ class ClipboardRepository implements IClipboardRepository {
           originalFilename ??
           'file.${ContentType.fromMimeType(mimeType)?.fileExtension ?? 'bin'}';
 
-      // Compress images before upload (skip GIFs to preserve animation)
+      // Store the original payload. Thumbnail resizing belongs only in the
+      // image widget: exports, drag-and-drop and receiving devices must get
+      // the same bytes, dimensions and format that were selected for sending.
       var uploadBytes = fileBytes;
-      var uploadMimeType = mimeType;
-      if (contentType.isImage && mimeType != 'image/gif') {
-        try {
-          final result = await _compressionService.compressImage(
-            fileBytes,
-            mimeType,
-          );
-          if (result.wasCompressed) {
-            debugPrint(
-              '[Repository] Compressed: ${fileBytes.length} → ${result.compressedSize} bytes '
-              '(${(result.compressionRatio * 100).toStringAsFixed(0)}%)',
-            );
-            uploadBytes = result.bytes;
-            uploadMimeType = result.mimeType;
-          }
-        } on Exception catch (e) {
-          debugPrint(
-            '[Repository] ⚠ Compression failed, uploading original: $e',
-          );
-          // Graceful fallback: upload original bytes
-        }
-      }
 
       // Encrypt the bytes themselves before they leave the device.
       //
@@ -293,7 +264,7 @@ class ClipboardRepository implements IClipboardRepository {
         clipboardId: storageId,
         bytes: uploadBytes,
         filename: filename,
-        mimeType: uploadMimeType,
+        mimeType: mimeType,
       );
 
       // 2. Insert to database with correct storage path (no placeholder, no UPDATE!)
@@ -316,7 +287,7 @@ class ClipboardRepository implements IClipboardRepository {
               // would actually search for; the bytes live at storage_path.
               'content': originalFilename ?? filename,
               'content_type': contentType.value,
-              'mime_type': uploadMimeType,
+              'mime_type': mimeType,
               'file_size_bytes': uploadBytes.length,
               'storage_path': uploadResult.storagePath,
               if (metadata.isNotEmpty) 'metadata': metadata,
@@ -340,12 +311,10 @@ class ClipboardRepository implements IClipboardRepository {
           targetDeviceTypes: targetDeviceTypes,
           contentType: contentType,
           storagePath: uploadResult.storagePath,
-          // The stored size, not the pre-compression one. The row records
-          // uploadBytes.length, so returning the original made the sending
-          // device display a different size for the same clip than every other
-          // device that reads it back.
+          isEncrypted: filesEncrypted,
+          // Match the stored size, including encryption overhead when enabled.
           fileSizeBytes: uploadBytes.length,
-          mimeType: uploadMimeType,
+          mimeType: mimeType,
           metadata: metadata.isNotEmpty
               ? ClipboardMetadata(
                   width: width,
@@ -1113,17 +1082,9 @@ class ClipboardRepository implements IClipboardRepository {
           );
         }
 
-        // Parse target_device_type (can be null, list, or single string)
-        List<String>? targetDeviceTypes;
-        final targetDeviceTypeJson = json['target_device_type'];
-        if (targetDeviceTypeJson != null) {
-          if (targetDeviceTypeJson is List) {
-            targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
-          } else if (targetDeviceTypeJson is String) {
-            // Handle old single-value format for backwards compatibility
-            targetDeviceTypes = [targetDeviceTypeJson];
-          }
-        }
+        final targetDeviceTypes = ClipboardItem.parseTargetDeviceTypes(
+          json['target_device_type'],
+        );
 
         // Parse content_type (default to text for backwards compatibility)
         final contentTypeStr = json['content_type'] as String? ?? 'text';

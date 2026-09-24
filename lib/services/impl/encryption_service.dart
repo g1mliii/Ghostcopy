@@ -119,8 +119,12 @@ class EncryptionService implements IEncryptionService {
   }
 
   // Storage keys - user-specific to prevent cross-user passphrase leakage
-  String get _passphraseKey => 'encryption_passphrase_$_userId';
-  String get _verificationHashKey => 'encryption_verification_hash_$_userId';
+  static String _passphraseKeyFor(String? userId) =>
+      'encryption_passphrase_$userId';
+  static String _verificationHashKeyFor(String? userId) =>
+      'encryption_verification_hash_$userId';
+  String get _passphraseKey => _passphraseKeyFor(_userId);
+  String get _verificationHashKey => _verificationHashKeyFor(_userId);
 
   // PBKDF2 algorithm for key derivation is created in-isolate when needed
 
@@ -369,6 +373,34 @@ class EncryptionService implements IEncryptionService {
   }
 
   @override
+  Future<void> forgetPassphraseLocally(String userId) async {
+    // Keyed by the caller's id, not _userId: whatever this service last
+    // loaded - nothing, after a reset or a failed init, or another account -
+    // says nothing about which account was just deleted, and the Keychain
+    // entry outlives a reinstall on iOS.
+    await _deleteStoredPassphrase(userId);
+    if (_userId == userId) _setKeyBytes(null);
+  }
+
+  /// Delete [userId]'s stored passphrase and verification hash, each
+  /// attempted whatever happens to the other. Returns the first failure.
+  Future<Exception?> _deleteStoredPassphrase(String? userId) async {
+    Exception? undeleted;
+    for (final key in [
+      _passphraseKeyFor(userId),
+      _verificationHashKeyFor(userId),
+    ]) {
+      try {
+        await _secureStorage.delete(key: key);
+      } on Exception catch (e) {
+        debugPrint('[EncryptionService] Could not delete $key: $e');
+        undeleted ??= e;
+      }
+    }
+    return undeleted;
+  }
+
+  @override
   Future<void> clearPassphrase() async {
     if (!_initialized) {
       throw StateError('EncryptionService not initialized');
@@ -386,15 +418,7 @@ class EncryptionService implements IEncryptionService {
       // half the entries on disk - the worst outcome for something whose whole
       // job is to make the key unavailable. Failing to erase is worth logging,
       // never worth abandoning the rest of the teardown for.
-      Exception? undeleted;
-      for (final key in [_passphraseKey, _verificationHashKey]) {
-        try {
-          await _secureStorage.delete(key: key);
-        } on Exception catch (e) {
-          debugPrint('[EncryptionService] Could not delete $key: $e');
-          undeleted ??= e;
-        }
-      }
+      final undeleted = await _deleteStoredPassphrase(_userId);
 
       // Clear from memory
       _setKeyBytes(null);

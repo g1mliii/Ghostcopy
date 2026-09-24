@@ -1,15 +1,14 @@
 #!/bin/bash
 # Explicit publication step. Run only for an approved release candidate.
 set -euo pipefail
-if [[ $# -ne 3 ]]; then
-    echo "Usage: $0 RELEASE_DIRECTORY PUSHED_COMMIT_SHA RELEASE_NOTES_FILE" >&2
+if [[ $# -ne 2 ]]; then
+    echo "Usage: $0 RELEASE_DIRECTORY PUSHED_COMMIT_SHA" >&2
     exit 1
 fi
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 release="$(cd "$1" && pwd)"
 commit="$2"
-notes="$3"
-[[ "$commit" =~ ^[0-9a-f]{40}$ && -f "$notes" ]] || { echo 'Supply a full pushed commit SHA and release notes file.' >&2; exit 1; }
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'Supply a full pushed commit SHA.' >&2; exit 1; }
 [[ -f "$release/source-commit.txt" && -f "$release/source-dirty.txt" ]] || {
     echo 'Missing source provenance. Build with build-release.sh.' >&2; exit 1;
 }
@@ -24,7 +23,17 @@ bin="$("$script_dir/sparkle-tools.sh")"
 # An update whose dialog is blank looks broken. Notes are embedded and signed at
 # prepare time, so this cannot be corrected here; it needs prepare-update.sh
 # rerun with the notes file.
-python3 "$script_dir/check-release-notes.py" "$updates/appcast.xml"
+#
+# The GitHub release body is that same validated text, extracted from the
+# appcast rather than supplied again. It used to be a third argument, checked
+# against nothing - and the runbook itself passed release-notes.md here while
+# the appcast had been built from release-notes.html. Edit the notes after
+# preparing and the update dialog kept the old signed text while the release
+# page showed the new one, with every check in this script passing. One copy
+# exists now, and it is the signed one.
+notes="$(mktemp)"
+trap 'rm -f "$notes"' EXIT
+python3 "$script_dir/check-release-notes.py" "$updates/appcast.xml" --extract > "$notes"
 # Validate the commit exists remotely before creating any release.
 gh api "repos/$repo/commits/$commit" --silent
 # Upload binary before exposing it in the stable feed. Never overwrite binaries.

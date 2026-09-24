@@ -94,6 +94,10 @@ def verify(app, require_updater=False, sparkle_bin=None):
     check(groups == ['R9TKT8U45R.com.ghostcopy.ghostcopy'], 'Keychain group changed; existing passphrase may become inaccessible')
     for group in groups:
         check(any(fnmatch.fnmatchcase(group, pattern) for pattern in allowed.get('keychain-access-groups', [])), 'Profile does not authorize Keychain group')
+    # Restricted like the Keychain group: signed in but missing from the
+    # profile, and macOS refuses to launch the app at all.
+    if 'com.apple.developer.applesignin' in entitlements:
+        check('com.apple.developer.applesignin' in allowed, 'Profile does not authorize Sign in with Apple; app will not launch')
     with tempfile.TemporaryDirectory() as directory:
         prefix = str(pathlib.Path(directory) / 'certificate')
         subprocess.run(['codesign', '-d', '--extract-certificates=' + prefix, str(app)], check=True, capture_output=True)

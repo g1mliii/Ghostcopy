@@ -10,5 +10,11 @@
 	</array>
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Sign in with Apple. The App ID has the capability enabled as a
+	     primary App ID; without this key the authorization sheet fails. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>

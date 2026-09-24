@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -37,6 +38,7 @@ class CachedClipboardImage extends StatefulWidget {
     this.height,
     this.fit = BoxFit.cover,
     this.borderRadius = 8.0,
+    this.encryptionService,
     super.key,
   });
 
@@ -47,11 +49,20 @@ class CachedClipboardImage extends StatefulWidget {
   final BoxFit fit;
   final double borderRadius;
 
+  /// Whose key decrypts the image; the app-wide service unless a test
+  /// supplies one.
+  final IEncryptionService? encryptionService;
+
   @override
   State<CachedClipboardImage> createState() => _CachedClipboardImageState();
 }
 
 class _CachedClipboardImageState extends State<CachedClipboardImage> {
+  // Fixed for the widget's life: the listener is added to and removed from
+  // this one service.
+  late final IEncryptionService _encryption =
+      widget.encryptionService ?? EncryptionService.instance;
+
   /// Whether this device holds a passphrase, so an encrypted image can be
   /// shown rather than reported as a load failure. Resolved asynchronously
   /// because build() cannot await, and re-resolved whenever the source or the
@@ -61,6 +72,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   bool _useFallback = false;
   Uint8List? _fallbackImageBytes;
   bool _isLoadingFallback = false;
+  int _loadGeneration = 0;
 
   /// Set once a storage load has failed for the current source.
   ///
@@ -111,20 +123,29 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     // before EncryptionService.initialize() has derived the key, so isEnabled()
     // answers false and, cached, would lock every encrypted image for the life
     // of the screen.
-    EncryptionService.instance.keyRevision.addListener(_onKeyRevisionChanged);
+    _encryption.keyRevision.addListener(_onKeyRevisionChanged);
     if (widget.item.isEncrypted) {
       unawaited(_resolveCanDecrypt());
     }
   }
 
   void _onKeyRevisionChanged() {
-    if (widget.item.isEncrypted) {
-      unawaited(_resolveCanDecrypt());
+    if (!widget.item.isEncrypted) return;
+    // A new key may decrypt what the old one could not - the passphrase
+    // entered after this thumbnail first failed. Without this, a failed
+    // download stayed failed until the item was rebuilt with another source.
+    if (_fallbackFailed && mounted) {
+      setState(() {
+        _loadGeneration++;
+        _fallbackFailed = false;
+        _isLoadingFallback = false;
+      });
     }
+    unawaited(_resolveCanDecrypt());
   }
 
   Future<void> _resolveCanDecrypt() async {
-    final enabled = await EncryptionService.instance.isEnabled();
+    final enabled = await _encryption.isEnabled();
     if (mounted && enabled != _canDecrypt) {
       setState(() => _canDecrypt = enabled);
     }
@@ -143,6 +164,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         _decodeDimension(oldWidget.height) != _decodeDimension(widget.height);
 
     if (didSourceChange) {
+      _loadGeneration++;
       _useFallback = false;
       _fallbackImageBytes = null;
       _isLoadingFallback = false;
@@ -164,9 +186,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   @override
   void dispose() {
-    EncryptionService.instance.keyRevision.removeListener(
-      _onKeyRevisionChanged,
-    );
+    _encryption.keyRevision.removeListener(_onKeyRevisionChanged);
     _resetDecodedImageState();
 
     // Clear fallback image bytes
@@ -272,7 +292,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   /// Build fallback image using direct storage download
   Widget _buildFallbackImage(BuildContext context) {
-    // If already loaded, decode in isolate and display
+    // Decode asynchronously using the engine's image decoder.
     if (_fallbackImageBytes != null) {
       final decodeFuture = _getDecodeFuture(context, _fallbackImageBytes!);
       return FutureBuilder<ui.Image>(
@@ -280,12 +300,6 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.done) {
             if (snapshot.hasData && snapshot.data != null) {
-              // Dispose previous image before storing new one
-              if (_decodedImage != snapshot.data) {
-                _decodedImage?.dispose();
-                _decodedImage = snapshot.data;
-              }
-
               // Perf: Container with clipBehavior instead of ClipRRect
               return Container(
                 decoration: BoxDecoration(
@@ -358,50 +372,37 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     final decodeKey = Object.hash(bytes, targetW, targetH);
 
     if (_fallbackDecodeFuture == null || _fallbackDecodeKey != decodeKey) {
+      _resetDecodedImageState();
       _fallbackDecodeKey = decodeKey;
-      _fallbackDecodeFuture = _decodeImageInIsolate(
-        bytes,
-        targetWidth: targetW,
-        targetHeight: targetH,
-      );
+      final generation = _decodeGeneration;
+      _fallbackDecodeFuture =
+          _decodeImage(bytes, targetWidth: targetW, targetHeight: targetH).then(
+            (image) {
+              if (!mounted || generation != _decodeGeneration) {
+                image.dispose();
+                throw Exception('Thumbnail decode superseded');
+              }
+              _decodedImage = image;
+              return image;
+            },
+          );
     }
 
     return _fallbackDecodeFuture!;
   }
 
+  int _decodeGeneration = 0;
+
   void _resetDecodedImageState() {
+    _decodeGeneration++;
     _fallbackDecodeFuture = null;
     _fallbackDecodeKey = null;
     _decodedImage?.dispose();
     _decodedImage = null;
   }
 
-  /// Decode image in background isolate to prevent UI blocking
-  Future<ui.Image> _decodeImageInIsolate(
-    Uint8List bytes, {
-    int? targetWidth,
-    int? targetHeight,
-  }) async {
-    // For small images (<100KB), decode on main thread to avoid isolate overhead
-    if (bytes.length < 102400) {
-      return _decodeImageSync(
-        bytes,
-        targetWidth: targetWidth,
-        targetHeight: targetHeight,
-      );
-    }
-
-    // FIXED: compute() cannot return ui.Image (native handle), it will crash!
-    // Use async main-thread decoding instead (instantiateImageCodec is already non-blocking)
-    return _decodeImageSync(
-      bytes,
-      targetWidth: targetWidth,
-      targetHeight: targetHeight,
-    );
-  }
-
-  /// Synchronous image decoding (for small images or in isolate)
-  static Future<ui.Image> _decodeImageSync(
+  /// The engine decodes asynchronously; ui.Image cannot cross isolate boundaries.
+  static Future<ui.Image> _decodeImage(
     Uint8List bytes, {
     int? targetWidth,
     int? targetHeight,
@@ -411,18 +412,25 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       targetWidth: targetWidth,
       targetHeight: targetHeight,
     );
-    final frame = await codec.getNextFrame();
-    return frame.image;
+    try {
+      final frame = await codec.getNextFrame();
+      return frame.image;
+    } finally {
+      codec.dispose();
+    }
   }
 
   /// Load image from storage (fallback method)
   Future<void> _loadFallbackImage() async {
-    if (_isLoadingFallback) return;
+    if (_isLoadingFallback || _fallbackImageBytes != null || _fallbackFailed) {
+      return;
+    }
 
     // Plain assignment, not setState: the caller already renders the loading
     // indicator for this state, so no rebuild is needed, and this method can be
     // reached from a build-adjacent path where setState would be illegal.
     _isLoadingFallback = true;
+    final generation = _loadGeneration;
 
     try {
       debugPrint(
@@ -431,7 +439,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
       final bytes = await widget.clipboardRepository.downloadFile(widget.item);
 
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         if (bytes != null && bytes.isNotEmpty) {
           _resetDecodedImageState();
           setState(() {
@@ -451,7 +459,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
       }
     } on Exception catch (e) {
       debugPrint('[CachedClipboardImage] ✗ Error loading from storage: $e');
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(() {
           _isLoadingFallback = false;
           _fallbackFailed = true;

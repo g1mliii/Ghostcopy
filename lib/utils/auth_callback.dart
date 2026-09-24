@@ -26,19 +26,6 @@ library;
 
 import 'package:supabase_flutter/supabase_flutter.dart' show OtpType;
 
-/// Whether [uri] is a callback this app asked for.
-///
-/// Wired into `Supabase.initialize` as `detectSessionInUriPredicate`, because
-/// supabase_flutter runs its own deep-link observer (`AppLinks`) that is a
-/// second, parallel route to `getSessionFromUrl` - one that does not go through
-/// [_handleDeepLinkArgs] at all. Its default heuristic accepts any URI merely
-/// carrying `access_token`, `code` or `error` in the query OR the fragment,
-/// which is exactly the URL an attacker sends. Validating both routes with the
-/// same rules is the point: fixing only the command-line one leaves the app
-/// wide open on every platform where AppLinks is the delivery mechanism.
-bool isTrustedAuthCallback(Uri uri) =>
-    AuthCallbackDecision.evaluate(uri.toString()).isAccepted;
-
 /// Why a callback URL was refused.
 enum AuthCallbackRejection {
   /// Not a `ghostcopy://` URL aimed at a callback this app asks for.
@@ -100,6 +87,7 @@ class AuthCallbackDecision {
     this.otpType,
     this.rejection,
     this.detail,
+    this.errorCode,
   });
 
   /// Decide what [link] deserves.
@@ -149,6 +137,7 @@ class AuthCallbackDecision {
       return AuthCallbackDecision._(
         rejection: AuthCallbackRejection.providerError,
         detail: error,
+        errorCode: params['error_code'] ?? params['error'],
       );
     }
 
@@ -191,6 +180,11 @@ class AuthCallbackDecision {
   /// Extra context for the log line - the offending host, parameter, or the
   /// provider's error text. Never the code itself.
   final String? detail;
+
+  /// The machine-readable error of a [AuthCallbackRejection.providerError] -
+  /// Supabase's `error_code` (`identity_already_exists`), else the OAuth
+  /// `error` (`access_denied`). Stable where [detail]'s wording is not.
+  final String? errorCode;
 
   bool get isAccepted => code != null || tokenHash != null;
 

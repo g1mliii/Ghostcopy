@@ -61,8 +61,12 @@ appcast. Review the candidate and release notes, then publish explicitly:
 
 ```bash
 installer/macos/publish-update.sh build/installer/YYYYMMDD-HHMMSS \
-  "<full pushed commit SHA>" release-notes.md
+  "<full pushed commit SHA>"
 ```
+
+The release body is not passed here. It is extracted from the appcast, which
+is the copy that was signed, so the GitHub release and the update dialog cannot
+say different things.
 
 Publishing creates a versioned draft GitHub release first, then updates the
 fixed `macos-updates` feed release and downloads the live feed again to verify

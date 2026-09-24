@@ -1678,6 +1678,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 },
                 onAutoReceiveBehaviorChanged: (value) {
                   setState(() => _autoReceiveBehavior = value);
+                  // The staleness watch runs only for smart receive.
+                  unawaited(_syncService.refreshClipboardActivityWatch());
                 },
               ),
             ),
@@ -2494,7 +2496,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
 
       final filename =
           item.metadata?.originalFilename ??
-          'ghostcopy-${item.id}.${item.contentType.value}';
+          'ghostcopy-${item.id}.${item.contentType.fileExtension}';
 
       // Reuses the temp file service, which already sweeps these up
       // periodically, so dragging does not leak files.
