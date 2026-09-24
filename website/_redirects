@@ -10,4 +10,4 @@
 # --latest=false, so GitHub has no stable URL for "the newest DMG". Bump this
 # line after each macOS release (docs/macos-releases.md). A stale target is
 # harmless: the app updates itself through Sparkle on first launch.
-/download/macos https://github.com/g1mliii/Ghostcopy/releases/download/macos-v1.0.0-5/GhostCopy-1.0.0-5.dmg 302
+/download/macos https://github.com/g1mliii/Ghostcopy/releases/download/macos-v1.0.0-6/GhostCopy-1.0.0-6.dmg 302
