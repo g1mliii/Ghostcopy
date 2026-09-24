@@ -44,6 +44,16 @@ every release and every auto-update re-triggers the warning.
 CI already builds Windows on `windows-latest`, so no Windows machine is needed
 to package - but everything below marked "verify" does need one.
 
+- [ ] **Clipboard counter: two copies in a row from GhostCopy's own window
+      read as one** (verify, then fix). `ClipboardChangeCount()` in
+      `windows/runner/flutter_window.cpp` ignores a sequence change while the
+      same in-process window owns the clipboard, to hide OLE's delayed
+      rendering. So a second Ctrl+C in the Spotlight field, or a second smart
+      action copy, never moves the counter: auto-send skips it and smart
+      receive does not date it. The deeper fix is `OleFlushClipboard()` after
+      each GhostCopy write, which renders every format up front so the raw
+      `GetClipboardSequenceNumber()` only moves on real changes and the owner
+      check can go. Found in the PR #19 review, 2026-09-24
 - [ ] **Pick the Store account type before signing up.** Individual means
       distribution NOT in relation to a business, so a released product points
       at Company - a DUNS number or business documents, and a work email on the
@@ -227,6 +237,14 @@ to package - but everything below marked "verify" does need one.
 
 ## All platforms
 
+- [ ] **Check the email confirmation link on macOS and iOS.** The deep-link
+      predicate in `lib/main.dart` accepts `token_hash` links, but on the
+      AppLinks route supabase_flutter hands them to `getSessionFromUrl`,
+      which in PKCE mode wants a `code` and may throw "No code detected". Only
+      the Windows command-line route calls `verifyOTP`. Sign up with a fresh
+      email on the Mac and on the iPhone and tap the link; if it fails, route
+      AppLinks through `_handleDeepLinkArgs` (`detectSessionInUri: false`) so
+      there is one callback handler. Found in the PR #19 review, 2026-09-24
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
       change it, which is why the macOS updater had to land first

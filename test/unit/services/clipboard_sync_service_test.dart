@@ -134,6 +134,9 @@ void main() {
     when(settings.getObsidianFileName).thenAnswer((_) async => 'clipboard.md');
     when(() => webhook.sendWebhook(any(), any())).thenAnswer((_) async {});
     when(
+      () => repository.getHistory(limit: any(named: 'limit')),
+    ).thenAnswer((_) async => []);
+    when(
       () => obsidian.appendToVault(
         deviceType: any(named: 'deviceType'),
         direction: any(named: 'direction'),
@@ -507,6 +510,31 @@ void main() {
     service.stopPolling();
   });
 
+  testWidgets('polling hands the integrations clips between two polls', (
+    tester,
+  ) async {
+    // Idle in the tray, two clips land between polls. Only the newest is
+    // copied, but the vault and the webhook must still see both.
+    when(repository.getLatestItemId).thenAnswer((_) async => '1');
+    when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+    when(
+      () => repository.getHistory(limit: 10),
+    ).thenAnswer((_) async => [clip('3'), clip('2')]);
+
+    service.startPolling(interval: const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await settle(tester);
+    when(repository.getLatestItemId).thenAnswer((_) async => '3');
+    await tester.pump(const Duration(seconds: 1));
+    await settle(tester);
+
+    verifyVaultGot('clip 1');
+    verifyVaultGot('clip 2');
+    verifyVaultGot('clip 3');
+    service.stopPolling();
+  });
+
   testWidgets('a received HTML clip reaches the integrations as text', (
     tester,
   ) async {
@@ -600,7 +628,7 @@ void main() {
       verify(() => clipboard.writeText('clip 1')).called(1);
       verify(
         () => notifier.showToast(
-          message: 'Auto-copied content from android',
+          message: 'Auto-copied content from Android',
           type: NotificationType.success,
         ),
       ).called(1);
@@ -619,7 +647,7 @@ void main() {
       verifyNever(() => clipboard.writeText(any()));
       verify(
         () => notifier.showClickableToast(
-          message: 'New clip from android: "clip 1"',
+          message: 'New clip from Android: "clip 1"',
           actionLabel: 'Copy',
           onAction: any(named: 'onAction'),
           duration: any(named: 'duration'),

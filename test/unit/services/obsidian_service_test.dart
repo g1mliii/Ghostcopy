@@ -2,8 +2,36 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/obsidian_service.dart';
+import 'package:path/path.dart' as path;
 
 void main() {
+  group('a ~ vault path expands from the home folder', () {
+    test('HOME, as on macOS', () {
+      expect(
+        ObsidianService.normalizeVaultPath('~/Obsidian', {'HOME': '/Users/me'}),
+        path.join('/Users/me', 'Obsidian'),
+      );
+    });
+
+    test('USERPROFILE on Windows, where HOME is unset', () {
+      const profile = r'C:\Users\me';
+      for (final typed in ['~/Obsidian', r'~\Obsidian', "'~/Obsidian'"]) {
+        expect(
+          ObsidianService.normalizeVaultPath(typed, {'USERPROFILE': profile}),
+          path.join(profile, 'Obsidian'),
+          reason: typed,
+        );
+      }
+    });
+
+    test('left alone with no home folder to expand from', () {
+      expect(
+        ObsidianService.normalizeVaultPath('~/Obsidian', {}),
+        '~/Obsidian',
+      );
+    });
+  });
+
   test('quoted vault paths append to the existing folder', () async {
     final vault = await Directory.systemTemp.createTemp('obsidian vault ');
     addTearDown(() => vault.delete(recursive: true));

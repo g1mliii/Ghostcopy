@@ -988,17 +988,13 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             }
           }
 
-          // Success - register device with FCM token before navigating
-          await locator<IDeviceService>().registerCurrentDevice();
-
-          // Update FCM token if available
+          // Success - register the device and its push token in one write
+          // before navigating.
           final fcmToken = await widget.fcmTokenFuture;
-          if (fcmToken != null) {
-            await locator<IDeviceService>().updateFcmToken(fcmToken);
-            debugPrint(
-              '[Mobile] ✅ Device registered with FCM token after $provider auth',
-            );
-          }
+          await locator<IDeviceService>().registerCurrentDevice(
+            fcmToken: fcmToken,
+          );
+          debugPrint('[Mobile] ✅ Device registered after $provider auth');
 
           widget.onAuthComplete();
         } else {

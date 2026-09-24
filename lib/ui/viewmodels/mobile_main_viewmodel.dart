@@ -19,6 +19,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
+import '../../utils/image_shrink.dart';
 import '../../utils/platform_label.dart';
 
 /// ViewModel for MobileMainScreen - handles business logic and state
@@ -780,17 +781,41 @@ class MobileMainViewModel extends ChangeNotifier {
       }
 
       final image = result.files.single;
-      if (image.size > ClipboardLimits.maxFileBytes) {
+      // A photo too big to send is scaled down rather than refused, as
+      // image_picker's 2048px cap used to make every photo fit. Anything that
+      // fits is still sent as the original. Other formats (GIF, HEIC, RAW)
+      // cannot be re-encoded without loss of what makes them that format.
+      final shrinkable = const {
+        'jpg',
+        'jpeg',
+        'png',
+        'webp',
+      }.contains(image.extension?.toLowerCase());
+      if (image.size > ClipboardLimits.maxFileBytes && !shrinkable) {
         throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
       }
-      final bytes = image.bytes ?? await File(image.path!).readAsBytes();
-      if (bytes.length > ClipboardLimits.maxFileBytes) {
-        throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
-      }
-      final typeInfo = FileTypeService.instance.detectFromBytes(
+      var bytes = image.bytes ?? await File(image.path!).readAsBytes();
+      var typeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
         image.name,
       );
+      if (bytes.length > ClipboardLimits.maxFileBytes &&
+          typeInfo.contentType.isImage) {
+        final shrunk = await compute(shrinkImageToFit, (
+          bytes,
+          ClipboardLimits.maxFileBytes,
+        ));
+        if (shrunk != null) {
+          bytes = shrunk;
+          typeInfo = FileTypeService.instance.detectFromBytes(
+            shrunk,
+            'photo.jpg',
+          );
+        }
+      }
+      if (bytes.length > ClipboardLimits.maxFileBytes) {
+        throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
+      }
 
       // STAGE, don't send. Picking an image now behaves like pasting one:
       // it appears in the preview and the user presses Send. Sending straight

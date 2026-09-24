@@ -1082,17 +1082,9 @@ class ClipboardRepository implements IClipboardRepository {
           );
         }
 
-        // Parse target_device_type (can be null, list, or single string)
-        List<String>? targetDeviceTypes;
-        final targetDeviceTypeJson = json['target_device_type'];
-        if (targetDeviceTypeJson != null) {
-          if (targetDeviceTypeJson is List) {
-            targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
-          } else if (targetDeviceTypeJson is String) {
-            // Handle old single-value format for backwards compatibility
-            targetDeviceTypes = [targetDeviceTypeJson];
-          }
-        }
+        final targetDeviceTypes = ClipboardItem.parseTargetDeviceTypes(
+          json['target_device_type'],
+        );
 
         // Parse content_type (default to text for backwards compatibility)
         final contentTypeStr = json['content_type'] as String? ?? 'text';

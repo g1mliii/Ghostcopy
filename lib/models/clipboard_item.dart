@@ -206,17 +206,9 @@ class ClipboardItem {
 
   /// Create from JSON from Supabase
   factory ClipboardItem.fromJson(Map<String, dynamic> json) {
-    // Parse target_device_type which can be null, a list, or a single string
-    List<String>? targetDeviceTypes;
-    final targetDeviceTypeJson = json['target_device_type'];
-    if (targetDeviceTypeJson != null) {
-      if (targetDeviceTypeJson is List) {
-        targetDeviceTypes = List<String>.from(targetDeviceTypeJson);
-      } else if (targetDeviceTypeJson is String) {
-        // Handle old single-value format for backwards compatibility
-        targetDeviceTypes = [targetDeviceTypeJson];
-      }
-    }
+    final targetDeviceTypes = parseTargetDeviceTypes(
+      json['target_device_type'],
+    );
 
     return ClipboardItem(
       id: json['id'].toString(),
@@ -242,6 +234,14 @@ class ClipboardItem {
       ),
     );
   }
+
+  /// A row's `target_device_type`: null for every device, a list, or - the
+  /// old single-value format, kept for backwards compatibility - a string.
+  static List<String>? parseTargetDeviceTypes(Object? value) => switch (value) {
+    final List<dynamic> list => List<String>.from(list),
+    final String single => [single],
+    _ => null,
+  };
 
   final String id;
   final String userId;

@@ -294,12 +294,16 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// that sign-out and account deletion both leave behind - clips and push
   /// only reach devices registered to the current user.
   Future<void> _reregisterDevice() async {
+    String? fcmToken;
     try {
-      await widget.deviceService.registerCurrentDevice();
-      final fcmToken = await FirebaseMessaging.instance.getToken();
-      if (fcmToken != null) {
-        await widget.deviceService.updateFcmToken(fcmToken);
-      }
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } on Exception catch (e) {
+      debugPrint('[Settings] No push token to register: $e');
+    }
+    try {
+      // One write carrying the token: registering without it clears the
+      // stored token, leaving push off until a second write lands.
+      await widget.deviceService.registerCurrentDevice(fcmToken: fcmToken);
       debugPrint('[Settings] ✅ Device re-registered for the new guest');
     } on Exception catch (e) {
       debugPrint('[Settings] ⚠️ Failed to re-register device: $e');
