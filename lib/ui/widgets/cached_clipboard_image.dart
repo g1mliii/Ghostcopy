@@ -186,9 +186,7 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
 
   @override
   void dispose() {
-    _encryption.keyRevision.removeListener(
-      _onKeyRevisionChanged,
-    );
+    _encryption.keyRevision.removeListener(_onKeyRevisionChanged);
     _resetDecodedImageState();
 
     // Clear fallback image bytes
