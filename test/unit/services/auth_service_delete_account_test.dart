@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
+import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/impl/auth_service.dart';
 import 'package:ghostcopy/services/impl/pkce_verifier_store.dart';
@@ -15,6 +16,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class _Encryption extends Mock implements IEncryptionService {}
 
 class _Repository extends Mock implements IClipboardRepository {}
+
+class _Devices extends Mock implements IDeviceService {}
 
 /// What PkceVerifierStore stores into, in memory.
 class _MemoryStorage extends GotrueAsyncStorage {
@@ -74,6 +77,10 @@ Map<String, Object?> _session(
 /// Apple account is asked to confirm before deletion.
 final _nativeApple = Platform.isIOS || Platform.isMacOS;
 
+/// Whether this host counts as desktop, where AuthService registers the
+/// device itself after an account change.
+final _desktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -88,7 +95,10 @@ void main() {
   late PkceVerifierStore pkceStore;
   late Exception? reauthorizeError;
 
-  Future<AuthService> signedInAs(Map<String, Object?> session) async {
+  Future<AuthService> signedInAs(
+    Map<String, Object?> session, {
+    IDeviceService? devices,
+  }) async {
     client = SupabaseClient(
       'https://example.com',
       'anon-key',
@@ -130,6 +140,7 @@ void main() {
     requests.clear();
     return AuthService(
       client: client,
+      deviceService: devices,
       encryptionService: encryption,
       clipboardRepository: _Repository(),
       appleReauthorize: () async {
@@ -258,6 +269,54 @@ void main() {
       verify(() => encryption.forgetPassphraseLocally('user')).called(1);
     },
   );
+
+  group('this desktop is registered to the account it moves to', () {
+    // Desktop registered only at launch, so the new account's device list -
+    // what the phone reads to show and target it - missed this computer until
+    // a restart.
+    late _Devices devices;
+
+    setUp(() {
+      devices = _Devices();
+      when(devices.getCurrentDeviceId).thenReturn(null);
+      when(devices.registerCurrentDevice).thenAnswer((_) async => true);
+    });
+
+    test('after deleting the account', () async {
+      final service = await signedInAs(
+        _session('user', provider: 'email'),
+        devices: devices,
+      );
+
+      await service.deleteAccount();
+
+      expect(client.auth.currentUser?.id, 'guest');
+      verify(devices.registerCurrentDevice).called(1);
+    }, skip: !_desktop);
+
+    test('after signing in to another account', () async {
+      final service = await signedInAs(
+        _session('guest', anonymous: true),
+        devices: devices,
+      );
+
+      await service.signInWithEmail('a@b.c', 'x');
+
+      expect(client.auth.currentUser?.id, 'apple-user');
+      verify(devices.registerCurrentDevice).called(1);
+    }, skip: !_desktop);
+
+    test('not when the account did not change', () async {
+      final service = await signedInAs(
+        _session('apple-user', provider: 'email'),
+        devices: devices,
+      );
+
+      await service.signInWithEmail('a@b.c', 'x');
+
+      verifyNever(devices.registerCurrentDevice);
+    }, skip: !_desktop);
+  });
 
   group('browser sign-in waits for the callback', () {
     test('resolves once the new session arrives', () async {

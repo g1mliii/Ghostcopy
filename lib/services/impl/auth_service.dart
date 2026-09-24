@@ -219,6 +219,7 @@ class AuthService implements IAuthService {
       if (previous != null && next != null) {
         await _cleanupPreviousSession(previous, next.user.id, deviceId);
       }
+      await _registerThisDesktop();
       debugPrint(
         '[AuthService] ${provider.name} sign in completed (web OAuth)',
       );
@@ -810,6 +811,7 @@ class AuthService implements IAuthService {
     try {
       await _client.auth.signInAnonymously();
       debugPrint('[AuthService] On a fresh guest account after deletion');
+      await _registerThisDesktop();
     } on Exception catch (e) {
       debugPrint('[AuthService] Guest sign-in after deletion failed: $e');
     }
@@ -852,6 +854,7 @@ class AuthService implements IAuthService {
       // Sign back in anonymously
       await _client.auth.signInAnonymously();
       debugPrint('[AuthService] Signed in anonymously after sign out');
+      await _registerThisDesktop();
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign out failed: ${e.message}');
       rethrow;
@@ -922,7 +925,33 @@ class AuthService implements IAuthService {
     if (previous != null && next != null) {
       await _cleanupPreviousSession(previous, next.user.id, deviceId);
     }
+    if (next != null && next.user.id != previous?.user.id) {
+      await _registerThisDesktop();
+    }
     return result;
+  }
+
+  /// Register this computer under the account it has just moved to.
+  ///
+  /// Desktop registered only at launch, so after signing in, signing out or
+  /// deleting the account it stayed off the new account's device list - the
+  /// phone could not see or target it - until the app was restarted. Run
+  /// after [_cleanupPreviousSession], which removes the old account's row.
+  ///
+  /// Desktop only: registering without a push token clears the stored one,
+  /// and the mobile screens already re-register with their token after each
+  /// of these changes. Best effort, like the registration at launch.
+  Future<void> _registerThisDesktop() async {
+    final devices = _deviceService;
+    if (devices == null ||
+        !(Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      return;
+    }
+    try {
+      await devices.registerCurrentDevice();
+    } on Object catch (e) {
+      debugPrint('[AuthService] Could not register this device: $e');
+    }
   }
 
   Future<void> _cleanupPreviousSession(
