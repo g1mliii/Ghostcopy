@@ -12,19 +12,16 @@ resource baseline. Finished work is in git history and
 
 ## macOS: what's left
 
-- [ ] **Launch at startup - fixed 2026-09-22, needs a hand check.** The
-      `launch_at_startup` package ships no macOS code and expects the app to
-      answer its method channel. Nothing did, so the Settings toggle saved the
-      preference and never registered a login item (the
-      MissingPluginException was swallowed in `AutoStartService`).
-      `macos/Runner/LaunchAtStartup.swift` now answers it with
-      `SMAppService.mainApp`. Check: toggle on, confirm GhostCopy appears in
-      System Settings > General > Login Items, log out and back in; toggle off
-      and confirm it is removed. Needs an installed build - a copy run from
+- [x] **Launch at startup - fixed 2026-09-22 and confirmed.** The
+      `launch_at_startup` package ships no macOS code;
+      `macos/Runner/LaunchAtStartup.swift` answers its channel with
+      `SMAppService.mainApp`. Checked on an installed build - a copy run from
       `build/` registers that path instead
-- [ ] **Decide whether the gentle update reminder is too quiet.** A scheduled
-      check shows only a dot next to the menu bar icon and relabels the tray
-      item; someone who never opens that menu never updates
+- [x] **Gentle update reminder - kept as it is.** The dot next to the menu
+      bar icon and the relabelled tray item were judged noticeable enough
+- [ ] **Build 6.** From main once #19 and #25 are in: notification and staleness
+      fixes, Sign in with Apple, the larger icon. Then bump the
+      `/download/macos` redirect (runbook step 8)
 - [x] **Notarize in CI - decided against.** Publishing needs three secrets in
       one place: the Developer ID private key, notarization credentials, and
       the Sparkle EdDSA key. That last one is unrecoverable - if it leaks,
