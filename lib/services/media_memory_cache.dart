@@ -76,6 +76,42 @@ class MediaMemoryCache {
     if (removed != null) _currentBytes -= removed.length;
   }
 
+  /// What survives hiding the window, in bytes.
+  ///
+  /// Hiding used to [clear] outright, on the reasoning that cached media is
+  /// pure overhead while the app sits in the tray. Measured on Windows
+  /// (`docs/windows-performance.md`), that reasoning does not hold: hidden the
+  /// process sits at ~107 MB, and of that 182 MB of mapped modules, 44.8 MB is
+  /// the GPU driver and 20.5 MB the Flutter engine. Dropping every cached
+  /// image reclaimed about 5 MB of a number dominated by things no cache
+  /// touches - and it is exactly what made an already-fetched clip slow to
+  /// come back, because the disk copy is stored encrypted, so each reopen paid
+  /// a read, an isolate spawn, an AES pass and a decode per thumbnail.
+  ///
+  /// Keeping a few megabytes of the most recently used media is a far better
+  /// trade at that scale.
+  static const int idleBytes = 6 * 1024 * 1024;
+
+  /// Evict down to [budget] bytes, keeping the most recently used.
+  ///
+  /// The LRU order does the choosing, so what survives is what the user was
+  /// last looking at - which is what they will see first on reopening.
+  void trimTo(int budget) {
+    final before = _currentBytes;
+    while (_currentBytes > budget && _entries.isNotEmpty) {
+      final oldestKey = _entries.keys.first;
+      final evicted = _entries.remove(oldestKey);
+      _currentBytes -= evicted?.length ?? 0;
+    }
+    if (before != _currentBytes) {
+      debugPrint(
+        '[MediaCache] Trimmed ${((before - _currentBytes) / 1024 / 1024).toStringAsFixed(1)} MB '
+        'to ${(_currentBytes / 1024 / 1024).toStringAsFixed(1)} MB '
+        '(${_entries.length} entries kept)',
+      );
+    }
+  }
+
   /// Drop everything. Called on system memory pressure and on sign-out, since
   /// cached bytes belong to the account that downloaded them.
   void clear() {

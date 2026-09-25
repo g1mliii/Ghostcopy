@@ -10,6 +10,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/clipboard_cache_manager.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/thumbnail_disk_cache.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 
@@ -421,6 +422,21 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
   }
 
   /// Load image from storage (fallback method)
+  /// Whether this instance is drawing a preview rather than the image.
+  ///
+  /// Keyed off the box it was given, in physical pixels, against the size the
+  /// thumbnail cache stores. Below that a thumbnail is at least as detailed
+  /// as the space it fills; above it, using one would visibly soften the
+  /// image, and the save/share/drag paths never come through here at all.
+  bool _wantsThumbnail(BuildContext context) {
+    final w = _decodePx(context, widget.width);
+    final h = _decodePx(context, widget.height);
+    // An unconstrained dimension means "natural size", which is not a preview.
+    if (w == null && h == null) return false;
+    final longest = [w ?? 0, h ?? 0].reduce((a, b) => a > b ? a : b);
+    return longest > 0 && longest <= ThumbnailDiskCache.servesUpTo;
+  }
+
   Future<void> _loadFallbackImage() async {
     if (_isLoadingFallback || _fallbackImageBytes != null || _fallbackFailed) {
       return;
@@ -437,7 +453,14 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
         '[CachedClipboardImage] Loading from storage: ${widget.item.storagePath}',
       );
 
-      final bytes = await widget.clipboardRepository.downloadFile(widget.item);
+      // A tile-sized box takes the cached thumbnail; anything larger takes
+      // the real image, so a full-screen preview is never an upscaled
+      // preview. loadThumbnail falls back to null rather than throwing, and
+      // the full path below still runs in that case.
+      final bytes = _wantsThumbnail(context)
+          ? await widget.clipboardRepository.loadThumbnail(widget.item) ??
+                await widget.clipboardRepository.downloadFile(widget.item)
+          : await widget.clipboardRepository.downloadFile(widget.item);
 
       if (mounted && generation == _loadGeneration) {
         if (bytes != null && bytes.isNotEmpty) {

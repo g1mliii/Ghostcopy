@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -16,6 +17,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
+import '../../services/thumbnail_disk_cache.dart';
 import '../../utils/platform_label.dart';
 import '../clipboard_repository.dart';
 
@@ -84,6 +86,10 @@ class ClipboardRepository implements IClipboardRepository {
   /// logs as the same object downloaded and "Decrypted to N bytes" twice,
   /// milliseconds apart, which is most of the first-load latency on mobile.
   final Map<String, Future<Uint8List?>> _inFlightDownloads =
+      <String, Future<Uint8List?>>{};
+
+  /// Same idea as _inFlightDownloads, for thumbnail builds.
+  final Map<String, Future<Uint8List?>> _inFlightThumbnails =
       <String, Future<Uint8List?>>{};
 
   @override
@@ -495,6 +501,93 @@ class ClipboardRepository implements IClipboardRepository {
     }
   }
 
+  @override
+  Future<Uint8List?> loadThumbnail(ClipboardItem item) async {
+    final storagePath = item.storagePath;
+    if (storagePath == null || !item.isImage) return null;
+
+    final memoryKey = _thumbnailKey(storagePath);
+    final cached = MediaMemoryCache.instance.get(memoryKey);
+    if (cached != null) return cached;
+
+    // Joined like downloadFile does, so a list of tiles rebuilding at once
+    // cannot all decode the same picture.
+    final inFlight = _inFlightThumbnails[memoryKey];
+    if (inFlight != null) return inFlight;
+
+    final future = _resolveThumbnail(item, storagePath, memoryKey);
+    _inFlightThumbnails[memoryKey] = future;
+    try {
+      return await future;
+    } finally {
+      // ignore: unawaited_futures
+      _inFlightThumbnails.remove(memoryKey);
+    }
+  }
+
+  Future<Uint8List?> _resolveThumbnail(
+    ClipboardItem item,
+    String storagePath,
+    String memoryKey,
+  ) async {
+    final onDisk = await ThumbnailDiskCache.instance.get(storagePath);
+    if (onDisk != null) {
+      MediaMemoryCache.instance.put(memoryKey, onDisk);
+      debugPrint('[Repository] 🖼 Thumbnail disk hit: $storagePath');
+      return onDisk;
+    }
+
+    // Only now is the real image needed - and this is the one time it is, for
+    // this clip, on this device. downloadFile applies its own caches and
+    // decryption, so an encrypted clip is handled here exactly as anywhere
+    // else; what is written below is already plaintext.
+    final full = await downloadFile(item);
+    if (full == null || full.isEmpty) return null;
+
+    final thumbnail = await _encodeThumbnail(full);
+    if (thumbnail == null) return null;
+
+    unawaited(ThumbnailDiskCache.instance.put(storagePath, thumbnail));
+    MediaMemoryCache.instance.put(memoryKey, thumbnail);
+    debugPrint(
+      '[Repository] 🖼 Thumbnail built for $storagePath '
+      '(${full.length} -> ${thumbnail.length} bytes)',
+    );
+    return thumbnail;
+  }
+
+  /// Downscale to [ThumbnailDiskCache.maxEdge] and re-encode as PNG.
+  ///
+  /// Only `targetWidth` is given: supplying both dimensions scales to exactly
+  /// those and would distort anything that is not square. With one, the codec
+  /// keeps the aspect ratio.
+  static Future<Uint8List?> _encodeThumbnail(Uint8List full) async {
+    ui.Codec? codec;
+    ui.Image? image;
+    try {
+      codec = await ui.instantiateImageCodec(
+        full,
+        targetWidth: ThumbnailDiskCache.maxEdge,
+      );
+      final frame = await codec.getNextFrame();
+      image = frame.image;
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List();
+    } on Exception catch (e) {
+      // Not an image, or an encoding this build cannot decode. The caller
+      // falls back to the full image, which is what happened before.
+      debugPrint('[Repository] Thumbnail encode failed: $e');
+      return null;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+    }
+  }
+
+  /// Namespaced so a thumbnail can never be handed back by downloadFile,
+  /// which looks the raw storage path up in the same RAM cache.
+  String _thumbnailKey(String storagePath) => 'thumb:$storagePath';
+
   /// Disk cache first, network second. Returns plaintext bytes either way.
   Future<Uint8List?> _resolveBytes(
     ClipboardItem item,
@@ -733,15 +826,17 @@ class ClipboardRepository implements IClipboardRepository {
         // Clean up orphaned cache entries (async, don't await)
         _cleanupOrphanedCache(decryptedItems);
 
-        // Drop disk-cached media for clips that no longer exist.
+        // Drop disk-cached media for clips that no longer exist. Both
+        // stores, from one set: a thumbnail of a clip whose bytes have been
+        // pruned is just as stale.
+        final livePaths = decryptedItems
+            .map((i) => i.storagePath)
+            .whereType<String>()
+            .where((p) => p.isNotEmpty)
+            .toSet();
+        unawaited(ThumbnailDiskCache.instance.prune(livePaths));
         unawaited(
-          MediaDiskCache.instance.prune(
-            decryptedItems
-                .map((i) => i.storagePath)
-                .whereType<String>()
-                .where((p) => p.isNotEmpty)
-                .toSet(),
-          ),
+          MediaDiskCache.instance.prune(livePaths),
         );
       }
 
@@ -836,6 +931,7 @@ class ClipboardRepository implements IClipboardRepository {
       if (deletedPath != null && deletedPath.isNotEmpty) {
         MediaMemoryCache.instance.remove(deletedPath);
         unawaited(MediaDiskCache.instance.remove(deletedPath));
+        unawaited(ThumbnailDiskCache.instance.remove(deletedPath));
       }
 
       // FIXED: Remove from image cache if it's an image
@@ -1279,6 +1375,8 @@ class ClipboardRepository implements IClipboardRepository {
     // profile directory. Signing out must not leave them for the next user.
     MediaMemoryCache.instance.clear();
     unawaited(MediaDiskCache.instance.clear());
+    // Plaintext previews of this account's clips; they must not outlive it.
+    unawaited(ThumbnailDiskCache.instance.clear());
   }
 
   @override
