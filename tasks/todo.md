@@ -56,7 +56,10 @@ resource baseline. Finished work is in git history and
 **Ships through the Microsoft Store**, decided 2026-09-19. Registration is free
 for Individual and Company accounts via https://storedeveloper.microsoft.com -
 that entry point specifically; Partner Center and Visual Studio still route to
-the paid legacy flow. The Store signs the package and handles updates, which
+the paid legacy flow. Re-checked 2026-09-25: Company became free in May 2026
+(sign-up with an Entra ID work account), Individual in September 2025 (ID and
+selfie). Publishing is free; Microsoft only shares revenue from paid apps and
+in-app purchases, which GhostCopy has none of. The Store signs the package and handles updates, which
 avoids a code-signing certificate and removes the WinSparkle half of the
 updater. Unsigned direct download is worse than it sounds: SmartScreen
 reputation accrues per certificate, and unsigned it accrues per file hash, so
@@ -103,7 +106,19 @@ to package - but everything below marked "verify" does need one.
         native COM `IExplorerCommand` DLL (msix's `context_menu` config).
         Decide whether it is worth that, or whether the Windows share target
         covers it
-- [ ] **Store submission**
+- [ ] **Crash symbols for Windows.** Wire `installer/upload-debug-symbols.sh`
+      (or its PowerShell equivalent) into the Windows release build to upload
+      the PDBs to Sentry, as the macOS and iOS builds do - otherwise native
+      Windows crash reports stay as raw addresses. The token lives in the
+      Keychain on the Mac; a Windows or CI build needs its own secure store
+- [ ] **Store submission:** the listing text (reuse the App Store one, naming
+      Windows rather than Mac where it applies), screenshots, and the Store's
+      own privacy and age-rating answers - the privacy answers must include
+      Sentry crash reports, as on the App Store
+- [ ] **Full manual test pass on Windows - by hand, on a real machine**,
+      once the MSIX build exists: the "verify" items below, plus sending and
+      receiving text, images and files both ways, the tray, the hotkey,
+      notifications, sign-in and encryption
 - [ ] **Tray menu frameless leak - fixed 2026-09-22, verify.** `_showTrayMenu`
       calls `setAsFrameless()`, and in window_manager's Windows code only
       `setTitleBarStyle` clears that flag. Until then `WM_NCCALCSIZE` hands the
