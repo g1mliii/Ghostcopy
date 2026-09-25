@@ -86,7 +86,17 @@ class AuthService implements IAuthService {
     if (_client.auth.currentUser == null) {
       debugPrint('[AuthService] No current user, signing in anonymously...');
       try {
-        await _client.auth.signInAnonymously();
+        final response = await _client.auth.signInAnonymously();
+        // Checked, not assumed. A response that carries no session is not an
+        // AuthException and does not throw, so without this `initialize`
+        // returned as if it had signed in and left `currentUser` null - which
+        // surfaced downstream as a fatal StateError from
+        // registerCurrentDevice rather than as the auth failure it was.
+        if (response.session == null) {
+          throw AuthException(
+            'Anonymous sign-in returned no session',
+          );
+        }
         debugPrint('[AuthService] ✅ Signed in anonymously');
       } on AuthException catch (e) {
         debugPrint(
