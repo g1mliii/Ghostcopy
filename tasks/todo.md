@@ -345,10 +345,14 @@ re-checked against current provider docs rather than trusted from here.
       Dart scrubber - a native event processor would close that. Privacy
       policy and the App Store privacy answers updated (Crash Data and Other
       Diagnostic Data, not linked). Ships with the next build of each platform
-  - [ ] **Upload debug symbols** so stack traces are readable: dSYMs (iOS,
-        macOS), Android mapping/native symbols, Windows PDBs - via
-        `sentry_dart_plugin` with an org auth token kept in the Keychain, never
-        in the repo
+  - [x] **Debug symbols, iOS and macOS:** `installer/upload-debug-symbols.sh`
+        uploads the archive's dSYMs with the org token from the Keychain
+        (`ghostcopy-sentry-auth-token`); called by
+        `installer/macos/build-release.sh` and the new
+        `installer/ios/build-testflight.sh`. Dart is not obfuscated, so Dart
+        frames are readable without upload
+  - [ ] **Debug symbols, Android and Windows:** wire the same script into those
+        release builds when they exist (native .so symbols, PDBs)
   - [x] **App Store privacy answers:** Diagnostics - Crash Data, Performance
         Data (hang/ANR reports) and Other Diagnostic Data, all App
         Functionality, not linked, no tracking

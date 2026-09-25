@@ -93,6 +93,13 @@ then `prepare-update.sh` to produce the signed appcast. Everything lands in
 
 It takes roughly 10–20 minutes, most of it notarization waiting on Apple.
 
+It also uploads the archive's debug symbols to Sentry
+(`installer/upload-debug-symbols.sh`), which reads the org auth token from the
+login Keychain item `ghostcopy-sentry-auth-token`. Without the token or
+`sentry-cli` it warns and carries on, and that build's native crash reports
+stay as raw addresses; the symbols cannot be uploaded later, because they are
+deleted with the build.
+
 **3. Verify the candidate by hand.** Signature and notarization prove nothing
 about whether the app runs. Mount `GhostCopy.dmg`, drag it to Applications, and:
 
