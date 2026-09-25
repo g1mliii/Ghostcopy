@@ -144,8 +144,16 @@ to package - but everything below marked "verify" does need one.
 
 ## iOS: open
 
-- [ ] **TestFlight.** Signing is `Apple Development`; TestFlight needs Apple
-      Distribution. `aps-environment` reads `development` in the entitlements;
+- [ ] **TestFlight - 1.0.0 (7) uploaded 2026-09-25**, internal testing only
+      until the Sentry build. Verified in the IPA: Apple Distribution,
+      aps-environment production, App Group and Sign in with Apple on both
+      targets. Left: answer Missing Compliance, add the Info.plist key it
+      points to, confirm production push on the TestFlight install. Upload
+      warned "Upload Symbols Failed" for objective_c.framework - its dSYM
+      matches the shipped UUID but Flutter copies it into the archive twice;
+      only affects symbolication inside that bridge, and Sentry uploads its
+      own. Earlier notes: signing was `Apple Development`; TestFlight needs
+      Apple Distribution. `aps-environment` reads `development` in the entitlements;
       the App Store export switches it, and the Firebase APNs key covers both.
       Confirm in Firebase (Project settings > Cloud Messaging > Apple app)
       that it is an APNs Authentication Key (.p8), not a development-only
