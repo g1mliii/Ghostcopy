@@ -29,6 +29,7 @@ import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../../utils/platform_label.dart';
+import '../../utils/windows_working_set.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
@@ -526,14 +527,30 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // 3. Unfocus text fields to release IME resources
     FocusManager.instance.primaryFocus?.unfocus();
 
-    // 4. Release downloaded media bytes. MediaMemoryCache holds up to 24MB of
-    // image/file data while browsing history - valuable with the window open,
-    // pure overhead once it is hidden, which is ~99% of the app's life.
+    // 4. Trim downloaded media rather than dropping it.
     //
-    // Only the RAM copy is dropped. MediaDiskCache keeps the bytes, so
-    // reopening re-reads them from local disk instead of paying for another
-    // R2 download - which is what made this trade-off expensive before.
-    MediaMemoryCache.instance.clear();
+    // This used to clear() the whole 24MB cache on the reasoning that it is
+    // overhead while hidden. It is not much of one: hidden, the process sits
+    // at ~107MB that is dominated by mapped modules - 44.8MB of GPU driver
+    // and 20.5MB of Flutter engine - so clearing every image reclaimed about
+    // 5MB. What it did reliably buy was a slow reopen. The disk copy is
+    // stored encrypted, deliberately, so every thumbnail that came back paid
+    // a disk read, an isolate spawn, an AES pass and a decode. Keeping the
+    // few most recently used images costs a few MB against a number no cache
+    // moves, and they are the ones about to be on screen again.
+    //
+    // Measurements behind this: docs/windows-performance.md.
+    MediaMemoryCache.instance.trimTo(MediaMemoryCache.idleBytes);
+
+    // 5. Hand the working set back to Windows, last and slightly late.
+    //
+    // Everything above frees Dart-side memory; this asks the OS to stop
+    // keeping the pages resident. Delayed on purpose - see
+    // windowsTrimDelay - because trimming before the window has actually
+    // gone would just fault those pages straight back in.
+    unawaited(
+      Future<void>.delayed(windowsTrimDelay, trimWindowsWorkingSet),
+    );
 
     debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
   }

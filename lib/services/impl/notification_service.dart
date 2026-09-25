@@ -450,6 +450,23 @@ class NotificationService implements INotificationService {
     );
   }
 
+  /// Memoised so the lazy path below cannot initialise the plugin twice.
+  Future<void>? _localNotificationsReady;
+
+  @override
+  Future<void> showSystemNotification({
+    required String message,
+    NotificationType type = NotificationType.info,
+  }) async {
+    // initialize() is not called on this path: it takes a navigator key, and
+    // the Explorer send-file verb has no navigator because it builds no UI.
+    // The plugin still has to be set up before it can raise anything, so do it
+    // here rather than making every headless caller remember to.
+    _localNotificationsReady ??= _initializeLocalNotifications();
+    await _localNotificationsReady;
+    await _showSystemNotification(message: message, type: type);
+  }
+
   @override
   void showClickableToast({
     required String message,
