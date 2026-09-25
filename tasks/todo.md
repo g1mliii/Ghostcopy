@@ -336,10 +336,20 @@ re-checked against current provider docs rather than trusted from here.
 
 ### With the first public build, not after it
 
-- [ ] **Sentry in the client.** Ordering matters: it has to be compiled into
-      the build that ships. Ship without it and the first real crashes are
-      invisible, and seeing them costs a whole new signed, notarized release.
-      Scrub clipboard content from every event before sending
+- [x] **Sentry in the client** (`lib/services/crash_reporting.dart`,
+      project spiderweb/flutter, sentry_flutter 9). Release builds only; errors
+      and crashes only - no tracing, screenshots, print or interaction
+      breadcrumbs, IP or user; quoted text, database key values and signed-URL
+      queries stripped from every event and breadcrumb on the device. Privacy
+      policy and the App Store privacy answers updated (Crash Data and Other
+      Diagnostic Data, not linked). Ships with the next build of each platform
+  - [ ] **Upload debug symbols** so stack traces are readable: dSYMs (iOS,
+        macOS), Android mapping/native symbols, Windows PDBs - via
+        `sentry_dart_plugin` with an org auth token kept in the Keychain, never
+        in the repo
+  - [ ] **App Store privacy answers:** add Diagnostics - Crash Data and Other
+        Diagnostic Data (App Functionality, not linked, no tracking) before
+        submitting a build that contains Sentry
 
 ### After Windows, iOS and macOS are out
 

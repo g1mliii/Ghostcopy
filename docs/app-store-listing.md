@@ -80,8 +80,10 @@ result: 4+.
 
 ## App Privacy
 
-Tracking: **No**. The app has no advertising, analytics or crash-reporting SDK
-(checked `pubspec.yaml`), and Firebase is used for push delivery only.
+Tracking: **No**. The app has no advertising or analytics SDK (checked
+`pubspec.yaml`), Firebase is used for push delivery only, and Sentry receives
+crash and error reports only (`lib/services/crash_reporting.dart`: no
+screenshots, no tracing, no IP, clip text stripped on the device).
 
 | Data type | Collected | Linked to user | Purpose | Why |
 |---|---|---|---|---|
@@ -90,9 +92,12 @@ Tracking: **No**. The app has no advertising, analytics or crash-reporting SDK
 | User Content - Other User Content | Yes | Yes | App Functionality | Clip text and files |
 | Identifiers - User ID | Yes | Yes | App Functionality | Supabase account ID |
 | Identifiers - Device ID | Yes | Yes | App Functionality | Push token per device, and the vendor-ID suffix in the device name |
+| Contact Info - Name | Yes | Yes | App Functionality | Google sign-in asks for the profile scope, so Supabase stores the Google name (never shown by the app) |
+| Diagnostics - Crash Data | Yes | **No** | App Functionality | Sentry crash reports; no user id is attached |
+| Diagnostics - Other Diagnostic Data | Yes | **No** | App Functionality | Sentry error reports: device model, OS and app version, stack traces |
 
 Not collected: location, contacts, browsing history, search history, health,
-financial info, purchases, usage data, diagnostics, sensitive info.
+financial info, purchases, usage data, performance data, sensitive info.
 
 User content is declared even though it can be end-to-end encrypted: encryption
 is optional, and without a passphrase the content is readable on the server.

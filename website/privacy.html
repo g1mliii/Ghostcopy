@@ -65,7 +65,8 @@
                 <p class="text-lg sm:text-xl lg:text-[22px] leading-[1.6] text-ink-3 max-w-[780px]">
                     We hold the minimum needed to move a clip from one of your devices to another. If you set a
                     passphrase, the clip is encrypted before it reaches us and we cannot read it. Nothing is sold, and
-                    there is no advertising or analytics SDK in the app or on this site.
+                    there is no advertising or analytics SDK in the app or on this site. The app reports crashes, with
+                    clip content stripped out.
                 </p>
             </div>
         </section>
@@ -174,6 +175,14 @@
                         <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Serves this website, and
                             stores the files and images you send (Cloudflare R2). With a passphrase set, those are
                             ciphertext by the time they arrive.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">Sentry</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Receives crash and error
+                            reports from the app: what failed, where in the code, and the device model, operating system
+                            and app version. Reports carry no clip content, no screenshots, no IP address and nothing
+                            that identifies you; text an error quotes is stripped on the device before it is sent.</p>
                     </div>
                 </div>
             </div>
