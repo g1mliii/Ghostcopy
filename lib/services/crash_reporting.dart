@@ -43,6 +43,9 @@ void configureCrashReporting(SentryFlutterOptions options) {
     ..enableUserInteractionTracing = false
     ..enableFramesTracking = false
     ..tracesSampleRate = null
+    // Kept at their defaults: app-hang (iOS, macOS) and ANR (Android) reports,
+    // and session tracking for the crash-free rate. Declared on the App Store
+    // as Performance Data and Other Diagnostic Data, not linked to the user.
     ..maxBreadcrumbs = 40
     ..beforeSend = scrubEvent
     ..beforeBreadcrumb = scrubBreadcrumb;

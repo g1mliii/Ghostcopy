@@ -347,9 +347,9 @@ re-checked against current provider docs rather than trusted from here.
         macOS), Android mapping/native symbols, Windows PDBs - via
         `sentry_dart_plugin` with an org auth token kept in the Keychain, never
         in the repo
-  - [ ] **App Store privacy answers:** add Diagnostics - Crash Data and Other
-        Diagnostic Data (App Functionality, not linked, no tracking) before
-        submitting a build that contains Sentry
+  - [x] **App Store privacy answers:** Diagnostics - Crash Data, Performance
+        Data (hang/ANR reports) and Other Diagnostic Data, all App
+        Functionality, not linked, no tracking
 
 ### After Windows, iOS and macOS are out
 

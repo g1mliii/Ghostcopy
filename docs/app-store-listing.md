@@ -95,9 +95,10 @@ screenshots, no tracing, no IP, clip text stripped on the device).
 | Contact Info - Name | Yes | Yes | App Functionality | Google sign-in asks for the profile scope, so Supabase stores the Google name (never shown by the app) |
 | Diagnostics - Crash Data | Yes | **No** | App Functionality | Sentry crash reports; no user id is attached |
 | Diagnostics - Other Diagnostic Data | Yes | **No** | App Functionality | Sentry error reports: device model, OS and app version, stack traces |
+| Diagnostics - Performance Data | Yes | **No** | App Functionality | Sentry app-hang (iOS) and ANR (Android) reports - on by default, kept. Tracing is off |
 
 Not collected: location, contacts, browsing history, search history, health,
-financial info, purchases, usage data, performance data, sensitive info.
+financial info, purchases, usage data, sensitive info.
 
 User content is declared even though it can be end-to-end encrypted: encryption
 is optional, and without a passphrase the content is readable on the server.
