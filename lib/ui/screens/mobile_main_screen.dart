@@ -25,6 +25,7 @@ import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/native_toast.dart';
+import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
@@ -658,28 +659,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         .getAutoSendTargetDevices();
     if (!mounted) return;
 
-    await _viewModel.handleSharedFiles(
-      files,
-      targetDeviceTypes: targets,
-      onSuccess: (msg) {
-        if (!mounted) return;
-        showGhostToast(
-          context,
-          msg,
-          icon: Icons.upload_file,
-          type: GhostToastType.success,
-        );
-      },
-      onError: (msg) {
-        if (!mounted) return;
-        showGhostToast(
-          context,
-          msg,
-          icon: Icons.error_outline,
-          type: GhostToastType.error,
-        );
-      },
-    );
+    // The share overlay reports progress and the outcome; see
+    // ShareProgressOverlay. No toast on top of it.
+    await _viewModel.handleSharedFiles(files, targetDeviceTypes: targets);
   }
 
   Future<void> _handleSend() async {
@@ -791,6 +773,28 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   @override
   Widget build(BuildContext context) {
+    final shareProgress = _viewModel.shareProgress;
+    return Stack(
+      children: [
+        _buildPage(context),
+        // Over the splash too: a share can be what cold-started the app.
+        Positioned.fill(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            child: shareProgress == null
+                ? const SizedBox.shrink()
+                : ShareProgressOverlay(
+                    key: ValueKey(shareProgress.stage),
+                    progress: shareProgress,
+                    onClose: _viewModel.dismissShareProgress,
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     // One splash, then the whole screen at once. Previously the scaffold, the
     // composer and the history list each appeared as their own data arrived, so
     // a cold start was a sequence of things popping in. Hold a single centred

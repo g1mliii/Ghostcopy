@@ -1139,18 +1139,44 @@ class MobileMainViewModel extends ChangeNotifier {
     void Function(String message)? onSuccess,
     void Function(String message)? onError,
   }) async {
-    for (final file in files) {
-      try {
-        if (file.path.isEmpty) continue;
+    final items = files.where((f) => f.path.isNotEmpty).toList();
+    if (items.isEmpty) return;
 
+    // The share sheet opens the app and the send runs from here, so without
+    // this the user looked at a splash or an idle list for a few seconds with
+    // nothing saying a share was on its way, then got a toast.
+    final destination = targetDeviceTypes.isEmpty
+        ? 'your devices'
+        : targetDeviceTypes.map(platformLabel).join(', ');
+    _setShareProgress(
+      ShareProgress(
+        stage: ShareProgressStage.sending,
+        destination: destination,
+        summary: _describeShare(items),
+      ),
+    );
+    var sent = 0;
+    String? firstError;
+    void succeeded(String message) {
+      sent++;
+      onSuccess?.call(message);
+    }
+
+    void failed(String message) {
+      firstError ??= message;
+      onError?.call(message);
+    }
+
+    for (final file in items) {
+      try {
         switch (file.type) {
           case SharedMediaType.text:
           case SharedMediaType.url:
             await saveSharedContent(
               file.path,
               targetDeviceTypes,
-              onSuccess: (msg) => onSuccess?.call(msg),
-              onError: onError,
+              onSuccess: succeeded,
+              onError: failed,
             );
 
           case SharedMediaType.image:
@@ -1159,8 +1185,8 @@ class MobileMainViewModel extends ChangeNotifier {
             await _sendSharedFile(
               file,
               targetDeviceTypes: targetDeviceTypes,
-              onSuccess: onSuccess,
-              onError: onError,
+              onSuccess: succeeded,
+              onError: failed,
             );
         }
         // `Object`, not `Exception`. This is a per-item boundary whose entire
@@ -1169,10 +1195,65 @@ class MobileMainViewModel extends ChangeNotifier {
         // it and strand the rest along with the history reload below.
       } on Object catch (e) {
         debugPrint('[ShareSheet] Failed to send shared item: $e');
-        onError?.call('Could not send that item');
+        failed('Could not send that item');
       }
     }
+    final error = firstError;
+    _setShareProgress(
+      ShareProgress(
+        stage: error == null
+            ? ShareProgressStage.sent
+            : ShareProgressStage.failed,
+        destination: destination,
+        summary: error == null
+            ? _describeShare(items)
+            : sent > 0
+            ? 'Sent $sent of ${items.length}. $error'
+            : error,
+      ),
+    );
     unawaited(loadHistory());
+  }
+
+  // ========== INCOMING SHARE PROGRESS ==========
+
+  /// What a share into the app is doing, for the overlay; null when idle.
+  ShareProgress? get shareProgress => _shareProgress;
+  ShareProgress? _shareProgress;
+  Timer? _shareProgressTimer;
+
+  /// How long "Sent" stays up before the overlay goes by itself. A failure
+  /// stays until the user closes it: it carries the reason.
+  static const shareSentLinger = Duration(milliseconds: 1400);
+
+  void _setShareProgress(ShareProgress progress) {
+    if (_isDisposed) return;
+    _shareProgressTimer?.cancel();
+    _shareProgress = progress;
+    if (progress.stage == ShareProgressStage.sent) {
+      _shareProgressTimer = Timer(shareSentLinger, dismissShareProgress);
+    }
+    notifyListeners();
+  }
+
+  /// Take the overlay down.
+  void dismissShareProgress() {
+    _shareProgressTimer?.cancel();
+    _shareProgressTimer = null;
+    if (_isDisposed || _shareProgress == null) return;
+    _shareProgress = null;
+    notifyListeners();
+  }
+
+  /// One line naming what was shared: the file, "Text", "Link", or a count.
+  static String _describeShare(List<SharedMediaFile> items) {
+    if (items.length > 1) return '${items.length} items';
+    final item = items.single;
+    return switch (item.type) {
+      SharedMediaType.text => 'Text',
+      SharedMediaType.url => 'Link',
+      _ => item.path.split(Platform.pathSeparator).last,
+    };
   }
 
   /// Upload one shared file, which really is on disk.
@@ -1620,6 +1701,8 @@ class MobileMainViewModel extends ChangeNotifier {
     _realtimeReconnectTimer = null;
     _searchDebounceTimer?.cancel();
     _searchDebounceTimer = null;
+    _shareProgressTimer?.cancel();
+    _shareProgressTimer = null;
 
     _decryptedContentCache.clear();
     _detectionCache.clear();
@@ -1655,4 +1738,22 @@ class DeviceTypeTarget {
 
   /// Names of every device this chip delivers to, for the tooltip.
   String get deviceNames => devices.map((d) => d.displayName).join(', ');
+}
+
+/// Where a share into the app has got to.
+enum ShareProgressStage { sending, sent, failed }
+
+/// State for the share overlay: the stage, where it is going, and one line
+/// about what - the file name, a count, or the reason it failed.
+@immutable
+class ShareProgress {
+  const ShareProgress({
+    required this.stage,
+    required this.destination,
+    required this.summary,
+  });
+
+  final ShareProgressStage stage;
+  final String destination;
+  final String summary;
 }
