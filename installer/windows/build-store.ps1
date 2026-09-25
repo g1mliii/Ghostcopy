@@ -103,6 +103,28 @@ try {
             $env:SENTRY_AUTH_TOKEN = $plain
             & $sentry.Source debug-files upload --org spiderweb --project flutter --wait $symbolsDir
             if ($LASTEXITCODE -ne 0) { throw "$($sentry.Name) upload failed ($LASTEXITCODE)" }
+
+            # The Flutter engine's own symbols, which ship with the SDK.
+            #
+            # Without these every frame inside flutter_windows.dll reports as
+            # `?`, and that is most of a native crash: the first two crash
+            # reports from this app were unreadable for exactly this reason.
+            # Uploaded per release rather than once, because the debug id
+            # changes with the engine - a Flutter upgrade silently goes back
+            # to unreadable otherwise. Already-known files are skipped by the
+            # server, so this costs nothing after the first time.
+            $engineDir = Join-Path (Split-Path -Parent (Split-Path -Parent (Get-Command flutter).Source)) `
+                'bin\cache\artifacts\engine\windows-x64-release'
+            $enginePdb = Join-Path $engineDir 'flutter_windows.dll.pdb'
+            if (Test-Path $enginePdb) {
+                Write-Host '    uploading Flutter engine symbols'
+                & $sentry.Source debug-files upload --org spiderweb --project flutter --wait `
+                    $enginePdb (Join-Path $engineDir 'flutter_windows.dll')
+                if ($LASTEXITCODE -ne 0) { throw "engine symbol upload failed ($LASTEXITCODE)" }
+            }
+            else {
+                Write-Warning "No engine PDB at $enginePdb - native crashes inside the engine will not symbolicate."
+            }
         }
         finally {
             Remove-Item Env:\SENTRY_AUTH_TOKEN -ErrorAction SilentlyContinue

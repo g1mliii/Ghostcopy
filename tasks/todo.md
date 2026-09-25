@@ -2,15 +2,53 @@
 
 ## Active Task
 
-**macOS wrap-up, then Windows.** macOS 1.0.0 (5) is published: notarized DMG
-on GitHub Releases, and the `macos-updates` appcast is live and serving
-build 5. See [`docs/macos-releases.md`](../docs/macos-releases.md) for the
-runbook, `installer/macos/VERIFICATION.md` for what was exercised, and
-[`docs/macos-performance.md`](../docs/macos-performance.md) for the measured
-resource baseline. Finished work is in git history and
-[`tasks/lessons.md`](lessons.md), not here.
+**Windows Store submission.** Everything buildable is built; what remains is
+testing, the listing, and a macOS/iOS pass afterwards. All of it is on the
+branch `feat/windows-store-release` - six commits, **one PR**, split so a bad
+test result can revert a single change rather than the lot.
+
+### The order
+
+1. **Test for a day or two** - the "Verify ... by hand" items in the Windows
+   section below. Start with save/share/drag-out giving the full image, since
+   that is the regression this project has had before.
+2. **Build the Store listing in parallel.** It depends on none of the testing:
+   text, screenshots, age rating, and privacy answers that must declare Sentry
+   crash data the way the App Store ones do. Doing it while the app sits in
+   the tray costs nothing and saves a day.
+3. **Merge and submit.**
+4. **macOS and iOS pass afterwards** - see below; they are not untouched.
+
+### Two things the plan is easy to leave out
+
+- **The unexplained native crash is a decision, not a formality.** Two
+  `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` reports. A defensive fix landed -
+  the clipboard flush was being called from inside a window procedure, where
+  it can pump messages and re-enter - but the first crash predates that code,
+  so it cannot be claimed as the cause. The Flutter engine's symbols are now
+  uploaded, so a recurrence will be readable rather than a wall of `?`. If
+  nothing recurs across the test days, shipping is reasonable; decide it
+  rather than let it pass unnoticed.
+- **macOS and mobile are NOT untouched.** Most of this work lives in `lib/`
+  and ships everywhere: the startup crash fix, the second-launch fix
+  (clicking a running app did nothing on macOS too), the thumbnail cache, the
+  auth panel condensing, and mobile background memory trimming. macOS
+  1.0.0 (9) is now behind this branch, and its next build will behave
+  differently.
 
 ## macOS: what's left
+
+- [ ] **Re-test Apple sign-in.** The Supabase Client IDs ordering that broke
+      it on Windows broke macOS identically. The fix was server-side, so no
+      rebuild is needed, but it has never been verified there.
+- [ ] **Re-release after this branch**, carrying the shared fixes above.
+      Bump the build number past 9 - the counter is shared across platforms
+      so TestFlight and Play never see a duplicate.
+- [ ] **Regenerate the icons** with
+      `DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py`.
+      The rounding already shipped; this is the one-pixel offset fix, which
+      needs Cairo and so cannot run on Windows.
+
 
 - [ ] **Sandbox - only if the Mac app goes to the Mac App Store.** Required
       there, optional for Developer ID. It would mean Sparkle's XPC
@@ -75,15 +113,28 @@ to package - but everything below marked "verify" does need one.
       copied out at runtime. Re-check first with the now-rounded icons: in a
       package Windows uses Square44x44Logo, which is regenerated from
       `app_icon.png`, so this may already be fixed
-- [ ] **Unattributed native crash, 2026-09-25 19:59 UTC.**
-      `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` with `SetWaitableTimer` as the
-      only named frame - a null-ish dereference. It arrived unsymbolicated
-      because the shipped build's PDBs had not been uploaded (see
-      `tasks/lessons.md`); they have been since, and Sentry reprocesses native
-      events when symbols arrive late, so check whether that issue resolved.
-      Do not theorise from the frame name alone: on Windows the Dart VM's own
-      event handler uses waitable timers, so it is as likely to be teardown as
-      anything in this app. Wait for a symbolicated recurrence.
+- [ ] **Two unexplained native crashes - decide before submitting.**
+      `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` on 2026-09-25 at 19:59 UTC
+      (dist 5) and 21:39 UTC (dist 9), same user, same shape. Reading 0x10 is
+      a null dereference at a member offset.
+      **Narrowed, 2026-09-25:** the only frame worth trusting is
+      `FlutterViewController::HandleTopLevelWindowProc`. `SetWaitableTimer`
+      appears in both but nothing in this repo calls it, so treat it as stack
+      noise from an unsymbolicated walk rather than a caller. That left one
+      pattern that fits: something the app calls from inside the window
+      procedure pumping messages and re-entering it. Both candidates are now
+      gone - the `MessageBoxW` the send-file path used (present in dist 5) was
+      deleted, and `OleFlushClipboard` (added in dist 9) is posted rather than
+      called. Consistent with the evidence, but NOT proven: the frames above
+      it were never resolved.
+      **What changed since:** `flutter_windows.dll.pdb` ships with the Flutter
+      SDK and had never been uploaded, which is why every engine frame read
+      `?`. It is uploaded now and `build-store.ps1` sends it per release, so
+      the debug id cannot drift on a Flutter upgrade. Sentry reprocesses
+      native events when symbols arrive late, so the two existing reports may
+      resolve on their own - **check them before deciding.**
+      If nothing recurs over the test days and the existing two stay
+      unexplained, shipping is defensible; make it a decision.
 - [ ] **Verify the clipboard counter change by hand.** `OleFlushClipboard`
       replaced the owner check, and the two halves pull against each other -
       none of it is covered by tests:
