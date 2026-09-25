@@ -30,6 +30,8 @@ app="$output/export/ghostcopy.app"
 # here, seconds in, rather than after both notarization round trips.
 python3 "$script_dir/verify-app.py" "$app" --require-updater \
     --sparkle-bin "$("$script_dir/sparkle-tools.sh")"
+# Crash reports from this build need its symbols; they exist only now.
+"$root/installer/upload-debug-symbols.sh" "$output/GhostCopy.xcarchive/dSYMs"
 # Notarize/staple the app too, so the copy dragged out of the DMG has a ticket.
 ditto -c -k --keepParent "$app" "$output/GhostCopy.zip"
 xcrun notarytool submit "$output/GhostCopy.zip" --keychain-profile "$profile" --wait

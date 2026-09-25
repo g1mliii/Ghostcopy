@@ -21,6 +21,7 @@ import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
+import 'services/crash_reporting_service.dart';
 import 'services/device_service.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
@@ -235,7 +236,12 @@ Future<void> _writePendingCopy(ClipboardItem item) async {
   debugPrint('[FCM Background] ✅ Staged clip ${item.id} for instant copy');
 }
 
-Future<void> main(List<String> args) async {
+/// Everything runs inside crash reporting, startup included, so an error that
+/// stops the app coming up is reported too.
+Future<void> main(List<String> args) =>
+    SentryCrashReportingService().run(() => _appMain(args));
+
+Future<void> _appMain(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
@@ -260,6 +266,9 @@ Future<void> main(List<String> args) async {
   // The assertion doesn't affect functionality - it's just noisy debug output
   // See: https://github.com/flutter/flutter/issues/93594
   if (Platform.isWindows) {
+    // Crash reporting installed its own handler first; hand everything but
+    // the suppressed assertion on to it, rather than replace it.
+    final reportError = FlutterError.onError;
     FlutterError.onError = (details) {
       // Suppress known RawKeyboard assertion on Windows
       if (details.exception is AssertionError &&
@@ -270,8 +279,12 @@ Future<void> main(List<String> args) async {
         );
         return;
       }
-      // Log other errors normally
-      FlutterError.presentError(details);
+      // Everything else goes where it would have gone.
+      if (reportError != null) {
+        reportError(details);
+      } else {
+        FlutterError.presentError(details);
+      }
     };
   }
 

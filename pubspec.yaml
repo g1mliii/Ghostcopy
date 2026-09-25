@@ -66,6 +66,7 @@ dependencies:
   # Already in the tree via window_manager; declared directly so
   # growToHeight can read the display work area to clamp the window.
   screen_retriever: ^0.2.0
+  sentry_flutter: ^9.0.0
   share_plus: ^12.0.1
   shared_preferences: ^2.2.2
   sign_in_with_apple: ^8.2.0
