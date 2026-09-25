@@ -106,6 +106,12 @@
 	     device-linking path, and iOS terminates the app on first camera access
 	     if this key is absent - TCC kills the process rather than returning an
 	     error, so it presents as a crash, not a denied permission. -->
+	<!-- Required by App Store Connect (ITMS-90683): a bundled library's binary
+	     references location APIs, and every such reference needs a purpose
+	     string whether or not it is ever called. GhostCopy never asks for
+	     location, so iOS never shows this. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>GhostCopy does not use your location. iOS requires this text because a library included in the app contains location features that GhostCopy never uses.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>GhostCopy uses the camera to scan the QR code shown by your desktop app, so the two devices can be linked.</string>
 	<!-- Photo Library Permissions for saving clipboard images -->
