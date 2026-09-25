@@ -24,6 +24,9 @@ resource baseline. Finished work is in git history and
       browser: Apple issues no Developer ID profile carrying the
       applesignin entitlement (only App Store/development profiles can), so
       the native sheet is iOS-only
+- [x] **Build 8 - published 2026-09-25:** Sentry crash reporting (symbols
+      uploaded at build time), push-token reliability. TestFlight 1.0.0 (8)
+      built from the same commit
 - [x] **Build 7 - published 2026-09-24: file upload and Save as.** Broken since build 5: dropping
       the sandbox also dropped the user-selected-files entitlement, which
       file_picker checks before opening any panel (ENTITLEMENT_NOT_FOUND).
