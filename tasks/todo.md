@@ -336,11 +336,13 @@ re-checked against current provider docs rather than trusted from here.
 
 ### With the first public build, not after it
 
-- [x] **Sentry in the client** (`lib/services/crash_reporting.dart`,
+- [x] **Sentry in the client** (`lib/services/impl/crash_reporting_service.dart`,
       project spiderweb/flutter, sentry_flutter 9). Release builds only; errors
-      and crashes only - no tracing, screenshots, print or interaction
-      breadcrumbs, IP or user; quoted text, database key values and signed-URL
-      queries stripped from every event and breadcrumb on the device. Privacy
+      and crashes only - no tracing, sessions, screenshots, print, interaction
+      or native breadcrumbs, IP or user; messages cut to their first line and
+      quoted text, database key values and signed-URL queries stripped on the
+      device. Native crash reasons (iOS/Android/macOS) do not pass through the
+      Dart scrubber - a native event processor would close that. Privacy
       policy and the App Store privacy answers updated (Crash Data and Other
       Diagnostic Data, not linked). Ships with the next build of each platform
   - [ ] **Upload debug symbols** so stack traces are readable: dSYMs (iOS,

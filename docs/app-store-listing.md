@@ -82,7 +82,7 @@ result: 4+.
 
 Tracking: **No**. The app has no advertising or analytics SDK (checked
 `pubspec.yaml`), Firebase is used for push delivery only, and Sentry receives
-crash and error reports only (`lib/services/crash_reporting.dart`: no
+crash and error reports only (`lib/services/impl/crash_reporting_service.dart`: no
 screenshots, no tracing, no IP, clip text stripped on the device).
 
 | Data type | Collected | Linked to user | Purpose | Why |

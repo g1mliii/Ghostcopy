@@ -21,7 +21,7 @@ import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
-import 'services/crash_reporting.dart';
+import 'services/crash_reporting_service.dart';
 import 'services/device_service.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
@@ -237,9 +237,9 @@ Future<void> _writePendingCopy(ClipboardItem item) async {
 }
 
 /// Everything runs inside crash reporting, startup included, so an error that
-/// stops the app coming up is reported too. See crash_reporting.dart.
+/// stops the app coming up is reported too.
 Future<void> main(List<String> args) =>
-    runWithCrashReporting(() => _appMain(args));
+    SentryCrashReportingService().run(() => _appMain(args));
 
 Future<void> _appMain(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();

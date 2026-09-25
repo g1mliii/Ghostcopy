@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ghostcopy/services/crash_reporting.dart';
+import 'package:ghostcopy/services/crash_reporting_service.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
 void main() {
@@ -37,6 +37,22 @@ void main() {
       final out = redact('x' * 500)!;
       expect(out.length, lessThanOrEqualTo(201));
       expect(out, endsWith('…'));
+    });
+
+    test('text after the first line is dropped', () {
+      // Dart's FormatException prints the source it could not parse on the
+      // next line, unquoted - often the clip itself.
+      final error = FormatException(
+        'Unexpected character',
+        'private clipboard text',
+        0,
+      ).toString();
+      expect(error, contains('private clipboard text'));
+      expect(redact(error), isNot(contains('private clipboard text')));
+      expect(
+        redact(error),
+        startsWith('FormatException: Unexpected character'),
+      );
     });
 
     test('null stays null', () => expect(redact(null), isNull));
@@ -99,9 +115,18 @@ void main() {
     expect(options.attachScreenshot, isFalse);
     expect(options.enablePrintBreadcrumbs, isFalse);
     expect(options.enableUserInteractionBreadcrumbs, isFalse);
+    // Native breadcrumbs bypass beforeSend; sessions report every launch.
+    expect(options.enableAutoNativeBreadcrumbs, isFalse);
+    expect(options.enableAutoSessionTracking, isFalse);
     expect(options.enableAutoPerformanceTracing, isFalse);
     expect(options.tracesSampleRate, isNull);
     expect(options.beforeSend, isNotNull);
     expect(options.beforeBreadcrumb, isNotNull);
+  });
+
+  test('when disabled, the app runs without Sentry', () async {
+    var ran = false;
+    await SentryCrashReportingService(enabled: false).run(() => ran = true);
+    expect(ran, isTrue);
   });
 }

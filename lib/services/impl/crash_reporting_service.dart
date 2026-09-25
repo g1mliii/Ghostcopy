@@ -3,22 +3,32 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
+import '../crash_reporting_service.dart';
+
 /// The GhostCopy Sentry project (spiderweb/flutter). A DSN only lets a client
 /// submit events - it grants no read access - so, like the Supabase
 /// publishable key in main.dart, it is compiled in rather than hidden.
 const _sentryDsn =
     'https://e0c0077d7dadc346ef2e6b41d508f583@o4511233616969728.ingest.us.sentry.io/4512145211392000';
 
-/// Run the app with crash reporting, in release builds only.
+/// Crash reporting through Sentry, in release builds only.
 ///
-/// Debug and profile builds run [app] directly: their errors are for the
+/// Debug and profile builds run the app directly: their errors are for the
 /// developer's console, not the project's issue list.
-Future<void> runWithCrashReporting(FutureOr<void> Function() app) async {
-  if (!kReleaseMode) {
-    await app();
-    return;
+class SentryCrashReportingService implements ICrashReportingService {
+  SentryCrashReportingService({bool? enabled})
+    : _enabled = enabled ?? kReleaseMode;
+
+  final bool _enabled;
+
+  @override
+  Future<void> run(FutureOr<void> Function() app) async {
+    if (!_enabled) {
+      await app();
+      return;
+    }
+    await SentryFlutter.init(configureCrashReporting, appRunner: app);
   }
-  await SentryFlutter.init(configureCrashReporting, appRunner: app);
 }
 
 /// Sentry settings, chosen for an app whose whole job is carrying other
@@ -37,6 +47,13 @@ void configureCrashReporting(SentryFlutterOptions options) {
     // debugPrint output names files and counts clips; it stays on the device.
     ..enablePrintBreadcrumbs = false
     ..enableUserInteractionBreadcrumbs = false
+    // Native breadcrumbs (system events, and network calls made by plugins
+    // with their URLs) are recorded by the iOS/Android/macOS SDKs and never
+    // pass through beforeSend below, so nothing here could scrub them.
+    ..enableAutoNativeBreadcrumbs = false
+    // Sessions report every launch and its length whether or not anything
+    // went wrong. Errors and crashes only.
+    ..enableAutoSessionTracking = false
     // Errors only. Performance was profiled directly (docs/*-performance.md),
     // and tracing costs CPU on an app that must idle at zero.
     ..enableAutoPerformanceTracing = false
@@ -44,8 +61,10 @@ void configureCrashReporting(SentryFlutterOptions options) {
     ..enableFramesTracking = false
     ..tracesSampleRate = null
     // Kept at their defaults: app-hang (iOS, macOS) and ANR (Android) reports,
-    // and session tracking for the crash-free rate. Declared on the App Store
-    // as Performance Data and Other Diagnostic Data, not linked to the user.
+    // declared on the App Store as Performance Data, not linked to the user.
+    // Native crash handling stays on too: a native crash report is a signal
+    // or exception name and a stack. Its reason text is the one thing the
+    // Dart-side scrubbing below cannot reach.
     ..maxBreadcrumbs = 40
     ..beforeSend = scrubEvent
     ..beforeBreadcrumb = scrubBreadcrumb;
@@ -63,10 +82,15 @@ final _urlQuery = RegExp(r'(https?://[^\s?#]+)[?#]\S*');
 const _maxTextLength = 200;
 
 /// A message or exception value with anything that could be content removed.
+///
+/// First line only: exceptions put the text they choked on after it,
+/// unquoted - Dart's FormatException prints the source on the next line,
+/// which for this app is often the clip itself.
 @visibleForTesting
 String? redact(String? text) {
   if (text == null) return null;
-  var out = text
+  final firstLine = text.split('\n').first.trimRight();
+  var out = firstLine
       .replaceAll(_quoted, '[redacted]')
       .replaceAll(_keyValue, ')=([redacted])')
       .replaceAllMapped(_urlQuery, (m) => m[1]!);
