@@ -245,3 +245,126 @@ Each entry should include:
   way - so the action was dropped rather than chased. Android keeps the fast
   path; its background execution is genuinely more permissive. When evaluating
   a similar feature, decide by the worst case the OS permits, not the best.
+
+### 2026-09-25 - Read the second CMake error as the whole story and nearly patched the wrong thing
+
+- **Date**: 2026-09-25
+- **Failure Mode**: A Windows build failed at CMake configure with "Could NOT
+  find JNI (missing: JVM)". Setting `JAVA_HOME` moved it on to a wall of MSVC
+  syntax errors inside `jni/third_party/jni.h`, which declares `JNIEXPORT`
+  with GCC attribute syntax. The obvious reading - that jni 0.14.2 simply does
+  not compile on MSVC and needed a dependency override or an upstream patch -
+  was wrong. `JAVA_INCLUDE_PATH` in `build/windows/x64/CMakeCache.txt` was
+  still pointing at that bundled header from a configure done under a
+  different jni version, which is the only reason the AOSP header was on the
+  include path at all. `flutter clean` plus `JAVA_HOME` built it.
+- **Detection Signal**: The cached value named a path that nothing in the
+  currently resolved package's `CMakeLists.txt` could have set. Reading the
+  installed 0.14.2 and the newer 1.0.3 side by side is what showed which
+  version's logic had written it.
+- **Prevention Rule**: A compile error inside a dependency's own headers, on a
+  build that used to work, is a stale-build-directory suspect before it is an
+  upstream-bug suspect. Check `CMakeCache.txt` for cached paths that the
+  current source could not have produced, and clear the build directory, before
+  reaching for a dependency override or an upstream patch - those are expensive
+  and hard to back out. The second error a build reports is not necessarily the
+  root cause of the first.
+
+### 2026-09-25 - Heredocs in this shell eat backslash escapes
+
+- **Date**: 2026-09-25
+- **Failure Mode**: C++ written through a quoted `<<'EOF'` heredoc arrived with
+  one level of backslash stripped, so `L'\'` became `L'\'` and the file did
+  not compile ("newline in string literal"). A later Python heredoc lost the
+  same way and its `assert` caught it before writing anything.
+- **Detection Signal**: A compiler error on a line that looked right in the
+  source that was sent. `cat -A` on the written file showed the difference.
+- **Prevention Rule**: Do not write files containing backslashes - Windows
+  paths, C/C++ escapes, regexes - through a heredoc here, even a quoted one.
+  Use the Write or Edit tool for those. When a heredoc must be used, assert on
+  the content afterwards rather than trusting it landed verbatim.
+
+### 2026-09-25 - A startup crash that did not crash
+
+- **Date**: 2026-09-25
+- **Failure Mode**: Sentry reported a fatal `StateError` from
+  `registerCurrentDevice` at launch. "Fatal" was misleading in both
+  directions: the process was still alive, and it was worse off for it. The
+  error escaped an unguarded `await` partway through `_appMain`, so everything
+  after it - the tray icon, the global hotkey, the window - was never created.
+  The mechanism tag said `PlatformDispatcher.onError`, which reports and lets
+  the isolate continue, so what shipped was a resident process with no way to
+  reach it and no visible sign anything was wrong.
+- **Detection Signal**: The Sentry event, and then the fact that the process
+  was still running when checked. Reproduced from the crash's own line
+  numbers: `main.dart:400` matched the working tree but not `HEAD`, which is
+  what identified the run as a local smoke test rather than a user's.
+- **Prevention Rule**: In a startup sequence, an `await` before the app is
+  reachable is load-bearing. Anything optional - signing in, registering a
+  device, restoring caches - belongs behind a guard that reports and
+  continues, and anything that is genuinely required should fail loudly rather
+  than silently abandon the remaining setup. Also: `level: fatal` in Sentry
+  means the error reached an unhandled-error handler, not that the process
+  died. Check whether it did.
+
+### 2026-09-25 - A checked return that was never checked
+
+- **Date**: 2026-09-25
+- **Failure Mode**: `AuthService.initialize()` called
+  `signInAnonymously()` inside `try { } on AuthException`, and treated
+  "did not throw" as "signed in". A response carrying no session is neither an
+  exception nor a sign-in, so `initialize()` returned normally with
+  `currentUser` still null, and the failure surfaced two call frames later as
+  a `StateError` about device registration - naming the wrong subsystem
+  entirely.
+- **Detection Signal**: The reported error was a `StateError`, not an
+  `AuthException`, which ruled out every path that throws and left only a
+  silent one. Persisted preferences being `{}` confirmed no session had ever
+  been written.
+- **Prevention Rule**: When an SDK call returns a result *and* can throw,
+  catching the throw covers half of it. Check the returned value for the thing
+  the call was made to obtain, and fail at that point - an error raised where
+  it happened names the right subsystem, which an error raised downstream
+  never does.
+
+### 2026-09-25 - Told the user to copy a command that reads the clipboard
+
+- **Date**: 2026-09-25
+- **Failure Mode**: The documented way to store the Sentry token read it from
+  the clipboard, deliberately, because a typed console prompt truncates a long
+  token silently. But the instruction was a multi-line snippet to copy and
+  paste - and copying the snippet replaces the token on the clipboard with the
+  snippet. What got DPAPI-encrypted and saved as the token was the setup
+  command itself, 244 characters of PowerShell.
+- **Detection Signal**: A check of the stored value before trusting it: it
+  decrypted cleanly and was a plausible length, but contained newlines,
+  quotes and `$`, which no token does. Nothing else would have caught it until
+  a release build failed at upload.
+- **Prevention Rule**: An instruction that reads the clipboard cannot itself
+  be something the user copies. Put it in a script they run by name, and have
+  the script validate what it found - reject whitespace, reject an implausible
+  length, read the value back after writing it. For any secret the user pastes
+  once and relies on later, the moment of storing it is the only cheap place
+  to catch a mistake; everywhere downstream it is silent.
+
+### 2026-09-25 - Went around the release script and lost a crash report
+
+- **Date**: 2026-09-25
+- **Failure Mode**: `installer/windows/build-store.ps1` exists so that a
+  Windows build cannot be packaged without its PDBs going to Sentry first. To
+  rebuild after an icon change I ran `flutter build windows --release` and
+  `dart run msix:create` by hand instead, because they were quicker. That
+  produced a new binary with new debug ids, shipped it, and uploaded nothing.
+  The first native crash from it - an access violation near `SetWaitableTimer`
+  - arrived with every frame unsymbolicated, which is precisely the outcome
+  the script was written to prevent. Re-running the upload afterwards reported
+  "Uploaded 1 missing debug information file", confirming the shipped build's
+  symbols had never been sent.
+- **Detection Signal**: A native crash whose stack was all `?`. The debug id
+  told the story: the uploaded one ended `-3`, the installed binary's `-5`.
+- **Prevention Rule**: When a project has a release script, use it for
+  anything that produces a binary someone will run - not just for releases.
+  The steps it bundles are bundled because doing them separately is easy to
+  forget, and the cost is not paid at build time but weeks later when a crash
+  report turns out to be unreadable. If a quicker path is genuinely needed,
+  add a flag to the script rather than reproducing half of it by hand.
