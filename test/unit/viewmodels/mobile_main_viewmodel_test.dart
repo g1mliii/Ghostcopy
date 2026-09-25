@@ -479,6 +479,90 @@ void main() {
     });
   });
 
+  group('share progress', () {
+    // Sharing from another app opens GhostCopy and sends from there; the
+    // overlay is the only thing telling the user what is happening.
+    late List<ShareProgressStage?> stages;
+    late Future<ClipboardItem> Function(Invocation) insert;
+
+    setUp(() {
+      stages = [];
+      viewModel.addListener(() => stages.add(viewModel.shareProgress?.stage));
+      when(() => authService.currentUserId).thenReturn('u1');
+      insert = (inv) async => inv.positionalArguments.first as ClipboardItem;
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((inv) => insert(inv));
+    });
+
+    SharedMediaFile text(String value) =>
+        SharedMediaFile(path: value, type: SharedMediaType.text);
+
+    test('shows sending, then sent, then goes by itself', () async {
+      final sharing = viewModel.handleSharedFiles(
+        [text('hello')],
+        targetDeviceTypes: {'macos'},
+      );
+      expect(viewModel.shareProgress?.stage, ShareProgressStage.sending);
+      expect(viewModel.shareProgress?.destination, 'macOS');
+      expect(viewModel.shareProgress?.summary, 'Text');
+
+      await sharing;
+      expect(viewModel.shareProgress?.stage, ShareProgressStage.sent);
+
+      await Future<void>.delayed(
+        MobileMainViewModel.shareSentLinger + const Duration(milliseconds: 50),
+      );
+      expect(viewModel.shareProgress, isNull);
+      expect(
+        stages,
+        containsAllInOrder([
+          ShareProgressStage.sending,
+          ShareProgressStage.sent,
+          null,
+        ]),
+      );
+    });
+
+    test('a failure stays up with its reason until closed', () async {
+      insert = (_) async => throw Exception('offline');
+
+      await viewModel.handleSharedFiles([text('hello')]);
+      expect(viewModel.shareProgress?.stage, ShareProgressStage.failed);
+      expect(viewModel.shareProgress?.summary, 'Failed to share content');
+      expect(viewModel.shareProgress?.destination, 'your devices');
+
+      await Future<void>.delayed(
+        MobileMainViewModel.shareSentLinger + const Duration(milliseconds: 50),
+      );
+      expect(viewModel.shareProgress?.stage, ShareProgressStage.failed);
+
+      viewModel.dismissShareProgress();
+      expect(viewModel.shareProgress, isNull);
+    });
+
+    test('a partial failure says how many went', () async {
+      var calls = 0;
+      insert = (inv) async {
+        if (calls++ == 1) throw Exception('offline');
+        return inv.positionalArguments.first as ClipboardItem;
+      };
+
+      await viewModel.handleSharedFiles([text('one'), text('two')]);
+      expect(viewModel.shareProgress?.stage, ShareProgressStage.failed);
+      expect(
+        viewModel.shareProgress?.summary,
+        'Sent 1 of 2. Failed to share content',
+      );
+    });
+
+    test('nothing to send shows nothing', () async {
+      await viewModel.handleSharedFiles([text('')]);
+      expect(viewModel.shareProgress, isNull);
+      expect(stages, isEmpty);
+    });
+  });
+
   group('delete', () {
     ClipboardItem item(String id) => ClipboardItem(
       id: id,
