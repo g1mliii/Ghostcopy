@@ -198,6 +198,11 @@ class MobileMainViewModel extends ChangeNotifier {
 
   static const int _maxCacheSize = 20;
 
+  /// Photo formats an over-limit image may be re-encoded from, by the gallery
+  /// picker and the share sheet alike. Other formats (GIF, HEIC, RAW) cannot
+  /// be re-encoded without losing what makes them that format.
+  static const _shrinkableExtensions = {'jpg', 'jpeg', 'png', 'webp'};
+
   // ========== ENCRYPTION ==========
 
   EncryptionService? _encryptionService;
@@ -791,14 +796,10 @@ class MobileMainViewModel extends ChangeNotifier {
       final image = result.files.single;
       // A photo too big to send is scaled down rather than refused, as
       // image_picker's 2048px cap used to make every photo fit. Anything that
-      // fits is still sent as the original. Other formats (GIF, HEIC, RAW)
-      // cannot be re-encoded without loss of what makes them that format.
-      final shrinkable = const {
-        'jpg',
-        'jpeg',
-        'png',
-        'webp',
-      }.contains(image.extension?.toLowerCase());
+      // fits is still sent as the original.
+      final shrinkable = _shrinkableExtensions.contains(
+        image.extension?.toLowerCase(),
+      );
       if (image.size > ClipboardLimits.maxFileBytes && !shrinkable) {
         throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
       }
@@ -1282,31 +1283,60 @@ class MobileMainViewModel extends ChangeNotifier {
 
     final filename = file.path.split(Platform.pathSeparator).last;
 
+    final tooLarge =
+        '$filename is too large (max ${ClipboardLimits.maxFileLabel})';
+
     // Size checked by stat, before the read. Reading first meant a shared video
     // was pulled into one contiguous Uint8List on the Dart heap purely to
     // discover it was over the limit and throw it away - and a share arrives
     // while the app is cold and already competing for memory with whatever
     // launched it, so a few hundred MB there is a jetsam risk, not a slow path.
-    if (await File(file.path).length() > ClipboardLimits.maxFileBytes) {
-      onError?.call(
-        '$filename is too large (max ${ClipboardLimits.maxFileLabel})',
-      );
+    // A photo is the exception: it is read and scaled down, as the gallery
+    // picker does, because refusing a camera photo shared from Photos was the
+    // commonest way to hit this at all.
+    final oversized =
+        await File(file.path).length() > ClipboardLimits.maxFileBytes;
+    final dot = filename.lastIndexOf('.');
+    final extension = dot < 0 ? '' : filename.substring(dot + 1).toLowerCase();
+    if (oversized && !_shrinkableExtensions.contains(extension)) {
+      onError?.call(tooLarge);
       return;
     }
 
-    final bytes = await File(file.path).readAsBytes();
+    var bytes = await File(file.path).readAsBytes();
+    var sentFilename = filename;
 
-    final fileTypeInfo = FileTypeService.instance.detectFromBytes(
+    var fileTypeInfo = FileTypeService.instance.detectFromBytes(
       bytes,
       filename,
     );
+
+    if (oversized) {
+      final shrunk = fileTypeInfo.contentType.isImage
+          ? await compute(shrinkImageToFit, (
+              bytes,
+              ClipboardLimits.maxFileBytes,
+            ))
+          : null;
+      if (shrunk == null) {
+        onError?.call(tooLarge);
+        return;
+      }
+      // Now a JPEG whatever it arrived as, so the name says so too.
+      bytes = shrunk;
+      sentFilename = '${dot < 0 ? filename : filename.substring(0, dot)}.jpg';
+      fileTypeInfo = FileTypeService.instance.detectFromBytes(
+        bytes,
+        sentFilename,
+      );
+    }
 
     await _clipboardRepo.insertFile(
       userId: userId,
       deviceType: ClipboardRepository.getCurrentDeviceType(),
       deviceName: null,
       fileBytes: bytes,
-      originalFilename: filename,
+      originalFilename: sentFilename,
       contentType: fileTypeInfo.contentType,
       mimeType: fileTypeInfo.mimeType,
       // null, not an empty list: the repository reads null as "every device".

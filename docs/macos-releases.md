@@ -12,7 +12,7 @@ Two GitHub releases, with different jobs:
 | Release | Tag | Contents | Changes per release? |
 |---|---|---|---|
 | Installer | `macos-v<version>-<build>` | `GhostCopy-<version>-<build>.dmg` | New tag each time |
-| Update feed | `macos-updates` | `appcast.xml` | Same tag, file replaced |
+| Update feed | `macos-updates` | `appcast.xml`, `GhostCopy.dmg` | Same tag, files replaced |
 
 The app's `SUFeedURL` points at the **fixed** `macos-updates` tag, so the feed
 URL compiled into every shipped build never changes. The feed's single item
@@ -158,12 +158,10 @@ that does not exist yet. It finishes by re-downloading the live feed and
 **7. Confirm a real client sees it.** On a Mac running the previous build, use
 **Check for Updates…** from the tray menu and let it install.
 
-**8. Point the website at the new DMG.** The download page's button goes to
-`/download/macos`, a redirect in `website/_redirects`. Release assets are
-versioned and never `latest`, so GitHub has no stable URL for the newest DMG -
-bump the tag and filename on that line and merge it to `main`, which deploys
-the site. Forgetting costs little: whoever downloads the older DMG is offered
-this update the first time the app checks.
+**8. Nothing to do for the website.** Its download button goes to
+`/download/macos`, which `website/_redirects` sends to `GhostCopy.dmg` on the
+fixed `macos-updates` release. Step 6 replaces that file with each release, so
+the button always serves the DMG the feed advertises.
 
 ## What the scripts refuse, and why
 

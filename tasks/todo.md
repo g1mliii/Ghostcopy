@@ -33,17 +33,20 @@ test result can revert a single change rather than the lot.
   and ships everywhere: the startup crash fix, the second-launch fix
   (clicking a running app did nothing on macOS too), the thumbnail cache, the
   auth panel condensing, and mobile background memory trimming. macOS
-  1.0.0 (9) is now behind this branch, and its next build will behave
-  differently.
+  1.0.0 (8) and TestFlight 1.0.0 (7) are behind it; both are being rebuilt as
+  1.0.0 (11) (Windows took 10, as `msix_version` 1.0.10.0).
 
 ## macOS: what's left
 
 - [ ] **Re-test Apple sign-in.** The Supabase Client IDs ordering that broke
       it on Windows broke macOS identically. The fix was server-side, so no
       rebuild is needed, but it has never been verified there.
-- [ ] **Re-release after this branch**, carrying the shared fixes above.
-      Bump the build number past 9 - the counter is shared across platforms
-      so TestFlight and Play never see a duplicate.
+- [x] **Released 1.0.0 (11) - 2026-09-26**, carrying the shared fixes above.
+      Notarized, smoke test passed, feed verified. The website's download
+      button now points at a fixed `GhostCopy.dmg` that publish-update.sh
+      replaces each release, so `_redirects` no longer needs a bump.
+- [ ] **On 1.0.0 (11):** encrypted history still decrypts with the existing
+      passphrase, tray menu, Option+Space, a clip each way
 - [x] **Regenerate the icons - done 2026-09-26 (dfc6987).** The one-pixel
       offset fix, regenerated with Cairo on Linux: only the 22 outputs whose
       pixels changed were committed, and the pre-fix generator reproduces
@@ -250,11 +253,10 @@ to package - but everything below marked "verify" does need one.
       once it exists; needs it signed in on the simulator
 - [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
       the listing doc
-- [ ] **Photos over 10 MB shared from the share sheet are refused.** The
-      gallery picker now scales a too-large JPEG/PNG/WebP down
-      (`lib/utils/image_shrink.dart`), but a photo shared into GhostCopy goes
-      through the shared-files path, which only checks the size. Route it
-      through the same shrink
+- [x] **Photos over 10 MB shared from the share sheet** now go through the
+      same shrink as the gallery picker and are sent as a .jpg. HEIC is still
+      refused over the limit on both paths - the `image` package cannot
+      decode it. Verify on the phone: share a large PNG screenshot from Photos
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the
       Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
@@ -287,16 +289,10 @@ to package - but everything below marked "verify" does need one.
 
 ## All platforms
 
-- [ ] **Nothing retries auth after a failed launch.** `startAuthAndDevice` in
-      `lib/main.dart` now keeps a failed sign-in from taking the tray icon and
-      hotkey down with it (2026-09-25), so the app comes up - but it comes up
-      with no session and nothing asks again. `AuthService.initialize()` leaves
-      `_initialized` false when it throws, so it is safe to call again; what is
-      missing is a caller. Launching offline therefore gives a running app that
-      stays signed out until it is restarted. Options: retry on the first
-      Spotlight open, or listen for connectivity. Decide before the Store
-      build - it is the difference between "opened the laptop on a train" and
-      "the app is broken"
+- [x] **Auth retries after a failed launch** (a416d25). `recoverSession`
+      retries on a backoff settling at five minutes, then registers the device
+      and rebinds realtime. Worth one manual check on a Mac: launch offline,
+      reconnect, and a clip arrives without a restart
 
 - [ ] **Check the email confirmation link on macOS and iOS.** The deep-link
       predicate in `lib/main.dart` accepts `token_hash` links, but on the
@@ -309,15 +305,11 @@ to package - but everything below marked "verify" does need one.
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
       change it, which is why the macOS updater had to land first
-- [ ] Version scheme: `1.0.0+N`, build number bumped per release (at 5 now).
-      TestFlight and Play reject a duplicate build number, so keep it
-      monotonic across platforms
-- [ ] **Sentry in the client, before the first shipped build.** A hard
-      ordering constraint, not a preference: it has to be compiled into the
-      build that goes out. Ship without it and the first real crashes are
-      invisible, and seeing them costs another signed, notarized release per
-      platform. Scrub clipboard content from every event before sending. See
-      the monitoring section below.
+- [ ] Version scheme: `1.0.0+N`, build number bumped per release (at 11 now:
+      macOS and iOS 11, Windows 10). TestFlight and Play reject a duplicate
+      build number, so keep it monotonic across platforms
+- [x] **Sentry in the client** - shipped in macOS 1.0.0 (8) and every build
+      since (a62bd4a), clip content stripped on the device.
 
 ## Monitoring, error tracking and cost guards
 
