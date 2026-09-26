@@ -130,7 +130,19 @@ jobs:
       # toolchains - Cargokit exits 101 before any Swift is compiled. The same
       # two variables are exported by installer/macos/build-release.sh, which
       # is why the release path works and a bare `flutter build macos` does not.
-      - run: flutter build macos --release
+      #
+      # Unsigned, like the iOS job's --no-codesign. `flutter build macos` has no
+      # such flag and signs with the project's team, and this runner has no
+      # profile for com.ghostcopy.ghostcopy - so the job stopped at "No profiles
+      # were found" before compiling anything, whatever the branch changed.
+      # Flutter writes the Xcode config; xcodebuild then compiles every target
+      # with signing off, which is all this job is for.
+      - run: flutter build macos --release --config-only
+      - run: >-
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner
+          -configuration Release -destination 'generic/platform=macOS'
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+          build
         env:
           CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG: 'true'
           CARGO_PROFILE_RELEASE_STRIP: none

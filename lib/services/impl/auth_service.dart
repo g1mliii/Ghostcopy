@@ -601,6 +601,24 @@ class AuthService implements IAuthService {
     }
   }
 
+  /// Ask which Google account to use, every time.
+  ///
+  /// This used to try signInSilently() first, which by design hands back the
+  /// last account with no chooser - so after signing out of GhostCopy, "Continue
+  /// with Google" went straight back into the same Google account. signIn()
+  /// alone reuses a cached account too. Forgetting it first puts the chooser up;
+  /// it only clears which account the plugin last used, it revokes nothing.
+  static Future<GoogleSignInAccount?> _pickGoogleAccount(
+    GoogleSignIn googleSignIn,
+  ) async {
+    try {
+      await googleSignIn.signOut();
+    } on Exception catch (e) {
+      debugPrint('[AuthService] Could not clear the cached Google account: $e');
+    }
+    return googleSignIn.signIn();
+  }
+
   /// Native Google Sign-In for iOS and Android
   Future<bool> _nativeGoogleSignIn() async {
     // Web Client ID (registered in Supabase Dashboard)
@@ -623,9 +641,7 @@ class AuthService implements IAuthService {
     final googleSignIn = _googleSignIn!;
 
     try {
-      // Attempt lightweight authentication (silent sign-in if previously signed in)
-      final googleUser = await googleSignIn.signInSilently();
-      final account = googleUser ?? await googleSignIn.signIn();
+      final account = await _pickGoogleAccount(googleSignIn);
 
       if (account == null) {
         debugPrint('[AuthService] Google sign in cancelled by user');
@@ -881,7 +897,7 @@ class AuthService implements IAuthService {
     final googleSignIn = _googleSignIn!;
 
     try {
-      final account = await googleSignIn.signIn();
+      final account = await _pickGoogleAccount(googleSignIn);
 
       if (account == null) {
         debugPrint('[AuthService] Google sign in cancelled by user');
