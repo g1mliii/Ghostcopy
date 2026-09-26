@@ -1749,9 +1749,9 @@ Future<void> startAuthAndDevice(
     );
   }
 
-  // Checked rather than assumed. registerCurrentDevice throws when there is no
-  // session, and a caller that cannot handle that must not call it - the whole
-  // point of the guard above is that reaching here proves nothing.
+  // Checked rather than assumed: the guard above means reaching here proves
+  // nothing about the session. registerCurrentDevice would only return false
+  // without one, but skipping it says why in the log.
   if (authService.currentUser == null) {
     debugPrint(
       '[Main] ⚠️ No session after init - skipping device registration',

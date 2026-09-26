@@ -105,7 +105,14 @@ class DeviceService implements IDeviceService {
   @override
   Future<bool> registerCurrentDevice({String? fcmToken}) async {
     _ensureInitialized();
-    _ensureAuthenticated();
+    // A result, not a throw: the contract is that registration swallows its
+    // own failures, and no session is one of them - an offline launch whose
+    // anonymous sign-in failed. As a StateError it escaped every caller's
+    // `on Exception` and, at startup, abandoned the launch.
+    if (_supabase.auth.currentUser == null) {
+      debugPrint('[DeviceService] No session - not registering this device');
+      return false;
+    }
 
     try {
       final userId = _supabase.auth.currentUser!.id;
