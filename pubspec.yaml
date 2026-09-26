@@ -179,8 +179,17 @@ msix_config:
   publisher_display_name: g1mli
   #
   # Independent of pubspec's `version:` above, and must be strictly greater
-  # than the last submission. The Store requires the fourth part to be 0.
-  msix_version: 1.0.0.9
+  # than the last submission.
+  #
+  # Major.Minor.Build.Revision, and the Store REJECTS any package whose
+  # revision - the fourth part - is not zero. So the shared build number goes
+  # in the third part, not the fourth: build 9 is 1.0.9.0, not 1.0.0.9. The
+  # upload that taught this said "Apps are not allowed to have a Version with
+  # a revision number other than zero".
+  #
+  # A version can never be reused, even by a submission that failed
+  # certification, so raise this before rebuilding after a rejection.
+  msix_version: 1.0.9.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
   # The Store signs the package; a signature applied here would be replaced.

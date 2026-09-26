@@ -284,6 +284,52 @@ The same account as the App Store submission (see
 device targeting have something to show. Leave it without a passphrase so no
 one is prompted for one.
 
+## Packages
+
+Upload **`build\windowsdunner\Release\ghostcopy.msix`** - the one
+`build-store.ps1` writes. Not the signed copy used for sideloading: the Store
+signs packages itself and rejects one that already carries a signature.
+
+**Device families:** tick Windows 10/11 Desktop only. It is the sole family
+the manifest declares (`Windows.Desktop`, min 10.0.17763, which is Flutter's
+floor rather than a choice). Ticking a family the package does not target
+fails validation rather than widening reach.
+
+### The version must end in .0
+
+`msix_version` is Major.Minor.**Build**.**Revision**, and the Store rejects any
+package whose revision is not zero:
+
+> Apps are not allowed to have a Version with a revision number other than
+> zero specified in the app manifest.
+
+So the shared build number goes in the *third* part. Build 9 is **1.0.9.0**,
+not 1.0.0.9. A version can never be reused - not even by a submission that
+failed certification - so raise it before rebuilding after a rejection.
+
+### The runFullTrust warning is expected
+
+> The following restricted capabilities require approval before you can use
+> them in your app: runFullTrust.
+
+A **warning, not an error**, and unavoidable: every packaged Win32 desktop app
+declares `runFullTrust`, because that is what `Windows.FullTrustApplication`
+means. msix adds it automatically. Submission proceeds with it.
+
+It is reviewed rather than blocked, so say plainly in the notes to
+certification what the full-trust access is for: a global hotkey, the system
+tray, clipboard read/write, and a File Explorer context-menu handler - none
+of which the sandboxed app model can do.
+
+### Arm64
+
+The package is x64 only. Partner Center's Arm warning is about **AArch32**
+(ARM32), which this does not target at all, so it does not apply. x64 runs on
+Windows on Arm under emulation, and this app idles at near-zero CPU, so the
+overhead is irrelevant. Flutter cannot cross-compile x64 to Arm64 - it needs
+an Arm64 Windows machine - so a native build is a later question, worth
+revisiting only if Store analytics show the demand.
+
 ## Before submitting
 
 - [ ] `identity_name`, `publisher` and `publisher_display_name` in
