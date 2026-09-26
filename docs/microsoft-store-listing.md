@@ -1,0 +1,222 @@
+# Microsoft Store listing - Windows
+
+Everything Partner Center asks for, drafted against the code on 2026-09-25
+rather than from memory. Where a line states what the app does, it was checked
+in `lib/`; keep it that way when editing.
+
+Reserved name: **GhostCopy**. Store ID `9NW0TTGMSF80`, listing URL
+https://apps.microsoft.com/detail/9NW0TTGMSF80.
+
+## Two ways this differs from the App Store draft
+
+Both are easy to get wrong by adapting `docs/app-store-listing.md` line by
+line.
+
+**Other platforms can be named here.** Apple's guideline 2.3.10 bans it, which
+is why the iOS listing never says Android and only mentions Windows in
+passing. Microsoft has no equivalent rule, and for this app the cross-device
+story *is* the product - so say Mac, iPhone and Android plainly.
+
+**The publisher name is public and is currently a handle.** Partner Center
+issued `g1mli` as the publisher display name, and that is what customers see
+under the app title in the Store. It also has to match
+`publisher_display_name` in `msix_config`, so changing it means changing both.
+Decide before submitting; it is far more awkward to change once people have
+installed.
+
+## Product details
+
+| Field | Value |
+|---|---|
+| Name | GhostCopy |
+| Category | Productivity |
+| Subcategory | Personal finance - no; use **Productivity > Other** unless a better fit appears in the picker |
+| Price | Free |
+| Markets | All, with the France note under "Encryption" below |
+| Privacy policy URL | https://ghostcopy.app/privacy |
+| Support contact | https://ghostcopy.app/faq (has a contact section) |
+| Website | https://ghostcopy.app |
+| Copyright | 2026 *legal name* - fill in; it is shown publicly |
+
+## Short description (500)
+
+Shown in search results and on the product tile, so it has to stand alone.
+
+> Copy on your PC, send it, and it is on your phone's clipboard a second
+> later. GhostCopy moves text, links, images and files between your Windows
+> PC, Mac, iPhone and Android devices - with a global hotkey, a right-click in
+> File Explorer, and optional end-to-end encryption with a passphrase only
+> your own devices hold.
+
+## Description
+
+> GhostCopy moves what you copy between your computer and your phone.
+>
+> Press Ctrl+Shift+S anywhere in Windows and GhostCopy opens over whatever you
+> are doing. Send what you copied, and it lands on your phone as a
+> notification - tap it and the text is already on the clipboard. Right-click
+> any file in File Explorer and choose "Send with GhostCopy" to send it
+> without opening anything.
+>
+> Going the other way is just as short: send from your phone and it arrives on
+> the PC, ready to paste.
+>
+> PRIVATE BY DESIGN
+> - Set a passphrase and every clip, file and image is encrypted on your
+>   device with AES-256-GCM before it leaves. We store ciphertext and cannot
+>   read it.
+> - The passphrase never leaves your devices. Adding a new one is a QR code
+>   scanned from a device you already have.
+> - No ads, no analytics, no tracking.
+>
+> BUILT FOR EVERY DAY
+> - Lives in the system tray and stays out of the way. Opens on a hotkey you
+>   choose.
+> - Recent history on every device, so a clip you missed is still there.
+> - Text and links up to 100 KB; images and files up to 10 MB.
+> - Choose which devices receive each clip.
+> - Received clips can be copied to your clipboard automatically.
+> - Game Mode holds notifications back while you are in a fullscreen app.
+> - Sign in with Apple, Google or email to keep your history across devices
+>   and reinstalls.
+>
+> WORKS WITH YOUR OTHER DEVICES
+> GhostCopy is also available for Mac, iPhone and Android, and syncing between
+> them is the point - a clip from your PC reaches whichever of your devices
+> you choose.
+
+## Search terms (up to 7, 30 chars each)
+
+```
+clipboard sync
+copy paste sync
+send to phone
+clipboard manager
+share files between devices
+clipboard history
+cross device clipboard
+```
+
+The product name and category are indexed already, so "GhostCopy" is not
+repeated here.
+
+## What's new in this version
+
+First release, so keep it plain:
+
+> First release of GhostCopy for Windows.
+
+## Screenshots (to take)
+
+At least one is required; up to ten. Minimum 1366 x 768, PNG. Take them at
+1920 x 1080 on a clean desktop with the demo account signed in - the same
+account the App Store screenshots use, so history looks consistent across
+stores.
+
+1. The Spotlight window open over a normal desktop, with a clip in the
+   composer and history below. This is the one that has to carry the app.
+2. The history list showing a mix of text, a link and an image.
+3. Device targeting - choosing which devices receive a clip.
+4. The File Explorer right-click menu showing "Send with GhostCopy".
+5. Settings, showing the encryption passphrase and launch-at-startup.
+
+Do not capture the tray flyout on its own: it reads as a fragment without the
+main window for context.
+
+## Age rating
+
+Answered through the IARC questionnaire, which Partner Center runs inline.
+Expected result: the equivalent of **3+ / Everyone**.
+
+Answer **No** to every content question - no violence, sexual content,
+gambling, drugs, profanity, or in-app purchases. Two that need care because
+the honest answer is not the obvious one:
+
+- **Does the app let users interact or share content with other users?**
+  **No.** Clips move only between devices signed in to the *same* account.
+  There is no messaging, no sharing with other people, and nothing another
+  user can see.
+- **Does the app share the user's location?** **No.** The iOS build carries a
+  location purpose string for a dependency, but nothing in the app requests
+  or transmits location.
+
+## Product declarations
+
+- Testing on all device families: it is a desktop app; declare Windows
+  Desktop only.
+- The app **does** access the internet - required, and the privacy policy URL
+  above is therefore mandatory rather than optional.
+- No in-app purchases, no ads, no commerce engine.
+- Accessibility: do **not** tick "tested for accessibility" - it has not
+  been, and the `primary`-on-`surface` contrast issue at 4.44:1 is still
+  open in `tasks/todo.md`.
+
+## Privacy: what the app collects
+
+The Store does not ask for Apple's per-type table, but the privacy policy has
+to match reality and a reviewer may check. This is the same set the App Store
+answers declare, restated for Windows:
+
+| Data | Why |
+|---|---|
+| Email address | Account sign-in and upgrade |
+| Clip content - text, images, files | The product. Encrypted on the device first when a passphrase is set |
+| Account and device identifiers | Routing a clip to the right devices |
+| Crash and error diagnostics | Sentry. No IP, no user id, no screenshots; clip text stripped on the device before sending |
+
+Not collected: location, contacts, browsing history, health, financial data,
+usage analytics.
+
+**Sentry must be declared**, as it is on the App Store. It is easy to forget
+because it is not a visible feature.
+
+## Encryption
+
+The app implements AES-256-GCM and PBKDF2-HMAC-SHA256 itself, in Dart, on top
+of the OS's HTTPS. Microsoft does not run Apple's export questionnaire, but
+the underlying law is the same, so two things still apply:
+
+- France requires a declaration to ANSSI for software implementing its own
+  encryption. The App Store draft excludes France for the first release for
+  this reason; decide whether the Windows listing does the same, and keep the
+  two consistent.
+- Whether a US self-classification report is needed is a legal question.
+  Confirm rather than assume - the answer does not change per store.
+
+## Notes for certification
+
+Certification is automated plus a human pass, and the app's main feature needs
+a second device, so say so:
+
+> GhostCopy syncs the clipboard between a user's own devices, so its main
+> feature needs a second device signed in to the same account.
+>
+> To test on one machine: press Ctrl+Shift+S, paste text into the composer and
+> send. It appears in the history below. Right-clicking a file in File
+> Explorer and choosing "Send with GhostCopy" sends it the same way.
+>
+> A demo account is provided below. Encryption is optional and off by default.
+> Account deletion is in the app under Settings.
+>
+> The app runs in the system tray and has no window on launch by design - open
+> it with Ctrl+Shift+S or from the tray icon.
+
+That last paragraph matters: a tester who launches the app and sees no window
+may report it as failing to start.
+
+## Demo account
+
+The same account as the App Store submission (see
+`docs/app-store-listing.md`), signed in on a second device so history and
+device targeting have something to show. Leave it without a passphrase so no
+one is prompted for one.
+
+## Before submitting
+
+- [ ] `identity_name`, `publisher` and `publisher_display_name` in
+      `msix_config` match Partner Center exactly - the upload is rejected
+      otherwise
+- [ ] `msix_version` is higher than the last submission, fourth part `0`
+- [ ] Built with `installer/windows/build-store.ps1`, so the symbols went to
+      Sentry before the package was made
+- [ ] The decision on the publisher display name has been made

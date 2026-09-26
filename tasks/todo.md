@@ -177,10 +177,41 @@ to package - but everything below marked "verify" does need one.
 - [ ] **Decide whether Windows needs an update signal in the UI.** macOS has
       the dot by the menu bar icon because Sparkle needs the user to act. The
       Store updates silently, so probably nothing - but make it a decision.
-- [ ] **Store submission:** the listing text (reuse the App Store one, naming
-      Windows rather than Mac where it applies), screenshots, and the Store's
-      own privacy and age-rating answers - the privacy answers must include
-      Sentry crash reports, as on the App Store
+- [x] **Realtime delivery stalled in the tray - fixed and verified
+      2026-09-25.** A clip sent to a backgrounded Windows app arrived about
+      five minutes later, which is the polling fallback's interval: realtime
+      had died and nothing noticed, so the fallback had quietly become the
+      only delivery path. `subscribe()` was called with no status callback, so
+      `channelError`, `timedOut` and `closed` all went nowhere and nothing
+      ever rejoined - not on status, not on wake, not on unlock. Windows
+      surfaced it first because it throttles a background process hard enough
+      for the socket's heartbeat to lapse, but the same socket dies anywhere
+      across a sleep, a network change or a server restart, so this was never
+      Windows-only. Verified after minutes in the tray: first clip instant,
+      and instant again 60s later.
+  - [ ] **Re-test on macOS after a lid close.** Same socket, same failure
+        mode; macOS had simply not been pushed into it.
+  - [ ] If a clip is ever slow again but the *next* one is instant, the death
+        was silent (no status to react to) and the evidence-based rejoin
+        caught it. The next lever then is opting the process out of Windows
+        power throttling (EcoQoS) - the root rather than the recovery. Not
+        done pre-emptively: it fights the OS's power management and sits
+        beside the working-set trim.
+- [ ] **Store submission.** Drafted in
+      [`docs/microsoft-store-listing.md`](../docs/microsoft-store-listing.md)
+      against the code, not adapted line by line from the App Store one -
+      two things differ. Microsoft has no equivalent of Apple's 2.3.10, so
+      the Windows listing names Mac, iPhone and Android plainly, which is the
+      whole point of the app. And the publisher display name Partner Center
+      issued is `g1mli`, a handle, which is public under the app title and
+      has to match `msix_config` - decide it before submitting rather than
+      after people have installed.
+  - [ ] Take the five screenshots listed in that doc, 1920x1080, demo account
+  - [ ] Run the IARC age questionnaire; the two answers worth care are
+        user-to-user sharing (No - same account only) and location (No)
+  - [ ] Declare Sentry in the privacy answers, as on the App Store
+  - [ ] Decide whether France is excluded for the first release, and keep it
+        consistent with the App Store decision
 
 ## iOS: open
 
