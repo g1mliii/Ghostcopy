@@ -186,8 +186,18 @@ class AuthService implements IAuthService {
   @override
   bool get isAnonymous => _client.auth.currentUser?.isAnonymous ?? true;
 
+  /// With errors dropped. supabase_flutter's deep-link observer pushes a
+  /// failed getSessionFromUrl into this stream as an error - a code whose PKCE
+  /// verifier was forgotten, or a callback delivered twice - and it is a
+  /// ReplaySubject, so every later subscriber is handed that error too. A
+  /// subscriber without onError then crashed the app: Sentry saw it as fatal
+  /// through PlatformDispatcher.onError (macOS, 1.0.0+11). No consumer here
+  /// can act on one; the sign-in waiting on it times out on its own.
   @override
-  Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
+  Stream<AuthState> get authStateChanges =>
+      _client.auth.onAuthStateChange.handleError((Object e) {
+        debugPrint('[AuthService] Auth state stream error: $e');
+      });
 
   @override
   Future<AuthResponse> signUpWithEmail(

@@ -148,4 +148,36 @@ void main() {
     expect(calls, isNot(contains('/auth/v1/verify')));
     expect(storage.items, isEmpty);
   });
+
+  // Sentry, 1.0.0+11 on macOS: a ghostcopy://auth-callback?code= arriving with
+  // no stored verifier. supabase_flutter pushes that failure into
+  // onAuthStateChange as an error, and a listener without onError took the
+  // app down.
+  test('a failed deep-link exchange does not reach subscribers', () async {
+    final events = <AuthChangeEvent>[];
+    final sub = service.authStateChanges.listen((s) => events.add(s.event));
+
+    try {
+      await client.auth.getSessionFromUrl(
+        Uri.parse('ghostcopy://auth-callback?code=stale'),
+      );
+      fail('there is no verifier, so the exchange must throw');
+    } on AuthException catch (error, stackTrace) {
+      // What supabase_flutter's _handleDeeplink does with it.
+      // ignore: invalid_use_of_internal_member
+      client.auth.notifyException(error, stackTrace);
+    }
+    await client.auth.signOut();
+    await pumpEventQueue();
+
+    // A new subscriber is replayed the error as well.
+    final late = <AuthChangeEvent>[];
+    final lateSub = service.authStateChanges.listen((s) => late.add(s.event));
+    await pumpEventQueue();
+
+    expect(events, contains(AuthChangeEvent.signedOut));
+    expect(late, contains(AuthChangeEvent.signedOut));
+    await sub.cancel();
+    await lateSub.cancel();
+  });
 }
