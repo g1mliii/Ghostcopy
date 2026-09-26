@@ -478,6 +478,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   @override
   void onWindowFocus() {
     _lastFocusTime = DateTime.now();
+    _viewModel.onWindowFocused();
     // Wait for window to be fully sized/positioned before animating
     // This prevents warped appearance on first few launches
     WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -4,10 +4,10 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 
 /// A JPEG of [args].$1 no larger than [args].$2 bytes, or null when the image
-/// cannot be decoded or will not fit even at [_minSide] pixels.
+/// cannot be decoded or will not fit even at [photoMinSide] pixels.
 ///
 /// Only for a photo that would otherwise be refused: anything that already
-/// fits is sent untouched. The longest side starts at [_maxSide] - double what
+/// fits is sent untouched. The longest side starts at [photoMaxSide] - double what
 /// image_picker used to cap every photo at - and halves until the JPEG fits.
 /// Pure Dart and slow on a large photo, so run it through `compute`. One
 /// record argument for that reason.
@@ -23,17 +23,20 @@ Uint8List? shrinkImageToFit((Uint8List, int) args) {
   if (decoded == null) return null;
   // Camera JPEGs store rotation as an EXIF flag; the re-encode drops EXIF.
   final image = img.bakeOrientation(decoded);
-  var side = math.min(_maxSide, math.max(image.width, image.height));
-  while (side >= _minSide) {
+  var side = math.min(photoMaxSide, math.max(image.width, image.height));
+  while (side >= photoMinSide) {
     final resized = image.width >= image.height
         ? img.copyResize(image, width: math.min(side, image.width))
         : img.copyResize(image, height: math.min(side, image.height));
-    final jpeg = img.encodeJpg(resized, quality: 85);
+    final jpeg = img.encodeJpg(resized, quality: photoJpegQuality);
     if (jpeg.length <= maxBytes) return jpeg;
     side ~/= 2;
   }
   return null;
 }
 
-const _maxSide = 4096;
-const _minSide = 1024;
+// Shared with the native HEIC transcoders through IImageTranscoder, so a
+// converted photo and a shrunk one come out alike.
+const photoMaxSide = 4096;
+const photoMinSide = 1024;
+const photoJpegQuality = 85;

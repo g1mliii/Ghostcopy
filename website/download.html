@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Download — GhostCopy</title>
     <meta name="description"
-        content="GhostCopy for macOS is out now, signed and notarized. Windows, Android and iOS go out to the beta list next." />
+        content="GhostCopy for macOS is out now, signed and notarized. The iPhone app is on TestFlight, and Windows is coming to the Microsoft Store." />
     <meta name="theme-color" content="#0F0F13" />
     <link rel="canonical" href="https://ghostcopy.app/download" />
     <meta property="og:url" content="https://ghostcopy.app/download" />
@@ -15,7 +15,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Download — GhostCopy" />
     <meta property="og:description"
-        content="GhostCopy for macOS is out now, signed and notarized. Windows, Android and iOS go out to the beta list next." />
+        content="GhostCopy for macOS is out now, signed and notarized. The iPhone app is on TestFlight, and Windows is coming to the Microsoft Store." />
     <meta property="og:image" content="https://ghostcopy.app/icons/icon-512.png?v=2" />
     <meta name="twitter:card" content="summary" />
 
@@ -43,8 +43,7 @@
         </a>
         <nav class="flex items-center gap-5 sm:gap-8">
             <a href="/download" class="label !text-ink-2" aria-current="page">Download</a>
-            <a href="/faq" class="label hover:text-ink-4 transition-colors hidden sm:inline">FAQ</a>
-            <a href="#waitlist" class="label hover:text-ink-4 transition-colors">Join the beta</a>
+            <a href="/faq" class="label hover:text-ink-4 transition-colors">FAQ</a>
         </nav>
     </header>
 
@@ -56,14 +55,13 @@
                 <span class="block text-ink-4">is out now.</span>
             </h1>
             <p class="mt-8 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-[600px]">
-                The Mac build is signed and notarized by Apple, and updates itself. Windows, Android and iOS go out to
-                the beta list platform by platform.
+                The Mac build is signed and notarized by Apple, and updates itself. The iPhone app is on TestFlight
+                today; Windows follows through the Microsoft Store, then Android.
             </p>
         </section>
 
-        <!-- Availability is encoded in brightness: what you can download now
-             is brighter than what is on the list, which is brighter than what
-             is still in testing. -->
+        <!-- Availability is encoded in brightness: what you can get today is
+             brighter than what is coming. -->
         <section class="shell pt-16 sm:pt-24 lg:pt-28">
             <div class="h-px bg-line"></div>
 
@@ -92,6 +90,31 @@
                 </div>
             </article>
 
+            <!-- iOS -->
+            <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
+                <div class="shrink-0 md:pt-1.5">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#F5F6FA" stroke-width="1.5"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="6" y="2" width="12" height="20" rx="3" />
+                        <path d="M10 5h4" />
+                    </svg>
+                </div>
+                <div class="md:w-[240px] lg:w-[300px] shrink-0">
+                    <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-4">iPhone</h2>
+                    <p class="label !text-accent-text mt-2">On TestFlight</p>
+                </div>
+                <div class="grow max-w-[480px] md:pt-1">
+                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
+                        Push notifications and tap&#8209;to&#8209;copy, with the share sheet for sending. TestFlight is
+                        Apple&rsquo;s way of trying an app before it reaches the App Store; ask for an invite below.
+                    </p>
+                    <p class="font-mono text-xs text-ink-1 mt-2.5">IOS 16 AND UP</p>
+                </div>
+                <div class="shrink-0 md:pt-1.5">
+                    <a href="#testflight" class="cta">Get an invite <span aria-hidden="true">&rarr;</span></a>
+                </div>
+            </article>
+
             <!-- Windows -->
             <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
                 <div class="shrink-0 md:pt-1.5">
@@ -101,17 +124,17 @@
                 </div>
                 <div class="md:w-[240px] lg:w-[300px] shrink-0">
                     <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-4">Windows</h2>
-                    <p class="label mt-2">Next</p>
+                    <p class="label mt-2">Coming soon</p>
                 </div>
                 <div class="grow max-w-[480px] md:pt-1">
                     <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
-                        Hotkeys and the tray icon work with no extra permissions. It will ship through the Microsoft
+                        Hotkeys and the tray icon work with no extra permissions. It is on its way to the Microsoft
                         Store, which signs it and keeps it updated.
                     </p>
                     <p class="font-mono text-xs text-ink-1 mt-2.5">WINDOWS 10 / 11 · 64-BIT</p>
                 </div>
                 <div class="shrink-0 md:pt-1.5">
-                    <a href="#waitlist" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
+                    <a href="#notify" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
                 </div>
             </article>
 
@@ -136,34 +159,10 @@
                     <p class="font-mono text-xs text-ink-1 mt-2.5">ANDROID 8.0 AND UP</p>
                 </div>
                 <div class="shrink-0 md:pt-1.5">
-                    <a href="#waitlist" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
+                    <a href="#notify" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
                 </div>
             </article>
 
-            <!-- iOS -->
-            <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
-                <div class="shrink-0 md:pt-1.5">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2A2A33" stroke-width="1.5"
-                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <rect x="6" y="2" width="12" height="20" rx="3" />
-                        <path d="M10 5h4" />
-                    </svg>
-                </div>
-                <div class="md:w-[240px] lg:w-[300px] shrink-0">
-                    <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-0">iOS</h2>
-                    <p class="label mt-2">In testing</p>
-                </div>
-                <div class="grow max-w-[480px] md:pt-1">
-                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-1">
-                        Running on real iPhones now. It goes out through TestFlight first, so the list is the only way
-                        onto it.
-                    </p>
-                    <p class="font-mono text-xs text-ink-0 mt-2.5">IOS 16 AND UP</p>
-                </div>
-                <div class="shrink-0 md:pt-1.5">
-                    <a href="#waitlist" class="cta">Notify me <span aria-hidden="true">&rarr;</span></a>
-                </div>
-            </article>
         </section>
 
         <!-- the honest bit -->
@@ -171,18 +170,72 @@
             <div class="flex flex-col md:flex-row gap-4 md:gap-16 lg:gap-24">
                 <p class="label !text-warning shrink-0 md:w-[140px] md:pt-1">Read this</p>
                 <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-[700px]">
-                    This is beta software that moves your clipboard between machines. It has not had an independent
+                    This is new software that moves your clipboard between machines. It has not had an independent
                     security audit. Apple&rsquo;s notarization means the Mac build was scanned and is signed by us
                     &mdash; not that anyone has reviewed the code. Treat it accordingly.
                 </p>
             </div>
         </section>
 
-        <!-- waitlist with platform -->
-        <section id="waitlist" class="shell pt-24 sm:pt-36 lg:pt-44">
+        <!-- TestFlight -->
+        <section id="testflight" class="shell pt-24 sm:pt-36 lg:pt-44">
             <h2 class="font-bold leading-[1.04] tracking-display text-[32px] sm:text-5xl lg:text-6xl xl:text-[62px] max-w-[860px]">
-                <span class="block text-ink-1">Tell us which platform,</span>
-                <span class="block text-ink-4">and we will put you in that wave.</span>
+                <span class="block text-ink-1">GhostCopy for iPhone,</span>
+                <span class="block text-ink-4">three steps away.</span>
+            </h2>
+            <ol class="mt-10 sm:mt-12 grid sm:grid-cols-3 gap-8 sm:gap-10 max-w-[900px]">
+                <li>
+                    <p class="label !text-accent-text mb-3">01</p>
+                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
+                        Install <span class="text-ink-4">TestFlight</span> from the App Store on your iPhone.
+                    </p>
+                </li>
+                <li>
+                    <p class="label !text-accent-text mb-3">02</p>
+                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
+                        Ask for an invite below. Any email works; it does not have to be your Apple ID.
+                    </p>
+                </li>
+                <li>
+                    <p class="label !text-accent-text mb-3">03</p>
+                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
+                        Open the invite on your iPhone and tap <span class="text-ink-4">View in TestFlight</span>.
+                    </p>
+                </li>
+            </ol>
+            <form data-waitlist data-source="download-testflight"
+                data-success="Asked. The invite will come to this address." novalidate class="mt-12 sm:mt-14 max-w-[470px]">
+                <div class="hp" aria-hidden="true">
+                    <label>Company<input type="text" name="company" tabindex="-1" autocomplete="off" /></label>
+                </div>
+                <input type="hidden" name="platform" value="ios" />
+                <div class="flex items-end gap-4">
+                    <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"
+                        aria-label="Email address" class="field" />
+                    <button type="submit" class="cta shrink-0 pb-3 border-b-0 hover:border-b-0">
+                        <span data-waitlist-label>Get an invite</span>
+                        <span aria-hidden="true">&rarr;</span>
+                    </button>
+                </div>
+                <p data-waitlist-status role="status" class="mt-4 text-sm text-ink-1"></p>
+                <p data-waitlist-idle class="mt-4 text-sm text-ink-1">
+                    We use the address for the invite and nothing else.
+                </p>
+            </form>
+            <noscript>
+                <p class="mt-4 text-sm text-ink-2">
+                    The form needs JavaScript. Email
+                    <a href="mailto:support@ghostcopy.app" class="text-accent-text">support@ghostcopy.app</a>
+                    for an invite.
+                </p>
+            </noscript>
+        </section>
+
+        <!-- tell me when it ships -->
+        <section id="notify" class="shell pt-24 sm:pt-36 lg:pt-44">
+            <h2 class="font-bold leading-[1.04] tracking-display text-[32px] sm:text-5xl lg:text-6xl xl:text-[62px] max-w-[860px]">
+                <span class="block text-ink-1">Windows and Android are next.</span>
+                <span class="block text-ink-4">Hear the day they land.</span>
             </h2>
 
             <form data-waitlist data-source="download" novalidate class="mt-10 sm:mt-12 max-w-[560px]">
@@ -208,14 +261,6 @@
                                          peer-checked:bg-accent-soft peer-checked:border-accent-border peer-checked:text-accent-text
                                          peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent peer-focus-visible:outline-offset-2">Android</span>
                         </label>
-                        <label class="cursor-pointer">
-                            <input type="radio" name="platform" value="ios" class="sr-only peer" />
-                            <span class="inline-flex items-center h-10 px-4 font-mono text-xs tracking-[0.1em] uppercase
-                                         bg-elevated border border-line-strong text-ink-2 rounded-md transition-colors
-                                         hover:border-ink-1
-                                         peer-checked:bg-accent-soft peer-checked:border-accent-border peer-checked:text-accent-text
-                                         peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent peer-focus-visible:outline-offset-2">iOS</span>
-                        </label>
                     </div>
                 </fieldset>
 
@@ -223,20 +268,20 @@
                     <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"
                         aria-label="Email address" class="field" />
                     <button type="submit" class="cta shrink-0 pb-3 border-b-0 hover:border-b-0">
-                        <span data-waitlist-label>Join the beta</span>
+                        <span data-waitlist-label>Notify me</span>
                         <span aria-hidden="true">&rarr;</span>
                     </button>
                 </div>
                 <p data-waitlist-status role="status" class="mt-4 text-sm text-ink-1"></p>
                 <p data-waitlist-idle class="mt-4 text-sm text-ink-1">
-                    One email when builds are ready. Nothing else, ever.
+                    One email when it ships. Nothing else, ever.
                 </p>
             </form>
             <noscript>
                 <p class="mt-4 text-sm text-ink-2">
                     The form needs JavaScript. Email
                     <a href="mailto:support@ghostcopy.app" class="text-accent-text">support@ghostcopy.app</a>
-                    to be added to the list.
+                    to be told when it ships.
                 </p>
             </noscript>
         </section>

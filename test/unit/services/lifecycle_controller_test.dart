@@ -85,6 +85,11 @@ class _RecordingSyncService implements IClipboardSyncService {
 /// where the user never copied anything stayed on the websocket forever and
 /// never dropped to polling, which is exactly the session polling is for.
 void main() {
+  // Entering the tray trims the working set on Windows, over a platform
+  // channel. Without a binding that call threw instead of finding no handler,
+  // so these tests failed on Windows and passed everywhere else.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late _MockSettingsService settings;
   late _RecordingSyncService sync;
 

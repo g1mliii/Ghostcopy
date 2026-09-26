@@ -65,6 +65,9 @@ void main() {
     when(() => auth.currentUserId).thenReturn('user');
     when(() => auth.isAnonymous).thenReturn(true);
     when(
+      () => auth.authStateChanges,
+    ).thenAnswer((_) => const Stream<AuthState>.empty());
+    when(
       () => devices.getUserDevices(forceRefresh: true),
     ).thenAnswer((_) async => []);
     when(() => encryption.initialize('user')).thenAnswer((_) async {});

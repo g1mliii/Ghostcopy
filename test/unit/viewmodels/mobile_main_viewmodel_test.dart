@@ -10,6 +10,7 @@ import 'package:ghostcopy/models/clipboard_limits.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/device_service.dart';
+import 'package:ghostcopy/services/image_transcoder.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/viewmodels/mobile_main_viewmodel.dart';
@@ -27,6 +28,17 @@ class _MockDeviceService extends Mock implements IDeviceService {}
 class _MockSecurityService extends Mock implements ISecurityService {}
 
 class _MockSettingsService extends Mock implements ISettingsService {}
+
+class _FakeImageTranscoder implements IImageTranscoder {
+  Uint8List? result;
+  final paths = <String>[];
+
+  @override
+  Future<Uint8List?> toJpeg(String path, {required int maxBytes}) async {
+    paths.add(path);
+    return result;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -49,6 +61,7 @@ void main() {
   late _MockDeviceService deviceService;
   late _MockSecurityService securityService;
   late _MockSettingsService settingsService;
+  late _FakeImageTranscoder transcoder;
   late MobileMainViewModel viewModel;
 
   setUp(() {
@@ -57,6 +70,7 @@ void main() {
     deviceService = _MockDeviceService();
     securityService = _MockSecurityService();
     settingsService = _MockSettingsService();
+    transcoder = _FakeImageTranscoder();
 
     when(
       () => clipboardRepository.getHistory(),
@@ -64,12 +78,16 @@ void main() {
     when(
       () => settingsService.getClipboardAutoClearSeconds(),
     ).thenAnswer((_) async => 0);
+    when(
+      () => authService.refreshIfAwaitingConfirmation(),
+    ).thenAnswer((_) async {});
 
     viewModel = MobileMainViewModel(
       authService: authService,
       clipboardRepository: clipboardRepository,
       deviceService: deviceService,
       securityService: securityService,
+      imageTranscoder: transcoder,
     );
   });
 
@@ -484,7 +502,7 @@ void main() {
       verify(() => clipboardRepository.getHistory()).called(greaterThan(0));
     });
 
-    group('an oversized file', () {
+    group('a shared file', () {
       late Directory dir;
       late List<(Uint8List, String?, ContentType)> inserted;
 
@@ -521,6 +539,16 @@ void main() {
 
       tearDown(() => dir.deleteSync(recursive: true));
 
+      /// A file of [bytes] bytes that costs no disk and no time to write.
+      File sparse(String name, int bytes) {
+        final file = File('${dir.path}${Platform.pathSeparator}$name');
+        file.openSync(mode: FileMode.write)
+          ..setPositionSync(bytes - 1)
+          ..writeByteSync(0)
+          ..closeSync();
+        return file;
+      }
+
       test('a photo is scaled down and sent as a JPEG', () async {
         // Noise, so the PNG cannot compress under the limit.
         final random = Random(1);
@@ -531,7 +559,7 @@ void main() {
             ..g = random.nextInt(256)
             ..b = random.nextInt(256);
         }
-        final file = File('${dir.path}/IMG_0001.png')
+        final file = File('${dir.path}${Platform.pathSeparator}IMG_0001.png')
           ..writeAsBytesSync(img.encodePng(photo));
         expect(file.lengthSync(), greaterThan(ClipboardLimits.maxFileBytes));
         final errors = <String>[];
@@ -550,11 +578,7 @@ void main() {
       });
 
       test('anything else is refused before it is read', () async {
-        final file = File('${dir.path}/big.pdf');
-        file.openSync(mode: FileMode.write)
-          ..setPositionSync(ClipboardLimits.maxFileBytes + 1)
-          ..writeByteSync(0)
-          ..closeSync();
+        final file = sparse('big.pdf', ClipboardLimits.maxFileBytes + 2);
         final errors = <String>[];
 
         await viewModel.handleSharedFiles([
@@ -563,6 +587,69 @@ void main() {
 
         expect(errors.single, 'big.pdf is too large (max 10MB)');
         expect(inserted, isEmpty);
+      });
+
+      group('a HEIC photo', () {
+        test('is converted even when it fits, and sent as a JPEG', () async {
+          // A HEIC that fits used to go as a plain file: no preview on any
+          // device, and unopenable on most Windows machines.
+          final file = sparse('IMG_0002.HEIC', 3 * 1024 * 1024);
+          transcoder.result = img.encodeJpg(img.Image(width: 8, height: 8));
+          final errors = <String>[];
+
+          await viewModel.handleSharedFiles([
+            SharedMediaFile(path: file.path, type: SharedMediaType.image),
+          ], onError: errors.add);
+
+          expect(errors, isEmpty);
+          expect(transcoder.paths, [file.path]);
+          final (bytes, name, type) = inserted.single;
+          expect(bytes, transcoder.result);
+          expect(name, 'IMG_0002.jpg');
+          expect(type.isImage, isTrue);
+        });
+
+        test('over the limit is converted rather than refused', () async {
+          final file = sparse(
+            'IMG_0003.heic',
+            ClipboardLimits.maxFileBytes + 1,
+          );
+          transcoder.result = img.encodeJpg(img.Image(width: 8, height: 8));
+
+          await viewModel.handleSharedFiles([
+            SharedMediaFile(path: file.path, type: SharedMediaType.image),
+          ]);
+
+          expect(inserted.single.$2, 'IMG_0003.jpg');
+        });
+
+        test(
+          'that cannot be converted goes as the original if it fits',
+          () async {
+            final file = sparse('IMG_0004.heic', 1024);
+
+            await viewModel.handleSharedFiles([
+              SharedMediaFile(path: file.path, type: SharedMediaType.image),
+            ]);
+
+            expect(inserted.single.$2, 'IMG_0004.heic');
+          },
+        );
+
+        test('that cannot be converted is refused over the limit', () async {
+          final file = sparse(
+            'IMG_0005.heic',
+            ClipboardLimits.maxFileBytes + 1,
+          );
+          final errors = <String>[];
+
+          await viewModel.handleSharedFiles([
+            SharedMediaFile(path: file.path, type: SharedMediaType.image),
+          ], onError: errors.add);
+
+          expect(errors.single, 'IMG_0005.heic is too large (max 10MB)');
+          expect(inserted, isEmpty);
+        });
       });
     });
   });

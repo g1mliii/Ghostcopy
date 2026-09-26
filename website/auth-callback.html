@@ -58,6 +58,36 @@
                 </p>
             </section>
 
+            <!-- ---------- email confirmation, handed to the app ---------- -->
+            <section id="state-confirm" hidden>
+                <h1 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-[40px]">
+                    <span class="block text-ink-1">Confirming your</span>
+                    <span class="block text-ink-4">email.</span>
+                </h1>
+                <p class="mt-7 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                    GhostCopy should have opened. If it signed you in, you can close this tab.
+                </p>
+                <div class="h-px bg-line my-7"></div>
+                <p class="text-sm text-ink-1">
+                    Nothing happened? <a id="confirm-open" class="text-accent underline" href="#">Open GhostCopy</a>
+                </p>
+                <p class="mt-3 text-sm text-ink-1">
+                    Not signed in, or GhostCopy not on this device?
+                    <button id="confirm-here" type="button" class="text-accent underline">Confirm in this browser</button>
+                </p>
+            </section>
+
+            <!-- ---------- email confirmed in the browser ---------- -->
+            <section id="state-confirmed" hidden>
+                <h1 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-[40px]">
+                    <span class="block text-ink-1">Email</span>
+                    <span class="block text-ink-4">confirmed.</span>
+                </h1>
+                <p class="mt-7 text-base sm:text-[17px] leading-[1.7] text-ink-2">
+                    Open GhostCopy and sign in with this email and your password.
+                </p>
+            </section>
+
             <!-- ---------- error ---------- -->
             <section id="state-error" hidden>
                 <h1 class="font-bold leading-[1.06] tracking-heading text-3xl sm:text-[40px]">

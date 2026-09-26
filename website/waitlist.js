@@ -1,4 +1,4 @@
-// Beta waitlist signup.
+// Email signups: TestFlight invites and "tell me when it ships".
 //
 // Posts straight to PostgREST rather than through an edge function: the table
 // has an insert-only policy and no select policy, so the anon key can add a row
@@ -12,7 +12,9 @@
     'use strict';
 
     var SUPABASE_URL = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+    // The publishable key, as auth-callback.js and the app send: the legacy
+    // anon JWT stops working once legacy API keys are disabled.
+    var SUPABASE_KEY = 'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
 
     // Deliberately loose. The server has the authoritative check; this only
     // catches the obvious typo before a round trip.
@@ -36,6 +38,11 @@
         if (idle) idle.hidden = Boolean(message);
     }
 
+    function successMessage(form) {
+        return form.getAttribute('data-success') ||
+            'You are on the list. We will email you when it ships.';
+    }
+
     function submit(form) {
         var input = form.querySelector('input[name="email"]');
         var button = form.querySelector('button[type="submit"]');
@@ -48,7 +55,7 @@
         var trap = form.querySelector('input[name="company"]');
         if ((trap && trap.value) || Date.now() - loadedAt < MIN_DWELL_MS) {
             form.reset();
-            setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
+            setStatus(form, successMessage(form), 'success');
             if (button) button.hidden = true;
             return;
         }
@@ -59,9 +66,9 @@
             return;
         }
 
-        var platform = null;
-        var checked = form.querySelector('input[name="platform"]:checked');
-        if (checked) platform = checked.value;
+        // A radio choice on the download page, fixed by a hidden field on a
+        // form that is only ever for one platform.
+        var platform = new FormData(form).get('platform') || null;
 
         var original = label ? label.textContent : '';
         if (button) button.disabled = true;
@@ -72,7 +79,7 @@
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
+                'apikey': SUPABASE_KEY,
                 // return=minimal is required, not cosmetic: the default asks
                 // PostgREST to return the inserted row, which needs a SELECT
                 // privilege anon does not have and must never have.
@@ -98,7 +105,7 @@
             // race past the trigger's existence check.
             if (res.ok || res.status === 409) {
                 form.reset();
-                setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
+                setStatus(form, successMessage(form), 'success');
                 if (button) button.hidden = true;
                 return;
             }

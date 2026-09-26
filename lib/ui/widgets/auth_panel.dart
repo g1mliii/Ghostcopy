@@ -512,7 +512,7 @@ class _AuthPanelState extends State<AuthPanel> {
           widget.clipboardSyncService.reinitializeForUser();
         }
       } else {
-        // Upgrade anonymous to permanent account
+        // Upgrade anonymous to permanent account (or sign up, with no guest)
         await widget.authService.upgradeWithEmail(
           _emailController.text,
           _passwordController.text,

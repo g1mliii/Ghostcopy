@@ -222,6 +222,12 @@ to package - but everything below marked "verify" does need one.
 
 ## iOS: open
 
+- [ ] **Verify HEIC on the next TestFlight build** (`fix/email-confirm-and-heic`):
+      a camera photo from the gallery and one shared from Photos both arrive
+      as a JPEG with a preview on the Mac and on Windows, upright, with no
+      location in them; a 48 MP photo arrives under 10 MB
+- [ ] **Verify on the next macOS build:** Continue with Apple and with Google
+      bring the Spotlight forward, signed in, once the browser hands back
 - [ ] **TestFlight - 1.0.0 (7) uploaded 2026-09-25**, internal testing only
       until the Sentry build. Verified in the IPA: Apple Distribution,
       aps-environment production, App Group and Sign in with Apple on both
@@ -304,14 +310,24 @@ to package - but everything below marked "verify" does need one.
       and rebinds realtime. Worth one manual check on a Mac: launch offline,
       reconnect, and a clip arrives without a restart
 
-- [ ] **Check the email confirmation link on macOS and iOS.** The deep-link
-      predicate in `lib/main.dart` accepts `token_hash` links, but on the
-      AppLinks route supabase_flutter hands them to `getSessionFromUrl`,
-      which in PKCE mode wants a `code` and may throw "No code detected". Only
-      the Windows command-line route calls `verifyOTP`. Sign up with a fresh
-      email on the Mac and on the iPhone and tap the link; if it fails, route
-      AppLinks through `_handleDeepLinkArgs` (`detectSessionInUri: false`) so
-      there is one callback handler. Found in the PR #19 review, 2026-09-24
+- [x] **Email confirmation links - fixed on `fix/email-confirm-and-heic`,
+      2026-09-26.** Tapping one ended on the home page with "Email link is
+      invalid or has expired" and a manual sign-in: Supabase's /verify link
+      was used up by whatever opened it first, and carried no redirect.
+      Templates now point at ghostcopy.app/auth-callback with a token_hash,
+      the app redeems it on every platform behind a guard, and the page can
+      confirm in the browser instead. **Verify after the next release:**
+  - [ ] Sign up on the Mac, tap the link on the Mac: GhostCopy comes forward
+        signed in, no manual sign-in
+  - [ ] The same on the iPhone
+  - [ ] Sign up on the Mac, tap the link on the iPhone with GhostCopy
+        installed: the phone refuses it, the page's "Confirm in this browser"
+        works, and the Mac shows signed in when its window is next opened
+  - [ ] Tapping the same link twice gives the "already used" message, not a
+        raw error
+- [ ] **Macs and PCs still send HEIC as a file.** The phones now convert
+      (`IImageTranscoder`); a HEIC dragged in from Photos on a Mac does not.
+      ImageIO is right there on macOS - the same Swift would do
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
       change it, which is why the macOS updater had to land first

@@ -15,6 +15,7 @@ import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
 import '../../services/fcm_service.dart';
 import '../../services/file_type_service.dart';
+import '../../services/image_transcoder.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
@@ -47,6 +48,7 @@ class MobileMainViewModel extends ChangeNotifier {
     required IClipboardRepository clipboardRepository,
     required this._deviceService,
     required this._securityService,
+    this._imageTranscoder = const ImageTranscoder(),
   }) : _clipboardRepo = clipboardRepository;
 
   final IAuthService _authService;
@@ -59,6 +61,7 @@ class MobileMainViewModel extends ChangeNotifier {
       _clipboardRepo.undecryptableItemCount;
   final IDeviceService _deviceService;
   final ISecurityService _securityService;
+  final IImageTranscoder _imageTranscoder;
 
   // ========== SEND STATE ==========
 
@@ -199,8 +202,9 @@ class MobileMainViewModel extends ChangeNotifier {
   static const int _maxCacheSize = 20;
 
   /// Photo formats an over-limit image may be re-encoded from, by the gallery
-  /// picker and the share sheet alike. Other formats (GIF, HEIC, RAW) cannot
-  /// be re-encoded without losing what makes them that format.
+  /// picker and the share sheet alike. HEIC goes through [IImageTranscoder]
+  /// instead; GIF and RAW cannot be re-encoded without losing what makes them
+  /// that format.
   static const _shrinkableExtensions = {'jpg', 'jpeg', 'png', 'webp'};
 
   // ========== ENCRYPTION ==========
@@ -797,45 +801,28 @@ class MobileMainViewModel extends ChangeNotifier {
       // A photo too big to send is scaled down rather than refused, as
       // image_picker's 2048px cap used to make every photo fit. Anything that
       // fits is still sent as the original.
-      final shrinkable = _shrinkableExtensions.contains(
-        image.extension?.toLowerCase(),
+      final prepared = await _preparePhoto(
+        path: image.path,
+        bytes: image.bytes,
+        filename: image.name,
+        size: image.size,
       );
-      if (image.size > ClipboardLimits.maxFileBytes && !shrinkable) {
+      if (prepared == null) {
         throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
       }
-      var bytes = image.bytes ?? await File(image.path!).readAsBytes();
-      var typeInfo = FileTypeService.instance.detectFromBytes(
-        bytes,
-        image.name,
-      );
-      if (bytes.length > ClipboardLimits.maxFileBytes &&
-          typeInfo.contentType.isImage) {
-        final shrunk = await compute(shrinkImageToFit, (
-          bytes,
-          ClipboardLimits.maxFileBytes,
-        ));
-        if (shrunk != null) {
-          bytes = shrunk;
-          typeInfo = FileTypeService.instance.detectFromBytes(
-            shrunk,
-            'photo.jpg',
-          );
-        }
-      }
-      if (bytes.length > ClipboardLimits.maxFileBytes) {
-        throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
-      }
+      final (:bytes, :filename, :typeInfo) = prepared;
 
       // STAGE, don't send. Picking an image now behaves like pasting one:
       // it appears in the preview and the user presses Send. Sending straight
       // from the picker skipped the device chips entirely, so every picked
       // image went to all devices regardless of what was selected.
       if (!_isDisposed) {
-        // Formats without an image preview (for example HEIC) remain files;
-        // never convert them to JPEG just to make a thumbnail available.
+        // Formats with no image preview stay files - a HEIC the platform
+        // could not convert, say. HEIC is converted above for every receiver's
+        // sake, not for the thumbnail.
         _clipboardContent = typeInfo.contentType.isImage
             ? ClipboardContent.image(bytes, typeInfo.mimeType)
-            : ClipboardContent.file(bytes, image.name, typeInfo.mimeType);
+            : ClipboardContent.file(bytes, filename, typeInfo.mimeType);
         _isUploadingImage = false;
         notifyListeners();
         onSuccess?.call();
@@ -1294,51 +1281,24 @@ class MobileMainViewModel extends ChangeNotifier {
     // A photo is the exception: it is read and scaled down, as the gallery
     // picker does, because refusing a camera photo shared from Photos was the
     // commonest way to hit this at all.
-    final oversized =
-        await File(file.path).length() > ClipboardLimits.maxFileBytes;
-    final dot = filename.lastIndexOf('.');
-    final extension = dot < 0 ? '' : filename.substring(dot + 1).toLowerCase();
-    if (oversized && !_shrinkableExtensions.contains(extension)) {
+    final prepared = await _preparePhoto(
+      path: file.path,
+      filename: filename,
+      size: await File(file.path).length(),
+    );
+    if (prepared == null) {
       onError?.call(tooLarge);
       return;
-    }
-
-    var bytes = await File(file.path).readAsBytes();
-    var sentFilename = filename;
-
-    var fileTypeInfo = FileTypeService.instance.detectFromBytes(
-      bytes,
-      filename,
-    );
-
-    if (oversized) {
-      final shrunk = fileTypeInfo.contentType.isImage
-          ? await compute(shrinkImageToFit, (
-              bytes,
-              ClipboardLimits.maxFileBytes,
-            ))
-          : null;
-      if (shrunk == null) {
-        onError?.call(tooLarge);
-        return;
-      }
-      // Now a JPEG whatever it arrived as, so the name says so too.
-      bytes = shrunk;
-      sentFilename = '${dot < 0 ? filename : filename.substring(0, dot)}.jpg';
-      fileTypeInfo = FileTypeService.instance.detectFromBytes(
-        bytes,
-        sentFilename,
-      );
     }
 
     await _clipboardRepo.insertFile(
       userId: userId,
       deviceType: ClipboardRepository.getCurrentDeviceType(),
       deviceName: null,
-      fileBytes: bytes,
-      originalFilename: sentFilename,
-      contentType: fileTypeInfo.contentType,
-      mimeType: fileTypeInfo.mimeType,
+      fileBytes: prepared.bytes,
+      originalFilename: prepared.filename,
+      contentType: prepared.typeInfo.contentType,
+      mimeType: prepared.typeInfo.mimeType,
       // null, not an empty list: the repository reads null as "every device".
       targetDeviceTypes: targetDeviceTypes.isEmpty
           ? null
@@ -1346,6 +1306,61 @@ class MobileMainViewModel extends ChangeNotifier {
     );
 
     onSuccess?.call('Sent $filename');
+  }
+
+  /// The bytes, name and type the gallery picker and the share sheet send for
+  /// a file of [size] bytes, or null when it is over the limit and cannot be
+  /// brought under it. Kept in one place because the two copies had drifted.
+  ///
+  /// A HEIC is converted to JPEG whatever its size - see IImageTranscoder -
+  /// straight from disk, so the platform decoder downsamples it without the
+  /// original reaching the Dart heap. Any other photo too big to send is
+  /// scaled down by shrinkImageToFit; anything that fits goes as the original.
+  ///
+  /// An over-limit file shrinkImageToFit cannot decode - a video, a GIF, or a
+  /// HEIC the platform could not convert - is refused before it is read.
+  /// Reading one first pulled the whole file onto the heap and into an
+  /// isolate only to throw it away.
+  Future<({Uint8List bytes, String filename, FileTypeInfo typeInfo})?>
+  _preparePhoto({
+    required String? path,
+    required String filename,
+    required int size,
+    Uint8List? bytes,
+  }) async {
+    const maxBytes = ClipboardLimits.maxFileBytes;
+    final oversized = size > maxBytes;
+    final dot = filename.lastIndexOf('.');
+    final extension = dot < 0 ? '' : filename.substring(dot + 1).toLowerCase();
+    // Now a JPEG whatever it arrived as, so the name says so too.
+    final asJpeg = '${dot < 0 ? filename : filename.substring(0, dot)}.jpg';
+    ({Uint8List bytes, String filename, FileTypeInfo typeInfo}) jpeg(
+      Uint8List data,
+    ) => (
+      bytes: data,
+      filename: asJpeg,
+      typeInfo: FileTypeService.instance.detectFromBytes(data, asJpeg),
+    );
+
+    if (heicExtensions.contains(extension)) {
+      final converted = path == null
+          ? null
+          : await _imageTranscoder.toJpeg(path, maxBytes: maxBytes);
+      if (converted != null) return jpeg(converted);
+      if (oversized) return null;
+    } else if (oversized && !_shrinkableExtensions.contains(extension)) {
+      return null;
+    }
+
+    final data = bytes ?? await File(path!).readAsBytes();
+    final typeInfo = FileTypeService.instance.detectFromBytes(data, filename);
+    if (!oversized) {
+      return (bytes: data, filename: filename, typeInfo: typeInfo);
+    }
+    final shrunk = typeInfo.contentType.isImage
+        ? await compute(shrinkImageToFit, (data, maxBytes))
+        : null;
+    return shrunk == null ? null : jpeg(shrunk);
   }
 
   /// Save shared text content
@@ -1488,6 +1503,10 @@ class MobileMainViewModel extends ChangeNotifier {
     unawaited(loadHistory());
 
     unawaited(_reassertFcmToken());
+
+    // Back from Mail, perhaps having confirmed a sign-up in the browser rather
+    // than in the app. Picks that up instead of staying a guest.
+    unawaited(_authService.refreshIfAwaitingConfirmation());
   }
 
   /// When the token was last written back on resume. Resume fires on every
