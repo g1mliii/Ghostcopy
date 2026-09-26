@@ -67,6 +67,8 @@ class ThumbnailDiskCache {
   /// plaintext preview of a clip - or an account - that is gone.
   Future<void> _tail = Future<void>.value();
 
+  bool _evictionQueued = false;
+
   Future<void> _serial(Future<void> Function() op) {
     final next = _tail.then((_) => op());
     // A failed op must not wedge every one queued behind it.
@@ -165,7 +167,18 @@ class ThumbnailDiskCache {
       final tmp = File('${file.path}.tmp');
       await tmp.writeAsBytes(png, flush: true);
       await tmp.rename(file.path);
-      unawaited(_evictToFit());
+      // Queued behind this write rather than run beside the next one: run
+      // concurrently it could stat or delete a later write's .tmp before its
+      // rename. One at a time is enough - it trims to fit whatever is there.
+      if (!_evictionQueued) {
+        _evictionQueued = true;
+        unawaited(
+          _serial(() async {
+            _evictionQueued = false;
+            await _evictToFit();
+          }),
+        );
+      }
     } on Exception catch (e) {
       debugPrint('[ThumbnailCache] Write failed for $storagePath: $e');
     }
@@ -247,7 +260,8 @@ class ThumbnailDiskCache {
       final files = <File>[];
       var total = 0;
       await for (final entity in dir.list()) {
-        if (entity is! File) continue;
+        // A write in progress, not a thumbnail. prune() sweeps any left over.
+        if (entity is! File || entity.path.endsWith('.tmp')) continue;
         files.add(entity);
         total += await entity.length();
       }

@@ -75,6 +75,33 @@ void main() {
     expect(await ThumbnailDiskCache.instance.get('clips/a.png'), isNull);
   });
 
+  // Eviction used to run beside the next write instead of behind it, and
+  // counted .tmp files - so it could delete a write's temp file before its
+  // rename, and the thumbnail was rebuilt over and over.
+  test('eviction runs in turn and leaves writes in progress alone', () async {
+    // Something to make the directory exist before planting files in it.
+    await ThumbnailDiskCache.instance.put('clips/seed.png', png());
+    final dir = thumbDir(cache);
+    final sep = Platform.pathSeparator;
+    File('${dir.path}${sep}old.png')
+      ..writeAsBytesSync(Uint8List(ThumbnailDiskCache.maxBytes + 1))
+      ..setLastAccessedSync(DateTime(2000));
+    // The oldest file of all, so an eviction that counted it would delete it
+    // first.
+    final pending = File('${dir.path}${sep}pending.png.tmp')
+      ..writeAsBytesSync(png())
+      ..setLastAccessedSync(DateTime(1990));
+
+    await ThumbnailDiskCache.instance.put('clips/a.png', png());
+    // Queued behind the eviction that put scheduled, so this returns only
+    // once that has run.
+    await ThumbnailDiskCache.instance.remove('clips/nothing.png');
+
+    expect(File('${dir.path}${sep}old.png').existsSync(), isFalse);
+    expect(pending.existsSync(), isTrue);
+    expect(await ThumbnailDiskCache.instance.get('clips/a.png'), isNotNull);
+  });
+
   test('a clear issued after a write is never overtaken by it', () async {
     final write = ThumbnailDiskCache.instance.put('clips/a.png', png());
     final clear = ThumbnailDiskCache.instance.clear();
