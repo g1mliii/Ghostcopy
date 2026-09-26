@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import Sentry
 import Sparkle
 
 /// Owns one Sparkle session for the lifetime of this menu bar application.
@@ -80,6 +81,19 @@ final class AppUpdater: NSObject, SPUStandardUserDriverDelegate {
   ) {
     updateAvailable = true
     channel.invokeMethod("stateChanged", arguments: self.state)
+  }
+
+  // Sparkle's alerts ("You're up to date", errors) are modal and are shown
+  // from a block on the main dispatch queue, so the queue cannot drain until
+  // the user dismisses them. Sentry's hang detector watches exactly that
+  // queue, and reported every Check for Updates as a 2-second App Hang - the
+  // time spent reading the dialog. Nothing is stuck; pause it while one is up.
+  func standardUserDriverWillShowModalAlert() {
+    SentrySDK.pauseAppHangTracking()
+  }
+
+  func standardUserDriverDidShowModalAlert() {
+    SentrySDK.resumeAppHangTracking()
   }
 
   func standardUserDriverWillFinishUpdateSession() {
