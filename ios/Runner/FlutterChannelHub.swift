@@ -137,9 +137,6 @@ final class FlutterChannelHub {
 /// on most Windows machines, and refused over the size limit.
 enum ImageTranscoder {
   private static let channelName = "com.ghostcopy/image_transcoder"
-  private static let maxSide = 4096
-  private static let minSide = 1024
-  private static let quality = 0.85
 
   static func attach(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: channelName, binaryMessenger: messenger)
@@ -150,13 +147,20 @@ enum ImageTranscoder {
       }
       guard let args = call.arguments as? [String: Any],
             let path = args["path"] as? String,
-            let maxBytes = args["maxBytes"] as? Int else {
-        result(FlutterError(code: "INVALID_ARGS", message: "path and maxBytes are required", details: nil))
+            let maxBytes = args["maxBytes"] as? Int,
+            // Sizing comes from lib/utils/image_shrink.dart, so the two agree.
+            let maxSide = args["maxSide"] as? Int,
+            let minSide = args["minSide"] as? Int,
+            let quality = args["quality"] as? Int else {
+        result(FlutterError(code: "INVALID_ARGS", message: "path, maxBytes and sizing are required", details: nil))
         return
       }
       // A 48 MP photo takes a noticeable moment; keep it off the main thread.
       DispatchQueue.global(qos: .userInitiated).async {
-        let jpeg = toJpeg(path: path, maxBytes: maxBytes)
+        let jpeg = toJpeg(
+          path: path, maxBytes: maxBytes,
+          maxSide: maxSide, minSide: minSide, quality: quality
+        )
         DispatchQueue.main.async {
           result(jpeg.map { FlutterStandardTypedData(bytes: $0) })
         }
@@ -167,7 +171,9 @@ enum ImageTranscoder {
   /// Halves the longest side from [maxSide] until the JPEG fits, as
   /// shrinkImageToFit does in Dart. ImageIO decodes straight to the target
   /// size, so the full-resolution image is never held in memory.
-  private static func toJpeg(path: String, maxBytes: Int) -> Data? {
+  private static func toJpeg(
+    path: String, maxBytes: Int, maxSide: Int, minSide: Int, quality: Int
+  ) -> Data? {
     let url = URL(fileURLWithPath: path) as CFURL
     guard let source = CGImageSourceCreateWithURL(url, nil),
           let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -193,7 +199,7 @@ enum ImageTranscoder {
       // No source properties are copied, so location and the rest of the
       // metadata stay behind.
       CGImageDestinationAddImage(destination, image, [
-        kCGImageDestinationLossyCompressionQuality: quality,
+        kCGImageDestinationLossyCompressionQuality: Double(quality) / 100,
       ] as CFDictionary)
       guard CGImageDestinationFinalize(destination) else { return nil }
       if data.length <= maxBytes { return data as Data }

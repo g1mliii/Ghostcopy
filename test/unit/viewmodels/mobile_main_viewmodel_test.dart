@@ -61,6 +61,7 @@ void main() {
   late _MockDeviceService deviceService;
   late _MockSecurityService securityService;
   late _MockSettingsService settingsService;
+  late _FakeImageTranscoder transcoder;
   late MobileMainViewModel viewModel;
 
   setUp(() {
@@ -69,6 +70,7 @@ void main() {
     deviceService = _MockDeviceService();
     securityService = _MockSecurityService();
     settingsService = _MockSettingsService();
+    transcoder = _FakeImageTranscoder();
 
     when(
       () => clipboardRepository.getHistory(),
@@ -85,6 +87,7 @@ void main() {
       clipboardRepository: clipboardRepository,
       deviceService: deviceService,
       securityService: securityService,
+      imageTranscoder: transcoder,
     );
   });
 
@@ -536,6 +539,16 @@ void main() {
 
       tearDown(() => dir.deleteSync(recursive: true));
 
+      /// A file of [bytes] bytes that costs no disk and no time to write.
+      File sparse(String name, int bytes) {
+        final file = File('${dir.path}${Platform.pathSeparator}$name');
+        file.openSync(mode: FileMode.write)
+          ..setPositionSync(bytes - 1)
+          ..writeByteSync(0)
+          ..closeSync();
+        return file;
+      }
+
       test('a photo is scaled down and sent as a JPEG', () async {
         // Noise, so the PNG cannot compress under the limit.
         final random = Random(1);
@@ -565,11 +578,7 @@ void main() {
       });
 
       test('anything else is refused before it is read', () async {
-        final file = File('${dir.path}${Platform.pathSeparator}big.pdf');
-        file.openSync(mode: FileMode.write)
-          ..setPositionSync(ClipboardLimits.maxFileBytes + 1)
-          ..writeByteSync(0)
-          ..closeSync();
+        final file = sparse('big.pdf', ClipboardLimits.maxFileBytes + 2);
         final errors = <String>[];
 
         await viewModel.handleSharedFiles([
@@ -581,39 +590,14 @@ void main() {
       });
 
       group('a HEIC photo', () {
-        late _FakeImageTranscoder transcoder;
-        late MobileMainViewModel heicViewModel;
-
-        setUp(() {
-          transcoder = _FakeImageTranscoder();
-          heicViewModel = MobileMainViewModel(
-            authService: authService,
-            clipboardRepository: clipboardRepository,
-            deviceService: deviceService,
-            securityService: securityService,
-            imageTranscoder: transcoder,
-          );
-        });
-
-        tearDown(() => heicViewModel.dispose());
-
-        File heic(String name, int bytes) {
-          final file = File('${dir.path}${Platform.pathSeparator}$name');
-          file.openSync(mode: FileMode.write)
-            ..setPositionSync(bytes - 1)
-            ..writeByteSync(0)
-            ..closeSync();
-          return file;
-        }
-
         test('is converted even when it fits, and sent as a JPEG', () async {
           // A HEIC that fits used to go as a plain file: no preview on any
           // device, and unopenable on most Windows machines.
-          final file = heic('IMG_0002.HEIC', 3 * 1024 * 1024);
+          final file = sparse('IMG_0002.HEIC', 3 * 1024 * 1024);
           transcoder.result = img.encodeJpg(img.Image(width: 8, height: 8));
           final errors = <String>[];
 
-          await heicViewModel.handleSharedFiles([
+          await viewModel.handleSharedFiles([
             SharedMediaFile(path: file.path, type: SharedMediaType.image),
           ], onError: errors.add);
 
@@ -626,10 +610,13 @@ void main() {
         });
 
         test('over the limit is converted rather than refused', () async {
-          final file = heic('IMG_0003.heic', ClipboardLimits.maxFileBytes + 1);
+          final file = sparse(
+            'IMG_0003.heic',
+            ClipboardLimits.maxFileBytes + 1,
+          );
           transcoder.result = img.encodeJpg(img.Image(width: 8, height: 8));
 
-          await heicViewModel.handleSharedFiles([
+          await viewModel.handleSharedFiles([
             SharedMediaFile(path: file.path, type: SharedMediaType.image),
           ]);
 
@@ -639,9 +626,9 @@ void main() {
         test(
           'that cannot be converted goes as the original if it fits',
           () async {
-            final file = heic('IMG_0004.heic', 1024);
+            final file = sparse('IMG_0004.heic', 1024);
 
-            await heicViewModel.handleSharedFiles([
+            await viewModel.handleSharedFiles([
               SharedMediaFile(path: file.path, type: SharedMediaType.image),
             ]);
 
@@ -650,10 +637,13 @@ void main() {
         );
 
         test('that cannot be converted is refused over the limit', () async {
-          final file = heic('IMG_0005.heic', ClipboardLimits.maxFileBytes + 1);
+          final file = sparse(
+            'IMG_0005.heic',
+            ClipboardLimits.maxFileBytes + 1,
+          );
           final errors = <String>[];
 
-          await heicViewModel.handleSharedFiles([
+          await viewModel.handleSharedFiles([
             SharedMediaFile(path: file.path, type: SharedMediaType.image),
           ], onError: errors.add);
 

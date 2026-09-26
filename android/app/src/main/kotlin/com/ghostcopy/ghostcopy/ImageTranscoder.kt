@@ -21,9 +21,6 @@ import java.util.concurrent.Executors
  */
 object ImageTranscoder {
     private const val CHANNEL = "com.ghostcopy/image_transcoder"
-    private const val MAX_SIDE = 4096
-    private const val MIN_SIDE = 1024
-    private const val QUALITY = 85
 
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -36,8 +33,13 @@ object ImageTranscoder {
             }
             val path = call.argument<String>("path")
             val maxBytes = call.argument<Int>("maxBytes")
-            if (path == null || maxBytes == null) {
-                result.error("INVALID_ARGS", "path and maxBytes are required", null)
+            // Sizing comes from lib/utils/image_shrink.dart, so the two agree.
+            val maxSide = call.argument<Int>("maxSide")
+            val minSide = call.argument<Int>("minSide")
+            val quality = call.argument<Int>("quality")
+            if (path == null || maxBytes == null || maxSide == null ||
+                minSide == null || quality == null) {
+                result.error("INVALID_ARGS", "path, maxBytes and sizing are required", null)
                 return@setMethodCallHandler
             }
             executor.execute {
@@ -46,7 +48,7 @@ object ImageTranscoder {
                 // throw never replies - the Dart side then waits forever with
                 // its upload spinner on.
                 val jpeg = try {
-                    toJpeg(path, maxBytes)
+                    toJpeg(path, maxBytes, maxSide, minSide, quality)
                 } catch (e: Throwable) {
                     null
                 }
@@ -55,12 +57,18 @@ object ImageTranscoder {
         }
     }
 
-    /** Halves the longest side from MAX_SIDE until the JPEG fits. */
-    private fun toJpeg(path: String, maxBytes: Int): ByteArray? {
+    /** Halves the longest side from [maxSide] until the JPEG fits. */
+    private fun toJpeg(
+        path: String,
+        maxBytes: Int,
+        maxSide: Int,
+        minSide: Int,
+        quality: Int,
+    ): ByteArray? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         val source = ImageDecoder.createSource(File(path))
         var longest = 0
-        var side = MAX_SIDE
+        var side = maxSide
         while (true) {
             // Decoded straight to the target size, so the full-resolution
             // image is never held. ImageDecoder applies EXIF orientation.
@@ -77,11 +85,11 @@ object ImageTranscoder {
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             }
             val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, QUALITY, out)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
             bitmap.recycle()
             if (out.size() <= maxBytes) return out.toByteArray()
             side = minOf(side, longest) / 2
-            if (side < minOf(MIN_SIDE, longest)) return null
+            if (side < minOf(minSide, longest)) return null
         }
     }
 }

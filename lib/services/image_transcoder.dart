@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../utils/image_shrink.dart';
+
 /// Re-encodes photos the `image` package cannot decode - HEIC and HEIF, which
 /// is what an iPhone camera saves by default - as JPEG, through the platform's
 /// own decoder.
@@ -41,6 +43,9 @@ class ImageTranscoder implements IImageTranscoder {
       return await _channel.invokeMethod<Uint8List>('toJpeg', {
         'path': path,
         'maxBytes': maxBytes,
+        'maxSide': photoMaxSide,
+        'minSide': photoMinSide,
+        'quality': photoJpegQuality,
       });
     } on PlatformException catch (e) {
       debugPrint('[ImageTranscoder] Could not convert: ${e.message}');
