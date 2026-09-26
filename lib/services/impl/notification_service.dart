@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -55,7 +56,11 @@ class NotificationService implements INotificationService {
       {}; // Track payload for each action ID
   final Map<int, DateTime> _actionTimestamps =
       {}; // Track when action was created
-  int _notificationIdCounter = 0;
+  /// Starts somewhere random, not at 0. Every process has its own counter -
+  /// each Explorer "Send with GhostCopy" is a separate headless process - and
+  /// Windows replaces a toast that reuses an id, so a multi-file send showed
+  /// only its last result, and could replace one of the running app's.
+  int _notificationIdCounter = Random().nextInt(1 << 30);
 
   // Repeated-toast coalescing. Deleting several clips in a row fired one toast
   // each, which replaced the overlay over and over and stacked a separate
