@@ -90,8 +90,11 @@
     setTimeout(function () { show('state-done'); }, 600);
 
     // Hand the emailed token to the app, which redeems it and lands signed in.
-    // The app refuses one it did not ask for, and may not be on this device at
-    // all, so confirming in the browser stays on offer.
+    // The app may not be on this device, and refuses a token it did not ask
+    // for - one from another device's sign-up, or an email change on an
+    // account it is already signed in to - without this page ever knowing.
+    // So confirming in the browser stays on offer, and the copy does not
+    // promise a sign-in.
     function confirmEmail(tokenHash, type) {
         if (!EMAIL_TYPES[type]) {
             fail('This confirmation link is not one GhostCopy sends.');

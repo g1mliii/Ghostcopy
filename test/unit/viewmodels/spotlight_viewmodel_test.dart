@@ -16,6 +16,15 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _MockAuthService extends Mock implements IAuthService {}
 
+User _user({required bool anonymous}) => User(
+  id: 'guest',
+  appMetadata: const {},
+  userMetadata: const {},
+  aud: 'authenticated',
+  createdAt: '2026-01-01T00:00:00Z',
+  isAnonymous: anonymous,
+);
+
 class _MockClipboardRepository extends Mock implements IClipboardRepository {}
 
 class _MockTransformerService extends Mock implements ITransformerService {}
@@ -361,6 +370,49 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     verify(() => clipboardRepository.getHistory()).called(2);
+  });
+
+  // A guest upgrade confirmed in a browser keeps its user id, so the account
+  // check above skipped it and the screen kept offering Sign Up.
+  test('a confirmed upgrade redraws without reloading history', () async {
+    final authEvents = StreamController<AuthState>();
+    addTearDown(authEvents.close);
+    when(() => authService.currentUserId).thenReturn('guest');
+    when(() => authService.currentUser).thenReturn(_user(anonymous: true));
+    when(
+      () => authService.authStateChanges,
+    ).thenAnswer((_) => authEvents.stream);
+    when(
+      () => clipboardRepository.getHistory(),
+    ).thenAnswer((_) async => <ClipboardItem>[]);
+    await viewModel.initialize();
+    var notified = 0;
+    viewModel.addListener(() => notified++);
+
+    authEvents.add(
+      AuthState(
+        AuthChangeEvent.tokenRefreshed,
+        Session(
+          accessToken: 'token',
+          tokenType: 'bearer',
+          user: _user(anonymous: false),
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(notified, 1);
+    verify(() => clipboardRepository.getHistory()).called(1);
+  });
+
+  test('window focus checks for an upgrade confirmed elsewhere', () {
+    when(
+      () => authService.refreshIfAwaitingConfirmation(),
+    ).thenAnswer((_) async {});
+
+    viewModel.onWindowFocused();
+
+    verify(() => authService.refreshIfAwaitingConfirmation()).called(1);
   });
 
   test('handleSend sends text and clears state on success', () async {

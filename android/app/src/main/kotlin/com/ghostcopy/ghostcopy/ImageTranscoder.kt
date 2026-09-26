@@ -41,9 +41,13 @@ object ImageTranscoder {
                 return@setMethodCallHandler
             }
             executor.execute {
+                // Throwable, not Exception: a large HEIC decoded on a phone
+                // short of memory throws OutOfMemoryError, and an escaped
+                // throw never replies - the Dart side then waits forever with
+                // its upload spinner on.
                 val jpeg = try {
                     toJpeg(path, maxBytes)
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     null
                 }
                 main.post { result.success(jpeg) }

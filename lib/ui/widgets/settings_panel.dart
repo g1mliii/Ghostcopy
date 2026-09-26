@@ -105,6 +105,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   /// The account the panel is currently drawn for, so a replayed or
   /// token-refresh event for the same user can be dropped.
   String? _lastAuthUserId;
+  bool? _lastAuthAnonymous;
 
   // Separate debounce timers per field to prevent data loss
   Timer? _webhookDebounceTimer;
@@ -137,14 +138,20 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     // And tokenRefreshed fires on that same hourly timer while the panel is
     // open, for a session whose user has not changed. Comparing the user id
     // drops both: a replayed event and a refresh both land on the id we are
-    // already showing.
+    // already showing. A guest upgrade keeps its id but stops being
+    // anonymous, which the panel has to show, so that is compared too.
     _lastAuthUserId = widget.authService.currentUser?.id;
+    _lastAuthAnonymous = widget.authService.currentUser?.isAnonymous;
     _authStateSub = widget.authService.authStateChanges.listen((state) {
       if (!mounted) return;
 
-      final userId = state.session?.user.id;
-      if (userId == _lastAuthUserId) return;
-      _lastAuthUserId = userId;
+      final user = state.session?.user;
+      if (user?.id == _lastAuthUserId &&
+          user?.isAnonymous == _lastAuthAnonymous) {
+        return;
+      }
+      _lastAuthUserId = user?.id;
+      _lastAuthAnonymous = user?.isAnonymous;
 
       scheduleRebuild();
       // Encryption and device state are per-account, so they are stale too.

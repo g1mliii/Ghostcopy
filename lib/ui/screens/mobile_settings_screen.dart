@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show AuthState;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../locator.dart';
@@ -107,9 +108,22 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   // App info
   String _appVersion = '';
 
+  /// Whether the account card was built for a guest. A guest upgrade
+  /// confirmed in the browser keeps its user id, and nothing else rebuilt
+  /// this screen, so it said "Temporary account" until it was reopened.
+  late bool _shownAnonymous;
+  StreamSubscription<AuthState>? _authSub;
+
   @override
   void initState() {
     super.initState();
+    _shownAnonymous = widget.authService.isAnonymous;
+    // The live value, not the event's: the stream replays old sessions.
+    _authSub = widget.authService.authStateChanges.listen((_) {
+      final anonymous = widget.authService.isAnonymous;
+      if (!mounted || anonymous == _shownAnonymous) return;
+      setState(() => _shownAnonymous = anonymous);
+    });
     _initializeEncryption().then((ready) {
       // Use the same decryption verification as the encryption switch. The
       // restore dialog alone only checks whether the passphrase can be saved.
@@ -161,6 +175,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   @override
   void dispose() {
+    unawaited(_authSub?.cancel());
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
     super.dispose();
   }

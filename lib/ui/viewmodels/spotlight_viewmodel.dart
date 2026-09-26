@@ -108,6 +108,7 @@ class SpotlightViewModel extends ChangeNotifier {
   Timer? _errorClearTimer;
   StreamSubscription<AuthState>? _authStateSubscription;
   String? _historyUserId;
+  bool? _historyUserAnonymous;
   int _accountRevision = 0;
 
   // ========== INITIALIZATION ==========
@@ -116,6 +117,7 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Call this once after construction
   Future<void> initialize() async {
     _historyUserId = _authService.currentUserId;
+    _historyUserAnonymous = _authService.currentUser?.isAnonymous;
 
     // The desktop spotlight stays mounted while the auth panel switches
     // accounts. Without listening here it loaded the anonymous account once,
@@ -123,10 +125,20 @@ class SpotlightViewModel extends ChangeNotifier {
     // encryption (the settings callback happened to refresh history). Reload
     // the repository as soon as Supabase announces the new user instead.
     _authStateSubscription = _authService.authStateChanges.listen((state) {
-      final userId = state.session?.user.id;
-      if (userId == _historyUserId) return;
+      final user = state.session?.user;
+      final userId = user?.id;
+      if (userId == _historyUserId) {
+        // A guest whose upgrade was just confirmed: the same account and
+        // history, but the screen still offers it Sign Up.
+        if (user != null && user.isAnonymous != _historyUserAnonymous) {
+          _historyUserAnonymous = user.isAnonymous;
+          notifyListeners();
+        }
+        return;
+      }
 
       _historyUserId = userId;
+      _historyUserAnonymous = user?.isAnonymous;
       _accountRevision++;
       _historyItems = <ClipboardItem>[];
       _isLoadingHistory = true;
@@ -226,13 +238,13 @@ class SpotlightViewModel extends ChangeNotifier {
     await _loadHistory(revision: _accountRevision);
   }
 
-  /// Populate content from system clipboard
-  /// Returns ClipboardContent if there's something to paste
   /// The window came forward. A sign-up confirmed in a browser meanwhile
   /// should read as signed in, not as the guest it was.
   void onWindowFocused() =>
       unawaited(_authService.refreshIfAwaitingConfirmation());
 
+  /// Populate content from system clipboard
+  /// Returns ClipboardContent if there's something to paste
   Future<ClipboardContent?> populateFromClipboard() async {
     try {
       final content = await _clipboardService.read();

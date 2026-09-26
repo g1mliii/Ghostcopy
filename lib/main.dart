@@ -1603,6 +1603,14 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
         decision.otpType!,
       );
       if (!redeemed) return;
+      // Nothing else rebinds for this sign-in: no auth panel is waiting on it,
+      // and recoverSession stops as soon as it sees a session. Without this a
+      // sign-up confirmed while the guest was still being retried never
+      // subscribed to its own clips until a restart. (redeemEmailLink
+      // registers the device.)
+      if (locator.isRegistered<IClipboardSyncService>()) {
+        locator<IClipboardSyncService>().reinitializeForUser();
+      }
     }
     debugPrint('[Main] ✅ Session established from deep link');
 

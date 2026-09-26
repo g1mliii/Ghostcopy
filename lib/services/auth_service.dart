@@ -94,16 +94,17 @@ abstract class IAuthService {
   /// within the last day, and no permanent account is signed in. A
   /// `ghostcopy://` URL can be opened by any web page, so without that a page
   /// could hand the app a token for the sender's own new account and sign it
-  /// in there - and every clip copied afterwards would go to the sender. If
-  /// the address confirmed is not the one asked for, the session it produced
-  /// is signed out again.
+  /// in there - and every clip copied afterwards would go to the sender. The
+  /// session is only installed once the address it confirmed is the one asked
+  /// for; any other leaves the app as it was.
   ///
   /// Returns whether this app is now signed in to the confirmed account.
   Future<bool> redeemEmailLink(String tokenHash, OtpType type);
 
-  /// If an email confirmation is pending, refresh the session so a link
-  /// confirmed somewhere else - in a browser, on another device - shows here
-  /// as a signed-in account rather than the guest it was. Cheap otherwise.
+  /// If this guest's upgrade is awaiting confirmation, refresh the session so
+  /// a link confirmed somewhere else - in a browser, on another device - shows
+  /// here as a signed-in account rather than the guest it was. At most once
+  /// every 30 seconds, and cheap otherwise.
   Future<void> refreshIfAwaitingConfirmation();
 
   /// Whether a sign-in or link is waiting for the browser to come back.

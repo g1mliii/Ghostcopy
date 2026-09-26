@@ -801,20 +801,15 @@ class MobileMainViewModel extends ChangeNotifier {
       // A photo too big to send is scaled down rather than refused, as
       // image_picker's 2048px cap used to make every photo fit. Anything that
       // fits is still sent as the original.
-      final extension = image.extension?.toLowerCase();
-      final shrinkable = _shrinkableExtensions.contains(extension);
-      final isHeic = heicExtensions.contains(extension);
-      if (image.size > ClipboardLimits.maxFileBytes && !shrinkable && !isHeic) {
+      final prepared = await _convertPhoto(
+        path: image.path,
+        extension: image.extension?.toLowerCase() ?? '',
+        oversized: image.size > ClipboardLimits.maxFileBytes,
+      );
+      if (prepared.tooLarge) {
         throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
       }
-      // A HEIC is converted whatever its size - see IImageTranscoder. Where
-      // the platform cannot, one that fits still goes as the original file.
-      final converted = isHeic && image.path != null
-          ? await _imageTranscoder.toJpeg(
-              image.path!,
-              maxBytes: ClipboardLimits.maxFileBytes,
-            )
-          : null;
+      final converted = prepared.jpeg;
       var bytes =
           converted ?? image.bytes ?? await File(image.path!).readAsBytes();
       var typeInfo = FileTypeService.instance.detectFromBytes(
@@ -1312,26 +1307,17 @@ class MobileMainViewModel extends ChangeNotifier {
         await File(file.path).length() > ClipboardLimits.maxFileBytes;
     final dot = filename.lastIndexOf('.');
     final extension = dot < 0 ? '' : filename.substring(dot + 1).toLowerCase();
-    final isHeic = heicExtensions.contains(extension);
-    if (oversized && !_shrinkableExtensions.contains(extension) && !isHeic) {
+    final prepared = await _convertPhoto(
+      path: file.path,
+      extension: extension,
+      oversized: oversized,
+    );
+    if (prepared.tooLarge) {
       onError?.call(tooLarge);
       return;
     }
+    final converted = prepared.jpeg;
     final asJpeg = '${dot < 0 ? filename : filename.substring(0, dot)}.jpg';
-
-    // A HEIC is converted whatever its size - see IImageTranscoder - and
-    // straight from disk, so the platform decoder can downsample without the
-    // original ever reaching the Dart heap.
-    final converted = isHeic
-        ? await _imageTranscoder.toJpeg(
-            file.path,
-            maxBytes: ClipboardLimits.maxFileBytes,
-          )
-        : null;
-    if (isHeic && converted == null && oversized) {
-      onError?.call(tooLarge);
-      return;
-    }
 
     var bytes = converted ?? await File(file.path).readAsBytes();
     var sentFilename = converted != null ? asJpeg : filename;
@@ -1376,6 +1362,37 @@ class MobileMainViewModel extends ChangeNotifier {
     );
 
     onSuccess?.call('Sent $filename');
+  }
+
+  /// What the gallery picker and the share sheet both do first with a file,
+  /// kept in one place because the two copies had drifted.
+  ///
+  /// A HEIC is converted to JPEG whatever its size - see IImageTranscoder -
+  /// straight from disk, so the platform decoder downsamples it without the
+  /// original reaching the Dart heap. [jpeg] is that conversion, or null when
+  /// there was none and the original goes as it is.
+  ///
+  /// [tooLarge] refuses an over-limit file that shrinkImageToFit cannot
+  /// decode, before it is read: a video, a GIF, or a HEIC the platform could
+  /// not convert. Reading one first pulled the whole file onto the heap and
+  /// into an isolate only to throw it away.
+  Future<({Uint8List? jpeg, bool tooLarge})> _convertPhoto({
+    required String? path,
+    required String extension,
+    required bool oversized,
+  }) async {
+    final isHeic = heicExtensions.contains(extension);
+    if (!isHeic) {
+      final tooLarge = oversized && !_shrinkableExtensions.contains(extension);
+      return (jpeg: null, tooLarge: tooLarge);
+    }
+    final jpeg = path == null
+        ? null
+        : await _imageTranscoder.toJpeg(
+            path,
+            maxBytes: ClipboardLimits.maxFileBytes,
+          );
+    return (jpeg: jpeg, tooLarge: jpeg == null && oversized);
   }
 
   /// Save shared text content

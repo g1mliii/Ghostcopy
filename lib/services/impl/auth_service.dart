@@ -27,6 +27,7 @@ class AuthService implements IAuthService {
     IClipboardRepository? clipboardRepository,
     this._pkceStore,
     GotrueAsyncStorage? confirmationStore,
+    this._detachedAuth,
   }) : _client = client ?? Supabase.instance.client,
        _confirmationStoreOverride = confirmationStore,
        _appleReauthorize = appleReauthorize ?? _nativeAppleAuthorizationCode,
@@ -75,6 +76,10 @@ class AuthService implements IAuthService {
       _confirmationStoreOverride ??= SharedPreferencesGotrueAsyncStorage();
   static const _pendingConfirmationKey = 'ghostcopy_pending_confirmation';
   static const _pendingConfirmationTtl = Duration(days: 1);
+
+  /// Builds the client an emailed token is redeemed on - see
+  /// redeemEmailLink. Injectable so tests can give it their HTTP mock.
+  final GoTrueClient Function()? _detachedAuth;
   bool _initialized = false;
 
   /// Interactive sign-ins in progress, and the anonymous sign-in, if one is.
@@ -206,6 +211,7 @@ class AuthService implements IAuthService {
     String? captchaToken,
   }) async {
     try {
+      final previousId = _client.auth.currentUser?.id;
       final response = await _interactive(
         () => _client.auth.signUp(
           email: email,
@@ -214,7 +220,13 @@ class AuthService implements IAuthService {
         ),
       );
       debugPrint('[AuthService] Sign up successful');
-      if (response.session == null) await _rememberPendingConfirmation(email);
+      final session = response.session;
+      if (session == null) {
+        await _rememberPendingConfirmation(email);
+      } else if (session.user.id != previousId) {
+        // Signed straight in: a new account this computer is not listed on.
+        await _registerThisDesktop();
+      }
       return response;
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign up failed: ${e.message}');
@@ -401,12 +413,18 @@ class AuthService implements IAuthService {
     }
   }
 
-  Future<void> _rememberPendingConfirmation(String email) async {
+  /// Record that this app asked for [email] to be confirmed. [userId] is the
+  /// guest being upgraded, or null for a sign-up that had no session.
+  Future<void> _rememberPendingConfirmation(
+    String email, {
+    String? userId,
+  }) async {
     try {
       await _confirmationStore.setItem(
         key: _pendingConfirmationKey,
         value: jsonEncode({
           'email': email.trim().toLowerCase(),
+          'user': userId,
           'at': DateTime.now().millisecondsSinceEpoch,
         }),
       );
@@ -416,8 +434,8 @@ class AuthService implements IAuthService {
     }
   }
 
-  /// The address this app is waiting to have confirmed, if it is recent.
-  Future<String?> _pendingConfirmationEmail() async {
+  /// The confirmation this app is waiting for, if it is recent.
+  Future<({String email, String? userId})?> _pendingConfirmation() async {
     try {
       final raw = await _confirmationStore.getItem(
         key: _pendingConfirmationKey,
@@ -429,7 +447,9 @@ class AuthService implements IAuthService {
         await _clearPendingConfirmation();
         return null;
       }
-      return record['email'] as String?;
+      final email = record['email'] as String?;
+      if (email == null) return null;
+      return (email: email, userId: record['user'] as String?);
     } on Object catch (e) {
       debugPrint('[AuthService] Could not read the pending confirmation: $e');
       return null;
@@ -442,47 +462,100 @@ class AuthService implements IAuthService {
     } on Object catch (_) {}
   }
 
+  /// A client with no storage and no session of its own, for redeeming an
+  /// emailed token without installing the session it returns.
+  GoTrueClient _newDetachedAuth() => GoTrueClient(
+    // SupabaseClient keeps its auth URL private; it is the REST URL's sibling.
+    url: _client.rest.url.replaceFirst(RegExp(r'/rest/v1/?$'), '/auth/v1'),
+    headers: _client.auth.headers,
+    autoRefreshToken: false,
+  );
+
+  // Guarded like any other sign-in, so a guest sign-in retried in the
+  // background cannot land on top of the account being confirmed.
   @override
-  Future<bool> redeemEmailLink(String tokenHash, OtpType type) async {
-    final pending = await _pendingConfirmationEmail();
+  Future<bool> redeemEmailLink(String tokenHash, OtpType type) =>
+      _interactive(() => _redeemEmailLinkUnguarded(tokenHash, type));
+
+  Future<bool> _redeemEmailLinkUnguarded(String tokenHash, OtpType type) async {
+    final pending = await _pendingConfirmation();
     if (pending == null) {
       debugPrint(
         '[AuthService] Refused an email link this app did not ask for',
       );
       return false;
     }
-    final current = _client.auth.currentUser;
-    if (current != null && !current.isAnonymous) {
+    final previous = _client.auth.currentSession;
+    if (previous != null && !previous.user.isAnonymous) {
       debugPrint('[AuthService] Refused an email link: already signed in');
       return false;
     }
 
-    final response = await _client.auth.verifyOTP(
-      tokenHash: tokenHash,
-      type: type,
-    );
-    final confirmed = response.user?.email?.toLowerCase();
-    if (confirmed != pending) {
-      // Not the address asked for: someone else's token. Do not stay in it.
-      debugPrint(
-        '[AuthService] Email link was for another address - signed out',
-      );
-      await _client.auth.signOut(); // local scope: this device only
+    // Redeemed on a client of its own, so the session is only looked at here
+    // and not yet installed. verifyOTP on the app's client saved it and
+    // announced the sign-in before the address could be checked: a page
+    // could sign the app into its sender's account long enough for every
+    // listener to switch to it, and signing out again then left the app with
+    // no session at all.
+    final detached = _detachedAuth?.call() ?? _newDetachedAuth();
+    final Session? session;
+    try {
+      session = (await detached.verifyOTP(
+        tokenHash: tokenHash,
+        type: type,
+      )).session;
+    } finally {
+      detached.dispose();
+    }
+    if (session == null) {
+      // The first half of a two-address email change; nothing to sign in to.
+      debugPrint('[AuthService] Email link confirmed, but gave no session');
       return false;
     }
+    if (session.user.email?.toLowerCase() != pending.email) {
+      debugPrint('[AuthService] Email link was for another address - not used');
+      return false;
+    }
+
+    // Verifies the tokens with the server once more, then installs them.
+    await _client.auth.setSession(
+      session.refreshToken!,
+      accessToken: session.accessToken,
+    );
     await _clearPendingConfirmation();
+    // A sign-up that began with no session is a new account on this device;
+    // an upgraded guest is the same one, already registered.
+    if (session.user.id != previous?.user.id) await _registerThisDesktop();
     return true;
   }
 
+  /// When [refreshIfAwaitingConfirmation] last looked. It runs on every
+  /// Spotlight focus and mobile resume, which is far more often than anyone
+  /// confirms an email.
+  DateTime? _lastConfirmationCheck;
+  static const _confirmationCheckInterval = Duration(seconds: 30);
+
   @override
   Future<void> refreshIfAwaitingConfirmation() async {
-    if (_client.auth.currentUser?.isAnonymous != true) return;
-    final pending = await _pendingConfirmationEmail();
-    if (pending == null) return;
+    final user = _client.auth.currentUser;
+    if (user == null || !user.isAnonymous) return;
+    final now = DateTime.now();
+    final last = _lastConfirmationCheck;
+    if (last != null && now.difference(last) < _confirmationCheckInterval) {
+      return;
+    }
+    _lastConfirmationCheck = now;
+
+    // Only a guest upgrade can be picked up by refreshing: it is the same
+    // account. A sign-up with no session is a different one, which only its
+    // link can sign in to - and a guest that replaced the one being upgraded
+    // never will be confirmed.
+    final pending = await _pendingConfirmation();
+    if (pending == null || pending.userId != user.id) return;
     try {
       final response = await _client.auth.refreshSession();
-      final user = response.user;
-      if (user != null && !user.isAnonymous) {
+      final refreshed = response.user;
+      if (refreshed != null && !refreshed.isAnonymous) {
         debugPrint('[AuthService] Email was confirmed elsewhere');
         await _clearPendingConfirmation();
       }
@@ -735,7 +808,7 @@ class AuthService implements IAuthService {
       debugPrint(
         '[AuthService] Upgraded anonymous user to: $email (user_id preserved)',
       );
-      await _rememberPendingConfirmation(email);
+      await _rememberPendingConfirmation(email, userId: currentUserId);
       return userResponse;
     } on AuthException catch (e) {
       if (e.message.contains('already registered') ||
@@ -934,6 +1007,9 @@ class AuthService implements IAuthService {
     // renderings of clips that are encrypted everywhere else. With no owner
     // left they would outlive every account switch.
     await _clearLegacyWidgetThumbnails();
+
+    // A confirmation asked for before signing out is not one to act on after.
+    await _clearPendingConfirmation();
 
     debugPrint('[AuthService] Reset encryption and repository state');
   }
