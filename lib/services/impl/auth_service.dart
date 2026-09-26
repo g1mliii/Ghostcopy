@@ -71,9 +71,9 @@ class AuthService implements IAuthService {
   // Where the pending email confirmation is kept - see redeemEmailLink.
   // Persisted, because the app is often killed while its user is off reading
   // mail. Built lazily so tests that never touch it need no plugin.
-  GotrueAsyncStorage? _confirmationStoreOverride;
-  GotrueAsyncStorage get _confirmationStore =>
-      _confirmationStoreOverride ??= SharedPreferencesGotrueAsyncStorage();
+  final GotrueAsyncStorage? _confirmationStoreOverride;
+  late final GotrueAsyncStorage _confirmationStore =
+      _confirmationStoreOverride ?? SharedPreferencesGotrueAsyncStorage();
   static const _pendingConfirmationKey = 'ghostcopy_pending_confirmation';
   static const _pendingConfirmationTtl = Duration(days: 1);
 
@@ -553,12 +553,15 @@ class AuthService implements IAuthService {
     final pending = await _pendingConfirmation();
     if (pending == null || pending.userId != user.id) return;
     try {
-      final response = await _client.auth.refreshSession();
-      final refreshed = response.user;
-      if (refreshed != null && !refreshed.isAnonymous) {
-        debugPrint('[AuthService] Email was confirmed elsewhere');
-        await _clearPendingConfirmation();
-      }
+      // Asked with a plain read first. A refresh rotates the token, saves it
+      // and announces it to every listener - and the guest may leave the
+      // link unclicked all day while this runs on every focus.
+      final server = (await _client.auth.getUser()).user;
+      if (server == null || server.isAnonymous) return;
+      // Confirmed: the refresh is what gets a token with the new claims.
+      await _client.auth.refreshSession();
+      debugPrint('[AuthService] Email was confirmed elsewhere');
+      await _clearPendingConfirmation();
     } on Object catch (e) {
       debugPrint('[AuthService] Could not refresh for confirmation: $e');
     }
@@ -694,6 +697,8 @@ class AuthService implements IAuthService {
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
+    // Linking needs a session. See upgradeWithEmail.
+    if (_client.auth.currentSession == null) return signInWithApple();
     try {
       if (!_hasNativeAppleSignIn) {
         return await _webOAuthLink(OAuthProvider.apple);
@@ -796,6 +801,14 @@ class AuthService implements IAuthService {
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
+    if (_client.auth.currentSession == null) {
+      final response = await signUpWithEmail(
+        email,
+        password,
+        captchaToken: captchaToken,
+      );
+      return UserResponse.fromJson(response.user!.toJson());
+    }
 
     try {
       // First, update the user's email
@@ -826,6 +839,8 @@ class AuthService implements IAuthService {
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
+    // Linking needs a session. See upgradeWithEmail.
+    if (_client.auth.currentSession == null) return signInWithGoogle();
 
     try {
       // Use native Google Sign-In for iOS and Android

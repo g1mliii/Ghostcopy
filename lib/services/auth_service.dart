@@ -71,6 +71,11 @@ abstract class IAuthService {
   /// Upgrade anonymous user to email/password account
   /// Uses Supabase's updateUser() to preserve user_id and clipboard data
   /// Throws exception if email already exists
+  ///
+  /// With no session at all there is no guest to upgrade - a phone never
+  /// makes one at launch, and a desktop whose guest sign-in failed has none
+  /// until recovery retries - so this signs up instead. Until the address is
+  /// confirmed that leaves no session either.
   /// [captchaToken] Required if captcha is enabled in Supabase
   Future<UserResponse> upgradeWithEmail(
     String email,
@@ -81,11 +86,13 @@ abstract class IAuthService {
   /// Link Google OAuth identity to current anonymous user
   /// Uses Supabase's linkIdentity() to preserve user_id
   /// Returns true if successful, false if cancelled or failed
+  /// With no session there is nothing to link to, so this signs in instead.
   Future<bool> linkGoogleIdentity();
 
   /// Link an Apple identity to the current anonymous user, preserving user_id
   /// and clipboard data. Native on iOS and macOS, the browser flow elsewhere.
   /// Returns true if successful, false if cancelled or failed
+  /// With no session there is nothing to link to, so this signs in instead.
   Future<bool> linkAppleIdentity();
 
   /// Redeem an emailed confirmation link's [tokenHash], signing this app in.

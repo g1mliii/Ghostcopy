@@ -51,6 +51,14 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   bool _authLoading = false;
   String? _authError;
 
+  /// Shown after an email sign-up that is waiting on its confirmation link.
+  String? _authNotice;
+
+  /// Set once [MobileWelcomeScreen.onAuthComplete] has run; see [_complete].
+  bool _completed = false;
+
+  StreamSubscription<AuthState>? _authSub;
+
   // QR scanning state
   static const int _qrTabIndex = 0;
   bool _qrScanning = false;
@@ -71,6 +79,36 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     // _qrTabIndex is 0, so the guard that used to be here could not be false.
     // Assigned directly rather than through setState: build has not run yet.
     _scannerController = _newScannerController();
+
+    // A sign-up from here has no guest to upgrade, so it ends with no session
+    // until the address is confirmed. Tapping the emailed link on this phone
+    // redeems it (main.dart) and signs in behind this screen - including on a
+    // cold launch, where this State is new - so move on when that happens.
+    // The live session, not the event: the stream replays its history.
+    _authSub = locator<IAuthService>().authStateChanges.listen((_) {
+      final user = locator<IAuthService>().currentUser;
+      if (user == null || user.isAnonymous) return;
+      // A flow of this screen's own is running and will finish itself.
+      if (_authLoading || _qrScanning) return;
+      unawaited(_completeAfterConfirmation());
+    });
+  }
+
+  Future<void> _completeAfterConfirmation() async {
+    if (_completed) return;
+    final fcmToken = await widget.fcmTokenFuture;
+    await locator<IDeviceService>().registerCurrentDevice(fcmToken: fcmToken);
+    debugPrint('[Mobile] ✅ Signed in from an email confirmation link');
+    _complete();
+  }
+
+  /// Run [MobileWelcomeScreen.onAuthComplete] once. The confirmation listener
+  /// and a flow of this screen's own could otherwise both call it, and from
+  /// Settings it pops a route - twice would pop Settings too.
+  void _complete() {
+    if (_completed || !mounted) return;
+    _completed = true;
+    widget.onAuthComplete();
   }
 
   /// The scanner's configuration, in one place.
@@ -87,6 +125,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       ..removeListener(_onTabChanged)
       ..dispose();
     _scannerController?.dispose();
+    unawaited(_authSub?.cancel());
     _emailController.dispose();
     _passwordController.dispose();
     // NOTE: ClipboardRepository is a singleton - do NOT dispose it here
@@ -398,6 +437,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           if (_isLogin) _buildForgotPasswordLink(),
           // Error message
           if (_authError != null) _buildAuthError(),
+          if (_authNotice != null) _buildAuthNotice(),
           const SizedBox(height: 16),
           // Submit button
           RepaintBoundary(child: _buildSubmitButton()),
@@ -558,6 +598,38 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             child: Text(
               _authError!,
               style: GhostTypography.caption.copyWith(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAuthNotice() {
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: ShapeDecoration(
+        color: GhostColors.primaryAlpha10,
+        shape: Adaptive.surfaceShape(
+          radius: 8,
+          side: BorderSide(color: GhostColors.primaryAlpha30),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.mark_email_unread_outlined,
+            color: GhostColors.primary,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _authNotice!,
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textPrimary,
+              ),
             ),
           ),
         ],
@@ -818,7 +890,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         }
 
         debugPrint('[QR] ✅ QR authentication complete');
-        widget.onAuthComplete();
+        _complete();
       }
     } on Object catch (e) {
       // Catch Object, not Exception: a failed cast throws TypeError, which is
@@ -838,6 +910,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     setState(() {
       _authLoading = true;
       _authError = null;
+      _authNotice = null;
     });
 
     try {
@@ -862,11 +935,28 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           _passwordController.text,
         );
       } else {
-        // Upgrade anonymous to permanent account
+        // Upgrade anonymous to permanent account (or sign up, with no guest)
         await locator<IAuthService>().upgradeWithEmail(
           _emailController.text,
           _passwordController.text,
         );
+
+        // A phone has no guest at first launch, so that was a plain sign-up,
+        // and it has no session until the address is confirmed. Going on
+        // would land in the app signed in as nobody.
+        if (locator<IAuthService>().currentUser == null) {
+          if (mounted) {
+            setState(() {
+              _authLoading = false;
+              _isLogin = true;
+              _authNotice =
+                  'Check ${_emailController.text.trim()} for a confirmation '
+                  'link. Open it on this phone to sign in, or confirm it '
+                  'anywhere and sign in here.';
+            });
+          }
+          return;
+        }
       }
 
       // Success - register device with FCM token before navigating
@@ -905,7 +995,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           );
         }
 
-        widget.onAuthComplete();
+        _complete();
       }
     } on Exception catch (e) {
       if (mounted) {
@@ -996,7 +1086,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           );
           debugPrint('[Mobile] ✅ Device registered after $provider auth');
 
-          widget.onAuthComplete();
+          _complete();
         } else {
           // User cancelled or failed
           setState(() => _authLoading = false);
