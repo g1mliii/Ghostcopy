@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Copy on your computer. Paste on your phone.</b><br />
-  A clipboard that follows you between devices &mdash; one keystroke, encrypted end to end,<br />
+  A clipboard that follows you between devices &mdash; one keystroke, encrypted end to end,
   and nothing running while you are not using it.
 </p>
 
