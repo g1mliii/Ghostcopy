@@ -816,11 +816,19 @@ class _AuthPanelState extends State<AuthPanel> {
         _passwordController.clear();
       });
     } on Exception catch (e) {
+      debugPrint('[AuthPanel] Switch account failed: $e');
+      // A toast, not _authError: a failed sign-out leaves the session as it
+      // was, so build() stays on the signed-in branch, which never shows
+      // _authError - the button looked as if it did nothing, which is the
+      // very bug this method was written to fix.
+      widget.notificationService.showToast(
+        message:
+            "Couldn't sign out to switch accounts. Check your "
+            'connection and try again.',
+        type: NotificationType.error,
+      );
       if (!mounted) return;
-      setState(() {
-        _authLoading = false;
-        _authError = e.toString().replaceAll('Exception: ', '');
-      });
+      setState(() => _authLoading = false);
     }
   }
 
