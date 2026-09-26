@@ -191,8 +191,9 @@ to package - but everything below marked "verify" does need one.
       tray, instant again 60s later, and **still instant after 30 minutes
       idle** - comfortably past the 20-30 seconds that used to break it and
       turn a clip into a five-minute wait.
-  - [ ] **Re-test on macOS after a lid close.** Same socket, same failure
-        mode; macOS had simply not been pushed into it.
+  - [x] **Re-tested on macOS after a lid close - 2026-09-26.** Same socket,
+        same failure mode; macOS had simply not been pushed into it. Closing
+        and reopening the lid, notifications still arrive.
   - [ ] If a clip is ever slow again but the *next* one is instant, the death
         was silent (no status to react to) and the evidence-based rejoin
         caught it. The next lever then is opting the process out of Windows
