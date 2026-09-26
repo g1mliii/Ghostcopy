@@ -56,7 +56,16 @@ fi
 alias_dir="$(mktemp -d)"
 trap 'rm -f "$notes"; rm -rf "$alias_dir"' EXIT
 cp "$updates/"*.dmg "$alias_dir/GhostCopy.dmg"
-gh release upload macos-updates "$alias_dir/GhostCopy.dmg" --repo "$repo" --clobber
+# Rename the outgoing copy instead of overwriting it. --clobber deletes the
+# asset, and its download count with it - the only count the website's button
+# ever gets, which .github/workflows/badges.yml adds up for the README.
+old_alias="$(gh api "repos/$repo/releases/tags/macos-updates" \
+    --jq '.assets[] | select(.name == "GhostCopy.dmg") | .id')"
+if [[ -n "$old_alias" ]]; then
+    gh api -X PATCH "repos/$repo/releases/assets/$old_alias" \
+        -f name="GhostCopy-website-until-${tag#macos-v}.dmg" --silent
+fi
+gh release upload macos-updates "$alias_dir/GhostCopy.dmg" --repo "$repo"
 curl --fail --location --silent --show-error \
     https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml \
     -o "$release/published-appcast.xml"
