@@ -68,7 +68,10 @@
 
         // A radio choice on the download page, fixed by a hidden field on a
         // form that is only ever for one platform.
-        var platform = new FormData(form).get('platform') || null;
+        var platform = null;
+        var chosen = form.querySelector(
+            'input[name="platform"]:checked, input[type="hidden"][name="platform"]');
+        if (chosen) platform = chosen.value;
 
         var original = label ? label.textContent : '';
         if (button) button.disabled = true;
