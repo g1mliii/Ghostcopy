@@ -949,7 +949,9 @@ class ClipboardRepository implements IClipboardRepository {
       // cleanup_storage_on_clipboard_delete trigger.
       final deletedPath = item?.storagePath;
       if (deletedPath != null && deletedPath.isNotEmpty) {
-        MediaMemoryCache.instance.remove(deletedPath);
+        MediaMemoryCache.instance
+          ..remove(deletedPath)
+          ..remove(_thumbnailKey(deletedPath));
         unawaited(MediaDiskCache.instance.remove(deletedPath));
         unawaited(ThumbnailDiskCache.instance.remove(deletedPath));
       }
