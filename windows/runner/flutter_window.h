@@ -50,6 +50,10 @@ class FlutterWindow : public Win32Window {
   /// True while a deferred flush is already queued, so a burst of clipboard
   /// updates collapses into one rather than filling the message queue.
   bool flush_posted_ = false;
+
+  /// Retries left for a flush that failed because another process had the
+  /// clipboard open. Reset whenever a fresh flush is posted.
+  int flush_retries_left_ = 0;
   int64_t clipboard_change_count_ = 0;
 
   // Power state monitor for sleep/wake/lock events

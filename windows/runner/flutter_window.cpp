@@ -19,6 +19,13 @@ constexpr wchar_t kStartupTaskId[] = L"GhostCopyStartup";
 // messages, so it cannot collide with anything Windows or Flutter sends.
 constexpr UINT kFlushClipboardMessage = WM_APP + 1;
 
+// WM_TIMER id for retrying a flush that found the clipboard open elsewhere.
+// Another process holding it open is routine - a clipboard manager, or the
+// app being pasted into reading it - and lasts milliseconds.
+constexpr UINT_PTR kFlushRetryTimerId = 1;
+constexpr UINT kFlushRetryDelayMs = 50;
+constexpr int kFlushRetryAttempts = 10;
+
 // Sent to Dart as a string rather than an index so that adding a state later
 // cannot silently renumber the others. Mirrors WindowsStartupState in
 // lib/services/windows_package_service.dart.
@@ -237,7 +244,19 @@ void FlutterWindow::FlushOwnedClipboard() {
   const bool counted = GetClipboardSequenceNumber() == last_clipboard_sequence_;
   // Only meaningful for data this process put there with OLE; harmless
   // otherwise, and the owner check above already narrows it to our own.
-  ::OleFlushClipboard();
+  const HRESULT hr = ::OleFlushClipboard();
+  if (FAILED(hr)) {
+    // Most often CLIPBRD_E_CANT_OPEN: someone else has it open for a moment.
+    // Giving up would leave this process the delayed-render owner, and the
+    // next paste's render would read as a copy - the very thing flushing is
+    // for. So try again shortly; the owner check above ends it if the
+    // clipboard changes hands meanwhile.
+    if (flush_retries_left_ > 0) {
+      --flush_retries_left_;
+      ::SetTimer(GetHandle(), kFlushRetryTimerId, kFlushRetryDelayMs, nullptr);
+    }
+    return;
+  }
   if (counted) last_clipboard_sequence_ = GetClipboardSequenceNumber();
 }
 
@@ -245,6 +264,7 @@ void FlutterWindow::OnDestroy() {
   // Unregister from session change notifications
   WTSUnRegisterSessionNotification(GetHandle());
   RemoveClipboardFormatListener(GetHandle());
+  ::KillTimer(GetHandle(), kFlushRetryTimerId);
 
   // Clean up power monitor
   if (power_monitor_) {
@@ -316,7 +336,18 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
     case kFlushClipboardMessage:
       flush_posted_ = false;
+      // A fresh flush supersedes any retry still pending for the last one.
+      ::KillTimer(hwnd, kFlushRetryTimerId);
+      flush_retries_left_ = kFlushRetryAttempts;
       FlushOwnedClipboard();
+      break;
+
+    case WM_TIMER:
+      if (wparam == kFlushRetryTimerId) {
+        ::KillTimer(hwnd, kFlushRetryTimerId);
+        FlushOwnedClipboard();
+        return 0;
+      }
       break;
   }
 
