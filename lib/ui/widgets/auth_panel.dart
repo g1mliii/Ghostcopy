@@ -801,6 +801,7 @@ class _AuthPanelState extends State<AuthPanel> {
       _authError = null;
       _authLoading = true;
     });
+    final accountBefore = widget.authService.currentUser?.id;
     try {
       await widget.authService.signOut();
       // signOut() lands on a fresh guest account, and the user may close the
@@ -817,10 +818,17 @@ class _AuthPanelState extends State<AuthPanel> {
       });
     } on Exception catch (e) {
       debugPrint('[AuthPanel] Switch account failed: $e');
-      // A toast, not _authError: a failed sign-out leaves the session as it
-      // was, so build() stays on the signed-in branch, which never shows
-      // _authError - the button looked as if it did nothing, which is the
-      // very bug this method was written to fix.
+      // signOut() is two steps - revoke this session, then sign in a fresh
+      // guest - and the second can fail after the first worked. The account
+      // has changed even though the call threw, so the channel filtered on
+      // the one just left must still be rebound.
+      if (widget.authService.currentUser?.id != accountBefore) {
+        widget.clipboardSyncService.reinitializeForUser();
+      }
+      // A toast, not _authError: when the sign-out fails outright the session
+      // is as it was, so build() stays on the signed-in branch, which never
+      // shows _authError - the button looked as if it did nothing, which is
+      // the very bug this method was written to fix.
       widget.notificationService.showToast(
         message:
             "Couldn't sign out to switch accounts. Check your "
