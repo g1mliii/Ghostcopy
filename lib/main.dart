@@ -823,8 +823,13 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WindowListener {
   bool _showingTrayMenu = false;
+
+  /// When the tray menu finished opening. Opening it from the notification
+  /// area's overflow flyout closes that flyout, which can report a blur right
+  /// away; the Spotlight debounces its blur the same way.
+  DateTime? _trayMenuShownAt;
   bool _openSettingsOnShow = false;
   bool _mobileAuthComplete = false;
   bool _servicesDisposed = false;
@@ -838,6 +843,9 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    // Only Windows draws the tray menu as this window; macOS pops a native
+    // NSMenu, which dismisses itself.
+    if (Platform.isWindows) windowManager.addListener(this);
     if (_isDesktop()) {
       // Initialize notification service with navigator key
       locator<INotificationService>().initialize(_navigatorKey);
@@ -1067,8 +1075,26 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
+    if (Platform.isWindows) windowManager.removeListener(this);
     _disposeServices();
     super.dispose();
+  }
+
+  /// Dismiss the tray menu when the user clicks anywhere else.
+  ///
+  /// The menu is topmost, and it replaces the SpotlightScreen - the only
+  /// other thing listening for blur - so without this it stayed on top of
+  /// every other window until something in GhostCopy itself was clicked.
+  @override
+  void onWindowBlur() {
+    if (!_showingTrayMenu) return;
+    final shownAt = _trayMenuShownAt;
+    if (shownAt != null &&
+        DateTime.now().difference(shownAt) <
+            const Duration(milliseconds: 500)) {
+      return;
+    }
+    _hideTrayMenu();
   }
 
   void _disposeServices() {
@@ -1242,6 +1268,7 @@ class _MyAppState extends State<MyApp> {
     // Show with correct size and content
     await windowManager.show();
     await windowManager.focus();
+    _trayMenuShownAt = DateTime.now();
   }
 
   void _hideTrayMenu() {
@@ -1639,14 +1666,22 @@ Future<int> _sendFileFromCommandLine(
     // else could happen, for a message that is purely informational.
     // showSystemNotification goes straight to the notification, no window
     // needed.
-    final notifications = NotificationService();
-    await notifications.showSystemNotification(
-      message: message,
-      type: result.ok ? NotificationType.success : NotificationType.error,
-    );
-    // The toast is handed to Windows asynchronously; exiting the instant the
-    // call returns can kill the process before it is shown.
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    //
+    // Guarded: the send has already happened, and this process has no window
+    // and no tray. A notification plugin that throws must not stop it from
+    // reaching exit(), or it stays resident and invisible.
+    try {
+      final notifications = NotificationService();
+      await notifications.showSystemNotification(
+        message: message,
+        type: result.ok ? NotificationType.success : NotificationType.error,
+      );
+      // The toast is handed to Windows asynchronously; exiting the instant
+      // the call returns can kill the process before it is shown.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    } on Object catch (e) {
+      debugPrint('[SendFile] Could not show the result notification: $e');
+    }
   }
   return exitCode;
 }
