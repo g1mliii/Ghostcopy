@@ -1,4 +1,4 @@
-// Beta waitlist signup.
+// Email signups: TestFlight invites and "tell me when it ships".
 //
 // Posts straight to PostgREST rather than through an edge function: the table
 // has an insert-only policy and no select policy, so the anon key can add a row
@@ -36,6 +36,11 @@
         if (idle) idle.hidden = Boolean(message);
     }
 
+    function successMessage(form) {
+        return form.getAttribute('data-success') ||
+            'You are on the list. We will email you when it ships.';
+    }
+
     function submit(form) {
         var input = form.querySelector('input[name="email"]');
         var button = form.querySelector('button[type="submit"]');
@@ -48,7 +53,7 @@
         var trap = form.querySelector('input[name="company"]');
         if ((trap && trap.value) || Date.now() - loadedAt < MIN_DWELL_MS) {
             form.reset();
-            setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
+            setStatus(form, successMessage(form), 'success');
             if (button) button.hidden = true;
             return;
         }
@@ -59,9 +64,12 @@
             return;
         }
 
+        // A radio choice on the download page, fixed by a hidden field on a
+        // form that is only ever for one platform.
         var platform = null;
-        var checked = form.querySelector('input[name="platform"]:checked');
-        if (checked) platform = checked.value;
+        var chosen = form.querySelector(
+            'input[name="platform"]:checked, input[type="hidden"][name="platform"]');
+        if (chosen) platform = chosen.value;
 
         var original = label ? label.textContent : '';
         if (button) button.disabled = true;
@@ -98,7 +106,7 @@
             // race past the trigger's existence check.
             if (res.ok || res.status === 409) {
                 form.reset();
-                setStatus(form, 'You are on the list. We will email you when builds are ready.', 'success');
+                setStatus(form, successMessage(form), 'success');
                 if (button) button.hidden = true;
                 return;
             }
