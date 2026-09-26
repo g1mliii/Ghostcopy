@@ -85,11 +85,9 @@ class ClipboardRepository implements IClipboardRepository {
   /// request, R2 fetch and AES decrypt for identical bytes. Observed in the
   /// logs as the same object downloaded and "Decrypted to N bytes" twice,
   /// milliseconds apart, which is most of the first-load latency on mobile.
-  final Map<String, Future<Uint8List?>> _inFlightDownloads =
-      <String, Future<Uint8List?>>{};
-
-  /// Same idea as _inFlightDownloads, for thumbnail builds.
-  final Map<String, Future<Uint8List?>> _inFlightThumbnails =
+  ///
+  /// Thumbnail builds share it under their own `thumb:` keys.
+  final Map<String, Future<Uint8List?>> _inFlight =
       <String, Future<Uint8List?>>{};
 
   /// Bumped by [reset]. A thumbnail build that began before a sign-out must
@@ -489,26 +487,38 @@ class ClipboardRepository implements IClipboardRepository {
       return cached;
     }
 
-    // Join an identical request already running rather than starting a second.
-    final inFlight = _inFlightDownloads[storagePath];
+    // The disk lookup lives inside _resolveBytes so that it, too, is covered
+    // by the in-flight join - otherwise two tiles rebuilding at once would
+    // both read and decrypt the same file.
+    return _joinInFlight(storagePath, () => _resolveBytes(item, storagePath));
+  }
+
+  /// Join an identical request already running rather than starting a second.
+  ///
+  /// [onSettled] runs once, for the request that started the work, in the
+  /// same step that stops [key] counting as in flight.
+  Future<Uint8List?> _joinInFlight(
+    String key,
+    Future<Uint8List?> Function() start, {
+    void Function()? onSettled,
+  }) async {
+    final inFlight = _inFlight[key];
     if (inFlight != null) {
-      debugPrint('[Repository] ⏳ Joining in-flight download: $storagePath');
+      debugPrint('[Repository] ⏳ Joining in-flight request: $key');
       return inFlight;
     }
 
     // Registered before any await so a concurrent caller sees it immediately.
-    // The disk lookup lives inside _resolveBytes so that it, too, is covered
-    // by the in-flight join - otherwise two tiles rebuilding at once would
-    // both read and decrypt the same file.
-    final future = _resolveBytes(item, storagePath);
-    _inFlightDownloads[storagePath] = future;
+    final future = start();
+    _inFlight[key] = future;
     try {
       return await future;
     } finally {
       // remove() hands back the Future we just awaited; discarding it here is
       // the point of the cleanup.
       // ignore: unawaited_futures
-      _inFlightDownloads.remove(storagePath);
+      _inFlight.remove(key);
+      onSettled?.call();
     }
   }
 
@@ -523,18 +533,11 @@ class ClipboardRepository implements IClipboardRepository {
 
     // Joined like downloadFile does, so a list of tiles rebuilding at once
     // cannot all decode the same picture.
-    final inFlight = _inFlightThumbnails[memoryKey];
-    if (inFlight != null) return inFlight;
-
-    final future = _resolveThumbnail(item, storagePath, memoryKey);
-    _inFlightThumbnails[memoryKey] = future;
-    try {
-      return await future;
-    } finally {
-      // ignore: unawaited_futures
-      _inFlightThumbnails.remove(memoryKey);
-      _deletedWhileBuilding.remove(storagePath);
-    }
+    return _joinInFlight(
+      memoryKey,
+      () => _resolveThumbnail(item, storagePath, memoryKey),
+      onSettled: () => _deletedWhileBuilding.remove(storagePath),
+    );
   }
 
   Future<Uint8List?> _resolveThumbnail(
@@ -967,7 +970,7 @@ class ClipboardRepository implements IClipboardRepository {
       // cleanup_storage_on_clipboard_delete trigger.
       final deletedPath = item?.storagePath;
       if (deletedPath != null && deletedPath.isNotEmpty) {
-        if (_inFlightThumbnails.containsKey(_thumbnailKey(deletedPath))) {
+        if (_inFlight.containsKey(_thumbnailKey(deletedPath))) {
           _deletedWhileBuilding.add(deletedPath);
         }
         MediaMemoryCache.instance

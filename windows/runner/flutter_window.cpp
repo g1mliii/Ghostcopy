@@ -20,8 +20,8 @@ constexpr wchar_t kStartupTaskId[] = L"GhostCopyStartup";
 constexpr UINT kFlushClipboardMessage = WM_APP + 1;
 
 // Sent to Dart as a string rather than an index so that adding a state later
-// cannot silently renumber the others. Mirrors StartupState in
-// lib/services/impl/windows_package_service.dart.
+// cannot silently renumber the others. Mirrors WindowsStartupState in
+// lib/services/windows_package_service.dart.
 const char* StartupStateName(ghostcopy::StartupState state) {
   switch (state) {
     case ghostcopy::StartupState::kDisabled:

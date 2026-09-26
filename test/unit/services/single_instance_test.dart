@@ -36,9 +36,10 @@ void main() {
       // A free port, so this does not race a running copy of the app for the
       // real one.
       final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final realPort = SingleInstance.port;
       SingleInstance.port = probe.port;
       await probe.close();
-      addTearDown(() => SingleInstance.port = 47821);
+      addTearDown(() => SingleInstance.port = realPort);
 
       final instance = SingleInstance.instance;
       final acquired = await instance.acquire(const <String>[]);

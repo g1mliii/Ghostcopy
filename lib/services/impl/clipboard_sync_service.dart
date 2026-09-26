@@ -329,8 +329,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       if (_isDisposed) return;
       // The account can have changed while this was pending.
       if (_supabaseClient.auth.currentUser?.id != userId) return;
-      _dropRealtimeChannel();
-      _subscribeToRealtimeUpdates();
+      _rejoinRealtime();
     });
   }
 
@@ -382,14 +381,17 @@ class ClipboardSyncService implements IClipboardSyncService {
     _lastRejoinAttempt = now;
 
     debugPrint('[ClipboardSyncService] Realtime not joined - rejoining now');
-    _realtimeRetryTimer?.cancel();
-    _realtimeRetryTimer = null;
     _realtimeRetries = 0;
+    _rejoinRealtime();
+  }
+
+  /// Drop the current channel, if any, and subscribe afresh.
+  void _rejoinRealtime() {
     try {
       _dropRealtimeChannel();
       _subscribeToRealtimeUpdates();
     } on Object catch (e) {
-      // This is called from the polling timer, and polling is the fallback
+      // This is reached from the polling timer, and polling is the fallback
       // that delivers while realtime is down. A failed rejoin must never be
       // able to take that down with it.
       debugPrint('[ClipboardSyncService] Rejoin attempt failed: $e');

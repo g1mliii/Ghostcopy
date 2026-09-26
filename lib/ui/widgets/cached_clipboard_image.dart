@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -421,7 +422,6 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     }
   }
 
-  /// Load image from storage (fallback method)
   /// Whether this instance is drawing a preview rather than the image.
   ///
   /// Keyed off the box it was given, in physical pixels, against the size the
@@ -433,10 +433,11 @@ class _CachedClipboardImageState extends State<CachedClipboardImage> {
     final h = _decodePx(context, widget.height);
     // An unconstrained dimension means "natural size", which is not a preview.
     if (w == null && h == null) return false;
-    final longest = [w ?? 0, h ?? 0].reduce((a, b) => a > b ? a : b);
-    return longest > 0 && longest <= ThumbnailDiskCache.servesUpTo;
+    final longest = math.max(w ?? 0, h ?? 0);
+    return longest > 0 && longest <= ThumbnailDiskCache.maxEdge;
   }
 
+  /// Load image from storage (fallback method)
   Future<void> _loadFallbackImage() async {
     if (_isLoadingFallback || _fallbackImageBytes != null || _fallbackFailed) {
       return;

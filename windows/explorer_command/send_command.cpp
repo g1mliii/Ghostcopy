@@ -108,7 +108,7 @@ IFACEMETHODIMP_(ULONG) SendCommand::Release() {
 
 IFACEMETHODIMP SendCommand::GetTitle(IShellItemArray*, LPWSTR* name) {
   // The same wording as the unpackaged HKCU verb, so the entry does not
-  // change when a user moves from the installer build to the Store one.
+  // change between an unpackaged build and the Store one.
   return ::SHStrDupW(L"Send with GhostCopy", name);
 }
 

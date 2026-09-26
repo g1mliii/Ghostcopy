@@ -68,10 +68,7 @@ class WindowsPackageService implements IWindowsPackageService {
     }
   }
 
-  static WindowsStartupState _parse(String? name) {
-    for (final state in WindowsStartupState.values) {
-      if (state.name == name) return state;
-    }
-    return WindowsStartupState.unavailable;
-  }
+  static WindowsStartupState _parse(String? name) =>
+      WindowsStartupState.values.asNameMap()[name] ??
+      WindowsStartupState.unavailable;
 }

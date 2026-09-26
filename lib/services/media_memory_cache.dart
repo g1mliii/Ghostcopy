@@ -62,12 +62,7 @@ class MediaMemoryCache {
     _entries[storagePath] = bytes;
     _currentBytes += bytes.length;
 
-    while (_currentBytes > maxBytes && _entries.isNotEmpty) {
-      final oldestKey = _entries.keys.first;
-      final evicted = _entries.remove(oldestKey);
-      _currentBytes -= evicted?.length ?? 0;
-      debugPrint('[MediaCache] Evicted $oldestKey to stay under cap');
-    }
+    trimTo(maxBytes);
   }
 
   /// Drop one entry, e.g. when its clip is deleted.

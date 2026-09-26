@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as path;
 import 'package:sentry_flutter/sentry_flutter.dart';
 
 import '../crash_reporting_service.dart';
@@ -113,17 +114,15 @@ void configureCrashReporting(SentryFlutterOptions options) {
 String? _nativeDatabasePath() {
   if (!Platform.isWindows && !Platform.isLinux) return null;
 
+  final home = Platform.environment['HOME'];
   final root = Platform.isWindows
       ? Platform.environment['LOCALAPPDATA']
       : Platform.environment['XDG_CACHE_HOME'] ??
-            _join(Platform.environment['HOME'], '.cache');
+            (home == null ? null : path.join(home, '.cache'));
   if (root == null || root.isEmpty) return null;
 
-  return _join(root, 'GhostCopy${Platform.pathSeparator}sentry-native');
+  return path.join(root, 'GhostCopy', 'sentry-native');
 }
-
-String? _join(String? base, String tail) =>
-    base == null ? null : '$base${Platform.pathSeparator}$tail';
 
 // Anything quoted is treated as content: exception messages quote the value
 // they choked on - a path, a JSON fragment, a filename - and for this app

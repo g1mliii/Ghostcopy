@@ -261,7 +261,7 @@ void main() {
       _noThumbnail(repository);
       when(() => repository.downloadFile(any())).thenAnswer((_) async => null);
 
-      // Comfortably past ThumbnailDiskCache.servesUpTo even at 1x, so this is
+      // Comfortably past ThumbnailDiskCache.maxEdge even at 1x, so this is
       // the preview case rather than a tile.
       await pumpAt(tester, repository, 1200);
 

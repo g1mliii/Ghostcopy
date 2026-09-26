@@ -339,13 +339,10 @@ Future<void> _appMain(
 
   // Answers whether this process is running from inside an MSIX package, which
   // decides how the app registers itself with Windows: directly in HKCU when
-  // it was installed by an installer, or not at all when the package manifest
-  // has already declared the same things. Constructed before the parallel
-  // group below because two members of it ask.
+  // it runs unpackaged, or not at all when the package manifest has already
+  // declared the same things. Constructed before the parallel group below
+  // because two members of it ask.
   final windowsPackage = WindowsPackageService();
-  if (Platform.isWindows) {
-    locator.registerSingleton<IWindowsPackageService>(windowsPackage);
-  }
 
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
@@ -556,14 +553,7 @@ Future<void> _appMain(
     // stream has no replay, so a callback forwarded in that window would be
     // dropped. listen() flushes that backlog.
     SingleInstance.instance.listen((forwarded) {
-      // Guarded: _handleDeepLinkArgs throwing synchronously used to take the
-      // show below with it, so a second launch handed its arguments over and
-      // then did nothing visible.
-      try {
-        unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
-      } on Object catch (e) {
-        debugPrint('[Main] Deep link handling failed: $e');
-      }
+      unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
       // Whether to surface the window, by what the launch was for. The rule
       // used to be "show unless it is a ghostcopy:// URL", which had both
       // interesting cases backwards.
@@ -1744,13 +1734,18 @@ Future<void> startAuthAndDevice(
   IDeviceService deviceService,
   ICrashReportingService crashReporting,
 ) async {
+  // Reports below are not awaited: on Windows they go out over HTTP, and this
+  // runs before the tray and hotkey exist, so an offline launch - the case
+  // these guards are for - would otherwise stall on them.
   try {
     await Future.wait([authService.initialize(), deviceService.initialize()]);
   } on Object catch (error, stackTrace) {
-    await crashReporting.reportHandled(
-      error,
-      stackTrace,
-      context: 'auth_and_device_init',
+    unawaited(
+      crashReporting.reportHandled(
+        error,
+        stackTrace,
+        context: 'auth_and_device_init',
+      ),
     );
   }
 
@@ -1767,10 +1762,12 @@ Future<void> startAuthAndDevice(
   try {
     await deviceService.registerCurrentDevice();
   } on Object catch (error, stackTrace) {
-    await crashReporting.reportHandled(
-      error,
-      stackTrace,
-      context: 'register_current_device',
+    unawaited(
+      crashReporting.reportHandled(
+        error,
+        stackTrace,
+        context: 'register_current_device',
+      ),
     );
   }
 }

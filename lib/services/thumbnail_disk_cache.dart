@@ -51,11 +51,6 @@ class ThumbnailDiskCache {
   /// upscaled thumbnail.
   static const int maxEdge = 512;
 
-  /// Above this a caller wants real detail, not a preview, and should go to
-  /// the full image. Below it the thumbnail is at least as detailed as the
-  /// box it is drawn into.
-  static const int servesUpTo = maxEdge;
-
   /// Thumbnails are small; this is thousands of them. The cap exists so a
   /// long-lived install cannot grow without bound, not because it is expected
   /// to be reached.

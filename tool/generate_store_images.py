@@ -22,13 +22,12 @@ import os
 
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Pillow-only at import time: generate_brand_assets loads Cairo inside
+# render(), so taking its constants from there does not need Cairo here.
+from generate_brand_assets import BACKGROUND, ROOT
+
 ICON = os.path.join(ROOT, "assets", "icons", "app_icon.png")
 OUT = os.path.join(ROOT, "docs", "microsoft-store-images")
-
-# GhostColors.background from lib/ui/theme/colors.dart. The icon is a purple
-# tile, so it needs a surround that is not also purple.
-BACKGROUND = (0x0F, 0x0F, 0x13, 255)
 
 # Share of the shorter edge the icon occupies. Comfortably inside Partner
 # Center's safe areas, and leaves the mark room to read at tile size.
@@ -36,11 +35,13 @@ ICON_SHARE = 0.62
 
 
 def canvas(width: int, height: int) -> Image.Image:
-    """The icon centred on the brand background."""
-    base = Image.new("RGBA", (width, height), BACKGROUND)
+    """The icon centred on the brand background.
+
+    The icon is a purple tile, so it needs a surround that is not also purple.
+    """
+    base = Image.new("RGBA", (width, height), BACKGROUND + (255,))
     edge = int(min(width, height) * ICON_SHARE)
-    icon = Image.open(ICON).convert("RGBA").resize((edge, edge), Image.LANCZOS)
-    base.alpha_composite(icon, ((width - edge) // 2, (height - edge) // 2))
+    base.alpha_composite(plain(edge), ((width - edge) // 2, (height - edge) // 2))
     return base
 
 
