@@ -66,6 +66,35 @@ class AuthService implements IAuthService {
   final PkceVerifierStore? _pkceStore;
   bool _initialized = false;
 
+  /// Interactive sign-ins in progress, and the anonymous sign-in, if one is.
+  ///
+  /// The app retries the anonymous sign-in in the background after a launch
+  /// that could not complete it (recoverSession in main.dart). That runs on
+  /// the same Supabase client as the auth panel, and both install whatever
+  /// session they get back - so an anonymous response landing after an email
+  /// sign-in silently replaced the account the user had just signed into.
+  /// An interactive sign-in therefore waits out one already in flight, and
+  /// initialize() does not start one while an interactive sign-in runs.
+  int _interactiveSignIns = 0;
+  Future<void>? _anonymousSignIn;
+
+  Future<T> _interactive<T>(Future<T> Function() signIn) async {
+    _interactiveSignIns++;
+    try {
+      final pending = _anonymousSignIn;
+      if (pending != null) {
+        try {
+          await pending;
+        } on Object catch (_) {
+          // Its failure is initialize()'s to report, not this sign-in's.
+        }
+      }
+      return await signIn();
+    } finally {
+      _interactiveSignIns--;
+    }
+  }
+
   // Lazy GoogleSignIn instance for native mobile auth (reused to prevent memory leaks)
   GoogleSignIn? _googleSignIn;
 
@@ -84,9 +113,24 @@ class AuthService implements IAuthService {
 
     // Sign in anonymously if no user exists
     if (_client.auth.currentUser == null) {
+      if (_interactiveSignIns > 0) {
+        // The user is signing in right now; a guest session could only race
+        // it. Left uninitialized, so a later call does this properly.
+        debugPrint(
+          '[AuthService] Sign-in in progress - not signing in as guest',
+        );
+        return;
+      }
       debugPrint('[AuthService] No current user, signing in anonymously...');
       try {
-        final response = await _client.auth.signInAnonymously();
+        final attempt = _client.auth.signInAnonymously();
+        _anonymousSignIn = attempt;
+        final AuthResponse response;
+        try {
+          response = await attempt;
+        } finally {
+          if (identical(_anonymousSignIn, attempt)) _anonymousSignIn = null;
+        }
         // Checked, not assumed. A response that carries no session is not an
         // AuthException and does not throw, so without this `initialize`
         // returned as if it had signed in and left `currentUser` null - which
@@ -141,10 +185,12 @@ class AuthService implements IAuthService {
     String? captchaToken,
   }) async {
     try {
-      final response = await _client.auth.signUp(
-        email: email,
-        password: password,
-        captchaToken: captchaToken,
+      final response = await _interactive(
+        () => _client.auth.signUp(
+          email: email,
+          password: password,
+          captchaToken: captchaToken,
+        ),
       );
       debugPrint('[AuthService] Sign up successful');
       return response;
@@ -263,6 +309,12 @@ class AuthService implements IAuthService {
   /// Listens before the browser opens, so a quick callback is not missed, and
   /// stops waiting at once if the browser never opened.
   Future<bool> _viaBrowser({
+    required Future<bool> Function() launch,
+    required bool Function(Session session) isDone,
+  }) =>
+      _interactive(() => _viaBrowserUnguarded(launch: launch, isDone: isDone));
+
+  Future<bool> _viaBrowserUnguarded({
     required Future<bool> Function() launch,
     required bool Function(Session session) isDone,
   }) async {
@@ -916,7 +968,12 @@ class AuthService implements IAuthService {
     await _switchAccount(() => _client.auth.setSession(refreshToken));
   }
 
-  Future<T> _switchAccount<T>(Future<T> Function() authenticate) async {
+  Future<T> _switchAccount<T>(Future<T> Function() authenticate) =>
+      _interactive(() => _switchAccountUnguarded(authenticate));
+
+  Future<T> _switchAccountUnguarded<T>(
+    Future<T> Function() authenticate,
+  ) async {
     final previous = _client.auth.currentSession;
     final deviceId = _deviceService?.getCurrentDeviceId();
     final T result;
