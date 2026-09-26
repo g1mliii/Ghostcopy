@@ -41,9 +41,12 @@ test result can revert a single change rather than the lot.
 - [ ] **Re-test Apple sign-in.** The Supabase Client IDs ordering that broke
       it on Windows broke macOS identically. The fix was server-side, so no
       rebuild is needed, but it has never been verified there.
-- [ ] **Re-release as 1.0.0 (11)**, carrying the shared fixes above. Built
-      from `release/1.0.0-11`; smoke test, Apple sign-in and the email link
-      are checked on the candidate before it is published.
+- [x] **Released 1.0.0 (11) - 2026-09-26**, carrying the shared fixes above.
+      Notarized, smoke test passed, feed verified. The website's download
+      button now points at a fixed `GhostCopy.dmg` that publish-update.sh
+      replaces each release, so `_redirects` no longer needs a bump.
+- [ ] **On 1.0.0 (11):** encrypted history still decrypts with the existing
+      passphrase, tray menu, Option+Space, a clip each way
 - [x] **Regenerate the icons - done 2026-09-26 (dfc6987).** The one-pixel
       offset fix, regenerated with Cairo on Linux: only the 22 outputs whose
       pixels changed were committed, and the pre-fix generator reproduces

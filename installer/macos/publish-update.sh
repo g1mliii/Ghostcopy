@@ -49,6 +49,14 @@ else
         --notes 'Signed Sparkle update feed. Installers are in the versioned macOS releases.' \
         --prerelease --latest=false
 fi
+# The website's download button. GitHub has no stable URL for the newest
+# versioned asset, so the same DMG also goes on the fixed feed tag under a
+# fixed name, and website/_redirects never has to change. Uploaded after the
+# versioned release, alongside the feed, so the two cannot disagree for long.
+alias_dir="$(mktemp -d)"
+trap 'rm -f "$notes"; rm -rf "$alias_dir"' EXIT
+cp "$updates/"*.dmg "$alias_dir/GhostCopy.dmg"
+gh release upload macos-updates "$alias_dir/GhostCopy.dmg" --repo "$repo" --clobber
 curl --fail --location --silent --show-error \
     https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/appcast.xml \
     -o "$release/published-appcast.xml"
