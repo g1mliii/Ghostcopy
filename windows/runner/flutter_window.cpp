@@ -226,9 +226,19 @@ void FlutterWindow::FlushOwnedClipboard() {
   DWORD owner_process = 0;
   GetWindowThreadProcessId(owner, &owner_process);
   if (owner_process != GetCurrentProcessId()) return;
+  // The flush itself moves the sequence number, and that is not a copy. When
+  // the counter has already seen everything up to now - the usual case, since
+  // the WM_CLIPBOARDUPDATE that posted this counted the write - absorb the
+  // flush's own bump, or the WM_CLIPBOARDUPDATE it raises would count it: a
+  // GhostCopy write would then read as the user copying a moment later, and
+  // smart auto-receive would only offer the next clip instead of taking it.
+  // If something is still uncounted, leave it: the next WM_CLIPBOARDUPDATE
+  // counts it and the flush together, once.
+  const bool counted = GetClipboardSequenceNumber() == last_clipboard_sequence_;
   // Only meaningful for data this process put there with OLE; harmless
   // otherwise, and the owner check above already narrows it to our own.
   ::OleFlushClipboard();
+  if (counted) last_clipboard_sequence_ = GetClipboardSequenceNumber();
 }
 
 void FlutterWindow::OnDestroy() {
