@@ -238,11 +238,12 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     if (autoStart == null) return;
 
     final lock = await autoStart.lock();
-    // While something else holds it, show what Windows will actually do -
-    // the saved preference is only what was last asked for.
-    final enabled = lock == AutoStartLock.none
-        ? await widget.settingsService.getAutoStartEnabled()
-        : await autoStart.isEnabled();
+    // Always what the system will actually do. The saved preference is only
+    // what was last asked for, and a request can fail without anything
+    // holding the setting - an unavailable task, a login item that did not
+    // register - which showed a switch that was on for an app that did not
+    // start.
+    final enabled = await autoStart.isEnabled();
     if (!mounted) return;
     _autoStartLock = lock;
     _autoStartEnabled = enabled;
@@ -803,11 +804,11 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                         enabled: value,
                       );
                       // An enable can come back refused - the entry was turned
-                      // off in Task Manager - and the switch must say so.
+                      // off in Task Manager, or the request simply failed - and
+                      // the switch must say so. A failed request stays saved,
+                      // so the next launch's sync asks again.
                       final lock = await autoStart.lock();
-                      final actual = lock == AutoStartLock.none
-                          ? value
-                          : await autoStart.isEnabled();
+                      final actual = await autoStart.isEnabled();
                       if (mounted) {
                         setState(() {
                           _autoStartLock = lock;
