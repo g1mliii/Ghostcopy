@@ -409,6 +409,41 @@ should start as early as a build allows.
       device. Supabase and Apple Developer need nothing more - it uses the
       same Services ID as Windows
 
+## Next update: a pin for the Spotlight
+
+Decided 2026-09-26, deliberately **after** the Store submission - it is new
+behaviour and wants its own testing pass rather than riding in on a package
+that has already been validated. Store updates are free and automatic.
+
+Auto-hide on blur is right for a Spotlight-style tool and matches Spotlight,
+Alfred, Raycast and PowerToys Run. But it fights three workflows a clipboard
+app actually has: copying something in another app and coming back to send
+it, dragging a file in from Explorer or Finder, and keeping history visible
+while working. All three need the window to survive losing focus.
+
+Chosen shape: **a pin toggle in the window's own header**, not a setting. It
+is discoverable at the moment it is wanted - the user is looking at the
+window when the auto-hide annoys them - and it leaves the default behaviour
+alone, so the ephemeral character survives. A Settings switch fails exactly
+the person it is meant to help, who would have to go looking for it.
+
+- [ ] Pin toggle in the Spotlight header, on Windows and macOS
+  - [ ] Pinned means `onWindowBlur` returns early - and that has to skip the
+        whole tray-optimization block, not just `hideSpotlight`. That block
+        clears the image cache, trims media and schedules the working-set
+        trim, none of which is right for a window that is still on screen
+  - [ ] Decide whether the pin persists across launches. Leaning yes, through
+        SettingsService - someone who pins it probably wants it pinned
+        tomorrow - but keep the *control* in the window rather than adding a
+        Settings row, or it becomes the setting this was chosen over
+  - [ ] The header is on a 400px panel; check the icon does not crowd the
+        close button
+- [ ] **Separately, and worth doing whether or not the pin lands: blur
+      discards the composer.** `onWindowBlur` clears the text controller and
+      the clipboard payload when there is an attachment, so clicking away
+      mid-compose loses what was typed or attached. That is a sharper problem
+      than the window closing, and it is a bug rather than a preference.
+
 ## Later: clipboard export and import
 
 Signing into an existing account from a guest session leaves the guest's clips
