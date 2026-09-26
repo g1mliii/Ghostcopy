@@ -389,6 +389,45 @@ void main() {
       verifyNever(() => channel.subscribe(any()));
     });
 
+    // A second missed clip inside the 30 s rejoin cooldown was refused, and
+    // with the channel already marked unjoined no later poll asked again -
+    // realtime stayed down until some unrelated wake or unlock.
+    testWidgets('a rejoin refused by the cooldown runs once it expires', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getHistory(limit: 10)).thenAnswer((_) async => []);
+      for (final id in ['2', '3']) {
+        when(() => repository.getById(id)).thenAnswer((_) async => clip(id));
+      }
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      service.startPolling(interval: const Duration(seconds: 1));
+
+      // The poll delivers what realtime should have: rejoin now.
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      clearInteractions(channel);
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      // And again a second later, inside the cooldown: deferred, not dropped.
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      clearInteractions(channel);
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verifyNever(() => channel.subscribe(any()));
+
+      await tester.pump(const Duration(seconds: 30));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+      service.stopPolling();
+    });
+
     // A wake or unlock the lifecycle already counted as awake still calls
     // ensureRealtimeConnected. With realtime paused for polling that opened a
     // channel behind the lifecycle's back.

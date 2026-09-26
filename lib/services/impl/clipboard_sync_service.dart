@@ -388,7 +388,19 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     final last = _lastRejoinAttempt;
     final now = clock.now();
-    if (last != null && now.difference(last) < _rejoinCooldown) return;
+    if (last != null && now.difference(last) < _rejoinCooldown) {
+      // Deferred, not dropped. The missed-clip path has already marked the
+      // channel unjoined, and polls only ask for a rejoin while it counts as
+      // joined - so a request refused here was never repeated, and realtime
+      // stayed down until an unrelated wake or unlock. Through the retry
+      // timer, so pauseRealtime and a successful join cancel it as they do
+      // any other pending rejoin.
+      _realtimeRetryTimer = Timer(_rejoinCooldown - now.difference(last), () {
+        _realtimeRetryTimer = null;
+        ensureRealtimeConnected();
+      });
+      return;
+    }
     _lastRejoinAttempt = now;
 
     debugPrint('[ClipboardSyncService] Realtime not joined - rejoining now');
