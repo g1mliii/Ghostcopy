@@ -893,7 +893,17 @@ class _MyAppState extends State<MyApp> {
           });
 
       // Set up tray right-click to show custom menu
-      (locator<ITrayService>() as TrayService).onRightClick = _showTrayMenu;
+      (locator<ITrayService>() as TrayService)
+        ..onRightClick = _showTrayMenu
+        // Left-click toggles rather than always showing: clicking the icon of
+        // an app that is already open, and having it jump and re-centre, is
+        // worse than having it close.
+        ..onLeftClick = () {
+          final window = locator<IWindowService>();
+          unawaited(
+            window.isVisible ? window.hideSpotlight() : window.showSpotlight(),
+          );
+        };
 
       // macOS uses a real NSMenu, which has to be rebuilt whenever Game Mode
       // changes so its checkmark matches the current state. On Windows this
