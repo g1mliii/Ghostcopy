@@ -188,7 +188,7 @@ void main() {
 
   test('cancelled native Google login makes no destructive requests', () async {
     final google = _GoogleSignIn();
-    when(google.signInSilently).thenAnswer((_) async => null);
+    when(google.signOut).thenAnswer((_) async => null);
     when(google.signIn).thenAnswer((_) async => null);
     when(google.disconnect).thenAnswer((_) async => null);
     service = AuthService(
@@ -205,6 +205,7 @@ void main() {
     () async {
       final google = _GoogleSignIn();
       final account = _GoogleAccount();
+      when(google.signOut).thenAnswer((_) async => null);
       when(google.signIn).thenAnswer((_) async => account);
       when(google.disconnect).thenAnswer((_) async => null);
       final credentials = _GoogleAuthentication();
@@ -226,4 +227,23 @@ void main() {
       expect(client.auth.currentUser?.id, 'old-user');
     },
   );
+
+  test('native Google sign-in always asks which account', () async {
+    // signInSilently() handed back the last Google account with no chooser, so
+    // signing back in after a sign-out skipped the choice entirely.
+    final google = _GoogleSignIn();
+    when(google.signOut).thenAnswer((_) async => null);
+    when(google.signIn).thenAnswer((_) async => null);
+    when(google.disconnect).thenAnswer((_) async => null);
+    service = AuthService(
+      client: client,
+      deviceService: devices,
+      googleSignIn: google,
+    );
+
+    await service.signInWithGoogle();
+
+    verifyNever(google.signInSilently);
+    verifyInOrder([google.signOut, google.signIn]);
+  });
 }

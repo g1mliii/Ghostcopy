@@ -121,7 +121,7 @@ void main() {
     final google = _GoogleSignIn();
     final account = _GoogleAccount();
     final credentials = _GoogleAuthentication();
-    when(google.signInSilently).thenAnswer((_) async => null);
+    when(google.signOut).thenAnswer((_) async => null);
     when(google.signIn).thenAnswer((_) async => account);
     when(google.disconnect).thenAnswer((_) async => null);
     when(() => account.authentication).thenAnswer((_) async => credentials);
