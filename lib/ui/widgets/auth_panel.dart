@@ -511,6 +511,14 @@ class _AuthPanelState extends State<AuthPanel> {
           _clipboardRepository.reset();
           widget.clipboardSyncService.reinitializeForUser();
         }
+      } else if (widget.authService.currentUser == null) {
+        // No guest to upgrade: startup's anonymous sign-in failed and recovery
+        // has not retried yet. Upgrading needs a session, so create the
+        // account outright - there are no guest clips to keep.
+        await widget.authService.signUpWithEmail(
+          _emailController.text,
+          _passwordController.text,
+        );
       } else {
         // Upgrade anonymous to permanent account
         await widget.authService.upgradeWithEmail(
@@ -653,8 +661,12 @@ class _AuthPanelState extends State<AuthPanel> {
           widget.clipboardSyncService.reinitializeForUser();
         }
       } else {
-        // Sign Up mode: upgrade the anonymous user, keeping user_id and clips
-        success = await _awaitProvider(link());
+        // Sign Up mode: upgrade the anonymous user, keeping user_id and clips.
+        // Linking needs a session; with none (guest recovery still pending)
+        // there is nothing to keep, so sign in with the provider instead.
+        success = await _awaitProvider(
+          widget.authService.currentUser == null ? signIn() : link(),
+        );
       }
 
       if (mounted) {
