@@ -30,8 +30,9 @@ import 'package:path_provider/path_provider.dart';
 ///
 /// ## Stored in the clear
 ///
-/// Even for an encrypted clip. Decided deliberately: these never leave the
-/// device and are never uploaded, and encrypting them would put back the
+/// Even for an encrypted clip. Decided deliberately: these are never uploaded,
+/// and they live in the OS cache directory rather than application support,
+/// so they are not swept into a device backup or a roaming Windows profile, and encrypting them would put back the
 /// isolate spawn and AES pass this exists to remove. The consequence is that
 /// a low-resolution copy of an encrypted clip does sit in the profile
 /// directory, so [clear] must be called on sign-out exactly as MediaDiskCache
@@ -64,6 +65,20 @@ class ThumbnailDiskCache {
   Future<Directory?>? _initializing;
   bool _disabled = false;
 
+  /// Writes and removals run one at a time, in the order they were asked for.
+  ///
+  /// Otherwise a thumbnail write that began just before a delete or a
+  /// sign-out could land after the removal meant to follow it, leaving a
+  /// plaintext preview of a clip - or an account - that is gone.
+  Future<void> _tail = Future<void>.value();
+
+  Future<void> _serial(Future<void> Function() op) {
+    final next = _tail.then((_) => op());
+    // A failed op must not wedge every one queued behind it.
+    _tail = next.catchError((Object _) {});
+    return next;
+  }
+
   Future<Directory?> _directory() {
     if (_disabled) return Future<Directory?>.value();
     // Re-checked rather than trusted, for the same reason MediaDiskCache does:
@@ -76,12 +91,16 @@ class ThumbnailDiskCache {
 
   Future<Directory?> _createDirectory() async {
     try {
-      final base = await getApplicationSupportDirectory();
+      // The cache directory, not application support: that one is included
+      // in iOS and Android backups and roams with a Windows profile, and
+      // these are plaintext previews that must stay on this device.
+      final base = await getApplicationCacheDirectory();
       final dir = Directory(
         '${base.path}${Platform.pathSeparator}thumbnail_cache',
       );
       if (!dir.existsSync()) await dir.create(recursive: true);
       _dir = dir;
+      unawaited(_removeLegacyDirectory());
       return dir;
     } on Exception catch (e) {
       // A cache is an optimisation: fall back to rendering from the full
@@ -91,6 +110,22 @@ class ThumbnailDiskCache {
       return null;
     } finally {
       _initializing = null;
+    }
+  }
+
+  /// Where development builds of this cache kept it before it moved to the
+  /// cache directory. Best effort: nothing depends on it being gone, it just
+  /// should not linger.
+  Future<void> _removeLegacyDirectory() async {
+    try {
+      final support = await getApplicationSupportDirectory();
+      final legacy = Directory(
+        '${support.path}${Platform.pathSeparator}thumbnail_cache',
+      );
+      if (legacy.path == _dir?.path) return;
+      if (legacy.existsSync()) await legacy.delete(recursive: true);
+    } on Exception catch (e) {
+      debugPrint('[ThumbnailCache] Could not remove old cache: $e');
     }
   }
 
@@ -123,7 +158,10 @@ class ThumbnailDiskCache {
     }
   }
 
-  Future<void> put(String storagePath, Uint8List png) async {
+  Future<void> put(String storagePath, Uint8List png) =>
+      _serial(() => _put(storagePath, png));
+
+  Future<void> _put(String storagePath, Uint8List png) async {
     try {
       final file = await _fileFor(storagePath);
       if (file == null) return;
@@ -138,7 +176,10 @@ class ThumbnailDiskCache {
     }
   }
 
-  Future<void> remove(String storagePath) async {
+  Future<void> remove(String storagePath) =>
+      _serial(() => _remove(storagePath));
+
+  Future<void> _remove(String storagePath) async {
     try {
       final file = await _fileFor(storagePath);
       if (file != null && file.existsSync()) await file.delete();
@@ -152,7 +193,10 @@ class ThumbnailDiskCache {
   /// Mirrors MediaDiskCache.prune and is called from the same place, so the
   /// two stores cannot drift apart into one holding previews of clips the
   /// other has already forgotten.
-  Future<void> prune(Set<String> liveStoragePaths) async {
+  Future<void> prune(Set<String> liveStoragePaths) =>
+      _serial(() => _prune(liveStoragePaths));
+
+  Future<void> _prune(Set<String> liveStoragePaths) async {
     try {
       final dir = await _directory();
       if (dir == null || !dir.existsSync()) return;
@@ -178,7 +222,9 @@ class ThumbnailDiskCache {
 
   /// Delete everything. Called on sign-out: these are plaintext previews of
   /// one account's clips and must not outlive its session on a shared machine.
-  Future<void> clear() async {
+  Future<void> clear() => _serial(_clear);
+
+  Future<void> _clear() async {
     try {
       final dir = await _directory();
       if (dir == null || !dir.existsSync()) return;

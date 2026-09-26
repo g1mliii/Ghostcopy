@@ -97,6 +97,12 @@ class ClipboardRepository implements IClipboardRepository {
   /// emptied for the account being left.
   int _cacheGeneration = 0;
 
+  /// Storage paths deleted while their thumbnail was still being built. The
+  /// build checks this before it writes, so a deleted clip's preview is not
+  /// cached again after delete() removed it. Only ever holds paths with a
+  /// build in flight, and each is dropped when that build finishes.
+  final Set<String> _deletedWhileBuilding = <String>{};
+
   @override
   ValueListenable<int> get undecryptableItemCount => _undecryptableItemCount;
 
@@ -527,6 +533,7 @@ class ClipboardRepository implements IClipboardRepository {
     } finally {
       // ignore: unawaited_futures
       _inFlightThumbnails.remove(memoryKey);
+      _deletedWhileBuilding.remove(storagePath);
     }
   }
 
@@ -537,7 +544,7 @@ class ClipboardRepository implements IClipboardRepository {
   ) async {
     final generation = _cacheGeneration;
     final onDisk = await ThumbnailDiskCache.instance.get(storagePath);
-    if (generation != _cacheGeneration) return null;
+    if (!_thumbnailStillWanted(storagePath, generation)) return null;
     if (onDisk != null) {
       MediaMemoryCache.instance.put(memoryKey, onDisk);
       debugPrint('[Repository] 🖼 Thumbnail disk hit: $storagePath');
@@ -552,7 +559,12 @@ class ClipboardRepository implements IClipboardRepository {
     if (full == null || full.isEmpty) return null;
 
     final thumbnail = await _encodeThumbnail(full);
-    if (thumbnail == null || generation != _cacheGeneration) return null;
+    // Checked in the same synchronous run as the writes below, so a delete
+    // or sign-out either lands first and is seen here, or lands after and
+    // queues its removal behind these writes.
+    if (thumbnail == null || !_thumbnailStillWanted(storagePath, generation)) {
+      return null;
+    }
 
     unawaited(ThumbnailDiskCache.instance.put(storagePath, thumbnail));
     MediaMemoryCache.instance.put(memoryKey, thumbnail);
@@ -595,6 +607,12 @@ class ClipboardRepository implements IClipboardRepository {
       codec?.dispose();
     }
   }
+
+  /// False once the account the build started under has signed out, or the
+  /// clip has been deleted.
+  bool _thumbnailStillWanted(String storagePath, int generation) =>
+      generation == _cacheGeneration &&
+      !_deletedWhileBuilding.contains(storagePath);
 
   /// The decode size for a thumbnail of a [width] x [height] image.
   @visibleForTesting
@@ -949,6 +967,9 @@ class ClipboardRepository implements IClipboardRepository {
       // cleanup_storage_on_clipboard_delete trigger.
       final deletedPath = item?.storagePath;
       if (deletedPath != null && deletedPath.isNotEmpty) {
+        if (_inFlightThumbnails.containsKey(_thumbnailKey(deletedPath))) {
+          _deletedWhileBuilding.add(deletedPath);
+        }
         MediaMemoryCache.instance
           ..remove(deletedPath)
           ..remove(_thumbnailKey(deletedPath));
