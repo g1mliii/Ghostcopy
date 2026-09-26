@@ -37,7 +37,7 @@ class MobileWelcomeScreen extends StatefulWidget {
 }
 
 class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // Tab controller for switching between QR scan and email/Google auth
   late final TabController _tabController;
 
@@ -67,6 +67,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
 
@@ -92,6 +93,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       if (_authLoading || _qrScanning) return;
       unawaited(_completeAfterConfirmation());
     });
+  }
+
+  // Back from Mail or a browser. A guest that signed up is waiting on its
+  // confirmation; if the link was opened somewhere else, refreshing the
+  // session is what tells this phone, and the listener above moves on.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(locator<IAuthService>().refreshIfAwaitingConfirmation());
+    }
   }
 
   Future<void> _completeAfterConfirmation() async {
@@ -125,6 +136,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       ..removeListener(_onTabChanged)
       ..dispose();
     _scannerController?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_authSub?.cancel());
     _emailController.dispose();
     _passwordController.dispose();
@@ -941,10 +953,14 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           _passwordController.text,
         );
 
-        // A phone has no guest at first launch, so that was a plain sign-up,
-        // and it has no session until the address is confirmed. Going on
-        // would land in the app signed in as nobody.
-        if (locator<IAuthService>().currentUser == null) {
+        // Wait here until the address is confirmed, whatever the session.
+        // A phone has no guest at first launch, so there a sign-up leaves no
+        // session at all. After a sign-out it does have one - sign-out drops
+        // back to a guest - and the upgrade keeps it, still unconfirmed. This
+        // used to test only for no session, so that second case went straight
+        // into the app with nothing said about the email.
+        final user = locator<IAuthService>().currentUser;
+        if (user == null || user.emailConfirmedAt == null) {
           if (mounted) {
             setState(() {
               _authLoading = false;
