@@ -38,6 +38,79 @@ installed.
 | Website | https://ghostcopy.app |
 | Copyright | 2026 *legal name* - fill in; it is shown publicly |
 
+## Properties page, field by field
+
+### Category
+
+**Productivity.** No subcategory applies; if the picker insists, take the
+most generic option rather than inventing a fit. "Utilities & tools" is the
+defensible alternative, but Productivity is where people look for this.
+
+### Privacy policy
+
+> Does this product access, collect, or transmit personal information?
+
+**Yes.** Not a judgement call: the app handles email addresses, clip
+contents, per-device identifiers and crash diagnostics. Answering yes makes
+the privacy policy URL mandatory, which is https://ghostcopy.app/privacy.
+
+### Support info
+
+| Field | Value |
+|---|---|
+| Website | https://ghostcopy.app |
+| Support contact info | https://ghostcopy.app/faq |
+| Phone number | leave blank |
+| Address lines, postal code, city, state, country | leave blank |
+
+**Everything on this page is shown publicly on the listing.** The account is
+an Individual one, so the address here would be a home address. Leave it
+empty - it is optional, and a support URL is the better contact route
+anyway.
+
+### Display mode
+
+Windows Mixed Reality. **Leave entirely unchecked**, including both boundary
+options - ticking either declares this an immersive headset experience.
+
+### Product declarations
+
+Defaults are right for almost all of it. The ones with a real answer:
+
+- Contains or displays ads: **No**
+- Purchases outside the Microsoft commerce engine: **No**
+- Broadcast/recording: not applicable, Games only
+- **Tested for accessibility: do NOT tick.** It has not been tested, and
+  `primary` on `surface` is 4.44:1 - under AA and still open in the todo.
+  This one is a claim, not a formality.
+
+The app needs an internet connection to do anything; if a declaration about
+working offline is offered, leave it unticked.
+
+### System requirements
+
+**Leave every row blank.**
+
+This is the field most likely to be filled in out of helpfulness and do
+harm. A *Minimum* that a customer's hardware does not meet shows them a
+warning before download and blocks them from rating or reviewing the app.
+Nothing here is genuinely required:
+
+- **Keyboard** - the hotkey is the main way in, but the tray icon opens the
+  window with a mouse alone, so it is not required.
+- **Mouse** - likewise, not required.
+- **Camera** - checked in the code, not needed. Desktop *displays* the
+  linking QR code; the phone scans it. `mobile_scanner` appears only in
+  `mobile_welcome_screen.dart`.
+- **Memory, DirectX, video memory, processor, graphics** - Flutter renders
+  through ANGLE, but no floor has been measured, and guessing one only
+  excludes people.
+- Touch, NFC, Bluetooth LE, telephony, microphone, Xbox controller, Mixed
+  Reality - none used.
+
+If anything is declared at all, make it Keyboard as *Recommended*, which
+carries no warning and no review block.
+
 ## Short description (500)
 
 Shown in search results and on the product tile, so it has to stand alone.
