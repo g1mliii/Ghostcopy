@@ -191,7 +191,11 @@ class DeviceService implements IDeviceService {
   @override
   Future<List<Device>> getUserDevices({bool forceRefresh = false}) async {
     _ensureInitialized();
-    _ensureAuthenticated();
+    // No session has no devices. The desktop starts without one when the
+    // anonymous sign-in fails offline, and the Settings device panel loads
+    // this straight away: as a StateError it escaped the panel's
+    // `on Exception` and left it spinning for good.
+    if (_supabase.auth.currentUser == null) return const [];
 
     // Check cache first (unless force refresh requested)
     if (!forceRefresh && _isCacheValid()) {

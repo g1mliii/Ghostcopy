@@ -124,6 +124,10 @@ void main() {
     await service.initialize();
 
     expect(await service.registerCurrentDevice(fcmToken: _token), isFalse);
+    // The Settings device panel loads this on open, and an offline launch
+    // can have no session: an empty list, not a StateError the panel's
+    // `on Exception` never sees.
+    expect(await service.getUserDevices(), isEmpty);
     expect(requests, isEmpty);
   });
 
