@@ -199,6 +199,36 @@ def on_transparent(px: int, master: str = "logo-white.svg") -> Image.Image:
     return render(master, px)
 
 
+def bare_mark(px: int, *, color=PRIMARY, fill: float = 0.94) -> Image.Image:
+    """The ghost alone on transparency, recoloured and scaled to fill the frame.
+
+    For the Windows tray, where a tile is the wrong shape: at 16-24px the
+    rounded square takes most of the canvas and leaves the ghost a few pixels
+    tall inside it. Tray icons there are bare marks.
+
+    The master pads the ghost inside a square viewBox, so it is rendered large,
+    cropped to the ghost, and fitted by its longer side - rendering it at px
+    directly would leave it as small as it is inside the tile. Recolouring
+    keeps only the alpha, so the eyes stay knocked through: indigo with see-
+    through eyes reads on both a dark and a light taskbar, which a white
+    silhouette does not.
+    """
+    big = render("logo-white.svg", max(512, px * 16))
+    ghost = big.crop(big.getbbox())
+    scale = px * fill / max(ghost.size)
+    size = (max(1, round(ghost.width * scale)), max(1, round(ghost.height * scale)))
+    alpha = ghost.getchannel("A").resize(size, Image.LANCZOS)
+
+    mark = Image.new("RGBA", size, color + (255,))
+    mark.putalpha(alpha)
+    canvas = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    # Round rather than floor, for the same reason tile() evens its padding:
+    # a floor puts every spare pixel on the left, and at 16px one is 6%.
+    canvas.alpha_composite(
+        mark, (round((px - size[0]) / 2), round((px - size[1]) / 2)))
+    return canvas
+
+
 def ios_app_icon() -> None:
     """iOS: opaque, square, no rounded corners - the OS masks them itself."""
     for name, px in [
@@ -305,8 +335,8 @@ def tray_icons() -> None:
     # Windows loads this one, not the PNG - see tray_service.dart. It was left
     # out when this script took over from tool/generate_desktop_icons.py, so
     # the Windows tray kept showing the pre-rebrand mark while every other
-    # surface changed.
-    write_ico([tile(s, radius=0.2, opaque=False) for s in (16, 20, 24, 32, 48)],
+    # surface changed. The bare ghost, not the tile - see bare_mark().
+    write_ico([bare_mark(s) for s in (16, 20, 24, 32, 48)],
               "assets", "icons", "tray_icon.ico")
 
 

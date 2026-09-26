@@ -41,6 +41,17 @@ It is drawn in brand indigo with the eyes knocked through to transparency,
 which keeps it legible on both a dark and a light taskbar. A white silhouette —
 what this used to ship — disappears entirely on a light taskbar.
 
+This is `bare_mark()` in the generator, and only `tray_icon.ico` uses it. The
+Linux and preview PNGs are still the tile. A generator change that regenerated
+"every icon drawn with tile()" once put the Windows tray back on the squircle
+too, so if the tray grows a square again, check `tray_icons()` first.
+
+The fallback, if indigo reads as too loud next to system icons, is the Windows
+convention: a white ghost on a dark taskbar and a black one on a light
+taskbar, swapped at runtime by watching `SystemUsesLightTheme` under
+`HKCU\...\Themes\Personalize`. That is code, not just an asset, which is why
+it was not the first choice.
+
 ## Why macOS is different
 
 macOS menu bar icons are *template* images: black on transparent, with the
