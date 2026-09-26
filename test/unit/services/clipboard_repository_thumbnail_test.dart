@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,8 @@ import 'package:ghostcopy/repositories/impl/clipboard_repository.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/media_memory_cache.dart';
 import 'package:ghostcopy/services/storage_service.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:image/image.dart' as img;
 import 'package:mocktail/mocktail.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -61,6 +64,58 @@ void main() {
     expect(thumbnail!.length, lessThan(png.length));
     expect(cache.get('thumb:$path'), isNotNull);
     expect(cache.get(path), isNull);
+  });
+
+  // A session Supabase ends by itself - a revoked refresh token - never
+  // reached reset(), so the account's cached media, thumbnails included, was
+  // left behind for whoever used the machine next.
+  test('a session ended outside the app still clears its caches', () async {
+    final cache = MediaMemoryCache.instance..clear();
+    addTearDown(cache.clear);
+    final expires =
+        DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
+        1000;
+    final payload = base64Url
+        .encode(utf8.encode(jsonEncode({'sub': 'user', 'exp': expires})))
+        .replaceAll('=', '');
+    final client = SupabaseClient(
+      'https://example.com',
+      'anon-key',
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+      httpClient: MockClient(
+        (request) async => http.Response('', 204, request: request),
+      ),
+    );
+    await client.auth.recoverSession(
+      jsonEncode({
+        'access_token': 'e30.$payload.signature',
+        'refresh_token': 'refresh',
+        'token_type': 'bearer',
+        'expires_in': 3600,
+        'expires_at': expires,
+        'user': {
+          'id': 'user',
+          'aud': 'authenticated',
+          'role': 'authenticated',
+          'email': '',
+          'created_at': '2026-01-01T00:00:00Z',
+          'app_metadata': <String, Object?>{},
+          'user_metadata': <String, Object?>{},
+        },
+      }),
+    );
+    final repository = ClipboardRepository(
+      client: client,
+      encryptionService: _Encryption(),
+      storageService: _Storage(),
+    );
+    addTearDown(repository.dispose);
+    cache.put('thumb:clips/a.png', Uint8List.fromList([1, 2, 3]));
+
+    await client.auth.signOut();
+    await pumpEventQueue();
+
+    expect(cache.get('thumb:clips/a.png'), isNull);
   });
 
   group('thumbnailTargetSize', () {

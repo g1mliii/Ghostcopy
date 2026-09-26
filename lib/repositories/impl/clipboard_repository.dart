@@ -59,7 +59,9 @@ class ClipboardRepository implements IClipboardRepository {
     IStorageService? storageService,
   }) : _client = client ?? Supabase.instance.client,
        _encryptionService = encryptionService ?? EncryptionService.instance,
-       _storageService = storageService ?? StorageService.instance;
+       _storageService = storageService ?? StorageService.instance {
+    _watchAccount();
+  }
 
   // Singleton instance
   static final ClipboardRepository instance = ClipboardRepository._internal();
@@ -68,6 +70,30 @@ class ClipboardRepository implements IClipboardRepository {
   final IEncryptionService _encryptionService;
   final IStorageService _storageService;
   bool _encryptionInitialized = false;
+
+  /// Resets whenever the signed-in account changes, however it changed.
+  ///
+  /// The explicit paths - sign-out, account switch, deletion - call [reset]
+  /// themselves. A session Supabase ends on its own, such as a revoked
+  /// refresh token, reaches none of them, so the previous account's caches -
+  /// the thumbnails among them, plaintext even for encrypted clips - stayed on
+  /// disk after it was left. Keyed on the user id, so upgrading a guest,
+  /// which keeps its id, clears nothing.
+  StreamSubscription<AuthState>? _accountWatch;
+  String? _watchedUserId;
+
+  void _watchAccount() {
+    _watchedUserId = _client.auth.currentUser?.id;
+    _accountWatch = _client.auth.onAuthStateChange.listen(
+      (state) {
+        final userId = state.session?.user.id;
+        if (_watchedUserId != null && userId != _watchedUserId) reset();
+        _watchedUserId = userId;
+      },
+      onError: (Object e) =>
+          debugPrint('[ClipboardRepository] Auth state stream error: $e'),
+    );
+  }
 
   /// User the loaded encryption state belongs to, so a sign-in as someone
   /// else re-keys instead of silently reusing the previous account's state.
@@ -1437,6 +1463,8 @@ class ClipboardRepository implements IClipboardRepository {
   @override
   void dispose() {
     // NOTE: EncryptionService is a singleton - do NOT dispose it here
+    unawaited(_accountWatch?.cancel());
+    _accountWatch = null;
     _encryptionInitialized = false;
     _encryptionUserId = null;
     _undecryptableItemCount.value = 0;
