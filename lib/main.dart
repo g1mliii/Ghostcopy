@@ -1516,7 +1516,19 @@ bool _acceptAuthCallbackUri(Uri uri) {
     unawaited(_handleDeepLinkArgs([uri.toString()]));
     return false;
   }
+  if (decision.code != null) _surfaceAfterBrowserSignIn();
   return decision.isAccepted;
+}
+
+/// Bring the Spotlight forward when a browser sign-in comes back.
+///
+/// It hides itself as soon as the browser takes focus, so the user returned
+/// to nothing - signed in, with no window to show it. Windows surfaces it
+/// through its second-launch path; on macOS the callback only ever arrives
+/// here.
+void _surfaceAfterBrowserSignIn() {
+  if (!Platform.isMacOS || !locator.isRegistered<IWindowService>()) return;
+  unawaited(locator<IWindowService>().showSpotlight());
 }
 
 /// A `token_hash` link that arrived before AuthService was registered - the
