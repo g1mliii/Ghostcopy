@@ -104,6 +104,13 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Off: app_links (and supabase_flutter through it) handles every
+	     ghostcopy:// link. Left on, Flutter also pushed each link as a named
+	     route, and with no route by that name _onUnknownRoute threw "Null
+	     check operator used on a null value" - reported to Sentry on every
+	     tapped confirmation link. -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
