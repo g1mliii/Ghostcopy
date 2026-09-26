@@ -44,10 +44,11 @@ test result can revert a single change rather than the lot.
 - [ ] **Re-release after this branch**, carrying the shared fixes above.
       Bump the build number past 9 - the counter is shared across platforms
       so TestFlight and Play never see a duplicate.
-- [ ] **Regenerate the icons** with
-      `DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py`.
-      The rounding already shipped; this is the one-pixel offset fix, which
-      needs Cairo and so cannot run on Windows.
+- [x] **Regenerate the icons - done 2026-09-26 (dfc6987).** The one-pixel
+      offset fix, regenerated with Cairo on Linux: only the 22 outputs whose
+      pixels changed were committed, and the pre-fix generator reproduces
+      every previously committed icon exactly there, so the renderer matches.
+      Nothing to re-run on the Mac.
 
 
 - [ ] **Sandbox - only if the Mac app goes to the Mac App Store.** Required
@@ -87,7 +88,7 @@ to package - but everything below marked "verify" does need one.
       Realtime socket and raises a *local* toast through
       flutter_local_notifications. Nothing to configure, and it has no bearing
       on the account type
-- [ ] **Regenerate the icons on a Mac.** `tile()` in
+- [x] **Regenerate the icons - done 2026-09-26 (dfc6987), see macOS above.** `tile()` in
       `tool/generate_brand_assets.py` seated the mark one pixel left and high
       at any size where `px - int(px * inset)` is odd, because the floor in
       `// 2` gave the spare pixel to the right and bottom. Measured on the
