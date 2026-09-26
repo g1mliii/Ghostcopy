@@ -331,9 +331,10 @@ to package - but everything below marked "verify" does need one.
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
       change it, which is why the macOS updater had to land first
-- [ ] Version scheme: `1.0.0+N`, build number bumped per release (at 11 now:
-      macOS and iOS 11, Windows 10). TestFlight and Play reject a duplicate
-      build number, so keep it monotonic across platforms
+- [ ] Version scheme: `1.0.0+N`, build number bumped per release (at 12 now,
+      on every platform: macOS, iOS and Windows as `msix_version` 1.0.12.0 -
+      Windows skipped 11). TestFlight and Play reject a duplicate build
+      number, so keep it monotonic across platforms
 - [x] **Sentry in the client** - shipped in macOS 1.0.0 (8) and every build
       since (a62bd4a), clip content stripped on the device.
 
