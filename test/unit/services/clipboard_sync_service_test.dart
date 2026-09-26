@@ -416,6 +416,31 @@ void main() {
       verify(() => channel.subscribe(any())).called(1);
     });
 
+    // On wake the lifecycle opens a channel, and main.dart asks for a rejoin
+    // straight after. Tearing down the channel that is still joining only
+    // restarted the join, while the network was still coming up.
+    testWidgets('a channel still joining is not torn down for another', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      clearInteractions(channel);
+
+      service.ensureRealtimeConnected();
+      await settle(tester);
+      verifyNever(channel.unsubscribe);
+      verifyNever(() => channel.subscribe(any()));
+
+      // A join that never answers at all is still replaced, once the join's
+      // own timeout has had its chance.
+      await tester.pump(const Duration(seconds: 16));
+      service.ensureRealtimeConnected();
+      await settle(tester);
+      verify(channel.unsubscribe).called(1);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
     // The catch-up after a rejoin exists to find what landed during the
     // outage. Finding it is not evidence that the channel which has just
     // joined is broken, and tearing it down for that rejoined in a loop.

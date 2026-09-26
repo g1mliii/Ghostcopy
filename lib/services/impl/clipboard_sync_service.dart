@@ -105,6 +105,16 @@ class ClipboardSyncService implements IClipboardSyncService {
   DateTime? _lastRejoinAttempt;
   static const Duration _rejoinCooldown = Duration(seconds: 30);
 
+  /// How long a channel that has not answered yet counts as still joining.
+  ///
+  /// realtime_client times a join out after 10 seconds and reports that
+  /// through the status callback, so a join always ends in `subscribed` or a
+  /// failure the callback handles; this only has to outlast it.
+  static const Duration _joinGrace = Duration(seconds: 15);
+
+  /// When the current channel was subscribed, until it reports a status.
+  DateTime? _realtimeJoinStartedAt;
+
   // Clipboard monitoring
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
@@ -226,6 +236,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     if (!_baselineReady) unawaited(_seedPollBaseline(userId));
 
     final generation = ++_realtimeGeneration;
+    _realtimeJoinStartedAt = clock.now();
     _realtimeChannel = _supabaseClient
         .channel('clipboard_changes')
         .onPostgresChanges(
@@ -272,6 +283,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     // bound to an account that has since changed. Its `closed` is the
     // unsubscribe it was asked for, not a failure.
     if (generation != _realtimeGeneration) return;
+    _realtimeJoinStartedAt = null;
     switch (status) {
       case RealtimeSubscribeStatus.subscribed:
         debugPrint('[ClipboardSyncService] ✅ Realtime subscribed');
@@ -349,6 +361,15 @@ class ClipboardSyncService implements IClipboardSyncService {
   void ensureRealtimeConnected() {
     if (_isDisposed) return;
     if (_realtimeChannel != null && _realtimeJoined) return;
+    // Still joining - on wake or unlock the lifecycle has usually just opened
+    // this channel. Tearing it down for another only restarts the same join,
+    // and its answer, either way, reaches _onRealtimeStatus.
+    final joinStarted = _realtimeJoinStartedAt;
+    if (_realtimeChannel != null &&
+        joinStarted != null &&
+        clock.now().difference(joinStarted) < _joinGrace) {
+      return;
+    }
     // Nothing to rejoin as, and _subscribeToRealtimeUpdates would have
     // nothing to filter on.
     if (_supabaseClient.auth.currentUser == null) return;
@@ -384,6 +405,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _realtimeGeneration++;
     _realtimeJoined = false;
     _realtimeCatchUpPending = false;
+    _realtimeJoinStartedAt = null;
     final channel = _realtimeChannel;
     _realtimeChannel = null;
     channel?.unsubscribe();
