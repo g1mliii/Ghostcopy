@@ -432,6 +432,94 @@ overhead is irrelevant. Flutter cannot cross-compile x64 to Arm64 - it needs
 an Arm64 Windows machine - so a native build is a later question, worth
 revisiting only if Store analytics show the demand.
 
+## Submission options
+
+### Publishing hold
+
+Choose **"Don't publish this submission until I select Publish now."**
+
+Certification can take anywhere from hours to days, and the default would put
+the app live the moment it passes - possibly overnight, with nobody watching.
+Holding it costs nothing, and buys a look at the rendered listing, a check
+that the download page and website agree with it, and control over the hour it
+appears. It can be released with one click afterwards.
+
+### runFullTrust justification
+
+The field asks for as much detail as possible, so it gets it. This is a
+restricted capability, and a thin answer invites a follow-up:
+
+> GhostCopy is a Win32 desktop application packaged with MSIX
+> (Windows.FullTrustApplication). Full trust is required because every core
+> function of the app is unavailable to a sandboxed application:
+>
+> - A system-wide global hotkey (Ctrl+Shift+S by default), so the user can
+>   summon the clipboard window from any application without leaving what
+>   they are doing.
+> - Reading and writing the Windows clipboard, including images and files.
+>   This is the entire purpose of the product.
+> - A system tray icon with a context menu; the app runs in the background
+>   between uses.
+> - A File Explorer context menu entry ("Send with GhostCopy"), implemented
+>   as an IExplorerCommand handler and declared in the manifest under
+>   desktop4:FileExplorerContextMenus.
+> - Launching at login through the declared uap5:StartupTask.
+>
+> Full trust is not used to read other applications' data, change system
+> settings, or install drivers or services. Network access is limited to the
+> app's own backend (Supabase) and Cloudflare R2 for file storage.
+
+### Administrator consent - leave blank
+
+That page is for products integrating with Microsoft Entra Identity and
+calling APIs needing admin consent. GhostCopy authenticates through Supabase
+with Apple, Google or email, and touches no Microsoft identity service. No
+Client ID exists to enter.
+
+### Submission notification audience
+
+Leave as the default.
+
+## Additional testing info
+
+Fill this in - it is not optional in practice. A tester who cannot work out
+how to exercise the app fails it.
+
+### Notes for certification
+
+> GhostCopy syncs the clipboard between a user's own devices.
+>
+> NO SIGN-IN IS NEEDED TO TEST. The app creates a guest account on first
+> launch, so everything below works immediately.
+>
+> The window opens on launch. Once closed it keeps running in the system
+> tray, which is where a background clipboard utility belongs; reopen it with
+> Ctrl+Shift+S or by clicking the tray icon.
+>
+> To exercise the app on a single machine:
+> 1. Type or paste text into the box at the top and press Send.
+> 2. It appears in the history list below.
+> 3. Right-click any file in File Explorer and choose "Send with GhostCopy".
+>    A Windows notification confirms it was sent.
+>
+> The headline feature - a clip arriving on a phone or Mac - needs a second
+> device signed in to the same account, which we appreciate may not be
+> available. Optional credentials for an account with existing history are in
+> the Credentials section; signing in with them shows history and device
+> targeting populated.
+>
+> Encryption is optional and off by default (Settings > Encryption). Account
+> deletion is in Settings.
+
+### Credentials
+
+Optional here, unlike the App Store, because Windows has a guest path and iOS
+does not. Provide the same demo account anyway: it costs nothing and it is
+the difference between a tester seeing an empty app and a populated one.
+
+Credentials go in the Credentials fields, never in the description - the page
+says so explicitly.
+
 ## Before submitting
 
 - [ ] `identity_name`, `publisher` and `publisher_display_name` in
