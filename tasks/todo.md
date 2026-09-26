@@ -331,10 +331,14 @@ to package - but everything below marked "verify" does need one.
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
       change it, which is why the macOS updater had to land first
-- [ ] Version scheme: `1.0.0+N`, build number bumped per release (at 12 now,
-      on every platform: macOS, iOS and Windows as `msix_version` 1.0.12.0 -
-      Windows skipped 11). TestFlight and Play reject a duplicate build
-      number, so keep it monotonic across platforms
+- [ ] Version scheme, from 1.0.1: a real version people see, plus a build
+      number that only ever goes up. `pubspec.yaml` is `1.0.1+13` - 1.0.1 is
+      shown everywhere; 13 is hidden and carries on from the 1.0.0 builds
+      (the last was 12), and Windows' `msix_version` puts it in the third
+      part, `1.0.13.0`. The build number cannot reset with the version:
+      Sparkle compares only it, so a lower one is never offered to a Mac, and
+      Play and TestFlight reject one they have seen. Bump the version by what
+      changed and the build number by one, every release, every platform
 - [x] **Sentry in the client** - shipped in macOS 1.0.0 (8) and every build
       since (a62bd4a), clip content stripped on the device.
 
