@@ -95,6 +95,11 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// so what it finds is no evidence against the channel that just joined.
   bool _realtimeCatchUpPending = false;
 
+  /// True between pauseRealtime and resumeRealtime: the lifecycle has closed
+  /// realtime on purpose - polling after idling in the tray, or a lock or
+  /// sleep - and only it may open it again.
+  bool _realtimePaused = false;
+
   /// When a rejoin was last attempted from [ensureRealtimeConnected].
   ///
   /// A channel that never reaches `subscribed` - an unreachable server, a
@@ -359,6 +364,12 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void ensureRealtimeConnected() {
     if (_isDisposed) return;
+    // A wake or unlock that the lifecycle did not see as a transition - it
+    // was already awake - still calls this. With realtime paused for polling
+    // there is no channel, and rejoining would open one behind the
+    // lifecycle's back; its own switch back to realtime then found the
+    // channel already open and skipped the catch-up poll.
+    if (_realtimePaused) return;
     if (_realtimeChannel != null && _realtimeJoined) return;
     // Still joining - on wake or unlock the lifecycle has usually just opened
     // this channel. Tearing it down for another only restarts the same join,
@@ -1521,6 +1532,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Pause realtime subscription (keep it for resume)
   @override
   void pauseRealtime() {
+    _realtimePaused = true;
     // A rejoin still on its backoff would reopen the socket this is closing.
     _realtimeRetryTimer?.cancel();
     _realtimeRetryTimer = null;
@@ -1534,6 +1546,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Resume realtime subscription
   @override
   void resumeRealtime() {
+    _realtimePaused = false;
     if (_realtimeChannel != null) return; // Already active
 
     debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
@@ -1588,6 +1601,9 @@ class ClipboardSyncService implements IClipboardSyncService {
     _realtimeRetryTimer = null;
     _realtimeRetries = 0;
     _dropRealtimeChannel();
+    // It subscribes below whatever the lifecycle last asked, so the flag
+    // must not claim otherwise.
+    _realtimePaused = false;
     _autoReceiveDebounceTimer?.cancel();
     _lastPolledItemId = null;
     _baselineReady = false;

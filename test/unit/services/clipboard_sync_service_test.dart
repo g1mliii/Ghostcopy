@@ -389,6 +389,30 @@ void main() {
       verifyNever(() => channel.subscribe(any()));
     });
 
+    // A wake or unlock the lifecycle already counted as awake still calls
+    // ensureRealtimeConnected. With realtime paused for polling that opened a
+    // channel behind the lifecycle's back.
+    testWidgets('a paused channel is not reopened by a rejoin request', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      service.pauseRealtime();
+      clearInteractions(channel);
+
+      service.ensureRealtimeConnected();
+      await settle(tester);
+      verifyNever(() => channel.subscribe(any()));
+
+      // Resuming is the lifecycle's call, and it still works.
+      service.resumeRealtime();
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
     // Ignoring the pause's own `closed` must not ignore the channel that
     // replaces it: the socket dying in the tray after a lock and unlock is
     // the original bug, and it still has to rejoin.
