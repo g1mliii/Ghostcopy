@@ -87,6 +87,8 @@ User _someUser() => User(
 );
 
 void main() {
+  group('recoverSession', recoverySessionTests);
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('the happy path initializes both and registers the device', () async {
@@ -171,5 +173,80 @@ void main() {
       startAuthAndDevice(auth, device, _RecordingReporter()),
       completes,
     );
+  });
+}
+
+/// Fails its first [failures] sign-ins, then signs in as [_someUser].
+class _FlakyAuth extends _FakeAuth {
+  _FlakyAuth(this.failures);
+
+  int failures;
+  int attempts = 0;
+
+  @override
+  Future<void> initialize() async {
+    attempts++;
+    if (failures > 0) {
+      failures--;
+      throw const AuthException('offline');
+    }
+    user = _someUser();
+  }
+}
+
+void recoverySessionTests() {
+  const backoff = [Duration(milliseconds: 1)];
+
+  // Started offline: the sign-in threw, the app came up without a session,
+  // and nothing ever tried again - sync stayed off until a restart.
+  test('a launch without a session keeps retrying until it has one', () async {
+    final auth = _FlakyAuth(2);
+    final device = _FakeDevice();
+    var recovered = 0;
+
+    await recoverSession(
+      auth,
+      device,
+      onRecovered: () => recovered++,
+      backoff: backoff,
+    );
+
+    expect(auth.attempts, 3);
+    expect(auth.currentUser, isNotNull);
+    expect(device.registerAttempted, isTrue);
+    expect(recovered, 1);
+  });
+
+  test('a session that arrived another way ends the retry untouched', () async {
+    final auth = _FlakyAuth(1000)..user = _someUser();
+    final device = _FakeDevice();
+    var recovered = 0;
+
+    await recoverSession(
+      auth,
+      device,
+      onRecovered: () => recovered++,
+      backoff: backoff,
+    );
+
+    // The auth panel signed in and rebound realtime itself.
+    expect(auth.attempts, 0);
+    expect(device.registerAttempted, isFalse);
+    expect(recovered, 0);
+  });
+
+  test('a failed registration after recovery still rebinds', () async {
+    final auth = _FlakyAuth(0);
+    final device = _FakeDevice(registerError: Exception('network'));
+    var recovered = 0;
+
+    await recoverSession(
+      auth,
+      device,
+      onRecovered: () => recovered++,
+      backoff: backoff,
+    );
+
+    expect(recovered, 1);
   });
 }

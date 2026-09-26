@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -488,6 +489,19 @@ Future<void> _appMain(
     locator
       ..registerSingleton<IClipboardSyncService>(clipboardSyncService)
       ..registerSingleton<ISystemPowerService>(systemPowerService);
+
+    // Started without a session - offline, or the anonymous sign-in failed.
+    // Nothing else would ever try again: the sync service declined to
+    // subscribe, and neither reconnecting nor opening the Spotlight signs in.
+    if (authService.currentUser == null) {
+      unawaited(
+        recoverSession(
+          authService,
+          deviceService,
+          onRecovered: clipboardSyncService.reinitializeForUser,
+        ),
+      );
+    }
 
     // Create LifecycleController for Tray Mode and connection management
     // Must be created AFTER clipboardSyncService and settingsService
@@ -1787,6 +1801,48 @@ Future<void> startAuthAndDevice(
         context: 'register_current_device',
       ),
     );
+  }
+}
+
+/// Keep retrying the anonymous sign-in a launch could not complete.
+///
+/// On success the device is registered and [onRecovered] rebinds whatever was
+/// waiting on a session. Stops without doing anything if a session appears
+/// some other way - the user signing in through the auth panel handles its
+/// own rebinding. Backs off to one attempt every five minutes, so an app left
+/// offline all day costs almost nothing.
+@visibleForTesting
+Future<void> recoverSession(
+  IAuthService authService,
+  IDeviceService deviceService, {
+  required void Function() onRecovered,
+  List<Duration> backoff = const [
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+  ],
+}) async {
+  for (var attempt = 0; ; attempt++) {
+    await Future<void>.delayed(backoff[min(attempt, backoff.length - 1)]);
+    if (authService.currentUser != null) return;
+    try {
+      await authService.initialize();
+    } on Object catch (e) {
+      debugPrint('[Main] Session retry ${attempt + 1} failed: $e');
+      continue;
+    }
+    if (authService.currentUser == null) continue;
+
+    debugPrint('[Main] ✅ Session recovered after ${attempt + 1} retries');
+    try {
+      await deviceService.registerCurrentDevice();
+    } on Object catch (e) {
+      debugPrint('[Main] Device registration after recovery failed: $e');
+    }
+    onRecovered();
+    return;
   }
 }
 
