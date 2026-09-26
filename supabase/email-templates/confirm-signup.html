@@ -22,9 +22,10 @@
 
   The link now goes to website/auth-callback.html with the token_hash, which
   opening the page does not redeem. The page hands it to the app as
-  ghostcopy://auth-callback, and the app redeems it with verifyOTP
-  (lib/utils/auth_callback.dart), so the user lands signed in. If the app is
-  not on that device, the page offers to confirm in the browser instead.
+  ghostcopy://auth-callback, and the app redeems it in
+  AuthService.redeemEmailLink (lib/services/impl/auth_service.dart), so the
+  user lands signed in. If the app is not on that device, or did not ask for
+  this confirmation, the page offers to confirm in the browser instead.
 
   type=signup must match this template: each template's TokenHash is a
   different token, and verify looks each type up in its own column.

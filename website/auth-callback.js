@@ -24,12 +24,9 @@
     var SUPABASE_URL = 'https://xhbggxftvnlkotvehwmj.supabase.co';
     var SUPABASE_KEY = 'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
 
-    // The confirmation types the emails send. Anything else did not come from us.
-    var EMAIL_TYPES = { signup: true, email_change: true };
-
     function show(id) {
-        ['state-working', 'state-done', 'state-confirm', 'state-confirmed', 'state-error'].forEach(function (s) {
-            document.getElementById(s).hidden = (s !== id);
+        document.querySelectorAll('section[id^="state-"]').forEach(function (s) {
+            s.hidden = (s.id !== id);
         });
     }
 
@@ -96,7 +93,8 @@
     // So confirming in the browser stays on offer, and the copy does not
     // promise a sign-in.
     function confirmEmail(tokenHash, type) {
-        if (!EMAIL_TYPES[type]) {
+        // The confirmation types the emails send. Anything else did not come from us.
+        if (type !== 'signup' && type !== 'email_change') {
             fail('This confirmation link is not one GhostCopy sends.');
             return;
         }
