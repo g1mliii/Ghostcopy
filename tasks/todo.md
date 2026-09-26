@@ -236,6 +236,14 @@ to package - but everything below marked "verify" does need one.
       Confirm in Firebase (Project settings > Cloud Messaging > Apple app)
       that it is an APNs Authentication Key (.p8), not a development-only
       certificate, or push stops in App Store builds
+- [ ] **"Upload Symbols Failed" for Sentry.framework** on the 1.0.0 (11)
+      upload (a warning; the upload succeeded). The shipped binary's UUID
+      `761704F3-...` matches no dSYM in any sentry-cocoa 8.58.4 variant under
+      `build/ios/SourcePackages/artifacts/sentry-cocoa/` - the Sentry-Dynamic
+      ios-arm64 dSYM is `76FF1075-...` - so the framework is rebuilt or
+      altered somewhere before it lands in the app. Cost: Apple's own crash
+      reports cannot name frames inside Sentry; the Sentry dashboard is
+      unaffected. Low priority. Same family as build 7's objective_c warning
 - [ ] **Decide: iPad at launch, or iPhone-only.** The app targets iPad, so the
       listing needs 13" iPad screenshots and review tests it there. Dropping
       iPad for 1.0 (TARGETED_DEVICE_FAMILY = 1) skips both; it can come back
