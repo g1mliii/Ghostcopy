@@ -312,6 +312,7 @@ void main() {
   group('a clip seen once is not received again by a later poll', () {
     late _Channel channel;
     late void Function(PostgresChangePayload) onInsert;
+    late void Function(RealtimeSubscribeStatus, Object?) onStatus;
 
     setUp(() {
       channel = _Channel();
@@ -330,9 +331,207 @@ void main() {
                 as void Function(PostgresChangePayload);
         return channel;
       });
-      when(channel.subscribe).thenReturn(channel);
+      // subscribe now takes a status callback, so the stub has to accept one -
+      // and hold on to it, since the reconnection test drives it.
+      when(() => channel.subscribe(any())).thenAnswer((invocation) {
+        onStatus =
+            invocation.positionalArguments.first
+                as void Function(RealtimeSubscribeStatus, Object?);
+        return channel;
+      });
       when(channel.unsubscribe).thenAnswer((_) async => 'ok');
       when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    });
+
+    // The bug behind "the clip turned up five minutes later": subscribe() was
+    // called with no callback, so a channel that died was never noticed and
+    // never rejoined, and the five-minute poll became the delivery path.
+    testWidgets('a dead channel rejoins itself', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      // What Windows produces when it throttles a background process hard
+      // enough for the socket's heartbeat to lapse.
+      onStatus(RealtimeSubscribeStatus.closed, null);
+      await settle(tester);
+      // Nothing yet: the rejoin is on a backoff, not immediate.
+      verifyNever(() => channel.subscribe(any()));
+
+      await tester.pump(const Duration(seconds: 3));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
+    // unsubscribe() reports `closed` through the same callback a dying socket
+    // does. Read as a failure, every pause for sleep, lock or tray polling
+    // rejoined two seconds later and reopened the socket it had just closed.
+    testWidgets('a deliberate pause does not rejoin', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      // The channel is unhealthy and a rejoin is pending when the pause lands.
+      onStatus(RealtimeSubscribeStatus.channelError, null);
+      clearInteractions(channel);
+
+      service.pauseRealtime();
+      // What realtime_client does on unsubscribe when the socket is down.
+      onStatus(RealtimeSubscribeStatus.closed, null);
+      await tester.pump(const Duration(minutes: 2));
+      await settle(tester);
+
+      verify(channel.unsubscribe).called(1);
+      verifyNever(() => channel.subscribe(any()));
+    });
+
+    // A second missed clip inside the 30 s rejoin cooldown was refused, and
+    // with the channel already marked unjoined no later poll asked again -
+    // realtime stayed down until some unrelated wake or unlock.
+    testWidgets('a rejoin refused by the cooldown runs once it expires', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getHistory(limit: 10)).thenAnswer((_) async => []);
+      for (final id in ['2', '3']) {
+        when(() => repository.getById(id)).thenAnswer((_) async => clip(id));
+      }
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      service.startPolling(interval: const Duration(seconds: 1));
+
+      // The poll delivers what realtime should have: rejoin now.
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      clearInteractions(channel);
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      // And again a second later, inside the cooldown: deferred, not dropped.
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      clearInteractions(channel);
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verifyNever(() => channel.subscribe(any()));
+
+      await tester.pump(const Duration(seconds: 30));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+      service.stopPolling();
+    });
+
+    // A wake or unlock the lifecycle already counted as awake still calls
+    // ensureRealtimeConnected. With realtime paused for polling that opened a
+    // channel behind the lifecycle's back.
+    testWidgets('a paused channel is not reopened by a rejoin request', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      service.pauseRealtime();
+      clearInteractions(channel);
+
+      service.ensureRealtimeConnected();
+      await settle(tester);
+      verifyNever(() => channel.subscribe(any()));
+
+      // Resuming is the lifecycle's call, and it still works.
+      service.resumeRealtime();
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
+    // Ignoring the pause's own `closed` must not ignore the channel that
+    // replaces it: the socket dying in the tray after a lock and unlock is
+    // the original bug, and it still has to rejoin.
+    testWidgets('a channel resumed after a pause still rejoins when it dies', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      service.pauseRealtime();
+      onStatus(RealtimeSubscribeStatus.closed, null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      // Windows throttles the tray process; the heartbeat lapses.
+      onStatus(RealtimeSubscribeStatus.timedOut, null);
+      await tester.pump(const Duration(seconds: 3));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
+    // On wake the lifecycle opens a channel, and main.dart asks for a rejoin
+    // straight after. Tearing down the channel that is still joining only
+    // restarted the join, while the network was still coming up.
+    testWidgets('a channel still joining is not torn down for another', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      clearInteractions(channel);
+
+      service.ensureRealtimeConnected();
+      await settle(tester);
+      verifyNever(channel.unsubscribe);
+      verifyNever(() => channel.subscribe(any()));
+
+      // A join that never answers at all is still replaced, once the join's
+      // own timeout has had its chance.
+      await tester.pump(const Duration(seconds: 16));
+      service.ensureRealtimeConnected();
+      await settle(tester);
+      verify(channel.unsubscribe).called(1);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
+    // The catch-up after a rejoin exists to find what landed during the
+    // outage. Finding it is not evidence that the channel which has just
+    // joined is broken, and tearing it down for that rejoined in a loop.
+    testWidgets('the catch-up after a rejoin does not blame the new channel', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      // The socket drops, a phone sends a clip, the rejoin succeeds.
+      onStatus(RealtimeSubscribeStatus.closed, null);
+      await tester.pump(const Duration(seconds: 3));
+      await settle(tester);
+      clearInteractions(channel);
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      when(
+        () => repository.getHistory(limit: 10),
+      ).thenAnswer((_) async => [clip('2')]);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      verify(() => repository.getById('2')).called(1);
+      verifyNever(channel.unsubscribe);
+      verifyNever(() => channel.subscribe(any()));
     });
 
     testWidgets('after it arrived over realtime', (tester) async {

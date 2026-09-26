@@ -1435,6 +1435,12 @@ class MobileMainViewModel extends ChangeNotifier {
     // Clear sensitive decrypted data from memory when backgrounded
     _decryptedContentCache.clear();
 
+    // Trim, not clear: the same trade desktop makes when it hides. Keeping a
+    // few MB of the most recently viewed media means resuming shows the list
+    // immediately, while giving back the bulk that iOS would otherwise count
+    // against this app when deciding what to kill.
+    MediaMemoryCache.instance.trimTo(MediaMemoryCache.idleBytes);
+
     _clipboardContent = null;
     notifyListeners();
   }

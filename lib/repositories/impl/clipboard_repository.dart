@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -16,6 +17,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
+import '../../services/thumbnail_disk_cache.dart';
 import '../../utils/platform_label.dart';
 import '../clipboard_repository.dart';
 
@@ -83,8 +85,21 @@ class ClipboardRepository implements IClipboardRepository {
   /// request, R2 fetch and AES decrypt for identical bytes. Observed in the
   /// logs as the same object downloaded and "Decrypted to N bytes" twice,
   /// milliseconds apart, which is most of the first-load latency on mobile.
-  final Map<String, Future<Uint8List?>> _inFlightDownloads =
+  ///
+  /// Thumbnail builds share it under their own `thumb:` keys.
+  final Map<String, Future<Uint8List?>> _inFlight =
       <String, Future<Uint8List?>>{};
+
+  /// Bumped by [reset]. A thumbnail build that began before a sign-out must
+  /// not write its plaintext preview back into caches that reset has just
+  /// emptied for the account being left.
+  int _cacheGeneration = 0;
+
+  /// Storage paths deleted while their thumbnail was still being built. The
+  /// build checks this before it writes, so a deleted clip's preview is not
+  /// cached again after delete() removed it. Only ever holds paths with a
+  /// build in flight, and each is dropped when that build finishes.
+  final Set<String> _deletedWhileBuilding = <String>{};
 
   @override
   ValueListenable<int> get undecryptableItemCount => _undecryptableItemCount;
@@ -472,30 +487,169 @@ class ClipboardRepository implements IClipboardRepository {
       return cached;
     }
 
-    // Join an identical request already running rather than starting a second.
-    final inFlight = _inFlightDownloads[storagePath];
+    // The disk lookup lives inside _resolveBytes so that it, too, is covered
+    // by the in-flight join - otherwise two tiles rebuilding at once would
+    // both read and decrypt the same file.
+    return _joinInFlight(storagePath, () async {
+      final bytes = await _resolveBytes(item, storagePath);
+      // Cache the PLAINTEXT in RAM: that cache is in-process and cleared on
+      // sign-out and memory pressure, so re-running AES on every hit would be
+      // pure waste. The disk copy stays as stored - encrypted when the clip is.
+      if (bytes != null) MediaMemoryCache.instance.put(storagePath, bytes);
+      return bytes;
+    });
+  }
+
+  /// Join an identical request already running rather than starting a second.
+  ///
+  /// [onSettled] runs once, for the request that started the work, in the
+  /// same step that stops [key] counting as in flight.
+  Future<Uint8List?> _joinInFlight(
+    String key,
+    Future<Uint8List?> Function() start, {
+    void Function()? onSettled,
+  }) async {
+    final inFlight = _inFlight[key];
     if (inFlight != null) {
-      debugPrint('[Repository] ⏳ Joining in-flight download: $storagePath');
+      debugPrint('[Repository] ⏳ Joining in-flight request: $key');
       return inFlight;
     }
 
     // Registered before any await so a concurrent caller sees it immediately.
-    // The disk lookup lives inside _resolveBytes so that it, too, is covered
-    // by the in-flight join - otherwise two tiles rebuilding at once would
-    // both read and decrypt the same file.
-    final future = _resolveBytes(item, storagePath);
-    _inFlightDownloads[storagePath] = future;
+    final future = start();
+    _inFlight[key] = future;
     try {
       return await future;
     } finally {
       // remove() hands back the Future we just awaited; discarding it here is
       // the point of the cleanup.
       // ignore: unawaited_futures
-      _inFlightDownloads.remove(storagePath);
+      _inFlight.remove(key);
+      onSettled?.call();
     }
   }
 
-  /// Disk cache first, network second. Returns plaintext bytes either way.
+  @override
+  Future<Uint8List?> loadThumbnail(ClipboardItem item) async {
+    final storagePath = item.storagePath;
+    if (storagePath == null || !item.isImage) return null;
+
+    final memoryKey = _thumbnailKey(storagePath);
+    final cached = MediaMemoryCache.instance.get(memoryKey);
+    if (cached != null) return cached;
+
+    // Joined like downloadFile does, so a list of tiles rebuilding at once
+    // cannot all decode the same picture.
+    return _joinInFlight(
+      memoryKey,
+      () => _resolveThumbnail(item, storagePath, memoryKey),
+      onSettled: () => _deletedWhileBuilding.remove(storagePath),
+    );
+  }
+
+  Future<Uint8List?> _resolveThumbnail(
+    ClipboardItem item,
+    String storagePath,
+    String memoryKey,
+  ) async {
+    final generation = _cacheGeneration;
+    final onDisk = await ThumbnailDiskCache.instance.get(storagePath);
+    if (!_thumbnailStillWanted(storagePath, generation)) return null;
+    if (onDisk != null) {
+      MediaMemoryCache.instance.put(memoryKey, onDisk);
+      debugPrint('[Repository] 🖼 Thumbnail disk hit: $storagePath');
+      return onDisk;
+    }
+
+    // Only now is the real image needed - and this is the one time it is, for
+    // this clip, on this device. _resolveBytes applies the disk cache and
+    // decryption, so an encrypted clip is handled exactly as anywhere else;
+    // what is written below is already plaintext.
+    //
+    // Not through downloadFile: that keeps the full image in the RAM cache,
+    // and a list of tiles building their thumbnails would fill it with
+    // full-size pictures needed for one decode each, evicting what is really
+    // on screen. Taken from RAM only if something else already put it there.
+    final full =
+        MediaMemoryCache.instance.get(storagePath) ??
+        await _joinInFlight(
+          storagePath,
+          () => _resolveBytes(item, storagePath),
+        );
+    if (full == null || full.isEmpty) return null;
+
+    final thumbnail = await _encodeThumbnail(full);
+    // Checked in the same synchronous run as the writes below, so a delete
+    // or sign-out either lands first and is seen here, or lands after and
+    // queues its removal behind these writes.
+    if (thumbnail == null || !_thumbnailStillWanted(storagePath, generation)) {
+      return null;
+    }
+
+    unawaited(ThumbnailDiskCache.instance.put(storagePath, thumbnail));
+    MediaMemoryCache.instance.put(memoryKey, thumbnail);
+    debugPrint(
+      '[Repository] 🖼 Thumbnail built for $storagePath '
+      '(${full.length} -> ${thumbnail.length} bytes)',
+    );
+    return thumbnail;
+  }
+
+  /// Downscale the longest edge to [ThumbnailDiskCache.maxEdge] and
+  /// re-encode as PNG.
+  ///
+  /// Only one dimension is ever given: supplying both scales to exactly those
+  /// and would distort anything that is not square. With one, the codec keeps
+  /// the aspect ratio. Which one depends on the source - capping only the
+  /// width let a full-page screenshot through at 512x9000 - and nothing is
+  /// scaled up, so a small icon is not re-encoded larger than it came.
+  static Future<Uint8List?> _encodeThumbnail(Uint8List full) async {
+    ui.Codec? codec;
+    ui.Image? image;
+    try {
+      // Handed over, not shared: instantiateImageCodecWithSize disposes it.
+      final buffer = await ui.ImmutableBuffer.fromUint8List(full);
+      codec = await ui.instantiateImageCodecWithSize(
+        buffer,
+        getTargetSize: thumbnailTargetSize,
+      );
+      final frame = await codec.getNextFrame();
+      image = frame.image;
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List();
+    } on Exception catch (e) {
+      // Not an image, or an encoding this build cannot decode. The caller
+      // falls back to the full image, which is what happened before.
+      debugPrint('[Repository] Thumbnail encode failed: $e');
+      return null;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+    }
+  }
+
+  /// False once the account the build started under has signed out, or the
+  /// clip has been deleted.
+  bool _thumbnailStillWanted(String storagePath, int generation) =>
+      generation == _cacheGeneration &&
+      !_deletedWhileBuilding.contains(storagePath);
+
+  /// The decode size for a thumbnail of a [width] x [height] image.
+  @visibleForTesting
+  static ui.TargetImageSize thumbnailTargetSize(int width, int height) {
+    const maxEdge = ThumbnailDiskCache.maxEdge;
+    if (width <= maxEdge && height <= maxEdge) return ui.TargetImageSize();
+    return width >= height
+        ? ui.TargetImageSize(width: maxEdge)
+        : ui.TargetImageSize(height: maxEdge);
+  }
+
+  /// Namespaced so a thumbnail can never be handed back by downloadFile,
+  /// which looks the raw storage path up in the same RAM cache.
+  String _thumbnailKey(String storagePath) => 'thumb:$storagePath';
+
+  /// Disk cache first, network second. Returns plaintext bytes either way,
+  /// and leaves the RAM cache to the caller.
   Future<Uint8List?> _resolveBytes(
     ClipboardItem item,
     String storagePath,
@@ -505,9 +659,7 @@ class ClipboardRepository implements IClipboardRepository {
       debugPrint(
         '[Repository] 💾 Disk cache hit: $storagePath (${cached.length} bytes)',
       );
-      final bytes = await _decryptDownloaded(item, cached);
-      if (bytes != null) MediaMemoryCache.instance.put(storagePath, bytes);
-      return bytes;
+      return _decryptDownloaded(item, cached);
     }
     return _downloadAndDecrypt(item, storagePath);
   }
@@ -528,15 +680,7 @@ class ClipboardRepository implements IClipboardRepository {
       // Fire and forget: a cache write must never delay showing the image.
       unawaited(MediaDiskCache.instance.put(storagePath, raw));
 
-      final bytes = await _decryptDownloaded(item, raw);
-      if (bytes == null) return null;
-
-      // Cache the PLAINTEXT in RAM: that cache is in-process and cleared on
-      // hide, sign-out and memory pressure, so re-running AES on every hit
-      // would be pure waste. The disk copy above stays encrypted.
-      MediaMemoryCache.instance.put(storagePath, bytes);
-
-      return bytes;
+      return await _decryptDownloaded(item, raw);
     } on Exception catch (e) {
       debugPrint('[Repository] ✗ Download failed: $e');
       return null;
@@ -733,16 +877,16 @@ class ClipboardRepository implements IClipboardRepository {
         // Clean up orphaned cache entries (async, don't await)
         _cleanupOrphanedCache(decryptedItems);
 
-        // Drop disk-cached media for clips that no longer exist.
-        unawaited(
-          MediaDiskCache.instance.prune(
-            decryptedItems
-                .map((i) => i.storagePath)
-                .whereType<String>()
-                .where((p) => p.isNotEmpty)
-                .toSet(),
-          ),
-        );
+        // Drop disk-cached media for clips that no longer exist. Both
+        // stores, from one set: a thumbnail of a clip whose bytes have been
+        // pruned is just as stale.
+        final livePaths = decryptedItems
+            .map((i) => i.storagePath)
+            .whereType<String>()
+            .where((p) => p.isNotEmpty)
+            .toSet();
+        unawaited(ThumbnailDiskCache.instance.prune(livePaths));
+        unawaited(MediaDiskCache.instance.prune(livePaths));
       }
 
       return decryptedItems;
@@ -834,8 +978,14 @@ class ClipboardRepository implements IClipboardRepository {
       // cleanup_storage_on_clipboard_delete trigger.
       final deletedPath = item?.storagePath;
       if (deletedPath != null && deletedPath.isNotEmpty) {
-        MediaMemoryCache.instance.remove(deletedPath);
+        if (_inFlight.containsKey(_thumbnailKey(deletedPath))) {
+          _deletedWhileBuilding.add(deletedPath);
+        }
+        MediaMemoryCache.instance
+          ..remove(deletedPath)
+          ..remove(_thumbnailKey(deletedPath));
         unawaited(MediaDiskCache.instance.remove(deletedPath));
+        unawaited(ThumbnailDiskCache.instance.remove(deletedPath));
       }
 
       // FIXED: Remove from image cache if it's an image
@@ -1268,6 +1418,7 @@ class ClipboardRepository implements IClipboardRepository {
   @override
   void reset() {
     debugPrint('[ClipboardRepository] Resetting repository state');
+    _cacheGeneration++;
     _encryptionInitialized = false;
     _encryptionUserId = null;
     // Belongs to the signed-out user's history. Leaving it set would show the
@@ -1279,6 +1430,8 @@ class ClipboardRepository implements IClipboardRepository {
     // profile directory. Signing out must not leave them for the next user.
     MediaMemoryCache.instance.clear();
     unawaited(MediaDiskCache.instance.clear());
+    // Plaintext previews of this account's clips; they must not outlive it.
+    unawaited(ThumbnailDiskCache.instance.clear());
   }
 
   @override

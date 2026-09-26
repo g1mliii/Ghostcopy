@@ -39,6 +39,7 @@ import 'services/impl/system_power_service.dart';
 import 'services/impl/transformer_service.dart';
 import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
+import 'services/impl/windows_package_service.dart';
 import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
 import 'services/obsidian_service.dart';
@@ -53,6 +54,7 @@ import 'services/tray_service.dart';
 import 'services/url_shortener_service.dart';
 import 'services/webhook_service.dart';
 import 'services/window_service.dart';
+import 'services/windows_package_service.dart';
 import 'ui/platform_adaptive.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
@@ -64,6 +66,7 @@ import 'utils/auth_callback.dart';
 import 'utils/file_picker_setup.dart';
 import 'utils/platform_label.dart';
 import 'utils/windows_registry.dart';
+import 'utils/windows_working_set.dart';
 
 // Configuration - These values are safe to be public
 // Security comes from Supabase Row-Level Security (RLS) policies, not hiding these keys
@@ -238,10 +241,17 @@ Future<void> _writePendingCopy(ClipboardItem item) async {
 
 /// Everything runs inside crash reporting, startup included, so an error that
 /// stops the app coming up is reported too.
-Future<void> main(List<String> args) =>
-    SentryCrashReportingService().run(() => _appMain(args));
+Future<void> main(List<String> args) {
+  // One instance, so the startup steps below can report a failure they
+  // recovered from through the same Sentry client that wraps the app.
+  final crashReporting = SentryCrashReportingService();
+  return crashReporting.run(() => _appMain(args, crashReporting));
+}
 
-Future<void> _appMain(List<String> args) async {
+Future<void> _appMain(
+  List<String> args,
+  ICrashReportingService crashReporting,
+) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
@@ -327,6 +337,13 @@ Future<void> _appMain(List<String> args) async {
   // AuthService can forget one when a browser sign-in is abandoned.
   final pkceStore = PkceVerifierStore();
 
+  // Answers whether this process is running from inside an MSIX package, which
+  // decides how the app registers itself with Windows: directly in HKCU when
+  // it runs unpackaged, or not at all when the package manifest has already
+  // declared the same things. Constructed before the parallel group below
+  // because two members of it ask.
+  final windowsPackage = WindowsPackageService();
+
   // PARALLEL GROUP 1: Independent startup operations
   await Future.wait([
     // Initialize Supabase with session persistence
@@ -343,9 +360,11 @@ Future<void> _appMain(List<String> args) async {
       ),
     ),
 
-    // Register custom URL scheme for OAuth callbacks (Windows only)
-    if (Platform.isWindows) _registerWindowsUrlScheme(),
-    if (Platform.isWindows) _registerWindowsContextMenu(),
+    // Register custom URL scheme for OAuth callbacks (Windows only).
+    // Both of these no-op inside an MSIX package, where the manifest declares
+    // the same things and the HKCU writes would be virtualized away.
+    if (Platform.isWindows) _registerWindowsUrlScheme(windowsPackage),
+    if (Platform.isWindows) _registerWindowsContextMenu(windowsPackage),
   ]);
 
   // Initialize services that depend on Supabase
@@ -373,17 +392,23 @@ Future<void> _appMain(List<String> args) async {
   }
 
   // PARALLEL GROUP 2: Auth and Device initialization (both depend on Supabase)
+  //
+  // Guarded, because everything after this point is what makes the app
+  // reachable at all - the tray icon, the global hotkey, the window. These
+  // three awaits used to be bare, so any failure in them abandoned the rest of
+  // _appMain and left a process running with no tray icon, no hotkey and no
+  // way to reach it. That is worse than a crash, which at least ends.
+  //
+  // Seen in production 2026-09-25: a fatal StateError, "User not
+  // authenticated. Cannot register device.", from a run where anonymous
+  // sign-in did not leave a session behind. Registering a device is not worth
+  // the app for, and neither is signing in - the auth panel can retry.
   if (_isDesktop()) {
-    await Future.wait([authService.initialize(), deviceService.initialize()]);
+    await startAuthAndDevice(authService, deviceService, crashReporting);
   } else {
-    // Mobile: Only initialize device service
+    // Mobile: Only initialize device service. The welcome screen registers
+    // the device after auth, so there is nothing to guard here yet.
     await deviceService.initialize();
-  }
-
-  // For desktop: Register device immediately
-  // For mobile: Skip registration - welcome screen will handle it after auth
-  if (_isDesktop()) {
-    await deviceService.registerCurrentDevice();
   }
 
   // Initialize services (desktop only)
@@ -393,7 +418,9 @@ Future<void> _appMain(List<String> args) async {
     final hotkeyService = HotkeyService();
     final gameModeService = GameModeService();
     final settingsService = SettingsService();
-    final autoStartService = AutoStartService();
+    final autoStartService = AutoStartService(
+      windowsPackageService: windowsPackage,
+    );
     final clipboardRepository = ClipboardRepository.instance;
 
     // Register generic services
@@ -496,7 +523,12 @@ Future<void> _appMain(List<String> args) async {
     // Sync auto-start setting with system if needed
     final autoStartEnabled = await settingsService.getAutoStartEnabled();
     final systemAutoStartEnabled = await autoStartService.isEnabled();
-    if (autoStartEnabled != systemAutoStartEnabled) {
+    // Not while Task Manager or a policy holds it: the request cannot change
+    // anything, so it only cost a blocking WinRT call on every launch - and
+    // once the user turned it back on in Task Manager, a saved "off" would
+    // undo that the next time the app started.
+    final autoStartLocked = await autoStartService.lock() != AutoStartLock.none;
+    if (!autoStartLocked && autoStartEnabled != systemAutoStartEnabled) {
       // Sync setting with actual system state
       if (autoStartEnabled) {
         await autoStartService.enable();
@@ -522,12 +554,40 @@ Future<void> _appMain(List<String> args) async {
     // dropped. listen() flushes that backlog.
     SingleInstance.instance.listen((forwarded) {
       unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
-      // A second launch without a URL is the user asking for the app, so show
-      // the window rather than silently doing nothing.
-      if (!forwarded.contains('ghostcopy://')) {
+      // Whether to surface the window, by what the launch was for. The rule
+      // used to be "show unless it is a ghostcopy:// URL", which had both
+      // interesting cases backwards.
+      //
+      //   --send-file  The Explorer verb. It exists so the user does not have
+      //                to open the app; a window appearing is the opposite of
+      //                the point. A toast already confirms the send.
+      //   ghostcopy:// A browser sign-in coming back. The user left the app to
+      //                authenticate and expects to land in it - and the
+      //                callback page's own "Nothing happened? Open GhostCopy"
+      //                link is this exact URL, so suppressing it made that
+      //                link appear to do nothing at all.
+      //   anything else  Someone launched the app. Show it.
+      final isExplorerSend = forwarded.contains('--send-file');
+      if (!isExplorerSend) {
+        debugPrint('[Main] Second launch - showing Spotlight');
         unawaited(locator<IWindowService>().showSpotlight());
       }
     });
+
+    // A launch that never shows the window never hides it either, so the
+    // tray path that trims the working set does not run - and that is the
+    // commonest state of all for this app: started at login and left alone.
+    // Trim once startup has settled, so it is not paid for only by users who
+    // happen to open the Spotlight and close it again.
+    unawaited(
+      Future<void>.delayed(windowsStartupTrimDelay, () async {
+        // Skipped if the user got there first. Trimming a window that is on
+        // screen only faults its pages straight back in; the hide path will
+        // trim when it is closed.
+        if (windowService.isVisible) return;
+        await trimWindowsWorkingSet();
+      }),
+    );
 
     runApp(MyApp(launchedAtStartup: launchedAtStartup));
   } else {
@@ -753,8 +813,18 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WindowListener {
   bool _showingTrayMenu = false;
+
+  /// When the tray menu finished opening. Opening it from the notification
+  /// area's overflow flyout closes that flyout, which can report a blur right
+  /// away; the Spotlight debounces its blur the same way.
+  DateTime? _trayMenuShownAt;
+
+  /// A blur that landed inside that grace, re-checked once it is over.
+  Timer? _trayMenuBlurRecheck;
+
+  static const Duration _trayMenuBlurGrace = Duration(milliseconds: 500);
   bool _openSettingsOnShow = false;
   bool _mobileAuthComplete = false;
   bool _servicesDisposed = false;
@@ -768,6 +838,9 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    // Only Windows draws the tray menu as this window; macOS pops a native
+    // NSMenu, which dismisses itself.
+    if (Platform.isWindows) windowManager.addListener(this);
     if (_isDesktop()) {
       // Initialize notification service with navigator key
       locator<INotificationService>().initialize(_navigatorKey);
@@ -824,18 +897,44 @@ class _MyAppState extends State<MyApp> {
                 break;
               case PowerEventType.systemWake:
                 locator<ILifecycleController>().onSystemWake();
+                // The realtime socket rarely survives a sleep, and nothing
+                // else finds out: without this the app fell back to the
+                // five-minute poll until it was restarted.
+                locator<IClipboardSyncService>().ensureRealtimeConnected();
                 break;
               case PowerEventType.screenLock:
                 locator<ILifecycleController>().onScreenLock();
                 break;
               case PowerEventType.screenUnlock:
                 locator<ILifecycleController>().onScreenUnlock();
+                locator<IClipboardSyncService>().ensureRealtimeConnected();
                 break;
             }
           });
 
       // Set up tray right-click to show custom menu
-      (locator<ITrayService>() as TrayService).onRightClick = _showTrayMenu;
+      (locator<ITrayService>() as TrayService)
+        ..onRightClick = _showTrayMenu
+        // Left-click toggles rather than always showing: clicking the icon of
+        // an app that is already open, and having it jump and re-centre, is
+        // worse than having it close.
+        ..onLeftClick = () {
+          final window = locator<IWindowService>();
+          // Clicking the icon deactivates an open Spotlight first, and its
+          // blur hides it before this runs - so a window that was hidden a
+          // moment ago was closed by this very click, which meant "close".
+          // Showing it again made the toggle unable to close anything.
+          if (window.hiddenWithin(const Duration(milliseconds: 500))) return;
+          if (window.isVisible) {
+            unawaited(window.hideSpotlight());
+            return;
+          }
+          // Through the hotkey's path, not showSpotlight directly: with the
+          // tray menu open the window is shown but not "visible", and only
+          // that path clears _showingTrayMenu - otherwise the Spotlight's
+          // size and position came up rendering the tray menu.
+          unawaited(_handleHotkeySpotlight());
+        };
 
       // macOS uses a real NSMenu, which has to be rebuilt whenever Game Mode
       // changes so its checkmark matches the current state. On Windows this
@@ -971,8 +1070,39 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
+    _trayMenuBlurRecheck?.cancel();
+    if (Platform.isWindows) windowManager.removeListener(this);
     _disposeServices();
     super.dispose();
+  }
+
+  /// Dismiss the tray menu when the user clicks anywhere else.
+  ///
+  /// The menu is topmost, and it replaces the SpotlightScreen - the only
+  /// other thing listening for blur - so without this it stayed on top of
+  /// every other window until something in GhostCopy itself was clicked.
+  @override
+  void onWindowBlur() {
+    if (!_showingTrayMenu) return;
+    final shownAt = _trayMenuShownAt;
+    final sinceShown = shownAt == null
+        ? _trayMenuBlurGrace
+        : DateTime.now().difference(shownAt);
+    if (sinceShown < _trayMenuBlurGrace) {
+      // Maybe the flyout closing, maybe a real click elsewhere - there is no
+      // telling them apart from here. Dropping it outright left a menu that
+      // was clicked away from inside the grace topmost for good, since no
+      // second blur ever comes. So look again once the grace is over: the
+      // flyout's blur leaves the menu focused, a real click does not.
+      _trayMenuBlurRecheck?.cancel();
+      _trayMenuBlurRecheck = Timer(_trayMenuBlurGrace - sinceShown, () async {
+        if (!mounted || !_showingTrayMenu) return;
+        if (await windowManager.isFocused()) return;
+        if (mounted && _showingTrayMenu) _hideTrayMenu();
+      });
+      return;
+    }
+    _hideTrayMenu();
   }
 
   void _disposeServices() {
@@ -1146,6 +1276,7 @@ class _MyAppState extends State<MyApp> {
     // Show with correct size and content
     await windowManager.show();
     await windowManager.focus();
+    _trayMenuShownAt = DateTime.now();
   }
 
   void _hideTrayMenu() {
@@ -1533,11 +1664,32 @@ Future<int> _sendFileFromCommandLine(
   final message = result.message;
   debugPrint('[SendFile] $message');
   if (Platform.isWindows) {
-    // Native feedback works without rendering the main Flutter window, a tray
-    // icon, or a second persistent app instance. It also survives Focus Assist.
-    await const MethodChannel(
-      'com.ghostcopy/send_file',
-    ).invokeMethod<void>('showResult', message);
+    // The same Windows toast every other notification in the app uses, in the
+    // corner and in the Action Center.
+    //
+    // This used to call a native MessageBox, because the send-file path builds
+    // no window and showToast has no overlay to draw into. It worked, but a
+    // modal dialog in the middle of the screen is not what the rest of the app
+    // does and not what Windows does - it had to be dismissed before anything
+    // else could happen, for a message that is purely informational.
+    // showSystemNotification goes straight to the notification, no window
+    // needed.
+    //
+    // Guarded: the send has already happened, and this process has no window
+    // and no tray. A notification plugin that throws must not stop it from
+    // reaching exit(), or it stays resident and invisible.
+    try {
+      final notifications = NotificationService();
+      await notifications.showSystemNotification(
+        message: message,
+        type: result.ok ? NotificationType.success : NotificationType.error,
+      );
+      // The toast is handed to Windows asynchronously; exiting the instant
+      // the call returns can kill the process before it is shown.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    } on Object catch (e) {
+      debugPrint('[SendFile] Could not show the result notification: $e');
+    }
   }
   return exitCode;
 }
@@ -1577,13 +1729,86 @@ Future<void> _listenForSharedFiles(IAuthService authService) async {
   }
 }
 
+/// Sign in and register this device, without letting either stop startup.
+///
+/// Both steps are things the app is better off without than blocked by. A
+/// desktop that cannot reach Supabase still has to put its tray icon up and
+/// listen for the hotkey, so the user can see it is running and sign in when
+/// the network comes back; a device row that fails to register costs a name in
+/// a list, and the next launch writes it.
+///
+/// The failures this absorbs are not hypothetical:
+///   * offline at launch, where `signInAnonymously` throws;
+///   * a sign-in that returns without a session, which left `currentUser` null
+///     and made `registerCurrentDevice` throw a StateError - the crash this
+///     function was written for;
+///   * `deviceService.initialize()` failing, which makes registration throw a
+///     different StateError.
+/// Each is reported as handled, so they stay visible without being counted as
+/// crashes.
+@visibleForTesting
+Future<void> startAuthAndDevice(
+  IAuthService authService,
+  IDeviceService deviceService,
+  ICrashReportingService crashReporting,
+) async {
+  // Reports below are not awaited: on Windows they go out over HTTP, and this
+  // runs before the tray and hotkey exist, so an offline launch - the case
+  // these guards are for - would otherwise stall on them.
+  try {
+    await Future.wait([authService.initialize(), deviceService.initialize()]);
+  } on Object catch (error, stackTrace) {
+    unawaited(
+      crashReporting.reportHandled(
+        error,
+        stackTrace,
+        context: 'auth_and_device_init',
+      ),
+    );
+  }
+
+  // Checked rather than assumed: the guard above means reaching here proves
+  // nothing about the session. registerCurrentDevice would only return false
+  // without one, but skipping it says why in the log.
+  if (authService.currentUser == null) {
+    debugPrint(
+      '[Main] ⚠️ No session after init - skipping device registration',
+    );
+    return;
+  }
+
+  try {
+    await deviceService.registerCurrentDevice();
+  } on Object catch (error, stackTrace) {
+    unawaited(
+      crashReporting.reportHandled(
+        error,
+        stackTrace,
+        context: 'register_current_device',
+      ),
+    );
+  }
+}
+
 /// Add "Send with GhostCopy" to the Explorer right-click menu for all files.
 ///
 /// Written under HKCU so no elevation is needed. `*` covers every file type.
 /// The command passes the clicked path as --send-file, which main() handles
 /// before any UI exists.
-Future<void> _registerWindowsContextMenu() async {
+Future<void> _registerWindowsContextMenu(
+  IWindowsPackageService packageService,
+) async {
   try {
+    // Inside an MSIX package this key lands in the package's private hive and
+    // Explorer never reads it. The packaged entry is the
+    // desktop4:FileExplorerContextMenus declaration in the manifest, backed by
+    // the IExplorerCommand DLL in windows/explorer_command - registering here
+    // as well would only leave a dead key behind.
+    if (await packageService.isPackaged()) {
+      debugPrint('[Main] Packaged: context menu comes from the manifest');
+      return;
+    }
+
     final exePath = Platform.resolvedExecutable;
     const key = r'HKCU\Software\Classes\*\shell\GhostCopySend';
 
@@ -1626,8 +1851,19 @@ Future<void> _registerWindowsContextMenu() async {
 }
 
 /// Register ghostcopy:// URL scheme in Windows Registry for OAuth callbacks
-Future<void> _registerWindowsUrlScheme() async {
+Future<void> _registerWindowsUrlScheme(
+  IWindowsPackageService packageService,
+) async {
   try {
+    // Inside an MSIX package the scheme is declared by protocol_activation in
+    // msix_config, and this HKCU write would be virtualized into the package's
+    // own hive - so ghostcopy:// would resolve for nobody and sign-in would
+    // never come back from the browser.
+    if (await packageService.isPackaged()) {
+      debugPrint('[Main] Packaged: ghostcopy:// comes from the manifest');
+      return;
+    }
+
     // Get the executable path
     final exePath = Platform.resolvedExecutable;
 

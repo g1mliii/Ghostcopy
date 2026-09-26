@@ -12,6 +12,12 @@ class TrayService with TrayListener implements ITrayService {
   // Callback for when tray icon is right-clicked
   void Function()? onRightClick;
 
+  /// Windows only: what a left-click on the tray icon does.
+  ///
+  /// macOS routes left-click to the menu instead, because that is what a
+  /// status item does there - see [onTrayIconMouseDown].
+  void Function()? onLeftClick;
+
   /// macOS gets a real NSMenu so the menu matches every other menu bar app -
   /// vibrancy, keyboard navigation and positioning all come from AppKit. The
   /// Windows tray menu is still the custom Flutter window, because the native
@@ -86,6 +92,7 @@ class TrayService with TrayListener implements ITrayService {
 
     // Clean up callback to prevent memory leak
     onRightClick = null;
+    onLeftClick = null;
 
     // Remove listener
     trayManager.removeListener(this);
@@ -101,11 +108,19 @@ class TrayService with TrayListener implements ITrayService {
     // macOS status items open their menu on either button, so left-click is
     // routed to the same handler there rather than left dead.
     //
-    // Guarded rather than unconditional: on Windows this used to do nothing,
-    // and routing it through _openMenu made a left-click hide the main window
-    // and repurpose it as the menu - a behaviour change to Windows that only
-    // macOS reasoning asked for.
-    if (_usesNativeMenu) _openMenu();
+    // Guarded rather than unconditional: routing Windows through _openMenu
+    // made a left-click hide the main window and repurpose it as the menu - a
+    // behaviour change that only macOS reasoning asked for.
+    //
+    // Windows gets the convention its users expect instead: left-click opens
+    // the app, right-click opens the menu, the way Discord, Steam and Dropbox
+    // behave. Doing nothing at all, which is what it did before, reads as a
+    // broken icon.
+    if (_usesNativeMenu) {
+      _openMenu();
+    } else {
+      onLeftClick?.call();
+    }
   }
 
   @override

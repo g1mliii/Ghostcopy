@@ -2,54 +2,59 @@
 
 ## Active Task
 
-**macOS wrap-up, then Windows.** macOS 1.0.0 (5) is published: notarized DMG
-on GitHub Releases, and the `macos-updates` appcast is live and serving
-build 5. See [`docs/macos-releases.md`](../docs/macos-releases.md) for the
-runbook, `installer/macos/VERIFICATION.md` for what was exercised, and
-[`docs/macos-performance.md`](../docs/macos-performance.md) for the measured
-resource baseline. Finished work is in git history and
-[`tasks/lessons.md`](lessons.md), not here.
+**Windows Store submission.** Everything buildable is built; what remains is
+testing, the listing, and a macOS/iOS pass afterwards. All of it is on the
+branch `feat/windows-store-release` - six commits, **one PR**, split so a bad
+test result can revert a single change rather than the lot.
+
+### The order
+
+1. **Test for a day or two** - the "Verify ... by hand" items in the Windows
+   section below. Start with save/share/drag-out giving the full image, since
+   that is the regression this project has had before.
+2. **Build the Store listing in parallel.** It depends on none of the testing:
+   text, screenshots, age rating, and privacy answers that must declare Sentry
+   crash data the way the App Store ones do. Doing it while the app sits in
+   the tray costs nothing and saves a day.
+3. **Merge and submit.**
+4. **macOS and iOS pass afterwards** - see below; they are not untouched.
+
+### Two things the plan is easy to leave out
+
+- **The unexplained native crash is a decision, not a formality.** Two
+  `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` reports. A defensive fix landed -
+  the clipboard flush was being called from inside a window procedure, where
+  it can pump messages and re-enter - but the first crash predates that code,
+  so it cannot be claimed as the cause. The Flutter engine's symbols are now
+  uploaded, so a recurrence will be readable rather than a wall of `?`. If
+  nothing recurs across the test days, shipping is reasonable; decide it
+  rather than let it pass unnoticed.
+- **macOS and mobile are NOT untouched.** Most of this work lives in `lib/`
+  and ships everywhere: the startup crash fix, the second-launch fix
+  (clicking a running app did nothing on macOS too), the thumbnail cache, the
+  auth panel condensing, and mobile background memory trimming. macOS
+  1.0.0 (9) is now behind this branch, and its next build will behave
+  differently.
 
 ## macOS: what's left
 
-- [x] **Launch at startup - fixed 2026-09-22 and confirmed.** The
-      `launch_at_startup` package ships no macOS code;
-      `macos/Runner/LaunchAtStartup.swift` answers its channel with
-      `SMAppService.mainApp`. Checked on an installed build - a copy run from
-      `build/` registers that path instead
-- [x] **Gentle update reminder - kept as it is.** The dot next to the menu
-      bar icon and the relabelled tray item were judged noticeable enough
-- [x] **Build 6 - published 2026-09-24** as `macos-v1.0.0-6`, feed and
-      `/download/macos` updated. Sign in with Apple on the Mac goes through the
-      browser: Apple issues no Developer ID profile carrying the
-      applesignin entitlement (only App Store/development profiles can), so
-      the native sheet is iOS-only
-- [x] **Build 8 - published 2026-09-25:** Sentry crash reporting (symbols
-      uploaded at build time), push-token reliability. TestFlight 1.0.0 (8)
-      built from the same commit
-- [x] **Build 7 - published 2026-09-24: file upload and Save as.** Broken since build 5: dropping
-      the sandbox also dropped the user-selected-files entitlement, which
-      file_picker checks before opening any panel (ENTITLEMENT_NOT_FOUND).
-      Fixed with `prepareFilePicker` (the plugin's skip switch) plus a
-      regression test tied to the entitlements. Audit of what else the
-      sandbox removal touched: no other plugin checks entitlements
-      (package_info_plus only uses it for an install date the app never
-      reads); keychain group, launch at startup, Sparkle, hotkey and network
-      all verified unaffected; folder-access prompts now carry usage strings.
-      Attach and Save as confirmed from the build 7 DMG before publishing.
-      Also carries the realtime catch-up (#35, #36)
+- [ ] **Re-test Apple sign-in.** The Supabase Client IDs ordering that broke
+      it on Windows broke macOS identically. The fix was server-side, so no
+      rebuild is needed, but it has never been verified there.
+- [ ] **Re-release after this branch**, carrying the shared fixes above.
+      Bump the build number past 9 - the counter is shared across platforms
+      so TestFlight and Play never see a duplicate.
+- [ ] **Regenerate the icons** with
+      `DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py`.
+      The rounding already shipped; this is the one-pixel offset fix, which
+      needs Cairo and so cannot run on Windows.
+
+
 - [ ] **Sandbox - only if the Mac app goes to the Mac App Store.** Required
       there, optional for Developer ID. It would mean Sparkle's XPC
       services (or dropping Sparkle for store updates), an Obsidian folder
       picker with security-scoped bookmarks, and migrating preferences into
       the container; it would also bring back the native Apple sign-in sheet
-- [x] **Notarize in CI - decided against.** Publishing needs three secrets in
-      one place: the Developer ID private key, notarization credentials, and
-      the Sparkle EdDSA key. That last one is unrecoverable - if it leaks,
-      anyone can sign an update every installed copy accepts and installs. Not
-      worth that to replace one local command. A workflow that *verifies* a
-      published feed (signature, checksums, feed matches release) is still
-      worth having; publishing stays manual
 
 ## Windows: next
 
@@ -68,97 +73,147 @@ every release and every auto-update re-triggers the warning.
 CI already builds Windows on `windows-latest`, so no Windows machine is needed
 to package - but everything below marked "verify" does need one.
 
-- [ ] **Clipboard counter: two copies in a row from GhostCopy's own window
-      read as one** (verify, then fix). `ClipboardChangeCount()` in
-      `windows/runner/flutter_window.cpp` ignores a sequence change while the
-      same in-process window owns the clipboard, to hide OLE's delayed
-      rendering. So a second Ctrl+C in the Spotlight field, or a second smart
-      action copy, never moves the counter: auto-send skips it and smart
-      receive does not date it. The deeper fix is `OleFlushClipboard()` after
-      each GhostCopy write, which renders every format up front so the raw
-      `GetClipboardSequenceNumber()` only moves on real changes and the owner
-      check can go. Found in the PR #19 review, 2026-09-24
-- [ ] **Pick the Store account type before signing up.** Individual means
-      distribution NOT in relation to a business, so a released product points
-      at Company - a DUNS number or business documents, and a work email on the
-      organisation's domain (contact address is anchored.site, product is
-      ghostcopy.app). **Individual cannot be converted to Company later.**
-- [ ] **Package as MSIX** for the Store, replacing the Inno Setup script.
-      `msix_config` in `pubspec.yaml` is a placeholder: identity and publisher
-      come from Partner Center once the name is reserved, and it needs
-      `store: true`. Three things the app registers itself today break inside
-      a package, because MSIX virtualizes HKCU and AppData writes - checked
-      against the code 2026-09-22, not yet on a machine:
-  - [ ] **`ghostcopy://` sign-in callback.** `_registerWindowsUrlScheme` in
-        `lib/main.dart` writes `HKCU\Software\Classes\ghostcopy` with
-        `reg.exe`; packaged, that lands in the package's private hive and
-        Google sign-in never comes back. Declare `protocol_activation:
-        ghostcopy` in `msix_config` and skip the registry write when packaged
-  - [ ] **Launch at startup.** The registry Run key is virtualized, and
-        launch_at_startup's MSIX mode is no better: it drops a Startup-folder
-        shortcut to the versioned `WindowsApps` exe path, which every Store
-        update moves. Needs a `startup_task` in `msix_config` plus the WinRT
-        `StartupTask` API (`RequestEnableAsync`) behind a method channel in
-        the Windows runner - the same shape as the macOS fix
-  - [ ] **"Send with GhostCopy" in Explorer.** `_registerWindowsContextMenu`
-        writes `HKCU\Software\Classes\*\shell`, also virtualized. The
-        packaged route is `desktop4:FileExplorerContextMenus`, which needs a
-        native COM `IExplorerCommand` DLL (msix's `context_menu` config).
-        Decide whether it is worth that, or whether the Windows share target
-        covers it
-- [ ] **Crash symbols for Windows.** Wire `installer/upload-debug-symbols.sh`
-      (or its PowerShell equivalent) into the Windows release build to upload
-      the PDBs to Sentry, as the macOS and iOS builds do - otherwise native
-      Windows crash reports stay as raw addresses. The token lives in the
-      Keychain on the Mac; a Windows or CI build needs its own secure store
-- [ ] **Store submission:** the listing text (reuse the App Store one, naming
-      Windows rather than Mac where it applies), screenshots, and the Store's
-      own privacy and age-rating answers - the privacy answers must include
-      Sentry crash reports, as on the App Store
-- [ ] **Full manual test pass on Windows - by hand, on a real machine**,
-      once the MSIX build exists: the "verify" items below, plus sending and
-      receiving text, images and files both ways, the tray, the hotkey,
-      notifications, sign-in and encryption
-- [ ] **Tray menu frameless leak - fixed 2026-09-22, verify.** `_showTrayMenu`
-      calls `setAsFrameless()`, and in window_manager's Windows code only
-      `setTitleBarStyle` clears that flag. Until then `WM_NCCALCSIZE` hands the
-      whole window to Flutter, so after the first tray right-click the
-      Spotlight lost its resize borders and came back ~16px wider and 8px
-      taller. `WindowService.showSpotlight` now restores
-      `TitleBarStyle.hidden` (buttons hidden) on Windows. Check: right-click
-      the tray, then open Spotlight - same size as before, edges resize
-- [ ] **Icons (look only).** All Windows `.ico` files are current - the
-      generator was re-run 2026-09-22 and reproduced them byte for byte. They
-      have just never been looked at on a real taskbar, light and dark
-- [ ] **System notifications (Windows half).** Toast and its Action Center
-      entry, Game Mode suppression, tap opens/copies, fresh-install permission.
-      Received clips never notified on any desktop until 2026-09-22 - the sync
-      service was built without its notifier - so this is the first real test
-- [ ] **Clipboard staleness (verify).** New native channel in
-      `windows/runner/flutter_window.cpp` answers `changeCount` from
-      `GetClipboardSequenceNumber()`, counting a change only when the
-      clipboard changes hands (so OLE delayed renders do not count), and
-      pushes "changed" on every `WM_CLIPBOARDUPDATE` so the smart watch runs
-      no timer on Windows. Written but not yet compiled. Check: the app builds; with auto-receive on smart,
-      copy something in another app, send a clip from the phone within the
-      stale window - it is NOT copied and a "Copy" notification appears
-      instead; after the window it is
-      copied; two clips sent back to back are both copied; copying from
-      GhostCopy's history also counts; pasting an auto-copied clip into Word
-      does NOT make the next clip wait. Auto-send now skips reading an
-      unchanged clipboard on Windows too, via the same counter, and a copy
-      made while a clipboard manager briefly holds the clipboard open is
-      still auto-sent a tick or two later
-- [ ] **Launch at startup (verify).** Uses the package's registry path on
-      Windows, unlike macOS; check it survives a reboot
-- [ ] **Encryption after reinstall/account switch.** Install over an existing
-      passphrase, sign into the same account, and confirm encrypted history
-      appears without toggling encryption (flutter_secure_storage's Windows
-      backend)
-- [ ] **Resource baseline.** One Task Manager sample idle in the tray and one
-      with the window open, recorded like `docs/macos-performance.md`, before
-      changing lifecycle or realtime services
-- [ ] Sign in, sign out and account upgrade
+- [ ] **AppData is NOT redirected for a full-trust MSIX**, contrary to the
+      note this file used to carry. Measured during the sideload: the packaged
+      app wrote its sentry-native database straight to the real
+      `%LOCALAPPDATA%` and the container's `LocalCache` stayed empty, so the
+      packaged and unpackaged builds share `%APPDATA%\com.ghostcopy` - the
+      same session, settings and passphrase. Harmless for the crash database,
+      but it means the sideload test was never isolated from the dev build,
+      and anything that assumes per-package state is wrong
+- [ ] **WNS is not used and needs no setup.** The Partner Center WNS/MPNS page
+      applies to apps receiving cloud push through Windows Push Notification
+      Services. GhostCopy desktop has no FCM and no push: it holds a Supabase
+      Realtime socket and raises a *local* toast through
+      flutter_local_notifications. Nothing to configure, and it has no bearing
+      on the account type
+- [ ] **Regenerate the icons on a Mac.** `tile()` in
+      `tool/generate_brand_assets.py` seated the mark one pixel left and high
+      at any size where `px - int(px * inset)` is odd, because the floor in
+      `// 2` gave the spare pixel to the right and bottom. Measured on the
+      shipped assets: 32px had 9px of padding left and 10 right, 256px had 73
+      and 74. One pixel is 3% of a 32px icon, which is the "not centred, too
+      far to the left" in the context menu and the tray. Fixed in the
+      generator and the arithmetic checked at every shipped size - 3 of 13
+      were off before, none after - but Cairo will not load on Windows, so the
+      PNG and ICO files still carry the old placement. Re-run
+      `DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py`
+      on the Mac and commit what it writes
+  - Separately, and NOT fixed: the mark's bounding box is centred to the pixel
+    but its mass is not - the centroid sits 5.9px left and 59px high of centre
+    at 1024 (0.6% and 5.8%). Optical centring would shift it to match, but
+    that moves the iOS, macOS and Android icons too, including ones already
+    through review, so it is a deliberate call rather than a bug fix
+- [ ] **The logo in the Windows toast looks warped.**
+      `WindowsInitializationSettings` in
+      `lib/services/impl/notification_service.dart` takes an optional
+      `iconPath` and is not given one, so Windows falls back to deriving an
+      icon. Passing an explicit square PNG needs a real file path, and the
+      asset lives inside `data/flutter_assets`, so it has to be resolved or
+      copied out at runtime. Re-check first with the now-rounded icons: in a
+      package Windows uses Square44x44Logo, which is regenerated from
+      `app_icon.png`, so this may already be fixed
+- [ ] **Two unexplained native crashes - decide before submitting.**
+      `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` on 2026-09-25 at 19:59 UTC
+      (dist 5) and 21:39 UTC (dist 9), same user, same shape. Reading 0x10 is
+      a null dereference at a member offset.
+      **Narrowed, 2026-09-25:** the only frame worth trusting is
+      `FlutterViewController::HandleTopLevelWindowProc`. `SetWaitableTimer`
+      appears in both but nothing in this repo calls it, so treat it as stack
+      noise from an unsymbolicated walk rather than a caller. That left one
+      pattern that fits: something the app calls from inside the window
+      procedure pumping messages and re-entering it. Both candidates are now
+      gone - the `MessageBoxW` the send-file path used (present in dist 5) was
+      deleted, and `OleFlushClipboard` (added in dist 9) is posted rather than
+      called. Consistent with the evidence, but NOT proven: the frames above
+      it were never resolved.
+      **What changed since:** `flutter_windows.dll.pdb` ships with the Flutter
+      SDK and had never been uploaded, which is why every engine frame read
+      `?`. It is uploaded now and `build-store.ps1` sends it per release, so
+      the debug id cannot drift on a Flutter upgrade. Sentry reprocesses
+      native events when symbols arrive late, so the two existing reports may
+      resolve on their own - **check them before deciding.**
+      If nothing recurs over the test days and the existing two stay
+      unexplained, shipping is defensible; make it a decision.
+- [ ] **Verify the clipboard counter change by hand.** `OleFlushClipboard`
+      replaced the owner check, and the two halves pull against each other -
+      none of it is covered by tests:
+  - [ ] Two copies in a row in the Spotlight field are BOTH auto-sent (the
+        bug the change fixes)
+  - [ ] Two smart-action copies in a row are both seen
+  - [ ] Pasting an auto-copied clip into Word does NOT make the next clip
+        wait (what the old owner check protected; most likely to regress)
+  - [ ] Auto-receive on smart: copy elsewhere, send from the phone inside the
+        stale window - NOT copied, "Copy" notification instead; after the
+        window, copied
+  - [ ] Two clips sent back to back are both copied
+  - [ ] Copying from GhostCopy's own history counts
+  - [ ] A large image or 10 MB file still copies without a visible stall
+- [ ] **Verify the thumbnail cache by hand.**
+  - [ ] Cold launch on Windows, and on both mobile platforms
+  - [ ] Save, share and drag-out still produce the FULL image, not the
+        thumbnail - the regression this project has had before
+  - [ ] A full-size preview is not a blurry upscale
+  - [ ] Encrypted clips still render; deleting a clip drops its thumbnail;
+        signing out wipes the cache
+- [ ] **Verify the memory work by hand.**
+  - [ ] Hotkey after 2-3 hours idle *while the machine is in normal use*, so
+        the trimmed pages have actually been reclaimed. An idle machine
+        evicts nothing and proves nothing
+  - [ ] A clip sent from the phone after 30+ minutes idle still notifies and
+        auto-copies
+  - [ ] Tray menu after a long idle, and that it now draws in front of the
+        taskbar flyout
+  - [ ] Mobile: background the app, reopen, list appears immediately; a push
+        still arrives after a long background
+- [ ] **Verify the second-launch fix.** Clicking the app while it is already
+      running opens the window - it never did before. Check sign-in still
+      completes (same delivery path), and that "Send with GhostCopy" sends
+      WITHOUT popping the Spotlight open.
+- [ ] **Windows updates: cannot be tested until published.** A sideloaded
+      package does not auto-update; only a Store-installed one does. After
+      the first release, submit a higher `msix_version` and confirm it
+      arrives (Store > Library > Get updates forces it).
+- [ ] **Decide whether Windows needs an update signal in the UI.** macOS has
+      the dot by the menu bar icon because Sparkle needs the user to act. The
+      Store updates silently, so probably nothing - but make it a decision.
+- [x] **Realtime delivery stalled in the tray - fixed and verified
+      2026-09-25.** A clip sent to a backgrounded Windows app arrived about
+      five minutes later, which is the polling fallback's interval: realtime
+      had died and nothing noticed, so the fallback had quietly become the
+      only delivery path. `subscribe()` was called with no status callback, so
+      `channelError`, `timedOut` and `closed` all went nowhere and nothing
+      ever rejoined - not on status, not on wake, not on unlock. Windows
+      surfaced it first because it throttles a background process hard enough
+      for the socket's heartbeat to lapse, but the same socket dies anywhere
+      across a sleep, a network change or a server restart, so this was never
+      Windows-only. Verified: first clip instant after a few minutes in the
+      tray, instant again 60s later, and **still instant after 30 minutes
+      idle** - comfortably past the 20-30 seconds that used to break it and
+      turn a clip into a five-minute wait.
+  - [ ] **Re-test on macOS after a lid close.** Same socket, same failure
+        mode; macOS had simply not been pushed into it.
+  - [ ] If a clip is ever slow again but the *next* one is instant, the death
+        was silent (no status to react to) and the evidence-based rejoin
+        caught it. The next lever then is opting the process out of Windows
+        power throttling (EcoQoS) - the root rather than the recovery. Not
+        done pre-emptively: it fights the OS's power management and sits
+        beside the working-set trim.
+- [ ] **Store submission.** Drafted in
+      [`docs/microsoft-store-listing.md`](../docs/microsoft-store-listing.md)
+      against the code, not adapted line by line from the App Store one -
+      two things differ. Microsoft has no equivalent of Apple's 2.3.10, so
+      the Windows listing names Mac, iPhone and Android plainly, which is the
+      whole point of the app. And the publisher display name Partner Center
+      issued is `g1mli`, a handle, which is public under the app title and
+      has to match `msix_config` - decide it before submitting rather than
+      after people have installed.
+  - [ ] Take the five screenshots listed in that doc, 1920x1080, demo account
+  - [ ] Run the IARC age questionnaire; the two answers worth care are
+        user-to-user sharing (No - same account only) and location (No)
+  - [ ] Declare Sentry in the privacy answers, as on the App Store
+  - [ ] Decide whether France is excluded for the first release, and keep it
+        consistent with the App Store decision
 
 ## iOS: open
 
@@ -180,61 +235,12 @@ to package - but everything below marked "verify" does need one.
       listing needs 13" iPad screenshots and review tests it there. Dropping
       iPad for 1.0 (TARGETED_DEVICE_FAMILY = 1) skips both; it can come back
       in an update
-- [x] **Privacy manifests** - `ios/Runner` and `ios/ShareExtension` now ship
-      `PrivacyInfo.xcprivacy` declaring their UserDefaults use; confirmed in a
-      release build. Branch `ios/app-store-prep`
-- [x] **In-app account deletion - live and tested on the iPhone.**
-      Settings > Delete Account, backed by the `delete-account` Edge Function
-      (deployed, `APPLE_PRIVATE_KEY` set). Apple accounts are asked for a fresh
-      code on iOS so the server can revoke Apple's token; the Mac and Windows
-      delete without revoking (logged) - see the macOS note on Sign in with
-      Apple
-  - [ ] Desktop has no delete button yet - add to the settings panel if
-        wanted; the website page tells desktop-only users to email
-- [x] **Account deletion web page** for Google Play's data-deletion URL:
-      `website/delete-account.html`, linked from the privacy policy
-- [x] **Sign in with Apple - live on iOS, macOS and Windows.**
-      Needed on every platform, not just iOS: an account made on an iPhone
-      with Apple (and Hide My Email) has no password, and QR linking only
-      brings a phone into a desktop's account, never the reverse - so a new
-      computer has no other way in.
-      - **iOS: native.** "Continue with Apple" above Google on the welcome
-        screen; Sign Up links in place (`linkIdentityWithIdToken`), Login
-        switches accounts with the guest-clips warning. SHA-256 nonce.
-      - **macOS: browser flow**, like Google on the Mac. Apple issues no
-        Developer ID provisioning profile carrying the applesignin
-        entitlement (only App Store and development profiles), so the
-        notarized build cannot have the native sheet - found when build 6's
-        export failed.
-      - **Windows: browser flow**, the same path Google uses (Supabase ->
-        `ghostcopy.app/auth-callback` -> `ghostcopy://auth-callback`), button
-        in the Spotlight auth panel.
-      - **Android: not yet.** The browser flow's calls return when the browser
-        opens, and the mobile welcome screen would go on to `onAuthComplete`
-        with the old session. Needs `_handleProviderAuth` to wait for the
-        non-anonymous session from `onAuthStateChange` before finishing, then
-        a device test. Do it in the Android phase.
-      - **Setup:** Supabase Apple provider Client IDs
-        `com.ghostcopy.ghostcopy,com.ghostcopy.web`; Services ID
-        `com.ghostcopy.web` with domain `xhbggxftvnlkotvehwmj.supabase.co`
-        and return URL `https://xhbggxftvnlkotvehwmj.supabase.co/auth/v1/callback`.
-        Key ID `Y8NRLTKXG3`, Team `R9TKT8U45R`; the `.p8` is kept offline.
-      - **Secret Key expires every 6 months.** `dart run
-        tool/apple_client_secret.dart <AuthKey.p8>` prints a new one and its
-        expiry. Lapsing breaks desktop Apple sign-in silently (iOS is native
-        and unaffected) - keep a calendar reminder
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set
       `ITSAppUsesNonExemptEncryption` to NO. Answer the questionnaire on the
       first upload ("standard algorithms in addition to the OS"), then set
       the Info.plist key(s) it points to so later uploads skip it
-- [x] **Privacy policy** matches the app now (R2 file storage, auto-send,
-      webhook, Obsidian) - `website/privacy.html`, deploys on merge to `main`
-- [x] **Listing drafted** in `docs/app-store-listing.md`: store text, age
-      rating, App Privacy answers, export compliance, review notes
-- [x] Display name was "Ghostcopy" on the home screen and in permission
-      prompts; now GhostCopy
 - [ ] **Demo account for App Review** - no guest path on the iOS welcome
       screen and sign-up waits on a confirmation email. Create one on a real
       inbox, no passphrase, a few clips, the Mac linked. See the listing doc
@@ -242,12 +248,6 @@ to package - but everything below marked "verify" does need one.
       once it exists; needs it signed in on the simulator
 - [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
       the listing doc
-- [x] Privacy policy and listing updated for Apple sign-in and in-app
-      account deletion
-
-- [x] **Resource baseline** in `docs/ios-performance.md` (2026-09-24). Found
-      and fixed the fading cursor (21% of a core with the composer focused),
-      the keyboard that would not close, and the clip list flashing on reopen
 - [ ] **Photos over 10 MB shared from the share sheet are refused.** The
       gallery picker now scales a too-large JPEG/PNG/WebP down
       (`lib/utils/image_shrink.dart`), but a photo shared into GhostCopy goes
@@ -284,6 +284,17 @@ to package - but everything below marked "verify" does need one.
       container and reading them with `devicectl device info files`
 
 ## All platforms
+
+- [ ] **Nothing retries auth after a failed launch.** `startAuthAndDevice` in
+      `lib/main.dart` now keeps a failed sign-in from taking the tray icon and
+      hotkey down with it (2026-09-25), so the app comes up - but it comes up
+      with no session and nothing asks again. `AuthService.initialize()` leaves
+      `_initialized` false when it throws, so it is safe to call again; what is
+      missing is a caller. Launching offline therefore gives a running app that
+      stays signed out until it is restarted. Options: retry on the first
+      Spotlight open, or listen for connectivity. Decide before the Store
+      build - it is the difference between "opened the laptop on a train" and
+      "the app is broken"
 
 - [ ] **Check the email confirmation link on macOS and iOS.** The deep-link
       predicate in `lib/main.dart` accepts `token_hash` links, but on the
@@ -354,27 +365,6 @@ re-checked against current provider docs rather than trusted from here.
 
 ### With the first public build, not after it
 
-- [x] **Sentry in the client** (`lib/services/impl/crash_reporting_service.dart`,
-      project spiderweb/flutter, sentry_flutter 9). Release builds only; errors
-      and crashes only - no tracing, sessions, screenshots, print, interaction
-      or native breadcrumbs, IP or user; messages cut to their first line and
-      quoted text, database key values and signed-URL queries stripped on the
-      device. Native crash reasons (iOS/Android/macOS) do not pass through the
-      Dart scrubber - a native event processor would close that. Privacy
-      policy and the App Store privacy answers updated (Crash Data and Other
-      Diagnostic Data, not linked). Ships with the next build of each platform
-  - [x] **Debug symbols, iOS and macOS:** `installer/upload-debug-symbols.sh`
-        uploads the archive's dSYMs with the org token from the Keychain
-        (`ghostcopy-sentry-auth-token`); called by
-        `installer/macos/build-release.sh` and the new
-        `installer/ios/build-testflight.sh`. Dart is not obfuscated, so Dart
-        frames are readable without upload
-  - [ ] **Debug symbols, Android and Windows:** wire the same script into those
-        release builds when they exist (native .so symbols, PDBs)
-  - [x] **App Store privacy answers:** Diagnostics - Crash Data, Performance
-        Data (hang/ANR reports) and Other Diagnostic Data, all App
-        Functionality, not linked, no tracking
-
 ### After Windows, iOS and macOS are out
 
 Diagnostics for a system with real traffic. With no users they are scaffolding
@@ -397,7 +387,6 @@ to maintain, not signal.
   alerting on raw log patterns is needed. The source plan reached the same
   conclusion.
 
-
 ## Parallel track: Google Play
 
 Play Console account purchased 2026-09-15. Full path:
@@ -419,6 +408,41 @@ should start as early as a build allows.
       then show the button (remove the `Platform.isIOS` gate) and test on a
       device. Supabase and Apple Developer need nothing more - it uses the
       same Services ID as Windows
+
+## Next update: a pin for the Spotlight
+
+Decided 2026-09-26, deliberately **after** the Store submission - it is new
+behaviour and wants its own testing pass rather than riding in on a package
+that has already been validated. Store updates are free and automatic.
+
+Auto-hide on blur is right for a Spotlight-style tool and matches Spotlight,
+Alfred, Raycast and PowerToys Run. But it fights three workflows a clipboard
+app actually has: copying something in another app and coming back to send
+it, dragging a file in from Explorer or Finder, and keeping history visible
+while working. All three need the window to survive losing focus.
+
+Chosen shape: **a pin toggle in the window's own header**, not a setting. It
+is discoverable at the moment it is wanted - the user is looking at the
+window when the auto-hide annoys them - and it leaves the default behaviour
+alone, so the ephemeral character survives. A Settings switch fails exactly
+the person it is meant to help, who would have to go looking for it.
+
+- [ ] Pin toggle in the Spotlight header, on Windows and macOS
+  - [ ] Pinned means `onWindowBlur` returns early - and that has to skip the
+        whole tray-optimization block, not just `hideSpotlight`. That block
+        clears the image cache, trims media and schedules the working-set
+        trim, none of which is right for a window that is still on screen
+  - [ ] Decide whether the pin persists across launches. Leaning yes, through
+        SettingsService - someone who pins it probably wants it pinned
+        tomorrow - but keep the *control* in the window rather than adding a
+        Settings row, or it becomes the setting this was chosen over
+  - [ ] The header is on a 400px panel; check the icon does not crowd the
+        close button
+- [ ] **Separately, and worth doing whether or not the pin lands: blur
+      discards the composer.** `onWindowBlur` clears the text controller and
+      the clipboard payload when there is an attachment, so clicking away
+      mid-compose loses what was typed or attached. That is a sharper problem
+      than the window closing, and it is a bug rather than a preference.
 
 ## Later: clipboard export and import
 

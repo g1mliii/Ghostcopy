@@ -34,7 +34,16 @@ class SingleInstance {
   static final SingleInstance instance = SingleInstance._();
 
   /// Arbitrary high port. Only ever contacted by another copy of this app.
-  static const int _port = 47821;
+  static const int _defaultPort = 47821;
+
+  /// The loopback port the primary instance owns.
+  ///
+  /// Settable only so tests can bind a free one. With a fixed port a test
+  /// races any running copy of the app for it and fails on a developer's
+  /// machine while passing in CI - which is the wrong way round for a test
+  /// that exists to catch a bug users hit.
+  @visibleForTesting
+  static int port = _defaultPort;
 
   /// Sent ahead of the payload so the primary can recognise a peer that is
   /// actually GhostCopy, and so a second launch can tell GhostCopy apart from
@@ -87,6 +96,28 @@ class SingleInstance {
     return subscription;
   }
 
+  /// Test hooks.
+  ///
+  /// The delivery bug these cover was in the socket handling, so a test has to
+  /// speak the real handshake to a real primary instance; that needs the port,
+  /// the magic and this process's secret. Exposed narrowly rather than
+  /// loosening the fields themselves.
+  @visibleForTesting
+  static const String handshakeMagic = _handshakeMagic;
+
+  @visibleForTesting
+  String? get secret => _secret;
+
+  /// Release the port and forget any backlog, so one test cannot strand the
+  /// singleton for the next.
+  @visibleForTesting
+  Future<void> disposeForTest() async {
+    await _server?.close();
+    _server = null;
+    _hasListener = false;
+    _pending.clear();
+  }
+
   void _deliver(String payload) {
     if (_hasListener) {
       _incoming.add(payload);
@@ -108,18 +139,18 @@ class SingleInstance {
     _secret = await _loadOrCreateSecret();
 
     try {
-      _server = await ServerSocket.bind(InternetAddress.loopbackIPv4, _port);
+      _server = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
       _server!.listen(_handleConnection);
-      debugPrint('[SingleInstance] ✅ Primary instance (port $_port)');
+      debugPrint('[SingleInstance] ✅ Primary instance (port $port)');
       return true;
     } on SocketException {
       // Port taken - but by whom?
-      debugPrint('[SingleInstance] Port $_port is in use, probing peer...');
+      debugPrint('[SingleInstance] Port $port is in use, probing peer...');
       final forwarded = await _forward(args);
       if (forwarded) return false;
 
       debugPrint(
-        '[SingleInstance] ⚠️ Port $_port is held by something that is not '
+        '[SingleInstance] ⚠️ Port $port is held by something that is not '
         'GhostCopy - continuing without single-instance support',
       );
       return true;
@@ -180,7 +211,15 @@ class SingleInstance {
             return;
           }
           debugPrint('[SingleInstance] ← Received from second launch: $args');
-          if (args.isNotEmpty) _deliver(args);
+          // Delivered even when empty, which is the commonest case of all:
+          // launching the app while it is already running, with no arguments.
+          // That is the user asking for the window, and main.dart handles it
+          // explicitly - "a second launch without a URL is the user asking for
+          // the app, so show the window rather than silently doing nothing".
+          // An `args.isNotEmpty` guard here meant that case was dropped before
+          // it ever reached that code, so clicking the app while it sat in the
+          // tray did nothing at all.
+          _deliver(args);
         })
         .catchError((Object e) {
           debugPrint('[SingleInstance] ⚠️ Connection error: $e');
@@ -237,7 +276,7 @@ class SingleInstance {
     try {
       socket = await Socket.connect(
         InternetAddress.loopbackIPv4,
-        _port,
+        port,
         timeout: _connectTimeout,
       );
       final payload = jsonEncode({

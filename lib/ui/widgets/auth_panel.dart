@@ -182,59 +182,52 @@ class _AuthPanelState extends State<AuthPanel> {
       );
     }
 
-    // Anonymous user - show login/signup form
+    // Anonymous user - show login/signup form.
+    //
+    // Everything here has to fit 400px without scrolling, which it did not on
+    // Windows: the bundled fonts in pubspec.yaml are commented out, so this
+    // renders in Segoe UI there and SF on macOS, and Segoe is the taller of
+    // the two. The form cleared 400px on a Mac and overflowed on Windows by
+    // roughly the difference. The budget is held by a widget test
+    // (auth_panel_fits_test.dart) measured at a larger text scale than either
+    // platform uses, so the layout has room to be wrong about font metrics and
+    // still fit. Adding a row here without checking that test will put the
+    // scrollbar back.
     return SingleChildScrollView(
       physics: Adaptive.scrollPhysics,
-      // Tight enough that login and Google sign-in are both visible without
-      // scrolling in the 400px-tall Spotlight window - a sign-in the user has
-      // to scroll to find is one they may not find.
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Login/Signup toggle
           _buildLoginSignupToggle(),
-          if (widget.authService.isAnonymous) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Create Account keeps the clips already on this device. '
-              'Signing into an existing account leaves them behind.',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textMuted,
-                height: 1.35,
-              ),
-            ),
-          ],
-          const SizedBox(height: 14),
+          // No standing explanation of what signing in does to guest clips.
+          // confirmGuestClipsBeforeSignIn is the real warning and a better
+          // one: it fires at the moment of action, counts the clips actually
+          // at risk, says whether they are abandoned or destroyed, and stays
+          // out of the way entirely when there is nothing to lose. A
+          // paragraph here repeated it to everyone, permanently, and cost the
+          // form more height than any other block.
+          const SizedBox(height: 12),
           // Email field
           RepaintBoundary(child: _buildEmailField()),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           // Password field
           RepaintBoundary(child: _buildPasswordField()),
           // Forgot password link (only show in login mode)
           if (_isLogin) _buildForgotPasswordLink(),
           // Error message
           if (_authError != null) _buildErrorMessage(),
-          const SizedBox(height: 12),
+          SizedBox(height: _isLogin ? 6 : 10),
           // Submit button
           RepaintBoundary(child: _buildSubmitButton()),
-          const SizedBox(height: 10),
-          // Divider
-          _buildDivider(),
-          const SizedBox(height: 10),
-          // Google sign in
-          // Apple: native sheet on macOS, the browser flow on Windows. Either
-          // way the only way onto this computer for someone who signed up on
-          // an iPhone with Apple and Hide My Email - that account has no
-          // password.
-          RepaintBoundary(
-            child: SocialSignInButtons(
-              enabled: !_authLoading,
-              onApple: _handleAppleAuth,
-              onGoogle: _handleGoogleAuth,
-              size: 44,
-            ),
-          ),
+          const SizedBox(height: 8),
+          // The provider buttons sit in the divider rather than under it.
+          // Stacked, the rule, its "OR", and the buttons were three blocks and
+          // two gaps for what is one idea - "or use one of these" - and the
+          // rule reads that way with the buttons inside it. Worth 22px in a
+          // form that had none to give.
+          _buildAlternativeSignIn(),
           if (_awaitingBrowser) _buildAwaitingBrowser(),
         ],
       ),
@@ -256,7 +249,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 left: Radius.circular(8),
               ),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 decoration: BoxDecoration(
                   color: _isLogin ? GhostColors.primary : Colors.transparent,
                   borderRadius: const BorderRadius.horizontal(
@@ -281,7 +274,7 @@ class _AuthPanelState extends State<AuthPanel> {
                 right: Radius.circular(8),
               ),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 decoration: BoxDecoration(
                   color: !_isLogin ? GhostColors.primary : Colors.transparent,
                   borderRadius: const BorderRadius.horizontal(
@@ -310,7 +303,7 @@ class _AuthPanelState extends State<AuthPanel> {
       decoration: const InputDecoration(
         labelText: 'Email',
         isDense: true,
-        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         filled: true,
         fillColor: GhostColors.surface,
         border: OutlineInputBorder(
@@ -333,7 +326,7 @@ class _AuthPanelState extends State<AuthPanel> {
       decoration: const InputDecoration(
         labelText: 'Password',
         isDense: true,
-        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         filled: true,
         fillColor: GhostColors.surface,
         border: OutlineInputBorder(
@@ -353,7 +346,7 @@ class _AuthPanelState extends State<AuthPanel> {
   Widget _buildForgotPasswordLink() {
     return Column(
       children: [
-        const SizedBox(height: 8),
+        const SizedBox(height: 2),
         Align(
           alignment: Alignment.centerRight,
           child: TextButton(
@@ -450,16 +443,27 @@ class _AuthPanelState extends State<AuthPanel> {
     );
   }
 
-  Widget _buildDivider() {
+  /// The third-party options, set into a rule instead of stacked under one.
+  ///
+  /// Apple: native sheet on macOS, the browser flow on Windows. Either way the
+  /// only way onto this computer for someone who signed up on an iPhone with
+  /// Apple and Hide My Email - that account has no password.
+  Widget _buildAlternativeSignIn() {
     return Row(
       children: [
         const Expanded(child: Divider(color: GhostColors.surface)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text(
-            'OR',
-            style: GhostTypography.caption.copyWith(
-              color: GhostColors.textMuted,
+          child: RepaintBoundary(
+            child: SocialSignInButtons(
+              enabled: !_authLoading,
+              onApple: _handleAppleAuth,
+              onGoogle: _handleGoogleAuth,
+              // Below the widget's own 52 default, but left at what the panel
+              // already used rather than shrunk further - these are the only
+              // way in for an Apple account with no password, and the row it
+              // now sits in gave back more than trimming them would.
+              size: 44,
             ),
           ),
         ),
@@ -780,14 +784,52 @@ class _AuthPanelState extends State<AuthPanel> {
     }
   }
 
+  /// Sign out of this account and offer the login form for another.
+  ///
+  /// Setting `_isLogin` alone did nothing, which is how this button behaved
+  /// for as long as it existed: `build` only renders the login form when the
+  /// session is anonymous, and while signed in it renders account management
+  /// instead. The flag changed, the same screen rebuilt, and the user saw no
+  /// response at all.
+  ///
+  /// Signing out first is what makes the form reachable - and it is what
+  /// "switch account" means anyway. No guest-clips prompt here: that warns
+  /// about abandoning clips belonging to an anonymous account, and this path
+  /// starts from a real one whose clips stay with it.
   Future<void> _handleSignInDifferent() async {
-    // Switch to login mode and show login form
     setState(() {
-      _isLogin = true;
       _authError = null;
-      _emailController.clear();
-      _passwordController.clear();
+      _authLoading = true;
     });
+    try {
+      await widget.authService.signOut();
+      // signOut() lands on a fresh guest account, and the user may close the
+      // form without signing in again. The realtime channel is still filtered
+      // on the account just left, so rebind it now - as deletion does - or
+      // nothing sent to the guest arrives live.
+      widget.clipboardSyncService.reinitializeForUser();
+      if (!mounted) return;
+      setState(() {
+        _isLogin = true;
+        _authLoading = false;
+        _emailController.clear();
+        _passwordController.clear();
+      });
+    } on Exception catch (e) {
+      debugPrint('[AuthPanel] Switch account failed: $e');
+      // A toast, not _authError: a failed sign-out leaves the session as it
+      // was, so build() stays on the signed-in branch, which never shows
+      // _authError - the button looked as if it did nothing, which is the
+      // very bug this method was written to fix.
+      widget.notificationService.showToast(
+        message:
+            "Couldn't sign out to switch accounts. Check your "
+            'connection and try again.',
+        type: NotificationType.error,
+      );
+      if (!mounted) return;
+      setState(() => _authLoading = false);
+    }
   }
 
   /// Delete the account and everything in it, then carry on as a fresh guest.

@@ -24,6 +24,9 @@ class _MockClipboardService extends Mock implements IClipboardService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
+  void ensureRealtimeConnected() {}
+
+  @override
   bool get isMonitoring => false;
 
   @override
@@ -81,6 +84,16 @@ class _TestClipboardSyncService implements IClipboardSyncService {
 class _TestNotificationService implements INotificationService {
   final List<(String message, NotificationType type)> toasts =
       <(String, NotificationType)>[];
+
+  /// Raised without an overlay, by the headless send-file path.
+  final List<(String message, NotificationType type)> systemNotifications =
+      <(String, NotificationType)>[];
+
+  @override
+  Future<void> showSystemNotification({
+    required String message,
+    NotificationType type = NotificationType.info,
+  }) async => systemNotifications.add((message, type));
 
   @override
   void dispose() {}

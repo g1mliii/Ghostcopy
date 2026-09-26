@@ -14,7 +14,14 @@ publish_to: 'none'
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+5
+# The build number is one counter shared by every platform, so TestFlight and
+# Play never see a duplicate. macOS and iOS pass it on the command line
+# (`--build-number=N`), which is why this line sat at 5 while they shipped 6,
+# 7, 8 and 9. Windows has no such override - it reads this, and every Windows
+# build so far therefore reported itself to Sentry as 1.0.0+5 no matter what
+# was in it. Bumped to match the other platforms; raise it for each build that
+# leaves this machine.
+version: 1.0.0+9
 
 environment:
   sdk: ^3.12.0
@@ -139,12 +146,107 @@ flutter:
   # Alternative: Use google_fonts package (recommended for easier setup)
   # Add to dependencies: google_fonts: ^6.1.0
 
-# MSIX Configuration for Windows Store packaging
+# MSIX Configuration for Windows Store packaging.
+#
+# Build with:  flutter build windows --release && dart run msix:create --store
+#
+# Everything GhostCopy registers for itself at first run is declared here
+# instead, because MSIX virtualizes the HKCU writes that would otherwise do it:
+# inside a package those writes succeed, land in a private per-package hive,
+# and are invisible to the rest of Windows. lib/main.dart skips them when
+# IWindowsPackageService reports a packaged process.
+#
+# Verified by sideloading on 2026-09-25: the COM verb handler instantiates
+# from the manifest registration, ActivateApplication carries --send-file
+# through with a spaced path, and ghostcopy:// resolves to the package.
 msix_config:
   display_name: GhostCopy
-  publisher_display_name: GhostCopy
-  identity_name: com.ghostcopy.app
-  msix_version: 1.0.0.0
+  #
+  # Assigned by the Store, not chosen: Partner Center > Product identity, for
+  # Store ID 9NW0TTGMSF80. The upload is rejected if any of the three differs
+  # from the reservation, so they are copied verbatim and not tidied.
+  #   identity_name          <- "Package/Identity/Name"
+  #   publisher              <- "Package/Identity/Publisher"
+  #   publisher_display_name <- "Package/Properties/PublisherDisplayName"
+  #
+  # These make the package family g1mli.GhostCopy_41asz506sbn22. The Explorer
+  # verb handler needs that family name to build the AUMID it activates the
+  # app with, but reads it at runtime through GetCurrentPackageFamilyName
+  # rather than hard-coding it - see ActivatePackagedApp in
+  # windows/explorer_command/send_command.cpp.
+  identity_name: g1mli.GhostCopy
+  publisher: CN=9BC07F96-83C5-41E5-8344-A470FAD38634
+  publisher_display_name: g1mli
+  #
+  # Independent of pubspec's `version:` above, and must be strictly greater
+  # than the last submission.
+  #
+  # Major.Minor.Build.Revision, and the Store REJECTS any package whose
+  # revision - the fourth part - is not zero. So the shared build number goes
+  # in the third part, not the fourth: build 9 is 1.0.9.0, not 1.0.0.9. The
+  # upload that taught this said "Apps are not allowed to have a Version with
+  # a revision number other than zero".
+  #
+  # A version that has been PUBLISHED is consumed for good. One sitting in a
+  # draft submission is not: delete the package in Partner Center and the same
+  # version uploads again. So a rebuild during drafting can keep its number,
+  # and only a released version forces a bump.
+  msix_version: 1.0.10.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
+  # The Store signs the package; a signature applied here would be replaced.
+  store: true
   install_certificate: false
+
+  # Replaces the HKCU\Software\Classes\ghostcopy key that
+  # _registerWindowsUrlScheme writes unpackaged. Without it the OAuth callback
+  # never comes back from the browser and sign-in hangs with nothing to show.
+  protocol_activation: ghostcopy
+
+  # Lets a tapped notification reach the app.
+  #
+  # Toasts themselves are fine without this - flutter_local_notifications
+  # checks GetCurrentPackageFullName and uses the package identity when it
+  # finds one. Activation is the part that breaks: the plugin registers its
+  # callback with CoRegisterClassObject, which only tells COM about a class
+  # while the process is already running, and Windows learns which CLSID
+  # activates this app from the HKCU\Software\Classes\AppUserModelId key the
+  # plugin writes - virtualized, and so invisible, inside a package. Declared
+  # here instead. Receiving a clip and tapping it to copy is most of what the
+  # Windows app does, so this is not cosmetic.
+  #
+  # The clsid must match the `guid` passed to WindowsInitializationSettings in
+  # lib/services/impl/notification_service.dart.
+  toast_activator:
+    clsid: 2c295777-6228-48b4-82a9-7b7c25c78d06
+    display_name: GhostCopy Notification Activator
+
+  # Replaces launch_at_startup's Run key. `enabled: false` is deliberate: the
+  # app ships with launch-at-startup off and the settings toggle turns it on
+  # through RequestEnableAsync. task_id must match kStartupTaskId in
+  # windows/runner/flutter_window.cpp, and parameters must match the flag
+  # main.dart checks to start hidden.
+  startup_task:
+    task_id: GhostCopyStartup
+    enabled: false
+    parameters: --launched-at-startup
+
+  # Replaces the HKCU\Software\Classes\*\shell verb. A packaged verb can only
+  # point at a COM class, which is what windows/explorer_command builds; clsid
+  # must match CLSID_GhostCopySendCommand in send_command.cpp. dll_path is a
+  # build output, so `flutter build windows --release` has to run first.
+  #
+  # This is the CMake target's own output directory, NOT the runner's Release
+  # bundle. msix copies the dll into the bundle to package it and deletes it
+  # again afterwards, so a dll_path inside that bundle is a file msix removes
+  # and then cannot find on the next run.
+  context_menu:
+    dll_path: build\windows\x64\explorer_command\Release\ghostcopy_shell.dll
+    items:
+      - type: '*'
+        commands:
+          # No braces: the appx schema's ST_GUID is a bare
+          # 8-4-4-4-12 pattern, and MakeAppx rejects the manifest with
+          # "attribute 'Clsid' ... failed to parse" if they are present.
+          - id: GhostCopySend
+            clsid: BCE5C0BC-582B-49BA-8FED-537B9F3100C0

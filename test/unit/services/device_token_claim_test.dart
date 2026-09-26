@@ -107,6 +107,26 @@ void main() {
           )
           as Map<String, Object?>;
 
+  // Registration is documented as swallowing its own failures, and no session
+  // is one: an offline launch whose anonymous sign-in failed. It used to throw
+  // a StateError, which no caller's `on Exception` caught.
+  test('with no session it reports failure instead of throwing', () async {
+    final signedOut = SupabaseClient(
+      'https://example.com',
+      'anon-key',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response('[]', 200, request: request);
+      }),
+    );
+    addTearDown(signedOut.dispose);
+    final service = DeviceService(supabaseClient: signedOut);
+    await service.initialize();
+
+    expect(await service.registerCurrentDevice(fcmToken: _token), isFalse);
+    expect(requests, isEmpty);
+  });
+
   test('a token held by another account is claimed server-side', () async {
     await devices.registerCurrentDevice();
     requests.clear();

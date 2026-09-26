@@ -1,106 +1,42 @@
-# GhostCopy Installer
+# GhostCopy packaging
 
-This directory contains the installation packaging scripts for GhostCopy.
+One directory per platform, plus the symbol upload they share.
 
-For the signed and notarized macOS drag-to-Applications installer, see
-[macOS packaging](macos/README.md). The instructions below cover Windows.
+| Path | What it packages |
+|------|------------------|
+| [`windows/`](windows/) | The Microsoft Store MSIX |
+| [`macos/`](macos/README.md) | The signed, notarized drag-to-Applications DMG |
+| [`ios/`](ios/) | The TestFlight / App Store build |
+| `upload-debug-symbols.sh` | dSYMs to Sentry, called by the macOS and iOS builds |
 
-## Prerequisites
+## Windows
 
-### For Inno Setup (Traditional .exe Installer)
-1. Download and install Inno Setup: https://jrsoftware.org/isdl.php
-2. Optional: Install Inno Setup Preprocessor for advanced features
+**Store only.** `installer/windows/build-store.ps1` does the whole release:
+builds, uploads the PDBs to Sentry, then packages. Its header carries the
+one-time setup - sentry-cli, and the auth token via `set-sentry-token.ps1`.
 
-### For MSIX (Windows Store Package)
-1. Install `msix` package:
-   ```bash
-   flutter pub add msix
-   ```
+```powershell
+installer\windows\build-store.ps1
+```
 
-## Building the Installer
+The package's identity, capabilities and everything it registers with Windows
+live in `msix_config` in `pubspec.yaml`, not here.
 
-### Option 1: Inno Setup (.exe installer)
+### There is no .exe installer any more
 
-1. Build the Flutter app in release mode:
-   ```bash
-   flutter build windows --release
-   ```
+`ghostcopy.iss` and `build-installer.bat` are gone, along with
+`installer/ghostcopy.ico`. Inno Setup was the alternative to the Store and it
+lost on the one thing that matters for a small app: SmartScreen reputation
+accrues **per code-signing certificate**, and unsigned it accrues **per file
+hash** - so every release and every auto-update re-triggers the warning for
+every user. The Store signs each package with Microsoft's certificate and
+carries updates, which also removed the need for a certificate and for the
+WinSparkle half of the updater.
 
-2. Compile the Inno Setup script:
-   ```bash
-   # Using Inno Setup GUI
-   - Open ghostcopy.iss in Inno Setup Compiler
-   - Click Build > Compile
+Two things it used to do are now the manifest's job, and neither is optional:
+the `ghostcopy://` protocol and the Run key for launch at startup. See the
+Windows table in [`CLAUDE.md`](../CLAUDE.md).
 
-   # OR using command line
-   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ghostcopy.iss
-   ```
-
-3. Output: `build\installer\ghostcopy-setup-1.0.0.exe`
-
-### Option 2: MSIX (Windows Store package)
-
-1. Build MSIX package:
-   ```bash
-   flutter pub run msix:create
-   ```
-
-2. Output: `build\windows\x64\runner\Release\ghostcopy.msix`
-
-## Installation Locations
-
-### Program Files
-- **Executable:** `C:\Program Files\GhostCopy\ghostcopy.exe`
-
-### User Data
-- **Settings:** `%APPDATA%\Roaming\com.ghostcopy\shared_preferences.json`
-- **Credentials:** Windows Credential Manager (flutter_secure_storage_*)
-- **Auto-start:** `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\GhostCopy`
-
-## Uninstall Cleanup
-
-The uninstaller removes **EVERYTHING**:
-- ✅ Application files in Program Files
-- ✅ Settings in AppData\Roaming
-- ✅ Cache in LocalAppData
-- ✅ Credentials in Windows Credential Manager
-- ✅ Auto-start registry entry
-- ✅ Temp files
-
-**Zero traces left behind.**
-
-## Code Signing (Optional but Recommended)
-
-To sign the installer:
-
-1. Get a code signing certificate (DigiCert, Sectigo, etc.)
-
-2. Sign the executable before packaging:
-   ```bash
-   signtool sign /f certificate.pfx /p password /t http://timestamp.digicert.com build\windows\x64\runner\Release\ghostcopy.exe
-   ```
-
-3. Sign the installer:
-   ```bash
-   signtool sign /f certificate.pfx /p password /t http://timestamp.digicert.com build\installer\ghostcopy-setup-1.0.0.exe
-   ```
-
-4. For MSIX, signing is required:
-   ```bash
-   flutter pub run msix:create --certificate-path certificate.pfx --certificate-password password
-   ```
-
-## Testing Uninstall Cleanup
-
-To verify complete cleanup:
-
-1. Install GhostCopy
-2. Run the app and configure settings
-3. Check these locations exist:
-   - `C:\Program Files\GhostCopy\`
-   - `%APPDATA%\Roaming\com.ghostcopy\`
-   - Registry: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\GhostCopy`
-   - Credential Manager: `cmdkey /list | findstr flutter`
-
-4. Uninstall via "Add or Remove Programs"
-5. Verify ALL locations are gone (use Revo Uninstaller to double-check)
+Nothing in the app depends on having been installed by an installer - the
+unpackaged build still registers itself in `HKCU` on first run, which is what
+`flutter run -d windows` and a build from `build/` rely on.

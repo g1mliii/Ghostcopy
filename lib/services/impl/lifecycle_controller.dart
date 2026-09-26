@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/windows_working_set.dart';
 import '../lifecycle_controller.dart';
 
 /// Enhanced implementation of LifecycleController
@@ -20,10 +21,23 @@ class LifecycleController implements ILifecycleController {
   LifecycleController({
     required this._clipboardSyncService,
     required this._settingsService,
+    this._trimWorkingSet = trimWindowsWorkingSet,
   });
 
   final IClipboardSyncService _clipboardSyncService;
   final ISettingsService _settingsService;
+
+  /// Hands the working set back to the OS; a no-op off Windows.
+  final Future<void> Function() _trimWorkingSet;
+
+  /// The trim scheduled on entering tray mode.
+  ///
+  /// Here rather than in the Spotlight's blur handler, which only ran for one
+  /// of the ways the window hides - not after a send, the tray icon, the tray
+  /// menu or the hotkey. Every one of those goes through hideSpotlight, which
+  /// enters tray mode. Delayed - see windowsTrimDelay - and cancelled when the
+  /// window comes back, so a quick reopen never has its pages evicted.
+  Timer? _trimTimer;
 
   // ========== TRAY MODE (UI State) ==========
 
@@ -125,6 +139,12 @@ class LifecycleController implements ILifecycleController {
     debugPrint('[Lifecycle] 📦 Entering TRAY MODE (window hidden)');
     _isInTrayMode = true;
 
+    _trimTimer?.cancel();
+    _trimTimer = Timer(windowsTrimDelay, () {
+      _trimTimer = null;
+      if (_isInTrayMode && !_isDisposed) unawaited(_trimWorkingSet());
+    });
+
     // Pause all registered UI resources (AnimationControllers, etc.)
     for (final pausable in _pausables) {
       try {
@@ -141,6 +161,8 @@ class LifecycleController implements ILifecycleController {
 
     debugPrint('[Lifecycle] 📭 Exiting TRAY MODE (window shown)');
     _isInTrayMode = false;
+    _trimTimer?.cancel();
+    _trimTimer = null;
 
     // Resume all registered UI resources
     for (final pausable in _pausables) {
@@ -383,6 +405,8 @@ class LifecycleController implements ILifecycleController {
     // Cancel timers
     _inactivityCheckTimer?.cancel();
     _inactivityCheckTimer = null;
+    _trimTimer?.cancel();
+    _trimTimer = null;
 
     // Close streams
     _connectionModeController.close();

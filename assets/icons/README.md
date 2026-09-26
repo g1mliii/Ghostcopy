@@ -13,7 +13,7 @@ restating its primitives in code.
 
 This replaced `tool/generate_desktop_icons.py`, which is gone. That script drew
 the pre-rebrand mark from Pillow primitives and claimed the same outputs, so
-running it silently reverted the Windows, installer and tray icons - one of
+running it silently reverted the Windows and tray icons - one of
 them, `tray_icon.ico`, was the live Windows tray asset and stayed reverted
 because the new generator did not write it. One generator, one source of truth.
 
@@ -21,7 +21,6 @@ because the new generator did not write it. One generator, one source of truth.
 
 | File | Used by |
 |------|---------|
-| `../../installer/ghostcopy.ico` | Inno Setup `SetupIconFile` (`installer/ghostcopy.iss`) — kept outside `assets/` so it is not shipped inside the app bundle |
 | `../../windows/runner/resources/app_icon.ico` | The Windows exe, title bar, taskbar and Alt-Tab, via `windows/runner/Runner.rc` |
 | `tray_icon.ico` | Windows system tray (16/20/24/32/48 frames, picked per DPI) |
 | `tray_icon_macos.png` | macOS menu bar |

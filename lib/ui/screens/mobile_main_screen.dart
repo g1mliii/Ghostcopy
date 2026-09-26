@@ -273,6 +273,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       _viewModel.onAppPaused();
+      // Decoded images are the largest thing this app holds, and backgrounded
+      // it has no use for any of them. Waiting for didHaveMemoryPressure is
+      // waiting too long: iOS decides what to kill by the footprint an app is
+      // already holding, and does not always warn first. A smaller background
+      // footprint is the difference between still being alive when a push
+      // arrives and being relaunched from scratch.
+      //
+      // Cheap to give up now that thumbnails are cached on disk - resuming
+      // re-decodes a few tens of KB rather than re-deriving them from the
+      // full-size images.
+      imageCache
+        ..clear()
+        ..clearLiveImages();
     } else if (state == AppLifecycleState.resumed) {
       _viewModel.onAppResumed();
       // Deliberately no clipboard read here. Auto-pasting on every resume made

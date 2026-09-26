@@ -84,8 +84,15 @@ class NotificationService implements INotificationService {
   @override
   void initialize(GlobalKey<NavigatorState> navigatorKey) {
     _navigatorKey = navigatorKey;
-    _initializeLocalNotifications();
+    unawaited(_ensureLocalNotifications());
   }
+
+  /// Memoised so initialize() and the lazy path in showSystemNotification
+  /// share one plugin setup rather than each running their own.
+  Future<void>? _localNotificationsReady;
+
+  Future<void> _ensureLocalNotifications() =>
+      _localNotificationsReady ??= _initializeLocalNotifications();
 
   Future<void> _initializeLocalNotifications() async {
     // Android initialization
@@ -448,6 +455,19 @@ class NotificationService implements INotificationService {
       message: 'Clipboard from $deviceType: $truncatedContent',
       duration: const Duration(seconds: 3),
     );
+  }
+
+  @override
+  Future<void> showSystemNotification({
+    required String message,
+    NotificationType type = NotificationType.info,
+  }) async {
+    // initialize() is not called on this path: it takes a navigator key, and
+    // the Explorer send-file verb has no navigator because it builds no UI.
+    // The plugin still has to be set up before it can raise anything, so do it
+    // here rather than making every headless caller remember to.
+    await _ensureLocalNotifications();
+    await _showSystemNotification(message: message, type: type);
   }
 
   @override
