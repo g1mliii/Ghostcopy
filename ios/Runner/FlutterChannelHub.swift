@@ -1,5 +1,7 @@
 import Flutter
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// Owns the app's platform channels.
 ///
@@ -87,6 +89,8 @@ final class FlutterChannelHub {
       }
     }
     notificationChannel = notifications
+
+    ImageTranscoder.attach(messenger: messenger)
   }
 
   // MARK: - Outbound
@@ -123,5 +127,78 @@ final class FlutterChannelHub {
         print("[ChannelHub] Dart could not handle \(clipboardId) - parked for retry")
       }
     }
+  }
+}
+
+/// HEIC to JPEG through ImageIO, for `lib/services/image_transcoder.dart`.
+///
+/// iPhone photos are HEIC by default, which the Dart `image` package cannot
+/// decode, so without this they went as plain files - no preview, unopenable
+/// on most Windows machines, and refused over the size limit.
+enum ImageTranscoder {
+  private static let channelName = "com.ghostcopy/image_transcoder"
+  private static let maxSide = 4096
+  private static let minSide = 1024
+  private static let quality = 0.85
+
+  static func attach(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: channelName, binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "toJpeg" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let args = call.arguments as? [String: Any],
+            let path = args["path"] as? String,
+            let maxBytes = args["maxBytes"] as? Int else {
+        result(FlutterError(code: "INVALID_ARGS", message: "path and maxBytes are required", details: nil))
+        return
+      }
+      // A 48 MP photo takes a noticeable moment; keep it off the main thread.
+      DispatchQueue.global(qos: .userInitiated).async {
+        let jpeg = toJpeg(path: path, maxBytes: maxBytes)
+        DispatchQueue.main.async {
+          result(jpeg.map { FlutterStandardTypedData(bytes: $0) })
+        }
+      }
+    }
+  }
+
+  /// Halves the longest side from [maxSide] until the JPEG fits, as
+  /// shrinkImageToFit does in Dart. ImageIO decodes straight to the target
+  /// size, so the full-resolution image is never held in memory.
+  private static func toJpeg(path: String, maxBytes: Int) -> Data? {
+    let url = URL(fileURLWithPath: path) as CFURL
+    guard let source = CGImageSourceCreateWithURL(url, nil),
+          let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = props[kCGImagePropertyPixelWidth] as? Int,
+          let height = props[kCGImagePropertyPixelHeight] as? Int else {
+      return nil
+    }
+    var side = min(maxSide, max(width, height))
+    while side >= min(minSide, max(width, height)) {
+      let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceThumbnailMaxPixelSize: side,
+        // Applies the EXIF orientation, which the JPEG would not carry over.
+        kCGImageSourceCreateThumbnailWithTransform: true,
+      ]
+      guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+        return nil
+      }
+      let data = NSMutableData()
+      guard let destination = CGImageDestinationCreateWithData(
+        data, UTType.jpeg.identifier as CFString, 1, nil
+      ) else { return nil }
+      // No source properties are copied, so location and the rest of the
+      // metadata stay behind.
+      CGImageDestinationAddImage(destination, image, [
+        kCGImageDestinationLossyCompressionQuality: quality,
+      ] as CFDictionary)
+      guard CGImageDestinationFinalize(destination) else { return nil }
+      if data.length <= maxBytes { return data as Data }
+      side /= 2
+    }
+    return nil
   }
 }

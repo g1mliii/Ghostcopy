@@ -1,0 +1,83 @@
+package com.ghostcopy.ghostcopy
+
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.concurrent.Executors
+
+/**
+ * HEIC/HEIF to JPEG through the platform decoder, for
+ * lib/services/image_transcoder.dart. Mirrors ImageTranscoder in
+ * ios/Runner/FlutterChannelHub.swift.
+ *
+ * ImageDecoder reads HEIF from API 28. Below that this answers null and the
+ * photo goes as the original file, as it always did.
+ */
+object ImageTranscoder {
+    private const val CHANNEL = "com.ghostcopy/image_transcoder"
+    private const val MAX_SIDE = 4096
+    private const val MIN_SIDE = 1024
+    private const val QUALITY = 85
+
+    private val executor = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
+
+    fun attach(messenger: BinaryMessenger) {
+        MethodChannel(messenger, CHANNEL).setMethodCallHandler { call, result ->
+            if (call.method != "toJpeg") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val path = call.argument<String>("path")
+            val maxBytes = call.argument<Int>("maxBytes")
+            if (path == null || maxBytes == null) {
+                result.error("INVALID_ARGS", "path and maxBytes are required", null)
+                return@setMethodCallHandler
+            }
+            executor.execute {
+                val jpeg = try {
+                    toJpeg(path, maxBytes)
+                } catch (e: Exception) {
+                    null
+                }
+                main.post { result.success(jpeg) }
+            }
+        }
+    }
+
+    /** Halves the longest side from MAX_SIDE until the JPEG fits. */
+    private fun toJpeg(path: String, maxBytes: Int): ByteArray? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        val source = ImageDecoder.createSource(File(path))
+        var longest = 0
+        var side = MAX_SIDE
+        while (true) {
+            // Decoded straight to the target size, so the full-resolution
+            // image is never held. ImageDecoder applies EXIF orientation.
+            val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                val w = info.size.width
+                val h = info.size.height
+                longest = maxOf(w, h)
+                val target = minOf(side, longest)
+                val scale = target.toDouble() / longest
+                decoder.setTargetSize(
+                    maxOf(1, (w * scale).toInt()),
+                    maxOf(1, (h * scale).toInt()),
+                )
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, QUALITY, out)
+            bitmap.recycle()
+            if (out.size() <= maxBytes) return out.toByteArray()
+            side = minOf(side, longest) / 2
+            if (side < minOf(MIN_SIDE, longest)) return null
+        }
+    }
+}

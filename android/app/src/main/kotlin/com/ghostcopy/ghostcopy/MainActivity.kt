@@ -41,6 +41,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        ImageTranscoder.attach(flutterEngine.dartExecutor.binaryMessenger)
+
         ensureNotificationChannel()
 
         applyScreenshotProtection()

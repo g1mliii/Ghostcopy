@@ -15,6 +15,7 @@ import '../../services/clipboard_service.dart';
 import '../../services/device_service.dart';
 import '../../services/fcm_service.dart';
 import '../../services/file_type_service.dart';
+import '../../services/image_transcoder.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
@@ -47,6 +48,7 @@ class MobileMainViewModel extends ChangeNotifier {
     required IClipboardRepository clipboardRepository,
     required this._deviceService,
     required this._securityService,
+    this._imageTranscoder = const ImageTranscoder(),
   }) : _clipboardRepo = clipboardRepository;
 
   final IAuthService _authService;
@@ -59,6 +61,7 @@ class MobileMainViewModel extends ChangeNotifier {
       _clipboardRepo.undecryptableItemCount;
   final IDeviceService _deviceService;
   final ISecurityService _securityService;
+  final IImageTranscoder _imageTranscoder;
 
   // ========== SEND STATE ==========
 
@@ -199,8 +202,9 @@ class MobileMainViewModel extends ChangeNotifier {
   static const int _maxCacheSize = 20;
 
   /// Photo formats an over-limit image may be re-encoded from, by the gallery
-  /// picker and the share sheet alike. Other formats (GIF, HEIC, RAW) cannot
-  /// be re-encoded without losing what makes them that format.
+  /// picker and the share sheet alike. HEIC goes through [IImageTranscoder]
+  /// instead; GIF and RAW cannot be re-encoded without losing what makes them
+  /// that format.
   static const _shrinkableExtensions = {'jpg', 'jpeg', 'png', 'webp'};
 
   // ========== ENCRYPTION ==========
@@ -797,16 +801,25 @@ class MobileMainViewModel extends ChangeNotifier {
       // A photo too big to send is scaled down rather than refused, as
       // image_picker's 2048px cap used to make every photo fit. Anything that
       // fits is still sent as the original.
-      final shrinkable = _shrinkableExtensions.contains(
-        image.extension?.toLowerCase(),
-      );
-      if (image.size > ClipboardLimits.maxFileBytes && !shrinkable) {
+      final extension = image.extension?.toLowerCase();
+      final shrinkable = _shrinkableExtensions.contains(extension);
+      final isHeic = heicExtensions.contains(extension);
+      if (image.size > ClipboardLimits.maxFileBytes && !shrinkable && !isHeic) {
         throw Exception('Image exceeds ${ClipboardLimits.maxFileLabel} limit');
       }
-      var bytes = image.bytes ?? await File(image.path!).readAsBytes();
+      // A HEIC is converted whatever its size - see IImageTranscoder. Where
+      // the platform cannot, one that fits still goes as the original file.
+      final converted = isHeic && image.path != null
+          ? await _imageTranscoder.toJpeg(
+              image.path!,
+              maxBytes: ClipboardLimits.maxFileBytes,
+            )
+          : null;
+      var bytes =
+          converted ?? image.bytes ?? await File(image.path!).readAsBytes();
       var typeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
-        image.name,
+        converted != null ? 'photo.jpg' : image.name,
       );
       if (bytes.length > ClipboardLimits.maxFileBytes &&
           typeInfo.contentType.isImage) {
@@ -831,8 +844,9 @@ class MobileMainViewModel extends ChangeNotifier {
       // from the picker skipped the device chips entirely, so every picked
       // image went to all devices regardless of what was selected.
       if (!_isDisposed) {
-        // Formats without an image preview (for example HEIC) remain files;
-        // never convert them to JPEG just to make a thumbnail available.
+        // Formats with no image preview stay files - a HEIC the platform
+        // could not convert, say. HEIC is converted above for every receiver's
+        // sake, not for the thumbnail.
         _clipboardContent = typeInfo.contentType.isImage
             ? ClipboardContent.image(bytes, typeInfo.mimeType)
             : ClipboardContent.file(bytes, image.name, typeInfo.mimeType);
@@ -1298,20 +1312,36 @@ class MobileMainViewModel extends ChangeNotifier {
         await File(file.path).length() > ClipboardLimits.maxFileBytes;
     final dot = filename.lastIndexOf('.');
     final extension = dot < 0 ? '' : filename.substring(dot + 1).toLowerCase();
-    if (oversized && !_shrinkableExtensions.contains(extension)) {
+    final isHeic = heicExtensions.contains(extension);
+    if (oversized && !_shrinkableExtensions.contains(extension) && !isHeic) {
+      onError?.call(tooLarge);
+      return;
+    }
+    final asJpeg = '${dot < 0 ? filename : filename.substring(0, dot)}.jpg';
+
+    // A HEIC is converted whatever its size - see IImageTranscoder - and
+    // straight from disk, so the platform decoder can downsample without the
+    // original ever reaching the Dart heap.
+    final converted = isHeic
+        ? await _imageTranscoder.toJpeg(
+            file.path,
+            maxBytes: ClipboardLimits.maxFileBytes,
+          )
+        : null;
+    if (isHeic && converted == null && oversized) {
       onError?.call(tooLarge);
       return;
     }
 
-    var bytes = await File(file.path).readAsBytes();
-    var sentFilename = filename;
+    var bytes = converted ?? await File(file.path).readAsBytes();
+    var sentFilename = converted != null ? asJpeg : filename;
 
     var fileTypeInfo = FileTypeService.instance.detectFromBytes(
       bytes,
-      filename,
+      sentFilename,
     );
 
-    if (oversized) {
+    if (oversized && converted == null) {
       final shrunk = fileTypeInfo.contentType.isImage
           ? await compute(shrinkImageToFit, (
               bytes,
@@ -1324,7 +1354,7 @@ class MobileMainViewModel extends ChangeNotifier {
       }
       // Now a JPEG whatever it arrived as, so the name says so too.
       bytes = shrunk;
-      sentFilename = '${dot < 0 ? filename : filename.substring(0, dot)}.jpg';
+      sentFilename = asJpeg;
       fileTypeInfo = FileTypeService.instance.detectFromBytes(
         bytes,
         sentFilename,

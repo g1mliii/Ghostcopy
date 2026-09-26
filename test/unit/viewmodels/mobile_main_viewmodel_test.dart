@@ -10,6 +10,7 @@ import 'package:ghostcopy/models/clipboard_limits.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/device_service.dart';
+import 'package:ghostcopy/services/image_transcoder.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/viewmodels/mobile_main_viewmodel.dart';
@@ -27,6 +28,17 @@ class _MockDeviceService extends Mock implements IDeviceService {}
 class _MockSecurityService extends Mock implements ISecurityService {}
 
 class _MockSettingsService extends Mock implements ISettingsService {}
+
+class _FakeImageTranscoder implements IImageTranscoder {
+  Uint8List? result;
+  final paths = <String>[];
+
+  @override
+  Future<Uint8List?> toJpeg(String path, {required int maxBytes}) async {
+    paths.add(path);
+    return result;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -484,7 +496,7 @@ void main() {
       verify(() => clipboardRepository.getHistory()).called(greaterThan(0));
     });
 
-    group('an oversized file', () {
+    group('a shared file', () {
       late Directory dir;
       late List<(Uint8List, String?, ContentType)> inserted;
 
@@ -563,6 +575,88 @@ void main() {
 
         expect(errors.single, 'big.pdf is too large (max 10MB)');
         expect(inserted, isEmpty);
+      });
+
+      group('a HEIC photo', () {
+        late _FakeImageTranscoder transcoder;
+        late MobileMainViewModel heicViewModel;
+
+        setUp(() {
+          transcoder = _FakeImageTranscoder();
+          heicViewModel = MobileMainViewModel(
+            authService: authService,
+            clipboardRepository: clipboardRepository,
+            deviceService: deviceService,
+            securityService: securityService,
+            imageTranscoder: transcoder,
+          );
+        });
+
+        tearDown(() => heicViewModel.dispose());
+
+        File heic(String name, int bytes) {
+          final file = File('${dir.path}/$name');
+          file.openSync(mode: FileMode.write)
+            ..setPositionSync(bytes - 1)
+            ..writeByteSync(0)
+            ..closeSync();
+          return file;
+        }
+
+        test('is converted even when it fits, and sent as a JPEG', () async {
+          // A HEIC that fits used to go as a plain file: no preview on any
+          // device, and unopenable on most Windows machines.
+          final file = heic('IMG_0002.HEIC', 3 * 1024 * 1024);
+          transcoder.result = img.encodeJpg(img.Image(width: 8, height: 8));
+          final errors = <String>[];
+
+          await heicViewModel.handleSharedFiles([
+            SharedMediaFile(path: file.path, type: SharedMediaType.image),
+          ], onError: errors.add);
+
+          expect(errors, isEmpty);
+          expect(transcoder.paths, [file.path]);
+          final (bytes, name, type) = inserted.single;
+          expect(bytes, transcoder.result);
+          expect(name, 'IMG_0002.jpg');
+          expect(type.isImage, isTrue);
+        });
+
+        test('over the limit is converted rather than refused', () async {
+          final file = heic('IMG_0003.heic', ClipboardLimits.maxFileBytes + 1);
+          transcoder.result = img.encodeJpg(img.Image(width: 8, height: 8));
+
+          await heicViewModel.handleSharedFiles([
+            SharedMediaFile(path: file.path, type: SharedMediaType.image),
+          ]);
+
+          expect(inserted.single.$2, 'IMG_0003.jpg');
+        });
+
+        test(
+          'that cannot be converted goes as the original if it fits',
+          () async {
+            final file = heic('IMG_0004.heic', 1024);
+
+            await heicViewModel.handleSharedFiles([
+              SharedMediaFile(path: file.path, type: SharedMediaType.image),
+            ]);
+
+            expect(inserted.single.$2, 'IMG_0004.heic');
+          },
+        );
+
+        test('that cannot be converted is refused over the limit', () async {
+          final file = heic('IMG_0005.heic', ClipboardLimits.maxFileBytes + 1);
+          final errors = <String>[];
+
+          await heicViewModel.handleSharedFiles([
+            SharedMediaFile(path: file.path, type: SharedMediaType.image),
+          ], onError: errors.add);
+
+          expect(errors.single, 'IMG_0005.heic is too large (max 10MB)');
+          expect(inserted, isEmpty);
+        });
       });
     });
   });
