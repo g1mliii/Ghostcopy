@@ -92,6 +92,11 @@ class ClipboardRepository implements IClipboardRepository {
   final Map<String, Future<Uint8List?>> _inFlightThumbnails =
       <String, Future<Uint8List?>>{};
 
+  /// Bumped by [reset]. A thumbnail build that began before a sign-out must
+  /// not write its plaintext preview back into caches that reset has just
+  /// emptied for the account being left.
+  int _cacheGeneration = 0;
+
   @override
   ValueListenable<int> get undecryptableItemCount => _undecryptableItemCount;
 
@@ -530,7 +535,9 @@ class ClipboardRepository implements IClipboardRepository {
     String storagePath,
     String memoryKey,
   ) async {
+    final generation = _cacheGeneration;
     final onDisk = await ThumbnailDiskCache.instance.get(storagePath);
+    if (generation != _cacheGeneration) return null;
     if (onDisk != null) {
       MediaMemoryCache.instance.put(memoryKey, onDisk);
       debugPrint('[Repository] 🖼 Thumbnail disk hit: $storagePath');
@@ -545,7 +552,7 @@ class ClipboardRepository implements IClipboardRepository {
     if (full == null || full.isEmpty) return null;
 
     final thumbnail = await _encodeThumbnail(full);
-    if (thumbnail == null) return null;
+    if (thumbnail == null || generation != _cacheGeneration) return null;
 
     unawaited(ThumbnailDiskCache.instance.put(storagePath, thumbnail));
     MediaMemoryCache.instance.put(memoryKey, thumbnail);
@@ -556,18 +563,23 @@ class ClipboardRepository implements IClipboardRepository {
     return thumbnail;
   }
 
-  /// Downscale to [ThumbnailDiskCache.maxEdge] and re-encode as PNG.
+  /// Downscale the longest edge to [ThumbnailDiskCache.maxEdge] and
+  /// re-encode as PNG.
   ///
-  /// Only `targetWidth` is given: supplying both dimensions scales to exactly
-  /// those and would distort anything that is not square. With one, the codec
-  /// keeps the aspect ratio.
+  /// Only one dimension is ever given: supplying both scales to exactly those
+  /// and would distort anything that is not square. With one, the codec keeps
+  /// the aspect ratio. Which one depends on the source - capping only the
+  /// width let a full-page screenshot through at 512x9000 - and nothing is
+  /// scaled up, so a small icon is not re-encoded larger than it came.
   static Future<Uint8List?> _encodeThumbnail(Uint8List full) async {
     ui.Codec? codec;
     ui.Image? image;
     try {
-      codec = await ui.instantiateImageCodec(
-        full,
-        targetWidth: ThumbnailDiskCache.maxEdge,
+      // Handed over, not shared: instantiateImageCodecWithSize disposes it.
+      final buffer = await ui.ImmutableBuffer.fromUint8List(full);
+      codec = await ui.instantiateImageCodecWithSize(
+        buffer,
+        getTargetSize: thumbnailTargetSize,
       );
       final frame = await codec.getNextFrame();
       image = frame.image;
@@ -582,6 +594,16 @@ class ClipboardRepository implements IClipboardRepository {
       image?.dispose();
       codec?.dispose();
     }
+  }
+
+  /// The decode size for a thumbnail of a [width] x [height] image.
+  @visibleForTesting
+  static ui.TargetImageSize thumbnailTargetSize(int width, int height) {
+    const maxEdge = ThumbnailDiskCache.maxEdge;
+    if (width <= maxEdge && height <= maxEdge) return ui.TargetImageSize();
+    return width >= height
+        ? ui.TargetImageSize(width: maxEdge)
+        : ui.TargetImageSize(height: maxEdge);
   }
 
   /// Namespaced so a thumbnail can never be handed back by downloadFile,
@@ -1362,6 +1384,7 @@ class ClipboardRepository implements IClipboardRepository {
   @override
   void reset() {
     debugPrint('[ClipboardRepository] Resetting repository state');
+    _cacheGeneration++;
     _encryptionInitialized = false;
     _encryptionUserId = null;
     // Belongs to the signed-out user's history. Leaving it set would show the
