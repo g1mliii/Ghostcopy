@@ -431,6 +431,30 @@ void main() {
     // A wake or unlock the lifecycle already counted as awake still calls
     // ensureRealtimeConnected. With realtime paused for polling that opened a
     // channel behind the lifecycle's back.
+    // recoverSession rebinds realtime when a sign-in finally succeeds, which
+    // can be while the machine is locked or hybrid mode is polling.
+    testWidgets('rebinding to a new account keeps a lifecycle pause', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      service.pauseRealtime();
+      clearInteractions(channel);
+      clearInteractions(repository);
+
+      service.reinitializeForUser();
+      await settle(tester);
+      verifyNever(() => channel.subscribe(any()));
+      // The new account's baseline is still taken, so its newest clip is not
+      // mistaken for a new one by the next poll.
+      verify(repository.getLatestItemId).called(1);
+
+      service.resumeRealtime();
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
+    });
+
     testWidgets('a paused channel is not reopened by a rejoin request', (
       tester,
     ) async {

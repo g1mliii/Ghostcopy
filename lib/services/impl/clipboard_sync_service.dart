@@ -1613,9 +1613,6 @@ class ClipboardSyncService implements IClipboardSyncService {
     _realtimeRetryTimer = null;
     _realtimeRetries = 0;
     _dropRealtimeChannel();
-    // It subscribes below whatever the lifecycle last asked, so the flag
-    // must not claim otherwise.
-    _realtimePaused = false;
     _autoReceiveDebounceTimer?.cancel();
     _lastPolledItemId = null;
     _baselineReady = false;
@@ -1629,6 +1626,16 @@ class ClipboardSyncService implements IClipboardSyncService {
     _emptyReadChangeCount = null;
     _emptyReads = 0;
     _lastSentContentHash = '';
+
+    // Paused by the lifecycle - locked, asleep, or polling after idling in the
+    // tray - stays paused: the new account's channel opens when it resumes,
+    // not behind its back. The poll baseline is still taken now, or the next
+    // poll would treat the account's newest clip as just arrived.
+    if (_realtimePaused) {
+      final userId = _supabaseClient.auth.currentUser?.id;
+      if (userId != null) unawaited(_seedPollBaseline(userId));
+      return;
+    }
 
     // Subscribe with new user ID (no need to disconnect - auth token updates automatically)
     _subscribeToRealtimeUpdates();
