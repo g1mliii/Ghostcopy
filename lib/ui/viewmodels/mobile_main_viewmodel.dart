@@ -1518,6 +1518,10 @@ class MobileMainViewModel extends ChangeNotifier {
     unawaited(loadHistory());
 
     unawaited(_reassertFcmToken());
+
+    // Back from Mail, perhaps having confirmed a sign-up in the browser rather
+    // than in the app. Picks that up instead of staying a guest.
+    unawaited(_authService.refreshIfAwaitingConfirmation());
   }
 
   /// When the token was last written back on resume. Resume fires on every

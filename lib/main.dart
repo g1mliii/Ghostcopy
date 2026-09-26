@@ -412,6 +412,14 @@ Future<void> _appMain(
     await deviceService.initialize();
   }
 
+  // An email link that launched the app arrived while Supabase was still
+  // initialising, before there was an AuthService to redeem it with.
+  final earlyEmailLink = _earlyEmailLink;
+  if (earlyEmailLink != null) {
+    _earlyEmailLink = null;
+    unawaited(_handleDeepLinkArgs([earlyEmailLink]));
+  }
+
   // Initialize services (desktop only)
   if (_isDesktop()) {
     // Initialize core services first
@@ -1497,11 +1505,23 @@ Future<void> _registerSavedHotkey() async {
 ///
 /// One side effect: a provider error ends the browser sign-in waiting on it,
 /// where otherwise the auth panel sat disabled until its timeout.
+///
+/// Only a PKCE `code` is left to gotrue. An emailed `token_hash` is redeemed by
+/// [_handleDeepLinkArgs] instead: getSessionFromUrl wants a code and throws on
+/// one, and a token hash needs AuthService.redeemEmailLink's guard.
 bool _acceptAuthCallbackUri(Uri uri) {
   final decision = AuthCallbackDecision.evaluate(uri.toString());
   _reportProviderError(decision);
+  if (decision.tokenHash != null) {
+    unawaited(_handleDeepLinkArgs([uri.toString()]));
+    return false;
+  }
   return decision.isAccepted;
 }
+
+/// A `token_hash` link that arrived before AuthService was registered - the
+/// app was launched by tapping the email. Replayed once startup has it.
+String? _earlyEmailLink;
 
 /// Hand a provider's error redirect (declined consent, an identity that
 /// already belongs to another account) to the sign-in waiting on it.
@@ -1560,12 +1580,17 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
     } else {
       // Email confirmation links carry a one-time token instead of a code,
       // because a code can only be redeemed on the device that began the flow -
-      // and mail is routinely opened somewhere else. gotrue checks the token
-      // server-side, so possession of the account's mailbox is what is proved.
-      await auth.verifyOTP(
-        tokenHash: decision.tokenHash,
-        type: decision.otpType!,
+      // and mail is routinely opened somewhere else. Redeemed only when this
+      // app asked for a confirmation; see redeemEmailLink.
+      if (!locator.isRegistered<IAuthService>()) {
+        _earlyEmailLink = link;
+        return;
+      }
+      final redeemed = await locator<IAuthService>().redeemEmailLink(
+        decision.tokenHash!,
+        decision.otpType!,
       );
+      if (!redeemed) return;
     }
     debugPrint('[Main] ✅ Session established from deep link');
 

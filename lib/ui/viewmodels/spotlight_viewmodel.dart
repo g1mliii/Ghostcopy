@@ -228,6 +228,11 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Populate content from system clipboard
   /// Returns ClipboardContent if there's something to paste
+  /// The window came forward. A sign-up confirmed in a browser meanwhile
+  /// should read as signed in, not as the guest it was.
+  void onWindowFocused() =>
+      unawaited(_authService.refreshIfAwaitingConfirmation());
+
   Future<ClipboardContent?> populateFromClipboard() async {
     try {
       final content = await _clipboardService.read();

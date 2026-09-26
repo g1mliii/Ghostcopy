@@ -26,7 +26,9 @@ class AuthService implements IAuthService {
     IEncryptionService? encryptionService,
     IClipboardRepository? clipboardRepository,
     this._pkceStore,
+    GotrueAsyncStorage? confirmationStore,
   }) : _client = client ?? Supabase.instance.client,
+       _confirmationStoreOverride = confirmationStore,
        _appleReauthorize = appleReauthorize ?? _nativeAppleAuthorizationCode,
        _encryptionOverride = encryptionService,
        _repositoryOverride = clipboardRepository;
@@ -64,6 +66,15 @@ class AuthService implements IAuthService {
   /// [PkceVerifierStore]. Without it an abandoned browser sign-in cannot
   /// forget its verifier.
   final PkceVerifierStore? _pkceStore;
+
+  // Where the pending email confirmation is kept - see redeemEmailLink.
+  // Persisted, because the app is often killed while its user is off reading
+  // mail. Built lazily so tests that never touch it need no plugin.
+  GotrueAsyncStorage? _confirmationStoreOverride;
+  GotrueAsyncStorage get _confirmationStore =>
+      _confirmationStoreOverride ??= SharedPreferencesGotrueAsyncStorage();
+  static const _pendingConfirmationKey = 'ghostcopy_pending_confirmation';
+  static const _pendingConfirmationTtl = Duration(days: 1);
   bool _initialized = false;
 
   /// Interactive sign-ins in progress, and the anonymous sign-in, if one is.
@@ -193,6 +204,7 @@ class AuthService implements IAuthService {
         ),
       );
       debugPrint('[AuthService] Sign up successful');
+      if (response.session == null) await _rememberPendingConfirmation(email);
       return response;
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign up failed: ${e.message}');
@@ -376,6 +388,96 @@ class AuthService implements IAuthService {
       unawaited(subscription.cancel());
       if (identical(_browserAuth, outcome)) _browserAuth = null;
       if (!succeeded) await _forgetCodeVerifier();
+    }
+  }
+
+  Future<void> _rememberPendingConfirmation(String email) async {
+    try {
+      await _confirmationStore.setItem(
+        key: _pendingConfirmationKey,
+        value: jsonEncode({
+          'email': email.trim().toLowerCase(),
+          'at': DateTime.now().millisecondsSinceEpoch,
+        }),
+      );
+    } on Object catch (e) {
+      // Only costs the seamless path: the website can still confirm.
+      debugPrint('[AuthService] Could not record the pending confirmation: $e');
+    }
+  }
+
+  /// The address this app is waiting to have confirmed, if it is recent.
+  Future<String?> _pendingConfirmationEmail() async {
+    try {
+      final raw = await _confirmationStore.getItem(
+        key: _pendingConfirmationKey,
+      );
+      if (raw == null) return null;
+      final record = jsonDecode(raw) as Map<String, dynamic>;
+      final at = DateTime.fromMillisecondsSinceEpoch(record['at'] as int);
+      if (DateTime.now().difference(at) > _pendingConfirmationTtl) {
+        await _clearPendingConfirmation();
+        return null;
+      }
+      return record['email'] as String?;
+    } on Object catch (e) {
+      debugPrint('[AuthService] Could not read the pending confirmation: $e');
+      return null;
+    }
+  }
+
+  Future<void> _clearPendingConfirmation() async {
+    try {
+      await _confirmationStore.removeItem(key: _pendingConfirmationKey);
+    } on Object catch (_) {}
+  }
+
+  @override
+  Future<bool> redeemEmailLink(String tokenHash, OtpType type) async {
+    final pending = await _pendingConfirmationEmail();
+    if (pending == null) {
+      debugPrint(
+        '[AuthService] Refused an email link this app did not ask for',
+      );
+      return false;
+    }
+    final current = _client.auth.currentUser;
+    if (current != null && !current.isAnonymous) {
+      debugPrint('[AuthService] Refused an email link: already signed in');
+      return false;
+    }
+
+    final response = await _client.auth.verifyOTP(
+      tokenHash: tokenHash,
+      type: type,
+    );
+    final confirmed = response.user?.email?.toLowerCase();
+    if (confirmed != pending) {
+      // Not the address asked for: someone else's token. Do not stay in it.
+      debugPrint(
+        '[AuthService] Email link was for another address - signed out',
+      );
+      await _client.auth.signOut(); // local scope: this device only
+      return false;
+    }
+    await _clearPendingConfirmation();
+    return true;
+  }
+
+  @override
+  Future<void> refreshIfAwaitingConfirmation() async {
+    if (_client.auth.currentUser?.isAnonymous != true) return;
+    final pending = await _pendingConfirmationEmail();
+    if (pending == null) return;
+    try {
+      final response = await _client.auth.refreshSession();
+      final user = response.user;
+      if (user != null && !user.isAnonymous) {
+        debugPrint('[AuthService] Email was confirmed elsewhere');
+        await _clearPendingConfirmation();
+      }
+    } on Object catch (e) {
+      debugPrint('[AuthService] Could not refresh for confirmation: $e');
     }
   }
 
@@ -623,6 +725,7 @@ class AuthService implements IAuthService {
       debugPrint(
         '[AuthService] Upgraded anonymous user to: $email (user_id preserved)',
       );
+      await _rememberPendingConfirmation(email);
       return userResponse;
     } on AuthException catch (e) {
       if (e.message.contains('already registered') ||

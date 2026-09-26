@@ -76,6 +76,9 @@ void main() {
     when(
       () => settingsService.getClipboardAutoClearSeconds(),
     ).thenAnswer((_) async => 0);
+    when(
+      () => authService.refreshIfAwaitingConfirmation(),
+    ).thenAnswer((_) async {});
 
     viewModel = MobileMainViewModel(
       authService: authService,

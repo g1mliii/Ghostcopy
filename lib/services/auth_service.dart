@@ -88,6 +88,24 @@ abstract class IAuthService {
   /// Returns true if successful, false if cancelled or failed
   Future<bool> linkAppleIdentity();
 
+  /// Redeem an emailed confirmation link's [tokenHash], signing this app in.
+  ///
+  /// Only when this app asked for one: an email sign-up or upgrade began here
+  /// within the last day, and no permanent account is signed in. A
+  /// `ghostcopy://` URL can be opened by any web page, so without that a page
+  /// could hand the app a token for the sender's own new account and sign it
+  /// in there - and every clip copied afterwards would go to the sender. If
+  /// the address confirmed is not the one asked for, the session it produced
+  /// is signed out again.
+  ///
+  /// Returns whether this app is now signed in to the confirmed account.
+  Future<bool> redeemEmailLink(String tokenHash, OtpType type);
+
+  /// If an email confirmation is pending, refresh the session so a link
+  /// confirmed somewhere else - in a browser, on another device - shows here
+  /// as a signed-in account rather than the guest it was. Cheap otherwise.
+  Future<void> refreshIfAwaitingConfirmation();
+
   /// Whether a sign-in or link is waiting for the browser to come back.
   bool get isAwaitingBrowserSignIn;
 
