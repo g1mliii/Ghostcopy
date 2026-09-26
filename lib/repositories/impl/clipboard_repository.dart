@@ -490,7 +490,14 @@ class ClipboardRepository implements IClipboardRepository {
     // The disk lookup lives inside _resolveBytes so that it, too, is covered
     // by the in-flight join - otherwise two tiles rebuilding at once would
     // both read and decrypt the same file.
-    return _joinInFlight(storagePath, () => _resolveBytes(item, storagePath));
+    return _joinInFlight(storagePath, () async {
+      final bytes = await _resolveBytes(item, storagePath);
+      // Cache the PLAINTEXT in RAM: that cache is in-process and cleared on
+      // sign-out and memory pressure, so re-running AES on every hit would be
+      // pure waste. The disk copy stays as stored - encrypted when the clip is.
+      if (bytes != null) MediaMemoryCache.instance.put(storagePath, bytes);
+      return bytes;
+    });
   }
 
   /// Join an identical request already running rather than starting a second.
@@ -555,10 +562,20 @@ class ClipboardRepository implements IClipboardRepository {
     }
 
     // Only now is the real image needed - and this is the one time it is, for
-    // this clip, on this device. downloadFile applies its own caches and
-    // decryption, so an encrypted clip is handled here exactly as anywhere
-    // else; what is written below is already plaintext.
-    final full = await downloadFile(item);
+    // this clip, on this device. _resolveBytes applies the disk cache and
+    // decryption, so an encrypted clip is handled exactly as anywhere else;
+    // what is written below is already plaintext.
+    //
+    // Not through downloadFile: that keeps the full image in the RAM cache,
+    // and a list of tiles building their thumbnails would fill it with
+    // full-size pictures needed for one decode each, evicting what is really
+    // on screen. Taken from RAM only if something else already put it there.
+    final full =
+        MediaMemoryCache.instance.get(storagePath) ??
+        await _joinInFlight(
+          storagePath,
+          () => _resolveBytes(item, storagePath),
+        );
     if (full == null || full.isEmpty) return null;
 
     final thumbnail = await _encodeThumbnail(full);
@@ -631,7 +648,8 @@ class ClipboardRepository implements IClipboardRepository {
   /// which looks the raw storage path up in the same RAM cache.
   String _thumbnailKey(String storagePath) => 'thumb:$storagePath';
 
-  /// Disk cache first, network second. Returns plaintext bytes either way.
+  /// Disk cache first, network second. Returns plaintext bytes either way,
+  /// and leaves the RAM cache to the caller.
   Future<Uint8List?> _resolveBytes(
     ClipboardItem item,
     String storagePath,
@@ -641,9 +659,7 @@ class ClipboardRepository implements IClipboardRepository {
       debugPrint(
         '[Repository] 💾 Disk cache hit: $storagePath (${cached.length} bytes)',
       );
-      final bytes = await _decryptDownloaded(item, cached);
-      if (bytes != null) MediaMemoryCache.instance.put(storagePath, bytes);
-      return bytes;
+      return _decryptDownloaded(item, cached);
     }
     return _downloadAndDecrypt(item, storagePath);
   }
@@ -664,15 +680,7 @@ class ClipboardRepository implements IClipboardRepository {
       // Fire and forget: a cache write must never delay showing the image.
       unawaited(MediaDiskCache.instance.put(storagePath, raw));
 
-      final bytes = await _decryptDownloaded(item, raw);
-      if (bytes == null) return null;
-
-      // Cache the PLAINTEXT in RAM: that cache is in-process and cleared on
-      // hide, sign-out and memory pressure, so re-running AES on every hit
-      // would be pure waste. The disk copy above stays encrypted.
-      MediaMemoryCache.instance.put(storagePath, bytes);
-
-      return bytes;
+      return await _decryptDownloaded(item, raw);
     } on Exception catch (e) {
       debugPrint('[Repository] ✗ Download failed: $e');
       return null;
