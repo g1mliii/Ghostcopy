@@ -139,13 +139,15 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     // open, for a session whose user has not changed. Comparing the user id
     // drops both: a replayed event and a refresh both land on the id we are
     // already showing. A guest upgrade keeps its id but stops being
-    // anonymous, which the panel has to show, so that is compared too.
+    // anonymous, which the panel has to show, so that is compared too - on
+    // the live user, not the event's: the replay holds the guest's events
+    // too, and reading those flipped the panel back and forth on every open.
     _lastAuthUserId = widget.authService.currentUser?.id;
     _lastAuthAnonymous = widget.authService.currentUser?.isAnonymous;
-    _authStateSub = widget.authService.authStateChanges.listen((state) {
+    _authStateSub = widget.authService.authStateChanges.listen((_) {
       if (!mounted) return;
 
-      final user = state.session?.user;
+      final user = widget.authService.currentUser;
       if (user?.id == _lastAuthUserId &&
           user?.isAnonymous == _lastAuthAnonymous) {
         return;

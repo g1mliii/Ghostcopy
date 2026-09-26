@@ -73,12 +73,14 @@ void main() {
   late _MemoryStorage storage;
   late List<String> calls;
   late String verifiedAs;
+  late bool guestConfirmed;
   late _Devices devices;
   Completer<void>? verifyGate;
 
   setUp(() async {
     calls = [];
     verifiedAs = 'me';
+    guestConfirmed = false;
     verifyGate = null;
     storage = _MemoryStorage();
     devices = _Devices();
@@ -98,7 +100,9 @@ void main() {
         '/auth/v1/user' when request.method == 'GET' => _json(
           _user(
             _subject(request.headers['Authorization']),
-            anonymous: _subject(request.headers['Authorization']) == 'guest',
+            anonymous:
+                _subject(request.headers['Authorization']) == 'guest' &&
+                !guestConfirmed,
           ),
         ),
         '/auth/v1/user' => _json(_user('guest', anonymous: true)),
@@ -209,13 +213,25 @@ void main() {
   });
 
   group('refreshIfAwaitingConfirmation', () {
-    test('refreshes the guest being upgraded, once per interval', () async {
+    test('asks after the guest being upgraded, once per interval', () async {
       await service.upgradeWithEmail('me@example.com', 'password1');
+      calls.clear();
 
       await service.refreshIfAwaitingConfirmation();
       await service.refreshIfAwaitingConfirmation();
 
-      expect(calls.where((c) => c == '/auth/v1/token'), hasLength(1));
+      // A read, not a refresh, while the link is still unclicked.
+      expect(calls, ['/auth/v1/user']);
+    });
+
+    test('refreshes once the upgrade was confirmed elsewhere', () async {
+      await service.upgradeWithEmail('me@example.com', 'password1');
+      guestConfirmed = true;
+
+      await service.refreshIfAwaitingConfirmation();
+
+      expect(calls, contains('/auth/v1/token'));
+      expect(storage.items, isEmpty);
     });
 
     test('leaves a guest alone that is not the one upgraded', () async {
