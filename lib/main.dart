@@ -559,9 +559,21 @@ Future<void> _appMain(
       } on Object catch (e) {
         debugPrint('[Main] Deep link handling failed: $e');
       }
-      // A second launch without a URL is the user asking for the app, so show
-      // the window rather than silently doing nothing.
-      if (!forwarded.contains('ghostcopy://')) {
+      // Whether to surface the window, by what the launch was for. The rule
+      // used to be "show unless it is a ghostcopy:// URL", which had both
+      // interesting cases backwards.
+      //
+      //   --send-file  The Explorer verb. It exists so the user does not have
+      //                to open the app; a window appearing is the opposite of
+      //                the point. A toast already confirms the send.
+      //   ghostcopy:// A browser sign-in coming back. The user left the app to
+      //                authenticate and expects to land in it - and the
+      //                callback page's own "Nothing happened? Open GhostCopy"
+      //                link is this exact URL, so suppressing it made that
+      //                link appear to do nothing at all.
+      //   anything else  Someone launched the app. Show it.
+      final isExplorerSend = forwarded.contains('--send-file');
+      if (!isExplorerSend) {
         debugPrint('[Main] Second launch - showing Spotlight');
         unawaited(locator<IWindowService>().showSpotlight());
       }
