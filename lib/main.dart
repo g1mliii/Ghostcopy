@@ -526,7 +526,12 @@ Future<void> _appMain(
     // Sync auto-start setting with system if needed
     final autoStartEnabled = await settingsService.getAutoStartEnabled();
     final systemAutoStartEnabled = await autoStartService.isEnabled();
-    if (autoStartEnabled != systemAutoStartEnabled) {
+    // Not while Task Manager or a policy holds it: the request cannot change
+    // anything, so it only cost a blocking WinRT call on every launch - and
+    // once the user turned it back on in Task Manager, a saved "off" would
+    // undo that the next time the app started.
+    final autoStartLocked = await autoStartService.lock() != AutoStartLock.none;
+    if (!autoStartLocked && autoStartEnabled != systemAutoStartEnabled) {
       // Sync setting with actual system state
       if (autoStartEnabled) {
         await autoStartService.enable();

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ghostcopy/services/impl/auto_start_service.dart';
+import 'package:ghostcopy/services/auto_start_service.dart';
 import 'package:ghostcopy/services/windows_package_service.dart';
 
 /// Stands in for the runner. Records the calls so a test can prove
@@ -91,6 +91,27 @@ void main() {
 
     await service.enable();
     expect(await service.isEnabled(), isFalse);
+  });
+
+  // Task Manager or a policy holds the entry: the settings toggle has to know
+  // so it can say so, and startup must stop re-asking on every launch.
+  test('a task held outside the app reports who holds it', () async {
+    final package = _FakePackage(
+      packaged: true,
+      state: WindowsStartupState.disabledByUser,
+    );
+    final service = await started(package);
+    expect(await service.lock(), AutoStartLock.disabledByUser);
+
+    package.state = WindowsStartupState.disabledByPolicy;
+    expect(await service.lock(), AutoStartLock.byPolicy);
+    package.state = WindowsStartupState.enabledByPolicy;
+    expect(await service.lock(), AutoStartLock.byPolicy);
+
+    package.state = WindowsStartupState.disabled;
+    expect(await service.lock(), AutoStartLock.none);
+    package.state = WindowsStartupState.enabled;
+    expect(await service.lock(), AutoStartLock.none);
   });
 
   test('dispose drops the packaged path', () async {

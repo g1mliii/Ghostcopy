@@ -164,6 +164,19 @@ class AutoStartService implements IAutoStartService {
   }
 
   @override
+  Future<AutoStartLock> lock() async {
+    _ensureInitialized();
+    if (!_isDesktop() || !_usePackagedStartup) return AutoStartLock.none;
+
+    return switch (await _windowsPackage.startupState()) {
+      WindowsStartupState.disabledByUser => AutoStartLock.disabledByUser,
+      WindowsStartupState.disabledByPolicy ||
+      WindowsStartupState.enabledByPolicy => AutoStartLock.byPolicy,
+      _ => AutoStartLock.none,
+    };
+  }
+
+  @override
   void dispose() {
     _initialized = false;
     _usePackagedStartup = false;
