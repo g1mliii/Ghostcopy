@@ -187,8 +187,10 @@ to package - but everything below marked "verify" does need one.
       surfaced it first because it throttles a background process hard enough
       for the socket's heartbeat to lapse, but the same socket dies anywhere
       across a sleep, a network change or a server restart, so this was never
-      Windows-only. Verified after minutes in the tray: first clip instant,
-      and instant again 60s later.
+      Windows-only. Verified: first clip instant after a few minutes in the
+      tray, instant again 60s later, and **still instant after 30 minutes
+      idle** - comfortably past the 20-30 seconds that used to break it and
+      turn a clip into a five-minute wait.
   - [ ] **Re-test on macOS after a lid close.** Same socket, same failure
         mode; macOS had simply not been pushed into it.
   - [ ] If a clip is ever slow again but the *next* one is instant, the death
