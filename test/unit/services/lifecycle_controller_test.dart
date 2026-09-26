@@ -95,6 +95,33 @@ void main() {
     when(settings.getAutoSendEnabled).thenAnswer((_) async => false);
   });
 
+  // Every way the window hides goes through enterTrayMode. The trim used to
+  // live in the Spotlight's blur handler, which only one of them reached.
+  test('tray mode trims the working set once the window has settled', () {
+    fakeAsync((async) {
+      var trims = 0;
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+        trimWorkingSet: () async => trims++,
+      )..enterTrayMode();
+      async.elapse(const Duration(seconds: 1));
+      expect(trims, 0, reason: 'delayed until the window has gone');
+      async.elapse(const Duration(seconds: 2));
+      expect(trims, 1);
+
+      // Reopened inside the delay: the visible window keeps its pages.
+      controller
+        ..exitTrayMode()
+        ..enterTrayMode();
+      async.elapse(const Duration(seconds: 1));
+      controller.exitTrayMode();
+      async.elapse(const Duration(seconds: 5));
+      expect(trims, 1);
+      controller.dispose();
+    });
+  });
+
   test('screen lock stops the staleness watch and unlock restarts it', () {
     fakeAsync((async) {
       final controller = LifecycleController(

@@ -29,7 +29,6 @@ import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../../utils/platform_label.dart';
-import '../../utils/windows_working_set.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
@@ -169,11 +168,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   // Track focus time to prevent immediate blur (debounce)
   DateTime? _lastFocusTime;
-
-  /// The delayed working-set trim scheduled on hide. Held so a hide that is
-  /// reopened inside the delay does not trim the pages the visible window is
-  /// using - the reopen jank the delay exists to avoid.
-  Timer? _workingSetTrimTimer;
 
   // Cached preview data to avoid recomputation on every build
   ClipboardItem? _cachedFilePreviewItem;
@@ -411,8 +405,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Wrap in try-catch to ensure all resources are disposed even if one fails
     // This prevents cascading failures and memory leaks
 
-    _workingSetTrimTimer?.cancel();
-
     // Note: ClipboardSyncService handles realtime subscription and clipboard monitoring
     // We don't need to clean those up here - they persist in the background
 
@@ -549,16 +541,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Measurements behind this: docs/windows-performance.md.
     MediaMemoryCache.instance.trimTo(MediaMemoryCache.idleBytes);
 
-    // 5. Hand the working set back to Windows, last and slightly late.
-    //
-    // Everything above frees Dart-side memory; this asks the OS to stop
-    // keeping the pages resident. Delayed on purpose - see
-    // windowsTrimDelay - because trimming before the window has actually
-    // gone would just fault those pages straight back in.
-    _workingSetTrimTimer?.cancel();
-    _workingSetTrimTimer = Timer(windowsTrimDelay, () {
-      if (!_windowService.isVisible) unawaited(trimWindowsWorkingSet());
-    });
+    // Handing the working set back to Windows happens in
+    // LifecycleController.enterTrayMode, which every way of hiding reaches -
+    // not only this one.
 
     debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
   }
