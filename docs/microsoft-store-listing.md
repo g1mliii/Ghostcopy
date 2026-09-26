@@ -286,7 +286,7 @@ one is prompted for one.
 
 ## Packages
 
-Upload **`build\windowsdunner\Release\ghostcopy.msix`** - the one
+Upload **`build\windows\x64\runner\Release\ghostcopy.msix`** - the one
 `build-store.ps1` writes. Not the signed copy used for sideloading: the Store
 signs packages itself and rejects one that already carries a signature.
 
