@@ -189,7 +189,7 @@ msix_config:
   #
   # A version can never be reused, even by a submission that failed
   # certification, so raise this before rebuilding after a rejection.
-  msix_version: 1.0.10.0
+  msix_version: 1.0.11.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
   # The Store signs the package; a signature applied here would be replaced.

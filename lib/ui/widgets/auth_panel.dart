@@ -784,14 +784,39 @@ class _AuthPanelState extends State<AuthPanel> {
     }
   }
 
+  /// Sign out of this account and offer the login form for another.
+  ///
+  /// Setting `_isLogin` alone did nothing, which is how this button behaved
+  /// for as long as it existed: `build` only renders the login form when the
+  /// session is anonymous, and while signed in it renders account management
+  /// instead. The flag changed, the same screen rebuilt, and the user saw no
+  /// response at all.
+  ///
+  /// Signing out first is what makes the form reachable - and it is what
+  /// "switch account" means anyway. No guest-clips prompt here: that warns
+  /// about abandoning clips belonging to an anonymous account, and this path
+  /// starts from a real one whose clips stay with it.
   Future<void> _handleSignInDifferent() async {
-    // Switch to login mode and show login form
     setState(() {
-      _isLogin = true;
       _authError = null;
-      _emailController.clear();
-      _passwordController.clear();
+      _authLoading = true;
     });
+    try {
+      await widget.authService.signOut();
+      if (!mounted) return;
+      setState(() {
+        _isLogin = true;
+        _authLoading = false;
+        _emailController.clear();
+        _passwordController.clear();
+      });
+    } on Exception catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _authLoading = false;
+        _authError = e.toString().replaceAll('Exception: ', '');
+      });
+    }
   }
 
   /// Delete the account and everything in it, then carry on as a fresh guest.
