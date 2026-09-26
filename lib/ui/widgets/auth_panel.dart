@@ -803,6 +803,11 @@ class _AuthPanelState extends State<AuthPanel> {
     });
     try {
       await widget.authService.signOut();
+      // signOut() lands on a fresh guest account, and the user may close the
+      // form without signing in again. The realtime channel is still filtered
+      // on the account just left, so rebind it now - as deletion does - or
+      // nothing sent to the guest arrives live.
+      widget.clipboardSyncService.reinitializeForUser();
       if (!mounted) return;
       setState(() {
         _isLogin = true;
