@@ -82,13 +82,37 @@ class ClipboardRepository implements IClipboardRepository {
   StreamSubscription<AuthState>? _accountWatch;
   String? _watchedUserId;
 
+  /// Who the on-disk caches were last filled for, kept across launches.
+  ///
+  /// The watch above only sees changes within one run. A launch whose saved
+  /// session was already dead starts with no user at all, so the account the
+  /// caches belong to is never seen leaving - and the fresh guest that
+  /// recovery then signs in inherited its thumbnails. Recording the owner
+  /// lets that launch tell a new account from a fresh install.
+  static const String _cacheOwnerKey = 'media_cache_owner';
+
+  Future<void> _claimCaches(String userId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final owner = prefs.getString(_cacheOwnerKey);
+      if (owner == userId) return;
+      if (owner != null) reset();
+      await prefs.setString(_cacheOwnerKey, userId);
+    } on Object catch (e) {
+      debugPrint('[ClipboardRepository] Could not check cache owner: $e');
+    }
+  }
+
   void _watchAccount() {
     _watchedUserId = _client.auth.currentUser?.id;
+    final initial = _watchedUserId;
+    if (initial != null) unawaited(_claimCaches(initial));
     _accountWatch = _client.auth.onAuthStateChange.listen(
       (state) {
         final userId = state.session?.user.id;
         if (_watchedUserId != null && userId != _watchedUserId) reset();
         _watchedUserId = userId;
+        if (userId != null) unawaited(_claimCaches(userId));
       },
       onError: (Object e) =>
           debugPrint('[ClipboardRepository] Auth state stream error: $e'),
@@ -991,18 +1015,26 @@ class ClipboardRepository implements IClipboardRepository {
 
       // Delete with RLS enforcement
       // RLS policy ensures user can only delete their own items
-      await _client
+      //
+      // Returning the row's storage_path, so cleaning its caches below does
+      // not depend on the best-effort fetch above: when that failed but the
+      // delete went through, the clip's plaintext thumbnail stayed on disk.
+      final deletedRows = await _client
           .from('clipboard')
           .delete()
           .eq('id', id)
-          .eq('user_id', userId); // Explicit filter for defense in depth
+          .eq('user_id', userId) // Explicit filter for defense in depth
+          .select('storage_path');
 
       // Drop the downloaded bytes for this clip from RAM and from disk. The
       // disk copy especially: it outlives the process, so without this a
       // deleted clip's image stayed readable in the profile directory
       // indefinitely. R2 itself is handled server-side by the
       // cleanup_storage_on_clipboard_delete trigger.
-      final deletedPath = item?.storagePath;
+      final returnedPath = deletedRows.isEmpty
+          ? null
+          : deletedRows.first['storage_path'] as String?;
+      final deletedPath = returnedPath ?? item?.storagePath;
       if (deletedPath != null && deletedPath.isNotEmpty) {
         if (_inFlight.containsKey(_thumbnailKey(deletedPath))) {
           _deletedWhileBuilding.add(deletedPath);
