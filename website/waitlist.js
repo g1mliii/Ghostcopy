@@ -12,7 +12,9 @@
     'use strict';
 
     var SUPABASE_URL = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+    // The publishable key, as auth-callback.js and the app send: the legacy
+    // anon JWT stops working once legacy API keys are disabled.
+    var SUPABASE_KEY = 'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
 
     // Deliberately loose. The server has the authoritative check; this only
     // catches the obvious typo before a round trip.
@@ -66,10 +68,7 @@
 
         // A radio choice on the download page, fixed by a hidden field on a
         // form that is only ever for one platform.
-        var platform = null;
-        var chosen = form.querySelector(
-            'input[name="platform"]:checked, input[type="hidden"][name="platform"]');
-        if (chosen) platform = chosen.value;
+        var platform = new FormData(form).get('platform') || null;
 
         var original = label ? label.textContent : '';
         if (button) button.disabled = true;
@@ -80,7 +79,7 @@
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
+                'apikey': SUPABASE_KEY,
                 // return=minimal is required, not cosmetic: the default asks
                 // PostgREST to return the inserted row, which needs a SELECT
                 // privilege anon does not have and must never have.

@@ -4,7 +4,9 @@
     // Publishable key. Public by design - security comes from RLS, and
     // this same value already ships inside the desktop and mobile apps.
     var SUPABASE_URL = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhoYmdneGZ0dm5sa290dmVod21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxOTk5MTIsImV4cCI6MjA3OTc3NTkxMn0.4xCsBo1ztgnrlGgJM8j78VWHpdp1bAjuHkgVD00HQXA';
+    // The publishable key, as auth-callback.js and the app send: the legacy
+    // anon JWT stops working once legacy API keys are disabled.
+    var SUPABASE_KEY = 'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
 
     var MIN_LENGTH = 8;
     var accessToken = null;
@@ -45,7 +47,7 @@
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY
+                'apikey': SUPABASE_KEY
             },
             body: JSON.stringify({ type: type || 'recovery', token_hash: tokenHash })
         }).then(function (res) {
@@ -63,7 +65,7 @@
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
+                'apikey': SUPABASE_KEY,
                 'Authorization': 'Bearer ' + accessToken
             },
             body: JSON.stringify({ password: password })
