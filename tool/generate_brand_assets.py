@@ -16,12 +16,6 @@ import os
 import struct
 import sys
 
-try:
-    import cairosvg
-except OSError as exc:  # pragma: no cover - environment problem, not logic
-    sys.exit(f"cairosvg could not load Cairo: {exc}\n"
-             "Try: DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 "
-             "tool/generate_brand_assets.py")
 from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,11 +27,29 @@ BACKGROUND = (0x0F, 0x0F, 0x13)
 PRIMARY = (0x66, 0x70, 0xFF)
 SURFACE = (0x19, 0x19, 0x1F)  # card colour the email templates sit the logo on
 
+# The corner radius for every platform that does not mask icons itself -
+# macOS, Windows, and the website's touch icon. iOS is masked by the OS and
+# Android has its own adaptive shape, so neither uses this.
+MASK_RADIUS = 0.225
+
 written = []
 
 
 def render(master: str, px: int) -> Image.Image:
-    """Rasterise a master SVG at px by px, alpha preserved."""
+    """Rasterise a master SVG at px by px, alpha preserved.
+
+    Cairo is imported here, not at module scope, so the pure-Pillow helpers in
+    this file - rounded_mask, write_ico - can be imported and used on a machine
+    without it. Windows ships no libcairo-2.dll, and reusing these rather than
+    restating their arithmetic somewhere else is the whole point of having one
+    generator.
+    """
+    try:
+        import cairosvg
+    except OSError as exc:  # pragma: no cover - environment, not logic
+        sys.exit(f"cairosvg could not load Cairo: {exc}\n"
+                 "Try: DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 "
+                 "tool/generate_brand_assets.py")
     png = cairosvg.svg2png(
         url=os.path.join(BRAND, master), output_width=px, output_height=px
     )
@@ -70,9 +82,20 @@ def tile(px: int, *, inset: float = 0.92, radius: float | None = None,
         mask = rounded_mask(px, radius)
         canvas.putalpha(mask)
 
+    # The leftover is forced even before it is halved. int(px * inset) leaves
+    # an odd remainder at plenty of sizes - 32, 128 and 256 among them - and
+    # the floor in `// 2` then puts the whole extra pixel on the right and
+    # bottom, seating the mark one pixel left and high of centre. Measured on
+    # the shipped icons: 32px had 9px of padding on the left and 10 on the
+    # right, 256px had 73 and 74. One pixel is 3% of a 32px icon, which is why
+    # it was reported as "not centred, too far to the left" in the Explorer
+    # context menu and the tray.
     mark_px = max(1, int(px * inset))
+    if (px - mark_px) % 2:
+        mark_px = mark_px + 1 if mark_px < px else mark_px - 1
+    offset = (px - mark_px) // 2
     mark = render("logo-white.svg", mark_px)
-    canvas.alpha_composite(mark, ((px - mark_px) // 2, (px - mark_px) // 2))
+    canvas.alpha_composite(mark, (offset, offset))
     return canvas.convert("RGB") if opaque else canvas
 
 
@@ -202,7 +225,7 @@ def ios_launch() -> None:
 def macos_app_icon() -> None:
     """macOS draws its own icons unmasked, so the rounded corner is ours."""
     for px in (16, 32, 64, 128, 256, 512, 1024):
-        save(tile(px, radius=0.225, opaque=False),
+        save(tile(px, radius=MASK_RADIUS, opaque=False),
              "macos", "Runner", "Assets.xcassets", "AppIcon.appiconset",
              f"app_icon_{px}.png")
 
@@ -292,7 +315,10 @@ def flutter_assets() -> None:
     save(on_transparent(1024), "assets", "icons", "logo_white.png")
     save(on_transparent(1024, "logo-black.svg"), "assets", "icons",
          "logo_dark.png")
-    save(tile(1024), "assets", "icons", "app_icon.png")
+    # msix_config's logo_path: Windows derives every tile and taskbar
+    # size from this one file, so the rounding has to be in it.
+    save(tile(1024, radius=MASK_RADIUS, opaque=False),
+         "assets", "icons", "app_icon.png")
 
 
 def flutter_web() -> None:
@@ -348,14 +374,33 @@ def email_logo() -> None:
         save(card.convert("RGB"), base, "icons", "email-logo.png")
 
 
+ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
+
+
 def favicon_ico() -> None:
-    """Multi-resolution .ico for Windows and the website."""
-    frames = [tile(s) for s in (16, 24, 32, 48, 64, 128, 256)]
+    """Multi-resolution .ico for the website."""
+    frames = [tile(s) for s in ICO_SIZES]
     for parts in (("website", "icons", "favicon.ico"),
-                  ("website", "dist", "icons", "favicon.ico"),
-                  ("windows", "runner", "resources", "app_icon.ico"),
-                  ("installer", "ghostcopy.ico")):
+                  ("website", "dist", "icons", "favicon.ico")):
         write_ico(frames, *parts)
+
+
+def windows_app_icon() -> None:
+    """Windows: the rounded corner is ours to draw, exactly as on macOS.
+
+    Windows does not mask an app icon, so a square tile stays a hard square.
+    Beside the rounded icons on a Windows 11 taskbar and in the Explorer
+    context menu that reads as both oversized and off-centre - which is how it
+    was reported, although the mark inside is centred to the pixel. The same
+    inset looks right on macOS only because macos_app_icon rounds it.
+
+    Same radius as macOS, so the one brand shows as one icon on both.
+    """
+    # One target. installer/ghostcopy.ico went with the Inno Setup script when
+    # Windows became Store-only - the Store builds the package's icons from
+    # msix_config's logo_path, so nothing else needs a .ico of its own.
+    frames = [tile(s, radius=MASK_RADIUS, opaque=False) for s in ICO_SIZES]
+    write_ico(frames, "windows", "runner", "resources", "app_icon.ico")
 
 
 if __name__ == "__main__":
@@ -370,6 +415,7 @@ if __name__ == "__main__":
     website()
     email_logo()
     favicon_ico()
+    windows_app_icon()
     print(f"wrote {len(written)} files")
     for w in sorted(written):
         print("   ", w)

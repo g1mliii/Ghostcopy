@@ -105,7 +105,14 @@ class DeviceService implements IDeviceService {
   @override
   Future<bool> registerCurrentDevice({String? fcmToken}) async {
     _ensureInitialized();
-    _ensureAuthenticated();
+    // A result, not a throw: the contract is that registration swallows its
+    // own failures, and no session is one of them - an offline launch whose
+    // anonymous sign-in failed. As a StateError it escaped every caller's
+    // `on Exception` and, at startup, abandoned the launch.
+    if (_supabase.auth.currentUser == null) {
+      debugPrint('[DeviceService] No session - not registering this device');
+      return false;
+    }
 
     try {
       final userId = _supabase.auth.currentUser!.id;
@@ -184,7 +191,11 @@ class DeviceService implements IDeviceService {
   @override
   Future<List<Device>> getUserDevices({bool forceRefresh = false}) async {
     _ensureInitialized();
-    _ensureAuthenticated();
+    // No session has no devices. The desktop starts without one when the
+    // anonymous sign-in fails offline, and the Settings device panel loads
+    // this straight away: as a StateError it escaped the panel's
+    // `on Exception` and left it spinning for good.
+    if (_supabase.auth.currentUser == null) return const [];
 
     // Check cache first (unless force refresh requested)
     if (!forceRefresh && _isCacheValid()) {

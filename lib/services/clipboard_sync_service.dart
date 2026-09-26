@@ -67,6 +67,13 @@ abstract class IClipboardSyncService {
   /// Stop polling mode
   void stopPolling();
 
+  /// Rejoin the realtime channel if it is not currently joined.
+  ///
+  /// Called at the moments a socket is most likely to have died without the
+  /// client being told - waking from sleep, unlocking - and from the polling
+  /// fallback, which is otherwise the only thing that notices.
+  void ensureRealtimeConnected();
+
   /// Reinitialize realtime subscription with new user ID
   /// Call this when user logs in or switches accounts
   void reinitializeForUser();

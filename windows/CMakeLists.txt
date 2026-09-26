@@ -61,6 +61,12 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# The Explorer verb handler DLL the MSIX package points its context menu at;
+# see explorer_command/CMakeLists.txt. Built for every Windows build so it
+# cannot rot, installed into the bundle below, and only carried into the
+# payload by msix_config's context_menu block.
+add_subdirectory("explorer_command")
+
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
@@ -83,6 +89,13 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
+
+# Deliberately NOT installed into the bundle. msix:create copies the dll into
+# the package itself from msix_config's context_menu.dll_path, and deletes it
+# from the bundle again when it is done - so a copy placed here is one msix
+# removes, and the next packaging run fails looking for it. An unpackaged
+# build has no use for it either: there the verb is the HKCU key that
+# _registerWindowsContextMenu writes, and this dll is never loaded.
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)

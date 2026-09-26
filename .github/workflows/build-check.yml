@@ -46,6 +46,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
+      # Not for anything Java in this app - there is none. sentry_flutter pins
+      # jni 0.14.2, whose CMake runs find_package(JNI REQUIRED) on every
+      # platform, so the Windows build fails at configure without a JDK. This
+      # passed before only because windows-latest happens to ship one and set
+      # JAVA_HOME; pinning it means a change to the runner image cannot
+      # silently break this job, and it documents the requirement that a
+      # developer machine has to satisfy too.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -53,6 +66,13 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build windows --release
+
+      # Proves the Store package still builds: the Explorer verb handler DLL
+      # compiles, and MakeAppx accepts the manifest generated from
+      # msix_config. It does NOT prove the package installs or that the verb
+      # works - the identity is a placeholder until Store registration, and
+      # nothing here is signed.
+      - run: dart run msix:create --store
 
   android:
     name: Android

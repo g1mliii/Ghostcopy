@@ -80,6 +80,17 @@ abstract class IClipboardRepository {
   /// Returns null if storage_path is null or download fails
   Future<Uint8List?> downloadFile(ClipboardItem item);
 
+  /// A small preview of [item]'s image, for lists and tiles.
+  ///
+  /// Separate from [downloadFile] on purpose, and never a substitute for it:
+  /// save, share, drag-out and copy must always take the real image, and
+  /// keeping the two on different methods is what stops a thumbnail being
+  /// shipped in its place. Returns null when there is nothing to preview.
+  ///
+  /// Cached on disk between launches, so this is a file read and a small
+  /// decode rather than the full-size decrypt-and-decode it replaces.
+  Future<Uint8List?> loadThumbnail(ClipboardItem item);
+
   /// Search clipboard history using lightweight local search
   ///
   /// Fast in-memory search with case-insensitive substring matching

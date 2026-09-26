@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as path;
 import 'package:sentry_flutter/sentry_flutter.dart';
 
 import '../crash_reporting_service.dart';
@@ -28,6 +30,23 @@ class SentryCrashReportingService implements ICrashReportingService {
       return;
     }
     await SentryFlutter.init(configureCrashReporting, appRunner: app);
+  }
+
+  @override
+  Future<void> reportHandled(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+  }) async {
+    debugPrint('[CrashReporting] $context: $error');
+    if (!_enabled) return;
+    // The same beforeSend scrubbing applies to these as to crashes; the
+    // context is a fixed string from the call site, never user content.
+    await Sentry.captureException(
+      error,
+      stackTrace: stackTrace,
+      withScope: (scope) => scope.setTag('startup_step', context),
+    );
   }
 }
 
@@ -66,8 +85,43 @@ void configureCrashReporting(SentryFlutterOptions options) {
     // or exception name and a stack. Its reason text is the one thing the
     // Dart-side scrubbing below cannot reach.
     ..maxBreadcrumbs = 40
+    ..nativeDatabasePath = _nativeDatabasePath()
     ..beforeSend = scrubEvent
     ..beforeBreadcrumb = scrubBreadcrumb;
+}
+
+/// Where sentry-native keeps its crash database on Windows and Linux.
+///
+/// Left unset it defaults to `.sentry-native` in the *current working
+/// directory*, which is only ever right by accident. Launched from the Start
+/// menu the working directory is not the app's own, and in an MSIX package the
+/// install directory is read-only - so the database cannot be created, and
+/// native crashes are dropped with nothing to say so. Running a build from the
+/// repository root is what makes it look fine: the folder appears next to the
+/// source and everything works.
+///
+/// `%LOCALAPPDATA%` is the right home on both, and needs no packaged special
+/// case. Measured by sideloading the package on 2026-09-25: a full-trust MSIX
+/// does NOT redirect writes under it into the package container - the app
+/// wrote its database straight to the real path, and the container's
+/// `LocalCache` stayed empty. The packaged and unpackaged builds therefore
+/// share this directory, which is harmless here (sentry-native namespaces its
+/// own runs) but is not something to rely on for anything else.
+///
+/// Returns null on platforms that do not use sentry-native (iOS, Android,
+/// macOS have their own), and on a Windows session with no LOCALAPPDATA, where
+/// the default is no worse than a path built from nothing.
+String? _nativeDatabasePath() {
+  if (!Platform.isWindows && !Platform.isLinux) return null;
+
+  final home = Platform.environment['HOME'];
+  final root = Platform.isWindows
+      ? Platform.environment['LOCALAPPDATA']
+      : Platform.environment['XDG_CACHE_HOME'] ??
+            (home == null ? null : path.join(home, '.cache'));
+  if (root == null || root.isEmpty) return null;
+
+  return path.join(root, 'GhostCopy', 'sentry-native');
 }
 
 // Anything quoted is treated as content: exception messages quote the value

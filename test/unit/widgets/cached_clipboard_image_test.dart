@@ -15,6 +15,24 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _Repository extends Mock implements IClipboardRepository {}
 
+/// The tests below exercise the full-image path. Registering a thumbnail miss
+/// keeps them doing that: CachedClipboardImage asks loadThumbnail first for a
+/// tile-sized box and falls through to downloadFile when it returns null.
+void _noThumbnail(_Repository repository) {
+  registerFallbackValue(
+    ClipboardItem(
+      id: 'fallback',
+      userId: 'test',
+      content: '',
+      deviceType: 'macos',
+      createdAt: DateTime(2026),
+      contentType: ContentType.imagePng,
+      storagePath: 'test/fallback',
+    ),
+  );
+  when(() => repository.loadThumbnail(any())).thenAnswer((_) async => null);
+}
+
 class _Encryption extends Mock implements IEncryptionService {}
 
 void main() {
@@ -35,6 +53,7 @@ void main() {
 
   testWidgets('recycled thumbnails ignore obsolete downloads', (tester) async {
     final repository = _Repository();
+    _noThumbnail(repository);
     final first = ClipboardItem(
       id: 'first',
       userId: 'test',
@@ -87,6 +106,7 @@ void main() {
     tester,
   ) async {
     final repository = _Repository();
+    _noThumbnail(repository);
     final item = ClipboardItem(
       id: 'image',
       userId: 'test',
@@ -140,6 +160,7 @@ void main() {
     // thumbnail showed the error. Entering it changes the key revision, and
     // that must bring the image back without rebuilding the list item.
     final repository = _Repository();
+    _noThumbnail(repository);
     final encryption = _Encryption();
     final revision = ValueNotifier<int>(0);
     addTearDown(revision.dispose);
@@ -189,5 +210,63 @@ void main() {
     expect(find.byType(FutureBuilder<ui.Image>), findsOneWidget);
     verify(() => repository.downloadFile(item)).called(2);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  // The split that keeps a thumbnail out of anything that is not a preview.
+  // Saving, sharing, dragging out and copying all go through downloadFile and
+  // never through this widget, so the only way a thumbnail could be shown in
+  // place of the real image is this size decision.
+  group('thumbnail is used only for preview-sized boxes', () {
+    ClipboardItem imageItem() => ClipboardItem(
+      id: 'img',
+      userId: 'test',
+      content: '',
+      deviceType: 'macos',
+      createdAt: DateTime(2026),
+      contentType: ContentType.imagePng,
+      storagePath: 'test/img',
+    );
+
+    Future<void> pumpAt(
+      WidgetTester tester,
+      _Repository repository,
+      double side,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CachedClipboardImage(
+            item: imageItem(),
+            clipboardRepository: repository,
+            width: side,
+            height: side,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('a tile-sized box asks for the thumbnail', (tester) async {
+      final repository = _Repository();
+      _noThumbnail(repository);
+      when(() => repository.downloadFile(any())).thenAnswer((_) async => null);
+
+      await pumpAt(tester, repository, 40);
+
+      verify(() => repository.loadThumbnail(any())).called(1);
+    });
+
+    testWidgets('a full-size box never asks for the thumbnail', (tester) async {
+      final repository = _Repository();
+      _noThumbnail(repository);
+      when(() => repository.downloadFile(any())).thenAnswer((_) async => null);
+
+      // Comfortably past ThumbnailDiskCache.maxEdge even at 1x, so this is
+      // the preview case rather than a tile.
+      await pumpAt(tester, repository, 1200);
+
+      verifyNever(() => repository.loadThumbnail(any()));
+      verify(() => repository.downloadFile(any())).called(1);
+    });
   });
 }

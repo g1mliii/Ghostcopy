@@ -225,7 +225,33 @@ Both tools execute in a secure V8 sandbox isolate with no file system access. Us
 
 ## Platform Notes
 
-**Windows**: Hotkeys and tray work out of the box
+**Windows**: Hotkeys and tray work out of the box.
+
+Building needs a JDK on `JAVA_HOME`, which is not obvious because nothing in
+this app is Java. `sentry_flutter` pins `jni` 0.14.2, whose CMake does
+`find_package(JNI REQUIRED)` on every platform, so a machine without
+`JAVA_HOME` fails at configure with "Could NOT find JNI (missing: JVM)". CI
+does not hit it because `windows-latest` ships one. jni 0.14.2 also cannot be
+compiled against its own bundled `third_party/jni.h` - that is the AOSP header
+and declares `JNIEXPORT` with GCC attribute syntax - so if `JAVA_INCLUDE_PATH`
+in `build/windows/x64/CMakeCache.txt` points there rather than at the JDK, the
+cache is stale from a different jni version and the fix is `flutter clean`.
+
+The Store package is MSIX; see `msix_config` in `pubspec.yaml` and the Windows
+section of [`tasks/todo.md`](tasks/todo.md). Three things the app registers for
+itself unpackaged are declared in the manifest instead, because MSIX
+virtualizes the `HKCU` writes that would otherwise do it - the writes succeed,
+land in a private per-package hive, and are invisible to Windows:
+
+| Unpackaged | Packaged |
+|---|---|
+| `HKCU\Software\Classes\ghostcopy` | `protocol_activation: ghostcopy` |
+| `launch_at_startup`'s Run key | `<uap5:StartupTask>`, driven by `IWindowsPackageService` |
+| `HKCU\Software\Classes\*\shell` | `<desktop5:Verb>` + the COM DLL in `windows/explorer_command/` |
+
+`IWindowsPackageService.isPackaged()` (`GetCurrentPackageFullName`) is what
+picks between them. The runner target compiles as C++20, not the Flutter
+default of C++17, because C++/WinRT needs real coroutine support.
 
 **macOS**: Distribution is a Developer ID archive/export plus a notarized
 drag-to-install DMG, and updates ship through Sparkle over a signed appcast.

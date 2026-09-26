@@ -73,6 +73,7 @@ class SettingsPanel extends StatefulWidget {
 class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Set<String> _autoSendTargetDevices = {};
   bool _autoStartEnabled = false;
+  AutoStartLock _autoStartLock = AutoStartLock.none;
   bool _encryptionEnabled = false;
   bool _hasBackup = false;
   bool _autoShortenUrls = false;
@@ -233,13 +234,28 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   }
 
   Future<void> _loadAutoStartSetting() async {
-    if (widget.autoStartService == null) return;
+    final autoStart = widget.autoStartService;
+    if (autoStart == null) return;
 
-    final enabled = await widget.settingsService.getAutoStartEnabled();
+    final lock = await autoStart.lock();
+    // Always what the system will actually do. The saved preference is only
+    // what was last asked for, and a request can fail without anything
+    // holding the setting - an unavailable task, a login item that did not
+    // register - which showed a switch that was on for an app that did not
+    // start.
+    final enabled = await autoStart.isEnabled();
     if (!mounted) return;
+    _autoStartLock = lock;
     _autoStartEnabled = enabled;
     scheduleRebuild();
   }
+
+  String get _autoStartSubtitle => switch (_autoStartLock) {
+    AutoStartLock.none => 'Start GhostCopy when you log in',
+    AutoStartLock.disabledByUser =>
+      'Turned off in Task Manager - turn it back on under Startup apps',
+    AutoStartLock.byPolicy => 'Set by your organization',
+  };
 
   Future<void> _loadEncryptionStatus() async {
     final encryptionService = widget.encryptionService;
@@ -769,21 +785,37 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           if (widget.autoStartService != null) ...[
             _buildSettingToggle(
               title: 'Launch at startup',
-              subtitle: 'Start GhostCopy when you log in',
+              subtitle: _autoStartSubtitle,
               value: _autoStartEnabled,
-              onChanged: (value) async {
-                if (value) {
-                  await widget.autoStartService!.enable();
-                } else {
-                  await widget.autoStartService!.disable();
-                }
-                await widget.settingsService.setAutoStartEnabled(
-                  enabled: value,
-                );
-                if (mounted) {
-                  setState(() => _autoStartEnabled = value);
-                }
-              },
+              // Windows ignores the request while it is locked, so a live
+              // switch would only pretend to work.
+              onChanged: _autoStartLock != AutoStartLock.none
+                  ? null
+                  : (value) async {
+                      final autoStart = widget.autoStartService!;
+                      if (value) {
+                        await autoStart.enable();
+                      } else {
+                        await autoStart.disable();
+                      }
+                      // The request is what is saved, so turning it back on
+                      // in Task Manager later is not undone at the next launch.
+                      await widget.settingsService.setAutoStartEnabled(
+                        enabled: value,
+                      );
+                      // An enable can come back refused - the entry was turned
+                      // off in Task Manager, or the request simply failed - and
+                      // the switch must say so. A failed request stays saved,
+                      // so the next launch's sync asks again.
+                      final lock = await autoStart.lock();
+                      final actual = await autoStart.isEnabled();
+                      if (mounted) {
+                        setState(() {
+                          _autoStartLock = lock;
+                          _autoStartEnabled = actual;
+                        });
+                      }
+                    },
             ),
             const SizedBox(height: 10),
           ],
@@ -836,7 +868,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     required String title,
     required String subtitle,
     required bool value,
-    required ValueChanged<bool> onChanged,
+    required ValueChanged<bool>? onChanged,
   }) {
     return RepaintBoundary(
       child: Container(
@@ -859,7 +891,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
             ),
           ),
           trailing: AdaptiveSwitch(value: value, onChanged: onChanged),
-          onTap: () => onChanged(!value),
+          onTap: onChanged == null ? null : () => onChanged(!value),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 10,
             vertical: 4,

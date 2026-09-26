@@ -32,6 +32,7 @@ class WindowService implements IWindowService {
 
   final ILifecycleController? _lifecycleController;
   bool _isVisible = false;
+  DateTime? _hideStartedAt;
 
   // Spotlight window dimensions from CLAUDE.md
   static const double _windowWidth = 500;
@@ -43,6 +44,12 @@ class WindowService implements IWindowService {
 
   @override
   bool get isVisible => _isVisible;
+
+  @override
+  bool hiddenWithin(Duration window) {
+    final at = _hideStartedAt;
+    return at != null && DateTime.now().difference(at) < window;
+  }
 
   @override
   Future<void> initialize() async {
@@ -83,6 +90,16 @@ class WindowService implements IWindowService {
   Future<void> setFramelessForTrayMenu() async {
     _framelessForTrayMenu = true;
     await windowManager.setAsFrameless();
+    // Topmost, or the menu loses the z-order fight it is guaranteed to have.
+    //
+    // The tray menu is an ordinary Flutter window rather than a native menu,
+    // and right-clicking a tray icon is very often done from inside the
+    // notification-area flyout - which is a system window that sits above
+    // ordinary ones. So the menu opened behind the very flyout the click came
+    // from and was invisible. Other tray apps look "detached" in the same way;
+    // the difference is that theirs draw on top. Cleared in showSpotlight, so
+    // the Spotlight itself is unaffected.
+    await windowManager.setAlwaysOnTop(true);
   }
 
   @override
@@ -118,6 +135,11 @@ class WindowService implements IWindowService {
         TitleBarStyle.hidden,
         windowButtonVisibility: false,
       );
+      // The menu needed to be topmost; the Spotlight does not, and leaving it
+      // set would pin the whole app over everything else for the rest of the
+      // session. Same gate, same reason: this is where the tray menu's window
+      // changes are undone.
+      await windowManager.setAlwaysOnTop(false);
     }
 
     // Set to Spotlight size and center (do this while hidden)
@@ -128,12 +150,14 @@ class WindowService implements IWindowService {
     await windowManager.show();
     await windowManager.focus();
     _isVisible = true;
+    debugPrint('[WindowService] Spotlight shown');
   }
 
   @override
   Future<void> hideSpotlight() async {
     if (!_isDesktop()) return;
 
+    _hideStartedAt = DateTime.now();
     await windowManager.hide();
     debugPrint('[WindowService] Hiding spotlight window');
     _isVisible = false;

@@ -24,6 +24,18 @@ abstract class INotificationService {
     required String deviceType,
   });
 
+  /// Raise a system notification directly, without the in-app overlay.
+  ///
+  /// For the paths that have no window to put an overlay in - chiefly the
+  /// Explorer "Send with GhostCopy" verb, which runs without building any UI.
+  /// [showToast] cannot serve them: with no overlay it has nothing to draw
+  /// into, which is why that path used to raise a native message box in the
+  /// middle of the screen instead of a notification like everything else.
+  Future<void> showSystemNotification({
+    required String message,
+    NotificationType type = NotificationType.info,
+  });
+
   /// Show a clickable toast notification with an action button
   ///
   /// [message] - The text to display

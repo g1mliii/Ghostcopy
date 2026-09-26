@@ -30,6 +30,14 @@ abstract class IWindowService {
   /// Check if the window is currently visible
   bool get isVisible;
 
+  /// Whether [hideSpotlight] began within the last [window].
+  ///
+  /// For input that arrives just after the window lost focus: clicking the
+  /// tray icon deactivates an open Spotlight, whose blur hides it before the
+  /// click itself is handled. The click then finds the window hidden when the
+  /// user was closing it.
+  bool hiddenWithin(Duration window);
+
   /// Dispose of the service and clean up resources
   Future<void> dispose();
 }

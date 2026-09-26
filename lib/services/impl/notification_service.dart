@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -55,7 +56,11 @@ class NotificationService implements INotificationService {
       {}; // Track payload for each action ID
   final Map<int, DateTime> _actionTimestamps =
       {}; // Track when action was created
-  int _notificationIdCounter = 0;
+  /// Starts somewhere random, not at 0. Every process has its own counter -
+  /// each Explorer "Send with GhostCopy" is a separate headless process - and
+  /// Windows replaces a toast that reuses an id, so a multi-file send showed
+  /// only its last result, and could replace one of the running app's.
+  int _notificationIdCounter = Random().nextInt(1 << 30);
 
   // Repeated-toast coalescing. Deleting several clips in a row fired one toast
   // each, which replaced the overlay over and over and stacked a separate
@@ -84,8 +89,15 @@ class NotificationService implements INotificationService {
   @override
   void initialize(GlobalKey<NavigatorState> navigatorKey) {
     _navigatorKey = navigatorKey;
-    _initializeLocalNotifications();
+    unawaited(_ensureLocalNotifications());
   }
+
+  /// Memoised so initialize() and the lazy path in showSystemNotification
+  /// share one plugin setup rather than each running their own.
+  Future<void>? _localNotificationsReady;
+
+  Future<void> _ensureLocalNotifications() =>
+      _localNotificationsReady ??= _initializeLocalNotifications();
 
   Future<void> _initializeLocalNotifications() async {
     // Android initialization
@@ -448,6 +460,19 @@ class NotificationService implements INotificationService {
       message: 'Clipboard from $deviceType: $truncatedContent',
       duration: const Duration(seconds: 3),
     );
+  }
+
+  @override
+  Future<void> showSystemNotification({
+    required String message,
+    NotificationType type = NotificationType.info,
+  }) async {
+    // initialize() is not called on this path: it takes a navigator key, and
+    // the Explorer send-file verb has no navigator because it builds no UI.
+    // The plugin still has to be set up before it can raise anything, so do it
+    // here rather than making every headless caller remember to.
+    await _ensureLocalNotifications();
+    await _showSystemNotification(message: message, type: type);
   }
 
   @override

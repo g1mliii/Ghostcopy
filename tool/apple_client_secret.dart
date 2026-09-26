@@ -17,8 +17,20 @@ import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
 const _teamId = 'R9TKT8U45R';
 const _keyId = 'Y8NRLTKXG3';
 
-/// The Services ID the browser flow authenticates as. It is also the second
-/// entry in the Apple provider's Client IDs in Supabase.
+/// The Services ID the browser flow authenticates as.
+///
+/// It must be the FIRST entry in the Apple provider's Client IDs in Supabase.
+/// That field is a comma-separated list, and Supabase sends the first entry as
+/// `client_id` when it builds the authorize URL; the rest are only accepted
+/// audiences for native ID tokens. With the native App ID first, Apple was
+/// sent `client_id=com.ghostcopy.ghostcopy` and answered
+/// "Invalid client id or web redirect url" - a native App ID cannot carry a
+/// web redirect URL, only a Services ID can. It failed on every desktop
+/// platform and never on iOS, which uses the native sheet and no client_id at
+/// all. Fixed 2026-09-25 by putting `com.ghostcopy.web` first.
+///
+/// This is also the `sub` of the secret below, so the two only agree when the
+/// order is right.
 const _servicesId = 'com.ghostcopy.web';
 
 /// Apple's ceiling is 15,777,000 seconds (about 182 days); 180 stays under it.

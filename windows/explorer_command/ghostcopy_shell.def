@@ -1,0 +1,4 @@
+LIBRARY ghostcopy_shell
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE
