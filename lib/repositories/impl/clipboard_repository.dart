@@ -88,7 +88,12 @@ class ClipboardRepository implements IClipboardRepository {
   /// session was already dead starts with no user at all, so the account the
   /// caches belong to is never seen leaving - and the fresh guest that
   /// recovery then signs in inherited its thumbnails. Recording the owner
-  /// lets that launch tell a new account from a fresh install.
+  /// lets that launch tell a new account from the one the caches were for.
+  ///
+  /// No owner recorded clears too. That is a fresh install, with nothing to
+  /// clear, or the first launch of a version that records one - whose caches
+  /// may hold a previous account's plaintext media and can be claimed for
+  /// nobody. Costs the same account one re-download, once.
   static const String _cacheOwnerKey = 'media_cache_owner';
 
   Future<void> _claimCaches(String userId) async {
@@ -96,7 +101,7 @@ class ClipboardRepository implements IClipboardRepository {
       final prefs = await SharedPreferences.getInstance();
       final owner = prefs.getString(_cacheOwnerKey);
       if (owner == userId) return;
-      if (owner != null) reset();
+      reset();
       await prefs.setString(_cacheOwnerKey, userId);
     } on Object catch (e) {
       debugPrint('[ClipboardRepository] Could not check cache owner: $e');

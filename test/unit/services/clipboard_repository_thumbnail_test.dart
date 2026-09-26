@@ -119,6 +119,31 @@ void main() {
     expect(prefs.getString('media_cache_owner'), 'new-guest');
   });
 
+  // The first launch of the version that records an owner: the caches may
+  // be a previous account's, and there is no telling whose.
+  test('caches with no recorded owner are cleared before claiming', () async {
+    SharedPreferences.setMockInitialValues({});
+    final cache = MediaMemoryCache.instance..clear();
+    addTearDown(cache.clear);
+    cache.put('thumb:clips/legacy.png', Uint8List.fromList([1, 2, 3]));
+    final client = await _signedIn(
+      'new-guest',
+      (request) async => http.Response('', 204, request: request),
+    );
+
+    final repository = ClipboardRepository(
+      client: client,
+      encryptionService: _Encryption(),
+      storageService: _Storage(),
+    );
+    addTearDown(repository.dispose);
+    await pumpEventQueue();
+
+    expect(cache.get('thumb:clips/legacy.png'), isNull);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('media_cache_owner'), 'new-guest');
+  });
+
   test('the same account keeps its caches across launches', () async {
     SharedPreferences.setMockInitialValues({'media_cache_owner': 'user'});
     final cache = MediaMemoryCache.instance..clear();
