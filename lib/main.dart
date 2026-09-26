@@ -820,6 +820,11 @@ class _MyAppState extends State<MyApp> with WindowListener {
   /// area's overflow flyout closes that flyout, which can report a blur right
   /// away; the Spotlight debounces its blur the same way.
   DateTime? _trayMenuShownAt;
+
+  /// A blur that landed inside that grace, re-checked once it is over.
+  Timer? _trayMenuBlurRecheck;
+
+  static const Duration _trayMenuBlurGrace = Duration(milliseconds: 500);
   bool _openSettingsOnShow = false;
   bool _mobileAuthComplete = false;
   bool _servicesDisposed = false;
@@ -1065,6 +1070,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
 
   @override
   void dispose() {
+    _trayMenuBlurRecheck?.cancel();
     if (Platform.isWindows) windowManager.removeListener(this);
     _disposeServices();
     super.dispose();
@@ -1079,9 +1085,21 @@ class _MyAppState extends State<MyApp> with WindowListener {
   void onWindowBlur() {
     if (!_showingTrayMenu) return;
     final shownAt = _trayMenuShownAt;
-    if (shownAt != null &&
-        DateTime.now().difference(shownAt) <
-            const Duration(milliseconds: 500)) {
+    final sinceShown = shownAt == null
+        ? _trayMenuBlurGrace
+        : DateTime.now().difference(shownAt);
+    if (sinceShown < _trayMenuBlurGrace) {
+      // Maybe the flyout closing, maybe a real click elsewhere - there is no
+      // telling them apart from here. Dropping it outright left a menu that
+      // was clicked away from inside the grace topmost for good, since no
+      // second blur ever comes. So look again once the grace is over: the
+      // flyout's blur leaves the menu focused, a real click does not.
+      _trayMenuBlurRecheck?.cancel();
+      _trayMenuBlurRecheck = Timer(_trayMenuBlurGrace - sinceShown, () async {
+        if (!mounted || !_showingTrayMenu) return;
+        if (await windowManager.isFocused()) return;
+        if (mounted && _showingTrayMenu) _hideTrayMenu();
+      });
       return;
     }
     _hideTrayMenu();
