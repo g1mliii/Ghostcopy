@@ -32,6 +32,7 @@ class WindowService implements IWindowService {
 
   final ILifecycleController? _lifecycleController;
   bool _isVisible = false;
+  DateTime? _hideStartedAt;
 
   // Spotlight window dimensions from CLAUDE.md
   static const double _windowWidth = 500;
@@ -43,6 +44,12 @@ class WindowService implements IWindowService {
 
   @override
   bool get isVisible => _isVisible;
+
+  @override
+  bool hiddenWithin(Duration window) {
+    final at = _hideStartedAt;
+    return at != null && DateTime.now().difference(at) < window;
+  }
 
   @override
   Future<void> initialize() async {
@@ -150,6 +157,7 @@ class WindowService implements IWindowService {
   Future<void> hideSpotlight() async {
     if (!_isDesktop()) return;
 
+    _hideStartedAt = DateTime.now();
     await windowManager.hide();
     debugPrint('[WindowService] Hiding spotlight window');
     _isVisible = false;

@@ -912,9 +912,20 @@ class _MyAppState extends State<MyApp> {
         // worse than having it close.
         ..onLeftClick = () {
           final window = locator<IWindowService>();
-          unawaited(
-            window.isVisible ? window.hideSpotlight() : window.showSpotlight(),
-          );
+          // Clicking the icon deactivates an open Spotlight first, and its
+          // blur hides it before this runs - so a window that was hidden a
+          // moment ago was closed by this very click, which meant "close".
+          // Showing it again made the toggle unable to close anything.
+          if (window.hiddenWithin(const Duration(milliseconds: 500))) return;
+          if (window.isVisible) {
+            unawaited(window.hideSpotlight());
+            return;
+          }
+          // Through the hotkey's path, not showSpotlight directly: with the
+          // tray menu open the window is shown but not "visible", and only
+          // that path clears _showingTrayMenu - otherwise the Spotlight's
+          // size and position came up rendering the tray menu.
+          unawaited(_handleHotkeySpotlight());
         };
 
       // macOS uses a real NSMenu, which has to be rebuilt whenever Game Mode
