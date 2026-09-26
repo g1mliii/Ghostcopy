@@ -187,9 +187,11 @@ msix_config:
   # upload that taught this said "Apps are not allowed to have a Version with
   # a revision number other than zero".
   #
-  # A version can never be reused, even by a submission that failed
-  # certification, so raise this before rebuilding after a rejection.
-  msix_version: 1.0.12.0
+  # A version that has been PUBLISHED is consumed for good. One sitting in a
+  # draft submission is not: delete the package in Partner Center and the same
+  # version uploads again. So a rebuild during drafting can keep its number,
+  # and only a released version forces a bump.
+  msix_version: 1.0.10.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
   # The Store signs the package; a signature applied here would be replaced.

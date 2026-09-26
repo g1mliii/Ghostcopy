@@ -406,8 +406,12 @@ package whose revision is not zero:
 > zero specified in the app manifest.
 
 So the shared build number goes in the *third* part. Build 9 is **1.0.9.0**,
-not 1.0.0.9. A version can never be reused - not even by a submission that
-failed certification - so raise it before rebuilding after a rejection.
+not 1.0.0.9.
+
+On reuse: a **published** version is consumed for good. One that is only
+sitting in a draft submission is not - delete the package in Partner Center
+and the same number uploads again. So rebuilding while drafting does not have
+to burn a version each time; only a released one forces a bump.
 
 ### The runFullTrust warning is expected
 
