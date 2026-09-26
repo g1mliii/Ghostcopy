@@ -102,7 +102,9 @@ class ThumbnailDiskCache {
   Future<File?> _fileFor(String storagePath) async {
     final dir = await _directory();
     if (dir == null) return null;
-    return File('${dir.path}${Platform.pathSeparator}${_fileName(storagePath)}');
+    return File(
+      '${dir.path}${Platform.pathSeparator}${_fileName(storagePath)}',
+    );
   }
 
   /// The cached thumbnail for [storagePath], or null on a miss.

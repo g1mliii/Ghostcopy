@@ -105,22 +105,25 @@ void main() {
   // The crash this was written for: sign-in leaves no session, and
   // registerCurrentDevice throws a StateError that used to abandon the rest of
   // startup - the tray icon and hotkey included.
-  test('no session after init skips registration instead of throwing', () async {
-    final auth = _FakeAuth(); // currentUser stays null
-    final device = _FakeDevice(
-      registerError: StateError('User not authenticated.'),
-    );
-    final reporter = _RecordingReporter();
+  test(
+    'no session after init skips registration instead of throwing',
+    () async {
+      final auth = _FakeAuth(); // currentUser stays null
+      final device = _FakeDevice(
+        registerError: StateError('User not authenticated.'),
+      );
+      final reporter = _RecordingReporter();
 
-    await startAuthAndDevice(auth, device, reporter);
+      await startAuthAndDevice(auth, device, reporter);
 
-    expect(
-      device.registerAttempted,
-      isFalse,
-      reason: 'it must not call a method it knows will throw',
-    );
-    expect(reporter.contexts, isEmpty);
-  });
+      expect(
+        device.registerAttempted,
+        isFalse,
+        reason: 'it must not call a method it knows will throw',
+      );
+      expect(reporter.contexts, isEmpty);
+    },
+  );
 
   test('an auth failure is reported and startup continues', () async {
     final auth = _FakeAuth(initError: AuthException('offline'));

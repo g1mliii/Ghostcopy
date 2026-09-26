@@ -548,9 +548,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // keeping the pages resident. Delayed on purpose - see
     // windowsTrimDelay - because trimming before the window has actually
     // gone would just fault those pages straight back in.
-    unawaited(
-      Future<void>.delayed(windowsTrimDelay, trimWindowsWorkingSet),
-    );
+    unawaited(Future<void>.delayed(windowsTrimDelay, trimWindowsWorkingSet));
 
     debugPrint('[Spotlight] 📦 Tray Optimizations Applied (Memory Cleared)');
   }

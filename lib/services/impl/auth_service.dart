@@ -93,9 +93,7 @@ class AuthService implements IAuthService {
         // surfaced downstream as a fatal StateError from
         // registerCurrentDevice rather than as the auth failure it was.
         if (response.session == null) {
-          throw AuthException(
-            'Anonymous sign-in returned no session',
-          );
+          throw AuthException('Anonymous sign-in returned no session');
         }
         debugPrint('[AuthService] ✅ Signed in anonymously');
       } on AuthException catch (e) {

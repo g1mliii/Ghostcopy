@@ -53,7 +53,10 @@ class _FakeSync implements IClipboardSyncService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Future<double> _contentHeight(WidgetTester tester, {required bool login}) async {
+Future<double> _contentHeight(
+  WidgetTester tester, {
+  required bool login,
+}) async {
   await tester.pumpWidget(
     MediaQuery(
       data: const MediaQueryData(
@@ -86,7 +89,9 @@ Future<double> _contentHeight(WidgetTester tester, {required bool login}) async 
   }
 
   final scrollable = tester.widget<Scrollable>(find.byType(Scrollable).first);
-  final position = scrollable.controller?.position ?? tester.state<ScrollableState>(find.byType(Scrollable).first).position;
+  final position =
+      scrollable.controller?.position ??
+      tester.state<ScrollableState>(find.byType(Scrollable).first).position;
   // How far the form could be scrolled. Zero means every control is on screen.
   return position.maxScrollExtent;
 }
@@ -100,7 +105,8 @@ void main() {
     expect(
       overflow,
       0.0,
-      reason: 'the sign-in form needs $overflow more logical pixels than the '
+      reason:
+          'the sign-in form needs $overflow more logical pixels than the '
           'Spotlight gives it, so the user has to scroll to reach the bottom',
     );
   });
@@ -112,7 +118,8 @@ void main() {
     expect(
       overflow,
       0.0,
-      reason: 'the create-account form needs $overflow more logical pixels '
+      reason:
+          'the create-account form needs $overflow more logical pixels '
           'than the Spotlight gives it',
     );
   });

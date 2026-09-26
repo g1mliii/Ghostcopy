@@ -7,7 +7,10 @@ import 'package:ghostcopy/services/windows_package_service.dart';
 /// AutoStartService would reach for PackageInfo and the Run key instead, and
 /// none of these would be called.
 class _FakePackage implements IWindowsPackageService {
-  _FakePackage({required this.packaged, this.state = WindowsStartupState.disabled});
+  _FakePackage({
+    required this.packaged,
+    this.state = WindowsStartupState.disabled,
+  });
 
   final bool packaged;
   WindowsStartupState state;

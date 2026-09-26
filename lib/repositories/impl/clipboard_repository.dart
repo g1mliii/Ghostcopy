@@ -835,9 +835,7 @@ class ClipboardRepository implements IClipboardRepository {
             .where((p) => p.isNotEmpty)
             .toSet();
         unawaited(ThumbnailDiskCache.instance.prune(livePaths));
-        unawaited(
-          MediaDiskCache.instance.prune(livePaths),
-        );
+        unawaited(MediaDiskCache.instance.prune(livePaths));
       }
 
       return decryptedItems;

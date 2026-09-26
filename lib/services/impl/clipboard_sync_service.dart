@@ -277,9 +277,11 @@ class ClipboardSyncService implements IClipboardSyncService {
   void _scheduleRealtimeResubscribe(String userId) {
     if (_isDisposed || _realtimeRetryTimer != null) return;
 
-    final seconds = _realtimeBackoffSeconds[
-      _realtimeRetries.clamp(0, _realtimeBackoffSeconds.length - 1)
-    ];
+    final seconds =
+        _realtimeBackoffSeconds[_realtimeRetries.clamp(
+          0,
+          _realtimeBackoffSeconds.length - 1,
+        )];
     _realtimeRetries++;
     debugPrint(
       '[ClipboardSyncService] Rejoining realtime in ${seconds}s '

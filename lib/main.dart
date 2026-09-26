@@ -1707,7 +1707,9 @@ Future<void> startAuthAndDevice(
   // session, and a caller that cannot handle that must not call it - the whole
   // point of the guard above is that reaching here proves nothing.
   if (authService.currentUser == null) {
-    debugPrint('[Main] ⚠️ No session after init - skipping device registration');
+    debugPrint(
+      '[Main] ⚠️ No session after init - skipping device registration',
+    );
     return;
   }
 

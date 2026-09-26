@@ -63,10 +63,7 @@ void main() {
 
     test('is false off Windows, without touching the channel', () async {
       runner.reply = true;
-      final service = WindowsPackageService(
-        channel: channel,
-        isWindows: false,
-      );
+      final service = WindowsPackageService(channel: channel, isWindows: false);
       expect(await service.isPackaged(), isFalse);
       expect(runner.calls, isEmpty);
     });
