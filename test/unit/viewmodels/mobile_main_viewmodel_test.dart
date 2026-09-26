@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ghostcopy/models/clipboard_item.dart';
+import 'package:ghostcopy/models/clipboard_limits.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/device_service.dart';
@@ -11,6 +14,7 @@ import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/viewmodels/mobile_main_viewmodel.dart';
 import 'package:ghostcopy/utils/platform_label.dart';
+import 'package:image/image.dart' as img;
 import 'package:mocktail/mocktail.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
@@ -36,6 +40,8 @@ void main() {
         createdAt: DateTime(2026),
       ),
     );
+    registerFallbackValue(Uint8List(0));
+    registerFallbackValue(ContentType.text);
   });
 
   late _MockAuthService authService;
@@ -476,6 +482,88 @@ void main() {
       // notice: the app opens, the share is gone, and the list never refreshes.
       await Future<void>.delayed(Duration.zero);
       verify(() => clipboardRepository.getHistory()).called(greaterThan(0));
+    });
+
+    group('an oversized file', () {
+      late Directory dir;
+      late List<(Uint8List, String?, ContentType)> inserted;
+
+      setUp(() {
+        dir = Directory.systemTemp.createTempSync('share_sheet_test');
+        inserted = [];
+        when(() => authService.currentUserId).thenReturn('u1');
+        when(
+          () => clipboardRepository.insertFile(
+            userId: any(named: 'userId'),
+            deviceType: any(named: 'deviceType'),
+            deviceName: any(named: 'deviceName'),
+            fileBytes: any(named: 'fileBytes'),
+            mimeType: any(named: 'mimeType'),
+            contentType: any(named: 'contentType'),
+            originalFilename: any(named: 'originalFilename'),
+            targetDeviceTypes: any(named: 'targetDeviceTypes'),
+          ),
+        ).thenAnswer((inv) async {
+          inserted.add((
+            inv.namedArguments[#fileBytes] as Uint8List,
+            inv.namedArguments[#originalFilename] as String?,
+            inv.namedArguments[#contentType] as ContentType,
+          ));
+          return ClipboardItem(
+            id: '1',
+            userId: 'u1',
+            content: '',
+            deviceType: 'ios',
+            createdAt: DateTime(2026),
+          );
+        });
+      });
+
+      tearDown(() => dir.deleteSync(recursive: true));
+
+      test('a photo is scaled down and sent as a JPEG', () async {
+        // Noise, so the PNG cannot compress under the limit.
+        final random = Random(1);
+        final photo = img.Image(width: 2100, height: 1800);
+        for (final pixel in photo) {
+          pixel
+            ..r = random.nextInt(256)
+            ..g = random.nextInt(256)
+            ..b = random.nextInt(256);
+        }
+        final file = File('${dir.path}/IMG_0001.png')
+          ..writeAsBytesSync(img.encodePng(photo));
+        expect(file.lengthSync(), greaterThan(ClipboardLimits.maxFileBytes));
+        final errors = <String>[];
+
+        await viewModel.handleSharedFiles([
+          SharedMediaFile(path: file.path, type: SharedMediaType.image),
+        ], onError: errors.add);
+
+        expect(errors, isEmpty);
+        expect(inserted, hasLength(1));
+        final (bytes, name, type) = inserted.single;
+        expect(bytes.length, lessThanOrEqualTo(ClipboardLimits.maxFileBytes));
+        expect(img.decodeJpg(bytes), isNotNull);
+        expect(name, 'IMG_0001.jpg');
+        expect(type.isImage, isTrue);
+      });
+
+      test('anything else is refused before it is read', () async {
+        final file = File('${dir.path}/big.pdf');
+        file.openSync(mode: FileMode.write)
+          ..setPositionSync(ClipboardLimits.maxFileBytes + 1)
+          ..writeByteSync(0)
+          ..closeSync();
+        final errors = <String>[];
+
+        await viewModel.handleSharedFiles([
+          SharedMediaFile(path: file.path, type: SharedMediaType.file),
+        ], onError: errors.add);
+
+        expect(errors.single, 'big.pdf is too large (max 10MB)');
+        expect(inserted, isEmpty);
+      });
     });
   });
 
