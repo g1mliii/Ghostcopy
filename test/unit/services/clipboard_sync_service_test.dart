@@ -312,6 +312,7 @@ void main() {
   group('a clip seen once is not received again by a later poll', () {
     late _Channel channel;
     late void Function(PostgresChangePayload) onInsert;
+    late void Function(RealtimeSubscribeStatus, Object?) onStatus;
 
     setUp(() {
       channel = _Channel();
@@ -330,9 +331,39 @@ void main() {
                 as void Function(PostgresChangePayload);
         return channel;
       });
-      when(channel.subscribe).thenReturn(channel);
+      // subscribe now takes a status callback, so the stub has to accept one -
+      // and hold on to it, since the reconnection test drives it.
+      when(() => channel.subscribe(any())).thenAnswer((invocation) {
+        onStatus =
+            invocation.positionalArguments.first
+                as void Function(RealtimeSubscribeStatus, Object?);
+        return channel;
+      });
       when(channel.unsubscribe).thenAnswer((_) async => 'ok');
       when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
+    });
+
+    // The bug behind "the clip turned up five minutes later": subscribe() was
+    // called with no callback, so a channel that died was never noticed and
+    // never rejoined, and the five-minute poll became the delivery path.
+    testWidgets('a dead channel rejoins itself', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => null);
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      // What Windows produces when it throttles a background process hard
+      // enough for the socket's heartbeat to lapse.
+      onStatus(RealtimeSubscribeStatus.closed, null);
+      await settle(tester);
+      // Nothing yet: the rejoin is on a backoff, not immediate.
+      verifyNever(() => channel.subscribe(any()));
+
+      await tester.pump(const Duration(seconds: 3));
+      await settle(tester);
+      verify(() => channel.subscribe(any())).called(1);
     });
 
     testWidgets('after it arrived over realtime', (tester) async {

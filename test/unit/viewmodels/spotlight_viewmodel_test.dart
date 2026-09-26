@@ -24,6 +24,9 @@ class _MockClipboardService extends Mock implements IClipboardService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
+  void ensureRealtimeConnected() {}
+
+  @override
   bool get isMonitoring => false;
 
   @override

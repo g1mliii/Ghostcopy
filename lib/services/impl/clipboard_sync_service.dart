@@ -69,6 +69,27 @@ class ClipboardSyncService implements IClipboardSyncService {
   // Realtime subscription
   RealtimeChannel? _realtimeChannel;
 
+  /// Rejoin backoff, in seconds, indexed by consecutive failures. Capped so a
+  /// long outage settles at one attempt a minute rather than hammering.
+  static const List<int> _realtimeBackoffSeconds = [2, 5, 15, 30, 60];
+  Timer? _realtimeRetryTimer;
+  int _realtimeRetries = 0;
+
+  /// Tracked from the subscribe callback rather than read off the channel:
+  /// RealtimeChannel.isJoined is package-internal, and this is the same
+  /// information from the one source that is told about every transition.
+  bool _realtimeJoined = false;
+
+  /// When a rejoin was last attempted from [ensureRealtimeConnected].
+  ///
+  /// A channel that never reaches `subscribed` - an unreachable server, a
+  /// revoked session - would otherwise be rejoined on every single poll tick,
+  /// because "not joined" stays true the whole time. The backoff in
+  /// _scheduleRealtimeResubscribe covers the callback path; this covers the
+  /// path that has no callback to wait for.
+  DateTime? _lastRejoinAttempt;
+  static const Duration _rejoinCooldown = Duration(seconds: 30);
+
   // Clipboard monitoring
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
@@ -207,9 +228,128 @@ class ClipboardSyncService implements IClipboardSyncService {
             handleRealtimeInsert(payload.newRecord);
           },
         )
-        .subscribe();
+        .subscribe((status, error) => _onRealtimeStatus(status, error, userId));
 
     debugPrint('[ClipboardSyncService] Realtime subscription active');
+  }
+
+  /// React to the channel's own view of its health.
+  ///
+  /// subscribe() was previously called with no callback at all, so nothing in
+  /// the app ever learned that realtime had died - and nothing resubscribed.
+  /// Delivery silently fell back to the five-minute poll, which is exactly
+  /// what "the clip arrived five minutes later" was. It showed up on Windows
+  /// first because Windows throttles a background process hard enough for the
+  /// socket's heartbeat to lapse; the same socket dies on any platform across
+  /// a sleep, a network change or a server-side restart.
+  void _onRealtimeStatus(
+    RealtimeSubscribeStatus status,
+    Object? error,
+    String userId,
+  ) {
+    if (_isDisposed) return;
+    switch (status) {
+      case RealtimeSubscribeStatus.subscribed:
+        debugPrint('[ClipboardSyncService] ✅ Realtime subscribed');
+        _realtimeJoined = true;
+        _realtimeRetries = 0;
+        _realtimeRetryTimer?.cancel();
+        _realtimeRetryTimer = null;
+        // Anything inserted while the channel was down was never delivered,
+        // so catch up rather than waiting for the next poll.
+        if (_baselineReady) {
+          unawaited(_pollForNewClipboards(queueIfBusy: true));
+        }
+      case RealtimeSubscribeStatus.channelError:
+      case RealtimeSubscribeStatus.timedOut:
+      case RealtimeSubscribeStatus.closed:
+        _realtimeJoined = false;
+        debugPrint(
+          '[ClipboardSyncService] ⚠️ Realtime ${status.name}'
+          '${error != null ? ': $error' : ''}',
+        );
+        _scheduleRealtimeResubscribe(userId);
+    }
+  }
+
+  /// Rejoin after a backoff, so a server that is down or an account that has
+  /// lost its session cannot turn into a reconnect loop.
+  void _scheduleRealtimeResubscribe(String userId) {
+    if (_isDisposed || _realtimeRetryTimer != null) return;
+
+    final seconds = _realtimeBackoffSeconds[
+      _realtimeRetries.clamp(0, _realtimeBackoffSeconds.length - 1)
+    ];
+    _realtimeRetries++;
+    debugPrint(
+      '[ClipboardSyncService] Rejoining realtime in ${seconds}s '
+      '(attempt $_realtimeRetries)',
+    );
+    _realtimeRetryTimer = Timer(Duration(seconds: seconds), () {
+      _realtimeRetryTimer = null;
+      if (_isDisposed) return;
+      // The account can have changed while this was pending.
+      if (_supabaseClient.auth.currentUser?.id != userId) return;
+      _realtimeJoined = false;
+      _realtimeChannel?.unsubscribe();
+      _realtimeChannel = null;
+      _subscribeToRealtimeUpdates();
+    });
+  }
+
+  /// Called when a poll delivered a clip that realtime should have.
+  ///
+  /// A channel can die without saying so - Windows throttles a background
+  /// process hard enough for the socket's heartbeat to lapse, and what comes
+  /// back is silence rather than an error. There is no status to react to and
+  /// no way to ask, so the only honest signal is this one: the fallback found
+  /// something the channel was supposed to deliver, which proves it is not
+  /// delivering. Checking on every poll tick instead would rejoin constantly
+  /// while a server is unreachable, for no evidence at all.
+  void _noteRealtimeMissedAClip() {
+    if (!_realtimeJoined) return;
+    debugPrint(
+      '[ClipboardSyncService] Poll found a clip realtime missed - rejoining',
+    );
+    _realtimeJoined = false;
+    ensureRealtimeConnected();
+  }
+
+  /// Rejoin now if the channel is not currently joined.
+  ///
+  /// For the moments where the socket is most likely to have died without
+  /// anyone being told: waking from sleep, unlocking, or simply the next poll
+  /// noticing that realtime has not spoken for a while.
+  @override
+  void ensureRealtimeConnected() {
+    if (_isDisposed) return;
+    if (_realtimeChannel != null && _realtimeJoined) return;
+    // Nothing to rejoin as, and _subscribeToRealtimeUpdates would have
+    // nothing to filter on.
+    if (_supabaseClient.auth.currentUser == null) return;
+    // A rejoin is already pending on its backoff; let it run.
+    if (_realtimeRetryTimer != null) return;
+
+    final last = _lastRejoinAttempt;
+    final now = clock.now();
+    if (last != null && now.difference(last) < _rejoinCooldown) return;
+    _lastRejoinAttempt = now;
+
+    debugPrint('[ClipboardSyncService] Realtime not joined - rejoining now');
+    _realtimeRetryTimer?.cancel();
+    _realtimeRetryTimer = null;
+    _realtimeRetries = 0;
+    _realtimeJoined = false;
+    try {
+      _realtimeChannel?.unsubscribe();
+      _realtimeChannel = null;
+      _subscribeToRealtimeUpdates();
+    } on Object catch (e) {
+      // This is called from the polling timer, and polling is the fallback
+      // that delivers while realtime is down. A failed rejoin must never be
+      // able to take that down with it.
+      debugPrint('[ClipboardSyncService] Rejoin attempt failed: $e');
+    }
   }
 
   Future<void> _seedPollBaseline(String userId) async {
@@ -1423,6 +1563,12 @@ class ClipboardSyncService implements IClipboardSyncService {
         return;
       }
 
+      // Getting here means the newest row is one the poll has not seen. If
+      // the channel believes it is subscribed, it should have delivered this
+      // already - so it is broken whatever it claims, and saying so here is
+      // the only evidence available.
+      _noteRealtimeMissedAClip();
+
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
       final previousId = _lastPolledItemId;
@@ -1651,6 +1797,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     // sync - but each one checks _isDisposed before doing more work.
 
     // Unsubscribe from realtime
+    _realtimeRetryTimer?.cancel();
+    _realtimeRetryTimer = null;
     _realtimeChannel?.unsubscribe();
     _realtimeChannel = null;
 

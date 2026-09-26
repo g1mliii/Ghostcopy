@@ -14,6 +14,9 @@ class _MockSettingsService extends Mock implements ISettingsService {}
 
 /// Records only what the lifecycle controller drives.
 class _RecordingSyncService implements IClipboardSyncService {
+  @override
+  void ensureRealtimeConnected() {}
+
   bool polling = false;
   bool realtimePaused = false;
 

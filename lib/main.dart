@@ -877,12 +877,17 @@ class _MyAppState extends State<MyApp> {
                 break;
               case PowerEventType.systemWake:
                 locator<ILifecycleController>().onSystemWake();
+                // The realtime socket rarely survives a sleep, and nothing
+                // else finds out: without this the app fell back to the
+                // five-minute poll until it was restarted.
+                locator<IClipboardSyncService>().ensureRealtimeConnected();
                 break;
               case PowerEventType.screenLock:
                 locator<ILifecycleController>().onScreenLock();
                 break;
               case PowerEventType.screenUnlock:
                 locator<ILifecycleController>().onScreenUnlock();
+                locator<IClipboardSyncService>().ensureRealtimeConnected();
                 break;
             }
           });
