@@ -546,7 +546,7 @@ void main() {
             ..g = random.nextInt(256)
             ..b = random.nextInt(256);
         }
-        final file = File('${dir.path}/IMG_0001.png')
+        final file = File('${dir.path}${Platform.pathSeparator}IMG_0001.png')
           ..writeAsBytesSync(img.encodePng(photo));
         expect(file.lengthSync(), greaterThan(ClipboardLimits.maxFileBytes));
         final errors = <String>[];
@@ -565,7 +565,7 @@ void main() {
       });
 
       test('anything else is refused before it is read', () async {
-        final file = File('${dir.path}/big.pdf');
+        final file = File('${dir.path}${Platform.pathSeparator}big.pdf');
         file.openSync(mode: FileMode.write)
           ..setPositionSync(ClipboardLimits.maxFileBytes + 1)
           ..writeByteSync(0)
@@ -598,7 +598,7 @@ void main() {
         tearDown(() => heicViewModel.dispose());
 
         File heic(String name, int bytes) {
-          final file = File('${dir.path}/$name');
+          final file = File('${dir.path}${Platform.pathSeparator}$name');
           file.openSync(mode: FileMode.write)
             ..setPositionSync(bytes - 1)
             ..writeByteSync(0)
