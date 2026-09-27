@@ -12,7 +12,7 @@ Two GitHub releases, with different jobs:
 | Release | Tag | Contents | Changes per release? |
 |---|---|---|---|
 | Installer | `macos-v<version>-<build>` | `GhostCopy-<version>-<build>.dmg` | New tag each time |
-| Update feed | `macos-updates` | `appcast.xml`, `GhostCopy.dmg` | Same tag, files replaced |
+| Update feed | `macos-updates` | `appcast.xml`, `GhostCopy.dmg` | Same tag; the feed is replaced, the old DMG renamed |
 
 The app's `SUFeedURL` points at the **fixed** `macos-updates` tag, so the feed
 URL compiled into every shipped build never changes. The feed's single item
@@ -161,7 +161,10 @@ that does not exist yet. It finishes by re-downloading the live feed and
 **8. Nothing to do for the website.** Its download button goes to
 `/download/macos`, which `website/_redirects` sends to `GhostCopy.dmg` on the
 fixed `macos-updates` release. Step 6 replaces that file with each release, so
-the button always serves the DMG the feed advertises.
+the button always serves the DMG the feed advertises. The outgoing copy is
+renamed `GhostCopy-website-until-<version>.dmg` rather than overwritten, so its
+download count survives for the README's Mac downloads badge
+(`.github/workflows/badges.yml`).
 
 ## What the scripts refuse, and why
 
