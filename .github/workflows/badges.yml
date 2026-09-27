@@ -1,14 +1,8 @@
-# README badges: Mac downloads and the current macOS version.
+# README badge: the current macOS version.
 #
-# GitHub's own "total downloads" counts every asset, and appcast.xml is one -
-# every installed Mac fetches it on each update check - so that number would
-# climb with checks, not installs. This counts only .dmg files, across every
-# release, and writes shields.io endpoint JSON to the orphan `badges` branch,
-# which the README reads through raw.githubusercontent.com.
-#
-# The website's download button serves GhostCopy.dmg from the macos-updates
-# release. publish-update.sh renames the outgoing copy rather than replacing
-# it, so its downloads stay in this count.
+# Shields' own release badge would show the raw tag, macos-v1.0.1-13. This
+# writes shields.io endpoint JSON with just the version to the orphan
+# `badges` branch, which the README reads through raw.githubusercontent.com.
 name: Badges
 
 on:
@@ -35,26 +29,21 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          downloads=$(gh api --paginate "repos/$REPO/releases?per_page=100" \
-            --jq '.[].assets[] | select(.name | endswith(".dmg")) | .download_count' \
-            | awk '{ s += $1 } END { print s + 0 }')
           # Newest macos-v<version>-<build> tag; the badge shows the version.
           tag=$(gh api --paginate "repos/$REPO/releases?per_page=100" \
             --jq '.[] | select(.draft | not) | select(.tag_name | startswith("macos-v")) | .tag_name' \
             | sort -V | tail -1)
           version=${tag#macos-v}
           version=${version%-*}
-          echo "downloads=$downloads version=$version"
+          echo "version=$version"
 
           mkdir out && cd out
-          printf '{"schemaVersion":1,"label":"Mac downloads","message":"%s","color":"6670FF"}\n' \
-            "$(printf "%'d" "$downloads" 2>/dev/null || echo "$downloads")" > downloads.json
           printf '{"schemaVersion":1,"label":"macOS","message":"%s","color":"6670FF"}\n' \
             "${version:-unreleased}" > macos-version.json
 
           git init -q -b badges
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add downloads.json macos-version.json
-          git commit -q -m "badges: $downloads Mac downloads, macOS $version"
+          git add macos-version.json
+          git commit -q -m "badges: macOS $version"
           git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" badges

@@ -58,7 +58,7 @@ trap 'rm -f "$notes"; rm -rf "$alias_dir"' EXIT
 cp "$updates/"*.dmg "$alias_dir/GhostCopy.dmg"
 # Rename the outgoing copy instead of overwriting it. --clobber deletes the
 # asset, and its download count with it - the only count the website's button
-# ever gets, which .github/workflows/badges.yml adds up for the README.
+# ever gets, and part of the README's downloads badge.
 old_alias="$(gh api "repos/$repo/releases/tags/macos-updates" \
     --jq '.assets[] | select(.name == "GhostCopy.dmg") | .id')"
 if [[ -n "$old_alias" ]]; then

@@ -163,8 +163,7 @@ that does not exist yet. It finishes by re-downloading the live feed and
 fixed `macos-updates` release. Step 6 replaces that file with each release, so
 the button always serves the DMG the feed advertises. The outgoing copy is
 renamed `GhostCopy-website-until-<version>.dmg` rather than overwritten, so its
-download count survives for the README's Mac downloads badge
-(`.github/workflows/badges.yml`).
+download count survives in the README's downloads badge.
 
 ## What the scripts refuse, and why
 
