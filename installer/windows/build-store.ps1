@@ -90,15 +90,23 @@ try {
         if (-not $sentry) {
             throw 'Neither sentry-cli nor sentry found on PATH. See the setup notes at the top of this script.'
         }
-        if (-not (Test-Path $tokenFile)) {
-            throw "No Sentry token at $tokenFile. Run installer\windows\set-sentry-token.ps1 with the token on the clipboard."
+        # On Actions (windows-store.yml) the token comes from a repository
+        # secret in the environment. The DPAPI file below can only be read by
+        # the Windows account that wrote it, so a runner could never use one.
+        if ($env:GITHUB_ACTIONS -eq 'true' -and $env:SENTRY_AUTH_TOKEN) {
+            $plain = $env:SENTRY_AUTH_TOKEN
         }
+        else {
+            if (-not (Test-Path $tokenFile)) {
+                throw "No Sentry token at $tokenFile. Run installer\windows\set-sentry-token.ps1 with the token on the clipboard."
+            }
 
-        # Decrypted here and put in the environment for the child process only,
-        # so it never appears in a command line or in this session's history.
-        $secure = Get-Content $tokenFile | ConvertTo-SecureString
-        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+            # Decrypted here and put in the environment for the child process only,
+            # so it never appears in a command line or in this session's history.
+            $secure = Get-Content $tokenFile | ConvertTo-SecureString
+            $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        }
         try {
             $env:SENTRY_AUTH_TOKEN = $plain
             & $sentry.Source debug-files upload --org spiderweb --project flutter --wait $symbolsDir

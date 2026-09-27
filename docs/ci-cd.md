@@ -51,6 +51,19 @@ checks until they are proven on real hardware.
 
 Android needs a Firebase stub to compile at all — see below.
 
+## `windows-store.yml` — the Store package
+
+Manual only, from the Actions tab. Builds the `.msix` that is uploaded to
+Partner Center, by running `installer/windows/build-store.ps1` on a Windows
+runner, and keeps it as the `ghostcopy-store-msix` artifact for 7 days. For when
+there is no Windows machine at hand; the version is `msix_version` in
+`pubspec.yaml` on the chosen ref, never bumped here.
+
+It needs the `SENTRY_AUTH_TOKEN` secret and fails at its first step without
+it, because a package shipped without its symbols uploaded has crash reports
+that can never be read. The `skip_symbols` input exists only for packaging
+tests — do not submit what it produces.
+
 ## `web-backend.yml`
 
 - **Website** — `npm install && npm run build`. Verified working locally.
@@ -85,6 +98,7 @@ reviewers under *Settings → Environments* to make deploys gated.
 | `CLOUDFLARE_ACCOUNT_ID` | `deploy.yml` | |
 | `SUPABASE_ACCESS_TOKEN` | `deploy.yml` | personal access token |
 | `SUPABASE_PROJECT_REF` | `deploy.yml` | the project ref |
+| `SENTRY_AUTH_TOKEN` | `windows-store.yml` | same org token as `installer/windows/set-sentry-token.ps1` stores, with project:write |
 
 None are needed for `ci.yml` — the Supabase URL and anon key are compiled into
 `lib/main.dart` on purpose (the anon key is `role: anon`, protected by RLS, and

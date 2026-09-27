@@ -1,0 +1,83 @@
+# Builds the Microsoft Store package - the .msix that gets uploaded to Partner
+# Center - on a Windows runner, for when no Windows machine is at hand.
+#
+# Runs installer/windows/build-store.ps1, the same script a local release
+# uses, so the order that matters (build, upload symbols, then package from
+# that same build) is kept. The version is whatever msix_version in
+# pubspec.yaml says on the chosen ref; nothing here bumps it.
+#
+# Manual only, from the Actions tab. The package is kept as a run artifact:
+# download it, unzip, and upload ghostcopy.msix under Packages.
+name: Windows Store package
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_symbols:
+        description: 'Skip the Sentry symbol upload (local packaging test only - do NOT submit the result)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: windows-store-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.8'
+
+jobs:
+  package:
+    name: Build Store MSIX
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    steps:
+      # Fails in seconds rather than after a 20-minute build.
+      - name: Check Sentry token
+        if: ${{ !inputs.skip_symbols }}
+        shell: pwsh
+        run: |
+          if (-not $env:SENTRY_AUTH_TOKEN) {
+            throw 'Repository secret SENTRY_AUTH_TOKEN is not set. A Store package must have its symbols uploaded - see docs/ci-cd.md.'
+          }
+
+      - uses: actions/checkout@v5
+
+      # sentry_flutter pins jni 0.14.2, whose CMake needs a JDK on every
+      # platform - see the same step in build-check.yml.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - run: flutter pub get
+
+      - name: Install sentry-cli
+        if: ${{ !inputs.skip_symbols }}
+        run: npm install -g @sentry/cli
+
+      - name: Build, upload symbols, package
+        shell: pwsh
+        run: |
+          if ('${{ inputs.skip_symbols }}' -eq 'true') {
+            installer\windows\build-store.ps1 -SkipSymbols
+          } else {
+            installer\windows\build-store.ps1
+          }
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ghostcopy-store-msix
+          path: build/windows/x64/runner/Release/ghostcopy.msix
+          if-no-files-found: error
+          retention-days: 7
