@@ -7,17 +7,6 @@ testing, the listing, and a macOS/iOS pass afterwards. All of it is on the
 branch `feat/windows-store-release` - six commits, **one PR**, split so a bad
 test result can revert a single change rather than the lot.
 
-### The order
-
-1. **Test for a day or two** - the "Verify ... by hand" items in the Windows
-   section below. Start with save/share/drag-out giving the full image, since
-   that is the regression this project has had before.
-2. **Build the Store listing in parallel.** It depends on none of the testing:
-   text, screenshots, age rating, and privacy answers that must declare Sentry
-   crash data the way the App Store ones do. Doing it while the app sits in
-   the tray costs nothing and saves a day.
-3. **Merge and submit.**
-4. **macOS and iOS pass afterwards** - see below; they are not untouched.
 
 ### Two things the plan is easy to leave out
 
@@ -38,28 +27,8 @@ test result can revert a single change rather than the lot.
 
 ## macOS: what's left
 
-- [ ] **Re-test Apple sign-in.** The Supabase Client IDs ordering that broke
-      it on Windows broke macOS identically. The fix was server-side, so no
-      rebuild is needed, but it has never been verified there.
-- [x] **Released 1.0.0 (11) - 2026-09-26**, carrying the shared fixes above.
-      Notarized, smoke test passed, feed verified. The website's download
-      button now points at a fixed `GhostCopy.dmg` that publish-update.sh
-      replaces each release, so `_redirects` no longer needs a bump.
 - [ ] **On 1.0.0 (11):** encrypted history still decrypts with the existing
       passphrase, tray menu, Option+Space, a clip each way
-- [x] **Regenerate the icons - done 2026-09-26 (dfc6987).** The one-pixel
-      offset fix, regenerated with Cairo on Linux: only the 22 outputs whose
-      pixels changed were committed, and the pre-fix generator reproduces
-      every previously committed icon exactly there, so the renderer matches.
-      Nothing to re-run on the Mac.
-
-
-- [ ] **Sandbox - only if the Mac app goes to the Mac App Store.** Required
-      there, optional for Developer ID. It would mean Sparkle's XPC
-      services (or dropping Sparkle for store updates), an Obsidian folder
-      picker with security-scoped bookmarks, and migrating preferences into
-      the container; it would also bring back the native Apple sign-in sheet
-
 ## Windows: next
 
 **Ships through the Microsoft Store**, decided 2026-09-19. Registration is free
@@ -91,32 +60,11 @@ to package - but everything below marked "verify" does need one.
       Realtime socket and raises a *local* toast through
       flutter_local_notifications. Nothing to configure, and it has no bearing
       on the account type
-- [x] **Regenerate the icons - done 2026-09-26 (dfc6987), see macOS above.** `tile()` in
-      `tool/generate_brand_assets.py` seated the mark one pixel left and high
-      at any size where `px - int(px * inset)` is odd, because the floor in
-      `// 2` gave the spare pixel to the right and bottom. Measured on the
-      shipped assets: 32px had 9px of padding left and 10 right, 256px had 73
-      and 74. One pixel is 3% of a 32px icon, which is the "not centred, too
-      far to the left" in the context menu and the tray. Fixed in the
-      generator and the arithmetic checked at every shipped size - 3 of 13
-      were off before, none after - but Cairo will not load on Windows, so the
-      PNG and ICO files still carry the old placement. Re-run
-      `DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py`
-      on the Mac and commit what it writes
   - Separately, and NOT fixed: the mark's bounding box is centred to the pixel
     but its mass is not - the centroid sits 5.9px left and 59px high of centre
     at 1024 (0.6% and 5.8%). Optical centring would shift it to match, but
     that moves the iOS, macOS and Android icons too, including ones already
     through review, so it is a deliberate call rather than a bug fix
-- [ ] **The logo in the Windows toast looks warped.**
-      `WindowsInitializationSettings` in
-      `lib/services/impl/notification_service.dart` takes an optional
-      `iconPath` and is not given one, so Windows falls back to deriving an
-      icon. Passing an explicit square PNG needs a real file path, and the
-      asset lives inside `data/flutter_assets`, so it has to be resolved or
-      copied out at runtime. Re-check first with the now-rounded icons: in a
-      package Windows uses Square44x44Logo, which is regenerated from
-      `app_icon.png`, so this may already be fixed
 - [ ] **Two unexplained native crashes - decide before submitting.**
       `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` on 2026-09-25 at 19:59 UTC
       (dist 5) and 21:39 UTC (dist 9), same user, same shape. Reading 0x10 is
@@ -160,16 +108,7 @@ to package - but everything below marked "verify" does need one.
   - [ ] A full-size preview is not a blurry upscale
   - [ ] Encrypted clips still render; deleting a clip drops its thumbnail;
         signing out wipes the cache
-- [ ] **Verify the memory work by hand.**
-  - [ ] Hotkey after 2-3 hours idle *while the machine is in normal use*, so
-        the trimmed pages have actually been reclaimed. An idle machine
-        evicts nothing and proves nothing
-  - [ ] A clip sent from the phone after 30+ minutes idle still notifies and
-        auto-copies
-  - [ ] Tray menu after a long idle, and that it now draws in front of the
-        taskbar flyout
-  - [ ] Mobile: background the app, reopen, list appears immediately; a push
-        still arrives after a long background
+
 - [ ] **Verify the second-launch fix.** Clicking the app while it is already
       running opens the window - it never did before. Check sign-in still
       completes (same delivery path), and that "Send with GhostCopy" sends
@@ -181,23 +120,7 @@ to package - but everything below marked "verify" does need one.
 - [ ] **Decide whether Windows needs an update signal in the UI.** macOS has
       the dot by the menu bar icon because Sparkle needs the user to act. The
       Store updates silently, so probably nothing - but make it a decision.
-- [x] **Realtime delivery stalled in the tray - fixed and verified
-      2026-09-25.** A clip sent to a backgrounded Windows app arrived about
-      five minutes later, which is the polling fallback's interval: realtime
-      had died and nothing noticed, so the fallback had quietly become the
-      only delivery path. `subscribe()` was called with no status callback, so
-      `channelError`, `timedOut` and `closed` all went nowhere and nothing
-      ever rejoined - not on status, not on wake, not on unlock. Windows
-      surfaced it first because it throttles a background process hard enough
-      for the socket's heartbeat to lapse, but the same socket dies anywhere
-      across a sleep, a network change or a server restart, so this was never
-      Windows-only. Verified: first clip instant after a few minutes in the
-      tray, instant again 60s later, and **still instant after 30 minutes
-      idle** - comfortably past the 20-30 seconds that used to break it and
-      turn a clip into a five-minute wait.
-  - [x] **Re-tested on macOS after a lid close - 2026-09-26.** Same socket,
-        same failure mode; macOS had simply not been pushed into it. Closing
-        and reopening the lid, notifications still arrive.
+
   - [ ] If a clip is ever slow again but the *next* one is instant, the death
         was silent (no status to react to) and the evidence-based rejoin
         caught it. The next lever then is opting the process out of Windows
@@ -213,49 +136,13 @@ to package - but everything below marked "verify" does need one.
       issued is `g1mli`, a handle, which is public under the app title and
       has to match `msix_config` - decide it before submitting rather than
       after people have installed.
-  - [ ] Take the five screenshots listed in that doc, 1920x1080, demo account
-  - [ ] Run the IARC age questionnaire; the two answers worth care are
-        user-to-user sharing (No - same account only) and location (No)
+
   - [ ] Declare Sentry in the privacy answers, as on the App Store
   - [ ] Decide whether France is excluded for the first release, and keep it
         consistent with the App Store decision
 
 ## iOS: open
 
-- [ ] **Verify HEIC on the next TestFlight build** (`fix/email-confirm-and-heic`):
-      a camera photo from the gallery and one shared from Photos both arrive
-      as a JPEG with a preview on the Mac and on Windows, upright, with no
-      location in them; a 48 MP photo arrives under 10 MB
-- [ ] **Verify on the next macOS build:** Continue with Apple and with Google
-      bring the Spotlight forward, signed in, once the browser hands back
-- [ ] **TestFlight - 1.0.0 (7) uploaded 2026-09-25**, internal testing only
-      until the Sentry build. Verified in the IPA: Apple Distribution,
-      aps-environment production, App Group and Sign in with Apple on both
-      targets. Left: answer Missing Compliance, add the Info.plist key it
-      points to, confirm production push on the TestFlight install. Upload
-      warned "Upload Symbols Failed" for objective_c.framework - its dSYM
-      matches the shipped UUID but Flutter copies it into the archive twice;
-      only affects symbolication inside that bridge, and Sentry uploads its
-      own. Earlier notes: signing was `Apple Development`; TestFlight needs
-      Apple Distribution. `aps-environment` reads `development` in the entitlements;
-      the App Store export switches it, and the Firebase APNs key covers both.
-      Confirm in Firebase (Project settings > Cloud Messaging > Apple app)
-      that it is an APNs Authentication Key (.p8), not a development-only
-      certificate, or push stops in App Store builds
-- [x] **"Upload Symbols Failed" for Sentry.framework - decided: leave it
-      (2026-09-26).** A warning on every iOS upload; the upload itself
-      succeeds. sentry_flutter's Package.swift links sentry-cocoa's `Sentry`
-      product, a static xcframework built with no debug info at all (none of
-      its 408 objects has DWARF), so the dynamic framework Xcode links from it
-      has nothing a dSYM could be made from. Only frames inside the Sentry SDK
-      itself go unsymbolicated, in Apple's reports and Sentry's alike; the
-      app's own code and Flutter are unaffected. Fixing it means forking
-      sentry_flutter onto `Sentry-Dynamic` (which ships dSYMs) or taking every
-      plugin back to CocoaPods - revisit only if upstream changes the product
-- [ ] **Decide: iPad at launch, or iPhone-only.** The app targets iPad, so the
-      listing needs 13" iPad screenshots and review tests it there. Dropping
-      iPad for 1.0 (TARGETED_DEVICE_FAMILY = 1) skips both; it can come back
-      in an update
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set
@@ -269,10 +156,6 @@ to package - but everything below marked "verify" does need one.
       once it exists; needs it signed in on the simulator
 - [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
       the listing doc
-- [x] **Photos over 10 MB shared from the share sheet** now go through the
-      same shrink as the gallery picker and are sent as a .jpg. HEIC is still
-      refused over the limit on both paths - the `image` package cannot
-      decode it. Verify on the phone: share a large PNG screenshot from Photos
 - [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
       iPhone is expected around late October 2026; its simulator is in the
       Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
@@ -305,28 +188,9 @@ to package - but everything below marked "verify" does need one.
 
 ## All platforms
 
-- [x] **Auth retries after a failed launch** (a416d25). `recoverSession`
-      retries on a backoff settling at five minutes, then registers the device
-      and rebinds realtime. Worth one manual check on a Mac: launch offline,
-      reconnect, and a clip arrives without a restart
 
-- [x] **Email confirmation links - fixed on `fix/email-confirm-and-heic`,
-      2026-09-26.** Tapping one ended on the home page with "Email link is
-      invalid or has expired" and a manual sign-in: Supabase's /verify link
-      was used up by whatever opened it first, and carried no redirect.
-      Templates now point at ghostcopy.app/auth-callback with a token_hash,
-      the app redeems it on every platform behind a guard, and the page can
-      confirm in the browser instead. **Verify after the next release:**
-  - [ ] Sign up on the Mac, tap the link on the Mac: GhostCopy comes forward
-        signed in, no manual sign-in
-  - [ ] The same on the iPhone
-  - [ ] Sign up on the Mac, tap the link on the iPhone with GhostCopy
-        installed: the phone refuses it, the page's "Confirm in this browser"
-        works, and the Mac shows signed in when its window is next opened
   - [ ] Tapping the same link twice gives the "already used" message, not a
         raw error
-- [ ] **Macs and PCs still send HEIC as a file.** The phones now convert
-      (`IImageTranscoder`); a HEIC dragged in from Photos on a Mac does not.
       ImageIO is right there on macOS - the same Swift would do
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
@@ -339,8 +203,6 @@ to package - but everything below marked "verify" does need one.
       Sparkle compares only it, so a lower one is never offered to a Mac, and
       Play and TestFlight reject one they have seen. Bump the version by what
       changed and the build number by one, every release, every platform
-- [x] **Sentry in the client** - shipped in macOS 1.0.0 (8) and every build
-      since (a62bd4a), clip content stripped on the device.
 
 ## Monitoring, error tracking and cost guards
 
@@ -348,47 +210,7 @@ From a monitoring plan reviewed 2026-09-22. Most of its cost-control advice is
 already implemented here, and more strictly than it suggested - recorded below
 so nobody builds it twice.
 
-### Already in place
 
-| Recommendation | What the repo does |
-|---|---|
-| Tag origin device so B does not echo back to A | `isFromDifferentDevice = deviceName != currentDeviceName` (`clipboard_sync_service.dart:163`, `:345`) |
-| Debounce client clipboard events | 5-second poll (`clipboard_sync_service.dart:474`) |
-| Per-user rate limit, suggested 30/min | **10/min**, Postgres trigger `check_clipboard_rate_limit` (`schema.sql:152`) |
-| Payload cap, suggested 15-20 MB | 100 KB text (`maxContentLength`), 10 MB files (`ClipboardLimits.maxFileBytes`) |
-| Bounded retention and storage cleanup | `20260915000000_bound_cleanup_and_rate_limits.sql`, R2 deletion queue |
-
-The infinite-sync-loop footgun that plan leads with is therefore closed on the
-application side. What is left is outside the repo.
-
-### Now - dashboard only, no code, no dependency on any platform
-
-Worth being precise about what the exposure actually is, because on the plans
-this project is on it is mostly **not** a bill. Every quota below should be
-re-checked against current provider docs rather than trusted from here.
-
-- [ ] **Supabase (free plan).** Cannot be charged, so there is no bill to cap -
-      but that inverts the risk rather than removing it. Exceeding free limits
-      gets a project restricted or paused, and a paused project is the app
-      fully down for every user on every platform. That is worse than an
-      unexpected invoice, and it is the one to watch around a launch. Set usage
-      notifications on Database Egress and Database Size, and know in advance
-      what upgrading costs, so the answer to an outage is a plan rather than a
-      decision made under pressure
-- [ ] **Google Cloud / Firebase.** FCM messaging itself is free and not
-      metered, so "essentially free" holds for what this app uses it for.
-      Confirm which plan the project is on: on Spark nothing can bill, on Blaze
-      other services can. If Blaze, set Budgets & Alerts at 50/80/100%
-- [ ] **Cloudflare R2.** The only place real money can leak. The free
-      allowance is generous, but overage bills once a payment method is on
-      file, and R2 has no hard spend cap - notifications are the only guard, so
-      configure them on storage capacity and Class A/B operation counts. Worth
-      confirming what "limits already on it" means today: a Cloudflare
-      notification is an alert after the fact, not a ceiling
-- [ ] **Cloudflare 5xx rate spike notification.** Free, and the fastest signal
-      that image sync is broken for everyone rather than one device
-
-### With the first public build, not after it
 
 ### After Windows, iOS and macOS are out
 
