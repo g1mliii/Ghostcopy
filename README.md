@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/g1mliii/Ghostcopy/releases?q=macos&expanded=true"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fg1mliii%2FGhostcopy%2Fbadges%2Fdownloads.json&style=flat-square" alt="Mac downloads" /></a>
+  <a href="https://github.com/g1mliii/Ghostcopy/releases?q=macos&expanded=true"><img src="https://img.shields.io/github/downloads/g1mliii/Ghostcopy/total?style=flat-square&label=downloads&color=6670FF" alt="Downloads" /></a>
   <a href="https://github.com/g1mliii/Ghostcopy/releases?q=macos&expanded=true"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fg1mliii%2FGhostcopy%2Fbadges%2Fmacos-version.json&style=flat-square" alt="Latest macOS release" /></a>
   <a href="https://ghostcopy.app/"><img src="https://img.shields.io/badge/website-ghostcopy.app-6670FF?style=flat-square" alt="ghostcopy.app" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3A3A44?style=flat-square" alt="MIT licence" /></a>
