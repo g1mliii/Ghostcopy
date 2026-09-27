@@ -36,6 +36,12 @@ class TrayService with TrayListener implements ITrayService {
 
     await trayManager.setIcon(_getTrayIconPath(), isTemplate: Platform.isMacOS);
 
+    // Without this, hovering the Windows tray icon shows an empty tooltip box
+    // instead of the app name. tray_manager has no tooltip on Linux.
+    if (!Platform.isLinux) {
+      await trayManager.setToolTip('GhostCopy');
+    }
+
     // On macOS, the title is usually not shown in tray for icon-only apps,
     // but we can set it if needed. Leaving empty for now for icon-only feel.
   }
