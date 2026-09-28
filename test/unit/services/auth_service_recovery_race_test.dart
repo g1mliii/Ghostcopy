@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/impl/auth_service.dart';
@@ -10,6 +11,20 @@ import 'package:mocktail/mocktail.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _DeviceService extends Mock implements IDeviceService {}
+
+class _MemoryStorage extends GotrueAsyncStorage {
+  final _values = <String, String>{};
+
+  @override
+  Future<String?> getItem({required String key}) async => _values[key];
+
+  @override
+  Future<void> removeItem({required String key}) async => _values.remove(key);
+
+  @override
+  Future<void> setItem({required String key, required String value}) async =>
+      _values[key] = value;
+}
 
 Map<String, Object?> _session(String id, {bool anonymous = false}) {
   final expires =
@@ -59,7 +74,10 @@ void main() {
     client = SupabaseClient(
       'https://example.com',
       'anon-key',
-      authOptions: const AuthClientOptions(autoRefreshToken: false),
+      authOptions: AuthClientOptions(
+        autoRefreshToken: false,
+        pkceAsyncStorage: _MemoryStorage(),
+      ),
       httpClient: MockClient((request) async {
         final path = request.url.path;
         calls.add(path);
@@ -87,6 +105,62 @@ void main() {
   tearDown(() async {
     service.dispose();
     await client.dispose();
+  });
+
+  // Browser sign-in succeeds when a session for a DIFFERENT account appears.
+  // "Different" was measured against the session read before the guest
+  // sign-in in flight had landed - none - so the guest arriving counted as
+  // the browser callback: the panel closed and sync stayed on the guest.
+  group('browser sign-in with a guest sign-in in flight', () {
+    const launcher = MethodChannel('plugins.flutter.io/url_launcher');
+    late List<String> launched;
+
+    setUp(() {
+      launched = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(launcher, (call) async {
+            if (call.method == 'launch') {
+              launched.add((call.arguments as Map)['url'] as String);
+              return true;
+            }
+            return call.method == 'canLaunch';
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(launcher, null);
+    });
+
+    for (final provider in ['google', 'apple']) {
+      test('$provider: the guest landing is not the callback', () async {
+        final retry = service.initialize().catchError((Object _) {});
+        await pumpEventQueue();
+
+        var settled = false;
+        final signIn =
+            (provider == 'google'
+                    ? service.signInWithGoogle()
+                    : service.signInWithApple())
+                .whenComplete(() => settled = true);
+        await pumpEventQueue();
+
+        guestReply.complete();
+        await retry;
+        await pumpEventQueue();
+        expect(client.auth.currentUser?.isAnonymous, isTrue);
+        expect(launched, hasLength(1), reason: 'the browser should be open');
+        expect(
+          settled,
+          isFalse,
+          reason: 'no callback has arrived, so the sign-in is still pending',
+        );
+
+        // The user gives up in the browser: that is a failure, not a login.
+        service.cancelBrowserSignIn();
+        expect(await signIn, isFalse);
+      });
+    }
   });
 
   test('a sign-in waits out a guest sign-in already in flight', () async {
