@@ -84,6 +84,15 @@ void configureCrashReporting(SentryFlutterOptions options) {
     // Native crash handling stays on too: a native crash report is a signal
     // or exception name and a stack. Its reason text is the one thing the
     // Dart-side scrubbing below cannot reach.
+    // Foreground, background and low-memory warnings, recorded from Dart so
+    // they go through scrubBreadcrumb like everything else. Without them a
+    // report cannot tell apart the three ways a phone app dies in the
+    // foreground: out of memory (memory warnings first), frozen and killed,
+    // or frozen and force-quit - which Sentry also files as a
+    // WatchdogTermination, because a frozen app cannot record that it left
+    // the foreground. FLUTTER-7 arrived with nothing to go on.
+    ..enableAppLifecycleBreadcrumbs = true
+    ..enableMemoryPressureBreadcrumbs = true
     ..maxBreadcrumbs = 40
     ..nativeDatabasePath = _nativeDatabasePath()
     ..beforeSend = scrubEvent
@@ -177,6 +186,38 @@ FutureOr<SentryEvent?> scrubEvent(SentryEvent event, Hint hint) {
 
 /// Keep a breadcrumb's shape - what kind of thing happened, and when - and
 /// drop anything in it that could be content.
+/// String data that is kept on a breadcrumb, by category. Everything else in
+/// `data` that is a string is dropped, because for this app a string is often
+/// a clip. These are enum names Sentry's own breadcrumbs carry, and without
+/// them the breadcrumb says nothing: `state` is resumed / inactive / hidden /
+/// paused, `action` is LOW_MEMORY.
+const _vocabularyData = <String, Set<String>>{
+  'app.lifecycle': {'state'},
+  'device.event': {'action'},
+};
+
+final _identifier = RegExp(r'^[A-Za-z_]{1,32}$');
+
+bool _isVocabulary(String? category, String key, Object? value) =>
+    (_vocabularyData[category]?.contains(key) ?? false) &&
+    value is String &&
+    _identifier.hasMatch(value);
+
+/// Record what the app was doing, for the next crash or hang report to carry.
+///
+/// Counts and sizes only, never content: [message] is a fixed description
+/// and [data] holds numbers. It goes through [scrubBreadcrumb] regardless, and
+/// does nothing where crash reporting is off (debug builds, tests).
+void recordDiagnostic(
+  String category,
+  String message, {
+  Map<String, num>? data,
+}) {
+  Sentry.addBreadcrumb(
+    Breadcrumb(category: category, message: message, data: data),
+  );
+}
+
 @visibleForTesting
 Breadcrumb? scrubBreadcrumb(Breadcrumb? crumb, Hint hint) {
   if (crumb == null) return null;
@@ -188,6 +229,8 @@ Breadcrumb? scrubBreadcrumb(Breadcrumb? crumb, Hint hint) {
         : {
             for (final entry in data.entries)
               if (entry.value is num || entry.value is bool)
+                entry.key: entry.value
+              else if (_isVocabulary(crumb.category, entry.key, entry.value))
                 entry.key: entry.value
               else if (entry.key == 'url' && entry.value is String)
                 'url': redact(entry.value as String)
