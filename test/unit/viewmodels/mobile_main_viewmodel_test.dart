@@ -76,6 +76,9 @@ void main() {
       () => clipboardRepository.getHistory(),
     ).thenAnswer((_) async => <ClipboardItem>[]);
     when(
+      () => clipboardRepository.getCachedHistory(),
+    ).thenAnswer((_) async => <ClipboardItem>[]);
+    when(
       () => settingsService.getClipboardAutoClearSeconds(),
     ).thenAnswer((_) async => 0);
     when(
@@ -319,6 +322,99 @@ void main() {
       expect(viewModel.historyError, isNull);
     });
 
+    // Opened with no signal: the session restores from disk, so the app gets
+    // as far as the main screen, and the list has to come from the phone.
+    test('offline, the saved history is shown instead of an error', () async {
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenThrow(Exception('network down'));
+      when(
+        () => clipboardRepository.getCachedHistory(),
+      ).thenAnswer((_) async => [item('1'), item('2')]);
+
+      await viewModel.loadHistory();
+
+      expect(viewModel.filteredHistoryItems.map((i) => i.id), ['1', '2']);
+      expect(viewModel.historyError, isNull);
+      expect(viewModel.historyLoading, isFalse);
+      expect(viewModel.showingSavedHistory, isTrue);
+    });
+
+    test('saved history is on screen while a slow fetch is pending', () async {
+      final request = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) => request.future);
+      when(
+        () => clipboardRepository.getCachedHistory(),
+      ).thenAnswer((_) async => [item('1')]);
+
+      final loading = viewModel.loadHistory();
+      await Future<void>.delayed(Duration.zero);
+
+      // A connection that hangs rather than fails - an elevator - must not
+      // keep the clips behind a spinner until it times out.
+      expect(viewModel.historyLoading, isFalse);
+      expect(viewModel.filteredHistoryItems.map((i) => i.id), ['1']);
+      // Not claimed offline yet: the fetch has not failed.
+      expect(viewModel.showingSavedHistory, isFalse);
+
+      request.complete([item('2'), item('1')]);
+      await loading;
+      expect(viewModel.filteredHistoryItems.map((i) => i.id), ['2', '1']);
+      expect(viewModel.showingSavedHistory, isFalse);
+    });
+
+    test('a saved copy read late never replaces the live history', () async {
+      final saved = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getCachedHistory(),
+      ).thenAnswer((_) => saved.future);
+      // The account's clips were all deleted elsewhere: live is empty.
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => <ClipboardItem>[]);
+
+      await viewModel.loadHistory();
+      saved.complete([item('stale')]);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(viewModel.filteredHistoryItems, isEmpty);
+    });
+
+    test('saved history does not survive a sign-out', () async {
+      final saved = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getCachedHistory(),
+      ).thenAnswer((_) => saved.future);
+      final request = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) => request.future);
+
+      unawaited(viewModel.loadHistory());
+      viewModel.clearUserState();
+      saved.complete([item('previous-account')]);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(viewModel.filteredHistoryItems, isEmpty);
+      request.complete(<ClipboardItem>[]);
+    });
+
+    test(
+      'with nothing saved, an offline load still reports the error',
+      () async {
+        when(
+          () => clipboardRepository.getHistory(),
+        ).thenThrow(Exception('network down'));
+
+        await viewModel.loadHistory();
+
+        expect(viewModel.historyError, isNotNull);
+        expect(viewModel.showingSavedHistory, isFalse);
+      },
+    );
+
     test('the first load shows loading while nothing is on screen', () async {
       final request = Completer<List<ClipboardItem>>();
       when(
@@ -548,6 +644,42 @@ void main() {
           ..closeSync();
         return file;
       }
+
+      // Android's plugin labels any shared file with a text/ MIME type as
+      // text and hands over its path; that path used to be sent as the clip.
+      test('a text document labelled as text is sent as the file', () async {
+        final doc = File('${dir.path}${Platform.pathSeparator}notes.txt')
+          ..writeAsStringSync('hello from a file');
+
+        await viewModel.handleSharedFiles([
+          SharedMediaFile(
+            path: doc.path,
+            mimeType: 'text/plain',
+            type: SharedMediaType.text,
+          ),
+        ]);
+
+        expect(inserted, hasLength(1));
+        expect(inserted.single.$2, 'notes.txt');
+        expect(String.fromCharCodes(inserted.single.$1), 'hello from a file');
+        verifyNever(() => clipboardRepository.insert(any()));
+      });
+
+      test('shared text that is not a file is still sent as text', () async {
+        when(() => clipboardRepository.insert(any())).thenAnswer(
+          (inv) async => inv.positionalArguments.first as ClipboardItem,
+        );
+        final missing = '${dir.path}${Platform.pathSeparator}gone.txt';
+
+        await viewModel.handleSharedFiles([
+          SharedMediaFile(path: 'just some text', type: SharedMediaType.text),
+          // A path that names nothing on disk is text someone typed.
+          SharedMediaFile(path: missing, type: SharedMediaType.text),
+        ]);
+
+        expect(inserted, isEmpty);
+        verify(() => clipboardRepository.insert(any())).called(2);
+      });
 
       test('a photo is scaled down and sent as a JPEG', () async {
         // Noise, so the PNG cannot compress under the limit.

@@ -107,6 +107,11 @@ abstract class IClipboardRepository {
   /// Get clipboard history (one-time fetch)
   Future<List<ClipboardItem>> getHistory({int limit = 15});
 
+  /// The history last fetched on this device, read from disk without touching
+  /// the network, so the app has something to show while offline. Empty when
+  /// nothing is stored for the signed-in user. Never throws.
+  Future<List<ClipboardItem>> getCachedHistory();
+
   /// Delete a clipboard item by ID
   Future<void> delete(String id);
 

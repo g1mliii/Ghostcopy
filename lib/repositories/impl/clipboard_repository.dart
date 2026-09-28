@@ -13,6 +13,7 @@ import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
 import '../../services/clipboard_cache_manager.dart';
 import '../../services/encryption_service.dart';
+import '../../services/history_disk_cache.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
@@ -825,7 +826,15 @@ class ClipboardRepository implements IClipboardRepository {
           .eq('user_id', userId) // Explicit filter for defense in depth
           .order('created_at') // Newest first
           .limit(safeLimit)
-          .map(_parseClipboardItems)
+          .map((rows) {
+            // Every realtime snapshot is the whole page, so it replaces the
+            // offline copy too - a clip that arrives while the app is open is
+            // there the next time it opens without a connection.
+            if (safeLimit >= _defaultHistoryLimit) {
+              _saveOfflineHistory(userId, rows);
+            }
+            return _parseClipboardItems(rows);
+          })
           .asyncMap(_decryptItems); // Decrypt items asynchronously
     } catch (e) {
       _fail(e, 'watch clipboard history');
@@ -929,6 +938,9 @@ class ClipboardRepository implements IClipboardRepository {
       // falls off the client's list loses its cached bytes and would be
       // re-fetched if it ever came back.
       if (safeLimit >= _defaultHistoryLimit) {
+        // Raw rows, before decryption: see HistoryDiskCache.
+        _saveOfflineHistory(userId, responseList.cast<Map<String, dynamic>>());
+
         // Clean up orphaned cache entries (async, don't await)
         _cleanupOrphanedCache(decryptedItems);
 
@@ -970,6 +982,36 @@ class ClipboardRepository implements IClipboardRepository {
         // Swallow exception - cache cleanup is best effort
       }
     });
+  }
+
+  /// Only the phones read the offline copy back, so only they write one. A
+  /// desktop keeps its history in memory for as long as it runs and would be
+  /// leaving a copy of every clip on disk for nothing.
+  static bool get _keepsOfflineHistory => Platform.isIOS || Platform.isAndroid;
+
+  void _saveOfflineHistory(String userId, List<Map<String, dynamic>> rows) {
+    if (!_keepsOfflineHistory) return;
+    // A save queued behind a sign-out would otherwise land after the clear.
+    if (_client.auth.currentUser?.id != userId) return;
+    unawaited(HistoryDiskCache.instance.save(userId, rows));
+  }
+
+  @override
+  Future<List<ClipboardItem>> getCachedHistory() async {
+    try {
+      final userId = _client.auth.currentUser?.id;
+      if (userId == null) return const [];
+      final rows = await HistoryDiskCache.instance.load(userId);
+      if (rows.isEmpty) return const [];
+      final items = _parseClipboardItems(rows)
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      // Same path as a live fetch, so an encrypted clip without a key is
+      // handled - dropped or kept as a file row - exactly as it is online.
+      return await _decryptItems(items);
+    } on Object catch (e) {
+      debugPrint('[Repository] Offline history unavailable: $e');
+      return const [];
+    }
   }
 
   /// Parse clipboard items with optional isolate for large responses
@@ -1039,6 +1081,8 @@ class ClipboardRepository implements IClipboardRepository {
       final returnedPath = deletedRows.isEmpty
           ? null
           : deletedRows.first['storage_path'] as String?;
+      unawaited(HistoryDiskCache.instance.remove(id));
+
       final deletedPath = returnedPath ?? item?.storagePath;
       if (deletedPath != null && deletedPath.isNotEmpty) {
         if (_inFlight.containsKey(_thumbnailKey(deletedPath))) {
@@ -1495,6 +1539,8 @@ class ClipboardRepository implements IClipboardRepository {
     unawaited(MediaDiskCache.instance.clear());
     // Plaintext previews of this account's clips; they must not outlive it.
     unawaited(ThumbnailDiskCache.instance.clear());
+    // The offline copy of the history itself - the clips, not just previews.
+    unawaited(HistoryDiskCache.instance.clear());
   }
 
   @override
