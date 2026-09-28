@@ -105,6 +105,33 @@ void main() {
     expect(await store.load('user-a'), isEmpty);
   });
 
+  test(
+    'large saves preserve snapshots and stay ordered before clear',
+    () async {
+      final content = 'large clip ' * 10000;
+      final metadata = <String, Object?>{
+        'tags': ['original'],
+      };
+      final rows = [row(1, content)..['metadata'] = metadata];
+      final saving = store.save('user-a', rows);
+      rows.single['content'] = 'changed';
+      (metadata['tags']! as List<String>)[0] = 'changed';
+      rows.clear();
+      await saving;
+
+      final loaded = await store.load('user-a');
+      expect(loaded.single['content'], content);
+      expect(loaded.single['metadata'], {
+        'tags': ['original'],
+      });
+
+      final savingAgain = store.save('user-a', [row(2, content)]);
+      final clearing = store.clear();
+      await Future.wait([savingAgain, clearing]);
+      expect(await store.load('user-a'), isEmpty);
+    },
+  );
+
   test('a corrupt file reads as empty rather than throwing', () async {
     await store.save('user-a', [row(1)]);
     final file = historyDir(cache).listSync().whereType<File>().single

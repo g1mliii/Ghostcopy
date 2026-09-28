@@ -645,17 +645,17 @@ void main() {
         return file;
       }
 
-      // Android's plugin labels any shared file with a text/ MIME type as
-      // text and hands over its path; that path used to be sent as the clip.
-      test('a text document labelled as text is sent as the file', () async {
+      // Android normalizes EXTRA_STREAM attachments before the plugin reads
+      // them, so a text document arrives as a file rather than literal text.
+      test('a text document attachment is sent as the file', () async {
         final doc = File('${dir.path}${Platform.pathSeparator}notes.txt')
           ..writeAsStringSync('hello from a file');
 
         await viewModel.handleSharedFiles([
           SharedMediaFile(
             path: doc.path,
-            mimeType: 'text/plain',
-            type: SharedMediaType.text,
+            mimeType: 'application/octet-stream',
+            type: SharedMediaType.file,
           ),
         ]);
 
@@ -670,15 +670,28 @@ void main() {
           (inv) async => inv.positionalArguments.first as ClipboardItem,
         );
         final missing = '${dir.path}${Platform.pathSeparator}gone.txt';
+        final privateFile = File(
+          '${dir.path}${Platform.pathSeparator}preferences.json',
+        )..writeAsStringSync('{"token":"private"}');
 
         await viewModel.handleSharedFiles([
           SharedMediaFile(path: 'just some text', type: SharedMediaType.text),
           // A path that names nothing on disk is text someone typed.
           SharedMediaFile(path: missing, type: SharedMediaType.text),
+          // EXTRA_TEXT may name a real private file. It still is not an
+          // attachment and must never be opened using this app's permissions.
+          SharedMediaFile(path: privateFile.path, type: SharedMediaType.text),
         ]);
 
         expect(inserted, isEmpty);
-        verify(() => clipboardRepository.insert(any())).called(2);
+        final sent = verify(
+          () => clipboardRepository.insert(captureAny()),
+        ).captured.cast<ClipboardItem>();
+        expect(sent.map((item) => item.content), [
+          'just some text',
+          missing,
+          privateFile.path,
+        ]);
       });
 
       test('a photo is scaled down and sent as a JPEG', () async {

@@ -4,8 +4,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.IntentCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -37,6 +40,37 @@ class MainActivity : FlutterActivity() {
     // the action waits here instead of being fired at a Dart handler that does
     // not exist yet.
     private var pendingNotificationAction: Map<String, String>? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        normalizeSharedAttachments(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    /**
+     * The plugin classifies streams with text MIME types as literal text. Preserve the
+     * distinction while EXTRA_STREAM still identifies an actual attachment;
+     * Dart must never infer attachment ownership from a text path's existence.
+     */
+    private fun normalizeSharedAttachments(share: Intent) {
+        fun fileMimeType(mime: String?): String =
+            if (mime == null || mime.startsWith("text/")) "application/octet-stream" else mime
+
+        when (share.action) {
+            Intent.ACTION_SEND -> {
+                val uri = IntentCompat.getParcelableExtra(share, Intent.EXTRA_STREAM, Uri::class.java)
+                if (uri != null) share.setDataAndType(share.data, fileMimeType(share.type))
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val uris = IntentCompat.getParcelableArrayListExtra(
+                    share, Intent.EXTRA_STREAM, Uri::class.java,
+                ) ?: return
+                val types = share.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)
+                share.putExtra(Intent.EXTRA_MIME_TYPES, Array(uris.size) { index ->
+                    fileMimeType(types?.getOrNull(index) ?: share.type)
+                })
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -153,6 +187,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onNewIntent(intent: Intent) {
+        normalizeSharedAttachments(intent)
         super.onNewIntent(intent)
         setIntent(intent) // Update the intent so Flutter can access it
 

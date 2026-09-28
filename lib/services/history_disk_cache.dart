@@ -5,6 +5,18 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+// Strings (including the large clip bodies) are immutable. Copy containers
+// before queuing so a realtime list or nested metadata can be reused safely.
+Object? _snapshotHistoryValue(Object? value) => switch (value) {
+  Map<String, Object?>() => value.map(
+    (key, value) => MapEntry(key, _snapshotHistoryValue(value)),
+  ),
+  List<Object?>() => value.map(_snapshotHistoryValue).toList(),
+  _ => value,
+};
+
+String _encodeHistory(Map<String, Object?> snapshot) => jsonEncode(snapshot);
+
 /// The last page of clipboard history, kept on disk so the app can show it
 /// without a connection.
 ///
@@ -88,16 +100,30 @@ class HistoryDiskCache {
 
   /// Replace the stored history for [userId] with [rows].
   Future<void> save(String userId, List<Map<String, dynamic>> rows) {
-    // Encoded now, not when the queued write runs: the caller's list may be
-    // reused or mutated by then.
-    final String encoded;
-    try {
-      encoded = jsonEncode({'v': _version, 'user': userId, 'rows': rows});
-    } on Object catch (e) {
-      debugPrint('[HistoryCache] Not saved - rows not encodable: $e');
-      return Future<void>.value();
-    }
+    final snapshot = <String, Object?>{
+      'v': _version,
+      'user': userId,
+      'rows': _snapshotHistoryValue(rows),
+    };
+    final large =
+        rows.length > 20 ||
+        rows.fold<int>(
+              0,
+              (size, row) => size + ((row['content'] as String?)?.length ?? 0),
+            ) >
+            10240;
+    // Reserve the queue position before yielding to the isolate. Otherwise
+    // a sign-out clear could finish before encoding, then be undone by save.
     return _serial(() async {
+      final String encoded;
+      try {
+        encoded = large
+            ? await compute(_encodeHistory, snapshot)
+            : _encodeHistory(snapshot);
+      } on Object catch (e) {
+        debugPrint('[HistoryCache] Not saved - rows not encodable: $e');
+        return;
+      }
       final dir = await _directory();
       if (dir == null) return;
       final target = _file(dir);

@@ -1230,19 +1230,6 @@ class MobileMainViewModel extends ChangeNotifier {
     for (final file in items) {
       try {
         switch (file.type) {
-          case SharedMediaType.text when isSharedFileOnDisk(file.path):
-            // A text *document*, not text. Android's plugin labels any shared
-            // file whose MIME type starts with text/ as text and hands over
-            // its path, so a shared .txt was sent as a clip reading
-            // "/data/user/0/.../notes.txt". Someone sharing a file wants the
-            // file sent.
-            await _sendSharedFile(
-              file,
-              targetDeviceTypes: targetDeviceTypes,
-              onSuccess: succeeded,
-              onError: failed,
-            );
-
           case SharedMediaType.text:
           case SharedMediaType.url:
             await saveSharedContent(
@@ -1286,20 +1273,6 @@ class MobileMainViewModel extends ChangeNotifier {
       ),
     );
     unawaited(loadHistory());
-  }
-
-  /// Whether a share labelled as text is really a file: an absolute path to
-  /// a file that exists. Real shared text is not a single line naming a file
-  /// in this app's reach, so this does not misfire on text.
-  @visibleForTesting
-  static bool isSharedFileOnDisk(String value) {
-    if (value.isEmpty || value.contains('\n')) return false;
-    try {
-      final file = File(value);
-      return file.isAbsolute && file.existsSync();
-    } on Object {
-      return false;
-    }
   }
 
   // ========== INCOMING SHARE PROGRESS ==========

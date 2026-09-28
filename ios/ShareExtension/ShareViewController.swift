@@ -253,10 +253,22 @@ class ShareViewController: RSIShareViewController {
 
     private static func destination(named name: String, in directory: URL?) -> URL? {
         guard let directory = directory else { return nil }
-        let safeName = name.isEmpty ? UUID().uuidString : name
-        let target = directory.appendingPathComponent(safeName)
-        if !FileManager.default.fileExists(atPath: target.path) { return target }
-        return directory.appendingPathComponent("\(UUID().uuidString.prefix(8))-\(safeName)")
+        // suggestedName belongs to the source app. Never let it select a
+        // parent directory, and retain only a usable basename.
+        let basename = (name as NSString).lastPathComponent
+        let safeName = basename.isEmpty || basename == "." || basename == ".."
+            ? UUID().uuidString : basename
+        // Each callback owns its directory, even when providers finish at
+        // the same time with identical names. No check-then-write race.
+        let itemDirectory = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: itemDirectory, withIntermediateDirectories: false)
+            return itemDirectory.appendingPathComponent(safeName)
+        } catch {
+            NSLog("[ShareExtension] Cannot create attachment folder: \(error)")
+            return nil
+        }
     }
 
     private static func copy(
