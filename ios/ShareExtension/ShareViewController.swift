@@ -116,6 +116,32 @@ class ShareViewController: RSIShareViewController {
         }
 
         let (kind, typeIdentifier) = match
+        if kind == .image {
+            // The image's file, copied as bytes. Asking for the item instead
+            // can hand back a decoded UIImage, and re-encoding a camera photo
+            // at full size - several at once - is enough to get the extension
+            // killed for memory before it writes anything.
+            _ = provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
+                if let url = url, let file = Self.copy(url, as: .image, into: directory) {
+                    return completion(file)
+                }
+                if let error = error { NSLog("[ShareExtension] Image file load failed: \(error)") }
+                Self.loadItem(provider, kind: kind, typeIdentifier: typeIdentifier,
+                              directory: directory, completion: completion)
+            }
+            return
+        }
+        loadItem(provider, kind: kind, typeIdentifier: typeIdentifier,
+                 directory: directory, completion: completion)
+    }
+
+    private static func loadItem(
+        _ provider: NSItemProvider,
+        kind: SharedMediaType,
+        typeIdentifier: String,
+        directory: URL?,
+        completion: @escaping (SharedMediaFile?) -> Void
+    ) {
         provider.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { data, error in
             if let error = error { NSLog("[ShareExtension] Load failed: \(error)") }
             // Also inside the handler: a file URL handed to it may be valid
@@ -169,8 +195,10 @@ class ShareViewController: RSIShareViewController {
         case let attributed as NSAttributedString:
             return text(attributed.string)
         case let image as UIImage:
-            guard let png = image.pngData() else { return nil }
-            return write(png, named: "\(UUID().uuidString).png", as: .image, into: directory)
+            // Only when no file was offered. JPEG, not PNG: a fraction of the
+            // size and of the encoding memory for a photo.
+            guard let jpeg = image.jpegData(compressionQuality: 0.9) else { return nil }
+            return write(jpeg, named: "\(UUID().uuidString).jpg", as: .image, into: directory)
         case let raw as Data:
             // Unnamed bytes offered as text are text. Anything with a file
             // name, or that is not text at all, is a file.

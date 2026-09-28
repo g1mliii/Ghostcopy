@@ -1258,6 +1258,7 @@ class MobileMainViewModel extends ChangeNotifier {
         failed('Could not send that item');
       }
     }
+    _removeShareFolders(items);
     final error = firstError;
     _setShareProgress(
       ShareProgress(
@@ -1273,6 +1274,34 @@ class MobileMainViewModel extends ChangeNotifier {
       ),
     );
     unawaited(loadHistory());
+  }
+
+  /// Delete the folders the iOS share extension copied these files into.
+  ///
+  /// It writes each share to its own `Shares/<id>` folder in the App Group
+  /// container and only swept old ones when the next share began - so the
+  /// last share, a large video refused over the size limit say, stayed on the
+  /// device indefinitely. Once handled, sent or not, it has no further use.
+  static void _removeShareFolders(List<SharedMediaFile> items) {
+    if (!Platform.isIOS) return;
+    final folders = <String>{
+      for (final item in items)
+        if (item.type != SharedMediaType.text &&
+            item.type != SharedMediaType.url)
+          File(item.path).parent.path,
+    };
+    for (final folder in folders) {
+      final dir = Directory(folder);
+      if (dir.parent.uri.pathSegments.where((s) => s.isNotEmpty).lastOrNull !=
+          'Shares') {
+        continue; // Not one of the extension's folders; leave it alone.
+      }
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException catch (e) {
+        debugPrint('[ShareSheet] Could not remove share folder: $e');
+      }
+    }
   }
 
   // ========== INCOMING SHARE PROGRESS ==========

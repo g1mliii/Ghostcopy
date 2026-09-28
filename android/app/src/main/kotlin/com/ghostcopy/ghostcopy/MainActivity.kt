@@ -2,6 +2,7 @@ package com.ghostcopy.ghostcopy
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -55,15 +56,29 @@ class MainActivity : FlutterActivity() {
         fun fileMimeType(mime: String?): String =
             if (mime == null || mime.startsWith("text/")) "application/octet-stream" else mime
 
+        // Only content:// streams, which a provider grants us. This activity is
+        // exported, so any app can send a file:// path into GhostCopy's own
+        // private storage (the history cache, say) and have it read and
+        // uploaded with GhostCopy's permissions. Such streams are dropped.
+        fun trusted(uri: Uri?): Boolean = uri?.scheme == ContentResolver.SCHEME_CONTENT
+
         when (share.action) {
             Intent.ACTION_SEND -> {
                 val uri = IntentCompat.getParcelableExtra(share, Intent.EXTRA_STREAM, Uri::class.java)
-                if (uri != null) share.setDataAndType(share.data, fileMimeType(share.type))
+                if (uri != null && !trusted(uri)) {
+                    share.removeExtra(Intent.EXTRA_STREAM)
+                } else if (uri != null) {
+                    share.setDataAndType(share.data, fileMimeType(share.type))
+                }
             }
             Intent.ACTION_SEND_MULTIPLE -> {
-                val uris = IntentCompat.getParcelableArrayListExtra(
+                val all = IntentCompat.getParcelableArrayListExtra(
                     share, Intent.EXTRA_STREAM, Uri::class.java,
                 ) ?: return
+                val uris = ArrayList(all.filter(::trusted))
+                if (uris.size != all.size) {
+                    share.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                }
                 val types = share.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)
                 share.putExtra(Intent.EXTRA_MIME_TYPES, Array(uris.size) { index ->
                     fileMimeType(types?.getOrNull(index) ?: share.type)
