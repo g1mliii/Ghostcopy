@@ -106,6 +106,31 @@ void main() {
     },
   );
 
+  group('breadcrumb string data', () {
+    Map<String, dynamic>? scrub(String category, Map<String, dynamic> data) =>
+        scrubBreadcrumb(
+          Breadcrumb(category: category, data: data),
+          Hint(),
+        )!.data;
+
+    // The state is the whole breadcrumb; dropped, it records nothing.
+    test('app lifecycle and memory warnings keep their state', () {
+      expect(scrub('app.lifecycle', {'state': 'paused'}), {'state': 'paused'});
+      expect(scrub('device.event', {'action': 'LOW_MEMORY'}), {
+        'action': 'LOW_MEMORY',
+      });
+    });
+
+    test('anything else that is a string is still dropped', () {
+      // The right key under another category.
+      expect(scrub('share', {'state': 'paused'}), isEmpty);
+      // The right key and category, but not an enum name.
+      expect(scrub('app.lifecycle', {'state': 'my secret clip text'}), isEmpty);
+      // Numbers are what diagnostics use, and they are kept.
+      expect(scrub('composer', {'chars': 409423}), {'chars': 409423});
+    });
+  });
+
   test('crash reporting is configured for errors only, with no content', () {
     final options = SentryFlutterOptions();
     configureCrashReporting(options);
@@ -118,6 +143,9 @@ void main() {
     // Native breadcrumbs bypass beforeSend; sessions report every launch.
     expect(options.enableAutoNativeBreadcrumbs, isFalse);
     expect(options.enableAutoSessionTracking, isFalse);
+    // What a hang or WatchdogTermination report needs to be readable.
+    expect(options.enableAppLifecycleBreadcrumbs, isTrue);
+    expect(options.enableMemoryPressureBreadcrumbs, isTrue);
     expect(options.enableAutoPerformanceTracing, isFalse);
     expect(options.tracesSampleRate, isNull);
     expect(options.beforeSend, isNotNull);

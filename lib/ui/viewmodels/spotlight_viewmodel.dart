@@ -9,6 +9,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
+import '../../services/crash_reporting_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/temp_file_service.dart';
@@ -248,6 +249,16 @@ class SpotlightViewModel extends ChangeNotifier {
   Future<ClipboardContent?> populateFromClipboard() async {
     try {
       final content = await _clipboardService.read();
+      // Sizes only. A large clipboard is where a hang would start.
+      recordDiagnostic(
+        'clipboard',
+        'Clipboard read',
+        data: {
+          'textChars': content.text?.length ?? 0,
+          'imageBytes': content.imageBytes?.length ?? 0,
+          'fileBytes': content.fileBytes?.length ?? 0,
+        },
+      );
 
       if (content.hasImage) {
         _clipboardContent = content;

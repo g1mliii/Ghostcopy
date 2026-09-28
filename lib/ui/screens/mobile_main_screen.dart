@@ -10,6 +10,7 @@ import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/crash_reporting_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/settings_service.dart';
@@ -106,6 +107,22 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// from the field's onChanged and from anything that sets the text
   /// programmatically (auto-paste, send, clear).
   final ValueNotifier<bool> _composerHasText = ValueNotifier(false);
+
+  /// Past this many characters the composer stops offering Apple Pencil
+  /// handwriting. See [_composerTooLongForPencil].
+  static const int _pencilHandwritingMaxChars = 2000;
+
+  /// Whether the composer holds more text than handwriting could apply to.
+  ///
+  /// On iOS a focused text field with handwriting enabled measures a box for
+  /// every character in it after each layout (EditableText's
+  /// _updateSelectionRects), one engine call per character, on the thread iOS
+  /// watches. Pasting a 409 KB Jetsam log into the composer hung the app for
+  /// seconds at a time (Sentry FLUTTER-8: NativeParagraph.getBoxesForRange
+  /// under _updateSelectionRects) - long enough for iOS to kill it. Nobody
+  /// handwrites into two thousand characters, so above that it is switched off
+  /// and short text keeps it.
+  final ValueNotifier<bool> _composerTooLongForPencil = ValueNotifier(false);
 
   // Share intent subscription
   StreamSubscription<List<SharedMediaFile>>? _intentDataStreamSubscription;
@@ -231,7 +248,23 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     if (_composerHasText.value != hasText) {
       _composerHasText.value = hasText;
     }
+    // Synchronous with the change, so a paste flips this before the frame that
+    // lays the text out - and before handwriting's measuring runs after it.
+    final length = _pasteController.text.length;
+    _composerTooLongForPencil.value = length > _pencilHandwritingMaxChars;
+    // A paste, not typing: the size only, for a hang report to carry.
+    if (length - _composerLength > 1000) {
+      recordDiagnostic(
+        'composer',
+        'Large text entered',
+        data: {'chars': length},
+      );
+    }
+    _composerLength = length;
   }
+
+  /// The composer's length at the last change, to tell a paste from typing.
+  int _composerLength = 0;
 
   void _onViewModelChanged() => scheduleRebuild();
 
@@ -249,6 +282,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       ..dispose();
     _historySearchController.dispose();
     _composerHasText.dispose();
+    _composerTooLongForPencil.dispose();
     _intentDataStreamSubscription?.cancel();
     _linkSubscription?.cancel();
 
@@ -1281,53 +1315,59 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ],
             // Its own layer: the cursor repaints this and nothing else.
             RepaintBoundary(
-              child: TextField(
-                controller: _pasteController,
-                focusNode: _pasteFocusNode,
-                // Blink, don't fade. The iOS default animates the cursor's
-                // opacity, which asks for a frame continuously - up to 120 a
-                // second on a ProMotion screen - for as long as the field has
-                // focus. Measured on an iPhone 15 Pro: 21% of a core with the
-                // keyboard up and nothing typed, against ~0% once dismissed.
-                // A plain blink repaints twice a second.
-                cursorOpacityAnimates: false,
-                // Phones do not unfocus on a tap elsewhere by default, so there was
-                // no way to put the keyboard away and stay on this screen.
-                onTapOutside: (_) => _pasteFocusNode.unfocus(),
-                // minLines sets the empty composer's height directly. Expanded
-                // cannot: this lives in a sliver, so incoming height is
-                // unbounded and a flex child has nothing to expand into.
-                minLines: 3,
-                maxLines: 5,
-                keyboardType: TextInputType.multiline,
-                style: const TextStyle(
-                  fontSize: 16,
-                  color: GhostColors.textPrimary,
+              // Rebuilds the field only when the text crosses the handwriting
+              // limit, not per keystroke.
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _composerTooLongForPencil,
+                builder: (context, tooLong, _) => TextField(
+                  stylusHandwritingEnabled: !tooLong,
+                  controller: _pasteController,
+                  focusNode: _pasteFocusNode,
+                  // Blink, don't fade. The iOS default animates the cursor's
+                  // opacity, which asks for a frame continuously - up to 120 a
+                  // second on a ProMotion screen - for as long as the field has
+                  // focus. Measured on an iPhone 15 Pro: 21% of a core with the
+                  // keyboard up and nothing typed, against ~0% once dismissed.
+                  // A plain blink repaints twice a second.
+                  cursorOpacityAnimates: false,
+                  // Phones do not unfocus on a tap elsewhere by default, so there was
+                  // no way to put the keyboard away and stay on this screen.
+                  onTapOutside: (_) => _pasteFocusNode.unfocus(),
+                  // minLines sets the empty composer's height directly. Expanded
+                  // cannot: this lives in a sliver, so incoming height is
+                  // unbounded and a flex child has nothing to expand into.
+                  minLines: 3,
+                  maxLines: 5,
+                  keyboardType: TextInputType.multiline,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: GhostColors.textPrimary,
+                  ),
+                  decoration: const InputDecoration(
+                    hintText: 'Paste or type something…',
+                    hintStyle: TextStyle(color: GhostColors.textMuted),
+                    contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
+                  ),
+                  onChanged: (value) {
+                    if (_viewModel.sendErrorMessage != null) {
+                      _viewModel.clearSendError();
+                    }
+                    // Nothing else needed here: _syncComposerHasText is driven by
+                    // the controller, so it covers typing and the programmatic
+                    // paths (auto-paste, clear after send) alike.
+                    //
+                    // This used to be setState(), which rebuilt the entire screen
+                    // on every keystroke - and the history list is built eagerly,
+                    // so that reconstructed every _HistoryRow (each doing
+                    // decryption and content detection) per character typed.
+                  },
                 ),
-                decoration: const InputDecoration(
-                  hintText: 'Paste or type something…',
-                  hintStyle: TextStyle(color: GhostColors.textMuted),
-                  contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
-                  filled: false,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  focusedErrorBorder: InputBorder.none,
-                ),
-                onChanged: (value) {
-                  if (_viewModel.sendErrorMessage != null) {
-                    _viewModel.clearSendError();
-                  }
-                  // Nothing else needed here: _syncComposerHasText is driven by
-                  // the controller, so it covers typing and the programmatic
-                  // paths (auto-paste, clear after send) alike.
-                  //
-                  // This used to be setState(), which rebuilt the entire screen
-                  // on every keystroke - and the history list is built eagerly,
-                  // so that reconstructed every _HistoryRow (each doing
-                  // decryption and content detection) per character typed.
-                },
               ),
             ),
             const Divider(height: 1, color: GhostColors.border),
@@ -1662,7 +1702,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ),
             const SizedBox(width: 7),
             Text(
-              '${items.length} recent',
+              // Saved on this phone and not refreshed - it may be behind.
+              _viewModel.showingSavedHistory
+                  ? '${items.length} saved · offline'
+                  : '${items.length} recent',
               style: GhostTypography.caption.copyWith(
                 color: GhostColors.textMuted,
               ),
@@ -2314,6 +2357,11 @@ class _HistoryRowState extends State<_HistoryRow> {
   /// longer fit in a row.
   void _showDetail(BuildContext context) {
     Adaptive.impactFeedback();
+    recordDiagnostic(
+      'ui',
+      'Clip opened',
+      data: {'chars': widget.item.content.length},
+    );
     final detection = _detectionResult;
 
     unawaited(

@@ -29,9 +29,7 @@ test result can revert a single change rather than the lot.
 
 - [ ] **On 1.0.0 (11):** encrypted history still decrypts with the existing
       passphrase, tray menu, Option+Space, a clip each way
-## Windows: next
-
-**Ships through the Microsoft Store**, decided 2026-09-19. Registration is free
+## Windows: nextre**, decided 2026-09-19. Registration is free
 for Individual and Company accounts via https://storedeveloper.microsoft.com -
 that entry point specifically; Partner Center and Visual Studio still route to
 the paid legacy flow. Re-checked 2026-09-25: Company became free in May 2026
@@ -142,6 +140,38 @@ to package - but everything below marked "verify" does need one.
         consistent with the App Store decision
 
 ## iOS: open
+
+- [ ] **Paste hang, FLUTTER-8** (fixed on `fix/mobile-offline-history`,
+      verify on device): pasting a 409 KB Jetsam log into the composer hung
+      the main thread - iOS Pencil handwriting support measures every
+      character of a focused field after each layout. The composer now turns
+      handwriting off above 2,000 characters. Verify: paste a large log on the
+      iPhone, the app stays responsive and it sends
+- [ ] **Share extension rewrite - not compiled yet** (branch
+      `fix/mobile-offline-history`, `ios/ShareExtension/ShareViewController.swift`).
+      The package's loader asked a document for `public.text`, got a file URL
+      back and silently never finished, so sharing a .txt/.ips hung the sheet.
+      Attachments now load in our own code: a file on disk is sent as a file,
+      only real text as text, and every share completes (60 s backstop).
+      Written on Windows: build on the Mac (or `build-check.yml` with
+      platform `ios`), then on device share - a .txt from Files, a Jetsam log
+      from Analytics Data, a photo, a Safari page, a message from Messages,
+      two files at once - and confirm each arrives as the right kind of clip
+- [ ] **WatchdogTermination, FLUTTER-7**, 2026-09-27 23:55 UTC - probably
+      not ours to fix. Came from a third install (`3340F209`, geo US, no
+      device model or OS) - not the iPhone (`406CE11B`, Milton) or the Mac
+      (`5754A4DF`, Milton), and Windows reports through a different SDK. Likely
+      another tester or an Apple review device. It predates the paste hang,
+      and the phone's newest Jetsam log (12:59 EDT) killed
+      `communicationtrustd`, not GhostCopy. The next build carries lifecycle,
+      memory-warning and size-only diagnostic breadcrumbs, so a recurrence
+      will say whether it was memory, a freeze or a force-quit
+- [ ] **Offline history** (`HistoryDiskCache`, branch
+      `fix/mobile-offline-history`): on a phone, open once online, then in
+      airplane mode force-quit and reopen - the list shows with "saved ·
+      offline" and a text clip copies. Also sign out and back in as someone
+      else offline: nothing of the first account shows. Files and images only
+      open offline if they were opened before (MediaDiskCache)
 
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the

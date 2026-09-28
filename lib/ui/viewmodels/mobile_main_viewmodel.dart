@@ -12,6 +12,7 @@ import '../../models/clipboard_limits.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
+import '../../services/crash_reporting_service.dart';
 import '../../services/device_service.dart';
 import '../../services/fcm_service.dart';
 import '../../services/file_type_service.dart';
@@ -183,6 +184,16 @@ class MobileMainViewModel extends ChangeNotifier {
 
   String _historySearchQuery = '';
   String get historySearchQuery => _historySearchQuery;
+
+  /// Whether the server has answered for this account since it was loaded,
+  /// by fetch or by realtime. Until then the list may be the copy saved on
+  /// this device, and once it has, that copy must never be put back over it.
+  bool _historyIsLive = false;
+
+  /// The list on screen is the saved copy and the network could not be
+  /// reached to replace it - the header says so, since it may be out of date.
+  bool _showingSavedHistory = false;
+  bool get showingSavedHistory => _showingSavedHistory;
 
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
   Timer? _realtimeReconnectTimer;
@@ -396,9 +407,19 @@ class MobileMainViewModel extends ChangeNotifier {
       notifyListeners();
     }
 
+    // With nothing on screen, show the history saved on this device while the
+    // network is asked. Opened without a signal, the app used to sit on a
+    // spinner and then an error over clips it had shown a minute before.
+    // Started, not awaited: with a signal the fetch usually wins and this
+    // does nothing, and on a connection that hangs rather than fails it is
+    // what puts the clips up.
+    final saved = _historyItems.isEmpty ? _showSavedHistory(revision) : null;
+
     try {
       final items = await _clipboardRepo.getHistory();
       if (!_isDisposed && revision == _accountRevision) {
+        _historyIsLive = true;
+        _showingSavedHistory = false;
         _historyItems = items;
         _filterHistory(_historySearchQuery);
         _historyLoading = false;
@@ -413,6 +434,11 @@ class MobileMainViewModel extends ChangeNotifier {
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to load history: $e');
+      recordDiagnostic('history', 'History load failed');
+      // No signal at all fails in milliseconds, usually before the disk read
+      // is back. Waiting for it keeps the error pane from flashing up and
+      // being replaced a moment later.
+      await saved;
       if (!_isDisposed && revision == _accountRevision) {
         _historyLoading = false;
         // Only claim failure when there is nothing on screen. Replacing a good
@@ -421,9 +447,36 @@ class MobileMainViewModel extends ChangeNotifier {
         if (_historyItems.isEmpty) {
           _historyError = 'Failed to load history. Pull to refresh.';
         }
+        _showingSavedHistory = !_historyIsLive && _historyItems.isNotEmpty;
         notifyListeners();
       }
     }
+  }
+
+  /// Put the history saved on this device on screen, unless the server has
+  /// already answered or the account has changed since [revision].
+  Future<void> _showSavedHistory(int revision) async {
+    final List<ClipboardItem> items;
+    try {
+      items = await _clipboardRepo.getCachedHistory();
+    } on Object catch (e) {
+      debugPrint('[MobileMainVM] Saved history unavailable: $e');
+      return;
+    }
+    if (_isDisposed || revision != _accountRevision) return;
+    if (_historyIsLive || _historyItems.isNotEmpty || items.isEmpty) return;
+
+    _historyItems = items;
+    _filterHistory(_historySearchQuery);
+    _historyLoading = false;
+    _historyError = null;
+    _cleanupCache();
+    recordDiagnostic(
+      'history',
+      'Showing saved history',
+      data: {'items': items.length},
+    );
+    notifyListeners();
   }
 
   /// Subscribe to realtime history updates
@@ -449,9 +502,15 @@ class MobileMainViewModel extends ChangeNotifier {
         _realtimeRetryCount = 0;
         _historyError = null;
 
-        final oldFirstId = _historyItems.isNotEmpty
+        // The saved copy is not a baseline for auto-copy: before it existed,
+        // this compared against an empty list at that point, and it still
+        // must - otherwise what counts as "new" would depend on whether the
+        // app was last opened offline.
+        final oldFirstId = _historyIsLive && _historyItems.isNotEmpty
             ? _historyItems.first.id
             : null;
+        _historyIsLive = true;
+        _showingSavedHistory = false;
 
         _historyItems = items;
         _filterHistory(_historySearchQuery);
@@ -1130,6 +1189,19 @@ class MobileMainViewModel extends ChangeNotifier {
     final items = files.where((f) => f.path.isNotEmpty).toList();
     if (items.isEmpty) return;
 
+    final texts = items.where(
+      (f) => f.type == SharedMediaType.text || f.type == SharedMediaType.url,
+    );
+    recordDiagnostic(
+      'share',
+      'Share received',
+      data: {
+        'items': items.length,
+        'texts': texts.length,
+        'textChars': texts.fold(0, (sum, f) => sum + f.path.length),
+      },
+    );
+
     // The share sheet opens the app and the send runs from here, so without
     // this the user looked at a splash or an idle list for a few seconds with
     // nothing saying a share was on its way, then got a toast.
@@ -1601,6 +1673,8 @@ class MobileMainViewModel extends ChangeNotifier {
     _detectionCache.clear();
     _historyItems = [];
     _filteredHistoryItems = [];
+    _historyIsLive = false;
+    _showingSavedHistory = false;
     _historySearchQuery = '';
     _selectedDeviceTypes.clear();
     // The device list belongs to the account that just went away. It was left

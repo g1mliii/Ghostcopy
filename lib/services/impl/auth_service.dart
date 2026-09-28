@@ -282,13 +282,22 @@ class AuthService implements IAuthService {
   /// redeems it there (desktop via _handleDeepLinkArgs, Android via
   /// supabase_flutter's own link observer). Both check the URL with
   /// AuthCallbackDecision first.
-  Future<bool> _webOAuthSignIn(OAuthProvider provider) async {
+  Future<bool> _webOAuthSignIn(OAuthProvider provider) =>
+      _interactive(() => _webOAuthSignInUnguarded(provider));
+
+  Future<bool> _webOAuthSignInUnguarded(OAuthProvider provider) async {
     // Launching a browser is not a completed sign-in. Keep the old session
     // until the callback has actually installed the new one.
+    //
+    // Read inside _interactive, once any guest sign-in in flight has landed.
+    // Read before it, `previous` was null while the background guest retry
+    // was still running; the guest then arrived during the wait, counted as
+    // "a different account" below, and the sign-in reported success with no
+    // callback - the panel closed and sync stayed on the guest.
     final previous = _client.auth.currentSession;
     final deviceId = _deviceService?.getCurrentDeviceId();
     try {
-      final signedIn = await _viaBrowser(
+      final signedIn = await _viaBrowserUnguarded(
         launch: () => _client.auth.signInWithOAuth(
           provider,
           redirectTo: kIsWeb ? null : _oauthRedirect,
@@ -342,12 +351,10 @@ class AuthService implements IAuthService {
   ///
   /// Listens before the browser opens, so a quick callback is not missed, and
   /// stops waiting at once if the browser never opened.
-  Future<bool> _viaBrowser({
-    required Future<bool> Function() launch,
-    required bool Function(Session session) isDone,
-  }) =>
-      _interactive(() => _viaBrowserUnguarded(launch: launch, isDone: isDone));
-
+  ///
+  /// Unguarded: callers run it inside [_interactive] together with reading
+  /// the state their `isDone` compares against, so that state is read after
+  /// any guest sign-in in flight has landed.
   Future<bool> _viaBrowserUnguarded({
     required Future<bool> Function() launch,
     required bool Function(Session session) isDone,
@@ -577,12 +584,16 @@ class AuthService implements IAuthService {
 
   /// Link [provider] to the anonymous user through the browser, preserving
   /// user_id and clipboard data. Same return path as [_webOAuthSignIn].
-  Future<bool> _webOAuthLink(OAuthProvider provider) async {
+  Future<bool> _webOAuthLink(OAuthProvider provider) =>
+      _interactive(() => _webOAuthLinkUnguarded(provider));
+
+  Future<bool> _webOAuthLinkUnguarded(OAuthProvider provider) async {
     try {
       // Linking keeps the user id; it is done when the account stops being a
-      // guest.
+      // guest. Read inside _interactive for the same reason as
+      // _webOAuthSignInUnguarded.
       final userId = _client.auth.currentUser?.id;
-      final linked = await _viaBrowser(
+      final linked = await _viaBrowserUnguarded(
         launch: () => _client.auth.linkIdentity(
           provider,
           redirectTo: kIsWeb ? null : _oauthRedirect,
