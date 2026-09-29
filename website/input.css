@@ -50,6 +50,13 @@
   .label {
     @apply font-mono text-label uppercase text-ink-1;
   }
+  /* A second platform's download, beside the accent .cta: same size and
+     underline, white rather than accent, so nothing reads as unavailable. */
+  .cta-alt {
+    @apply inline-flex items-center gap-2 text-ink-4 hover:text-accent-text
+           border-b border-line-strong hover:border-accent-border pb-1
+           text-base sm:text-[17px] font-medium transition-colors;
+  }
 
   /* Quiet full-width divider. */
   .rule {
