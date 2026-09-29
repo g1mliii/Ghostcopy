@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -102,8 +104,37 @@ class DeviceService implements IDeviceService {
     }
   }
 
+  /// The registration running now, and what it registers.
+  Future<bool>? _registration;
+  String? _registrationKey;
+
+  /// Joins an identical registration that is already running.
+  ///
+  /// A launch reached this from several places at once - startup, the
+  /// welcome screen, the push token arriving - and each ran the full
+  /// release-then-upsert: the API logs showed two DELETEs and two upserts on
+  /// devices within the same second, every launch. The same account and token
+  /// now share one write. A different token or account still runs its own.
   @override
-  Future<bool> registerCurrentDevice({String? fcmToken}) async {
+  Future<bool> registerCurrentDevice({String? fcmToken}) {
+    final key = '${_supabase.auth.currentUser?.id}|${fcmToken ?? ''}';
+    final running = _registration;
+    if (running != null && _registrationKey == key) return running;
+
+    final registration = _registerOnce(fcmToken: fcmToken);
+    _registration = registration;
+    _registrationKey = key;
+    void settle() {
+      if (identical(_registration, registration)) _registration = null;
+    }
+
+    unawaited(
+      registration.then<void>((_) => settle(), onError: (Object _) => settle()),
+    );
+    return registration;
+  }
+
+  Future<bool> _registerOnce({String? fcmToken}) async {
     _ensureInitialized();
     // A result, not a throw: the contract is that registration swallows its
     // own failures, and no session is one of them - an offline launch whose
@@ -173,7 +204,7 @@ class DeviceService implements IDeviceService {
         );
         // Success means the token landed, not just the row: callers such as
         // _reassertFcmToken stop retrying on true.
-        final registered = await registerCurrentDevice();
+        final registered = await _registerOnce();
         return registered && await _applyFcmToken(fcmToken);
       }
       debugPrint(

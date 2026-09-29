@@ -395,8 +395,53 @@ class MobileMainViewModel extends ChangeNotifier {
     }
   }
 
-  /// Load history (one-shot fetch)
-  Future<void> loadHistory() async {
+  /// The history load running now, and whether another was asked for while
+  /// it ran.
+  Future<void>? _historyLoad;
+  int? _historyLoadRevision;
+  bool _historyReloadWanted = false;
+
+  /// Load history, folding overlapping requests together.
+  ///
+  /// Startup, the realtime subscription, resume and sign-in each ask for
+  /// history, and each used to fetch it: the API logs showed the same
+  /// 15-clip query up to ten times in seven seconds on one app open. A call
+  /// made while a load runs now waits for that load plus one more started
+  /// after it - so ten calls cost two fetches, and every caller still gets a
+  /// fetch that began after it asked (a clip just sent, or just announced
+  /// by realtime, is never missed).
+  ///
+  /// Only within one account: after a switch the new account's load starts at
+  /// once rather than waiting behind the old account's, which may be the very
+  /// request that hung.
+  Future<void> loadHistory() {
+    final running = _historyLoad;
+    if (running != null && _historyLoadRevision == _accountRevision) {
+      _historyReloadWanted = true;
+      return running;
+    }
+    _historyReloadWanted = false;
+    _historyLoadRevision = _accountRevision;
+    final load = _runHistoryLoads();
+    _historyLoad = load;
+    return load;
+  }
+
+  Future<void> _runHistoryLoads() async {
+    final revision = _accountRevision;
+    try {
+      do {
+        _historyReloadWanted = false;
+        await _loadHistoryOnce();
+      } while (_historyReloadWanted &&
+          !_isDisposed &&
+          revision == _accountRevision);
+    } finally {
+      if (_historyLoadRevision == revision) _historyLoad = null;
+    }
+  }
+
+  Future<void> _loadHistoryOnce() async {
     final revision = _accountRevision;
     // Loading is only worth showing when there is nothing to look at. Every
     // resume reloads (see onAppResumed), and flagging that as loading swapped
