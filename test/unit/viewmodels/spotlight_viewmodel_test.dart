@@ -220,6 +220,9 @@ void main() {
     when(
       () => clipboardRepository.downloadFile(any()),
     ).thenAnswer((_) async => null);
+    when(
+      () => clipboardRepository.lastDownloadWasOffline(any()),
+    ).thenReturn(false);
     final copying = SpotlightViewModel(
       authService: authService,
       clipboardRepository: clipboardRepository,
@@ -245,6 +248,40 @@ void main() {
     expect(clipboardSyncService.modificationTimeUpdates, 0);
     expect(copying.errorMessage, isNotNull);
     verifyNever(() => clipboard.writeImage(any()));
+  });
+
+  test('copying a file that never downloaded, offline, says so', () async {
+    // Offline history shows the clip; its file lives in storage.
+    final clipboard = _MockClipboardService();
+    when(
+      () => clipboardRepository.downloadFile(any()),
+    ).thenAnswer((_) async => null);
+    when(
+      () => clipboardRepository.lastDownloadWasOffline(any()),
+    ).thenReturn(true);
+    final copying = SpotlightViewModel(
+      authService: authService,
+      clipboardRepository: clipboardRepository,
+      clipboardSyncService: clipboardSyncService,
+      transformerService: transformerService,
+      notificationService: notificationService,
+      clipboardService: clipboard,
+    );
+    addTearDown(copying.dispose);
+
+    await copying.handleHistoryItemCopy(
+      ClipboardItem(
+        id: 'img',
+        userId: 'user-123',
+        content: '',
+        deviceType: 'ios',
+        createdAt: DateTime(2026),
+        contentType: ContentType.imagePng,
+        storagePath: 'user-123/img',
+      ),
+    );
+
+    expect(copying.errorMessage, offlineFileMessage);
   });
 
   testWidgets('plain typing pauses do not repeatedly rebuild the window', (

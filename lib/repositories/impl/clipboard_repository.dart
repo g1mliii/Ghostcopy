@@ -721,6 +721,15 @@ class ClipboardRepository implements IClipboardRepository {
     return _downloadAndDecrypt(item, storagePath);
   }
 
+  /// Storage paths whose last download failed for want of a connection.
+  final _offlineDownloads = <String>{};
+
+  @override
+  bool lastDownloadWasOffline(ClipboardItem item) {
+    final storagePath = item.storagePath;
+    return storagePath != null && _offlineDownloads.contains(storagePath);
+  }
+
   Future<Uint8List?> _downloadAndDecrypt(
     ClipboardItem item,
     String storagePath,
@@ -729,6 +738,7 @@ class ClipboardRepository implements IClipboardRepository {
       debugPrint('[Repository] ↓ Downloading: $storagePath');
 
       final raw = await _storageService.downloadFile(storagePath);
+      _offlineDownloads.remove(storagePath);
 
       debugPrint('[Repository] ✓ Downloaded: ${raw.length} bytes');
 
@@ -740,6 +750,7 @@ class ClipboardRepository implements IClipboardRepository {
       return await _decryptDownloaded(item, raw);
     } on Exception catch (e) {
       debugPrint('[Repository] ✗ Download failed: $e');
+      if (isNetworkError(e)) _offlineDownloads.add(storagePath);
       return null;
     }
   }

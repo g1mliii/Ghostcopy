@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../models/exceptions.dart';
+import '../../utils/network_errors.dart';
 import '../storage_service.dart';
 
 /// Implementation of Storage operations using Cloudflare R2
@@ -80,6 +82,7 @@ class StorageService implements IStorageService {
     } catch (e) {
       debugPrint('[StorageService] ✗ Upload failed: $e');
       if (e is StorageException) rethrow;
+      if (isNetworkError(e)) throw NetworkException(noInternetMessage);
       throw StorageException('Failed to upload file: $e');
     }
   }
@@ -121,6 +124,9 @@ class StorageService implements IStorageService {
     } catch (e) {
       debugPrint('[StorageService] ✗ Download failed: $e');
       if (e is StorageException) rethrow;
+      // Kept distinct from StorageException, so a caller can tell "no
+      // connection" from "the server said no".
+      if (isNetworkError(e)) throw NetworkException(noInternetMessage);
       throw StorageException('Failed to download file: $e');
     }
   }
@@ -163,6 +169,10 @@ class StorageService implements IStorageService {
       return data;
     } on StorageException {
       rethrow;
+    } on FunctionsFetchException {
+      // The request never got a response - offline, not refused. Caught
+      // before FunctionException, which it extends.
+      throw NetworkException(noInternetMessage);
     } on FunctionException catch (e) {
       // Surface what the function actually said rather than the exception's
       // toString, which reads as a stack of client internals.
@@ -172,6 +182,7 @@ class StorageService implements IStorageService {
           : e.reasonPhrase ?? 'request failed';
       throw StorageException('Storage request failed: $message');
     } catch (e) {
+      if (isNetworkError(e)) throw NetworkException(noInternetMessage);
       throw StorageException('Edge function call failed: $e');
     }
   }

@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
+import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
@@ -968,6 +969,10 @@ class MobileMainViewModel extends ChangeNotifier {
           sharePositionOrigin: sharePositionOrigin,
         );
         if (!shared) {
+          if (_clipboardRepo.lastDownloadWasOffline(item)) {
+            onError?.call(offlineFileMessage);
+            return;
+          }
           throw Exception('Failed to download file');
         }
       } else if (item.isRichText) {
@@ -1807,7 +1812,9 @@ class MobileMainViewModel extends ChangeNotifier {
       if (item.isImage) {
         final bytes = await _clipboardRepo.downloadFile(item);
         if (bytes == null) {
-          throw Exception('Failed to download image');
+          throw _clipboardRepo.lastDownloadWasOffline(item)
+              ? NetworkException(offlineFileMessage)
+              : Exception('Failed to download image');
         }
 
         await clipboardService.writeImage(bytes);
