@@ -17,10 +17,16 @@ mixin CoalescedRebuild<T extends StatefulWidget> on State<T> {
     if (!mounted || _isRebuildScheduled) return;
 
     _isRebuildScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _isRebuildScheduled = false;
-      if (!mounted) return;
-      setState(() {});
-    });
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        _isRebuildScheduled = false;
+        if (!mounted) return;
+        setState(() {});
+      })
+      // A post-frame callback runs after the next frame but does not ask for
+      // one. On an idle screen - the Spotlight open, waiting for a clip - no
+      // frame came, so a clip that arrived reloaded history in the ViewModel
+      // and the screen did not redraw until the mouse moved over it.
+      ..ensureVisualUpdate();
   }
 }

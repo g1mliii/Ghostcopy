@@ -50,6 +50,7 @@ import 'services/settings_service.dart';
 import 'services/single_instance.dart';
 import 'services/system_power_service.dart';
 import 'services/temp_file_service.dart';
+import 'services/timeout_http_client.dart';
 import 'services/transformer_service.dart';
 import 'services/tray_service.dart';
 import 'services/url_shortener_service.dart';
@@ -130,6 +131,8 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     await Supabase.initialize(
       url: _supabaseUrl,
       publishableKey: _supabasePublishableKey,
+      // A deadline on every request; see TimeoutHttpClient.
+      httpClient: TimeoutHttpClient(),
       // Same guard as the UI isolate: this one also starts a deep-link
       // observer, and it must not accept a session from a URL either.
       authOptions: const FlutterAuthClientOptions(
@@ -351,6 +354,8 @@ Future<void> _appMain(
     Supabase.initialize(
       url: _supabaseUrl,
       publishableKey: _supabasePublishableKey,
+      // A deadline on every request; see TimeoutHttpClient.
+      httpClient: TimeoutHttpClient(),
       // supabase_flutter starts its own AppLinks deep-link observer that calls
       // getSessionFromUrl directly, bypassing _handleDeepLinkArgs. Its default
       // predicate accepts any URI carrying access_token, so without this the

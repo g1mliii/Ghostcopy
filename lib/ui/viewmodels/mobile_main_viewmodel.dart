@@ -22,6 +22,7 @@ import '../../services/media_memory_cache.dart';
 import '../../services/security_service.dart';
 import '../../services/transformer_service.dart';
 import '../../utils/image_shrink.dart';
+import '../../utils/network_errors.dart';
 import '../../utils/platform_label.dart';
 
 /// ViewModel for MobileMainScreen - handles business logic and state
@@ -695,7 +696,7 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to send: $e');
       if (!_isDisposed) {
         _isSending = false;
-        _sendErrorMessage = 'Failed to send: $e';
+        _sendErrorMessage = sendFailureMessage(e, 'Failed to send: $e');
         notifyListeners();
       }
     }
@@ -758,7 +759,7 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to send file: $e');
       if (!_isDisposed) {
         _isSending = false;
-        _sendErrorMessage = 'Failed to send file';
+        _sendErrorMessage = sendFailureMessage(e, 'Failed to send file');
         notifyListeners();
       }
     }
@@ -818,7 +819,7 @@ class MobileMainViewModel extends ChangeNotifier {
       debugPrint('[MobileMainVM] Failed to send image: $e');
       if (!_isDisposed) {
         _isSending = false;
-        _sendErrorMessage = 'Failed to send image: $e';
+        _sendErrorMessage = sendFailureMessage(e, 'Failed to send image: $e');
         notifyListeners();
       }
     }
@@ -1255,7 +1256,7 @@ class MobileMainViewModel extends ChangeNotifier {
         // it and strand the rest along with the history reload below.
       } on Object catch (e) {
         debugPrint('[ShareSheet] Failed to send shared item: $e');
-        failed('Could not send that item');
+        failed(sendFailureMessage(e, 'Could not send that item'));
       }
     }
     _removeShareFolders(items);
