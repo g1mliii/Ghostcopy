@@ -148,9 +148,9 @@
                     <div class="flex flex-wrap items-end gap-x-9 gap-y-5">
                         <!-- /download/macos is a redirect in _redirects to the
                              current DMG. -->
-                        <a href="/download/macos" class="cta">Download for Mac <span aria-hidden="true">&darr;</span></a>
-                        <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80" class="cta-alt" rel="noopener">Get it for Windows <span aria-hidden="true">&rarr;</span></a>
-                        <a href="#iphone" class="cta-alt">iPhone on TestFlight <span aria-hidden="true">&rarr;</span></a>
+                        <a href="/download/macos" class="cta" data-platform="mac">Download for Mac <span aria-hidden="true">&darr;</span></a>
+                        <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80" class="cta-alt" data-platform="windows" rel="noopener">Get it for Windows <span aria-hidden="true">&rarr;</span></a>
+                        <a href="#iphone" class="cta-alt" data-platform="ios">iPhone on TestFlight <span aria-hidden="true">&rarr;</span></a>
                     </div>
                     <p class="label mt-5">macOS 14 and up · Windows 10 and 11 · <a href="/download" class="hover:text-ink-4 transition-colors underline underline-offset-4 decoration-line-strong">All platforms</a></p>
                 </div>
@@ -383,6 +383,7 @@
         </div>
     </footer>
 
+    <script src="/platform.js" defer></script>
     <script src="/waitlist.js" defer></script>
 </body>
 
