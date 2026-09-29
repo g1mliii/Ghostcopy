@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://ghostcopy.app/download/macos"><img src="https://img.shields.io/badge/Download_for_Mac-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac" /></a>
   <a href="https://testflight.apple.com/join/62aWHQzj"><img src="https://img.shields.io/badge/iPhone-Join_the_TestFlight-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="iPhone on TestFlight" /></a>
-  <a href="https://ghostcopy.app/download"><img src="https://img.shields.io/badge/Windows-Coming_to_the_Microsoft_Store-3A3A44?style=for-the-badge&logo=windows&logoColor=white" alt="Windows, coming soon" /></a>
+  <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80"><img src="https://img.shields.io/badge/Windows-Get_it_from_Microsoft-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Get it from Microsoft" /></a>
 </p>
 
 <p align="center">
@@ -48,7 +48,7 @@
 |---|---|---|
 | **macOS** 14+ | Available | [Download the .dmg](https://ghostcopy.app/download/macos) &mdash; signed and notarized by Apple, and keeps itself up to date |
 | **iPhone** iOS 16+ | Public beta | [Join on TestFlight](https://testflight.apple.com/join/62aWHQzj) &mdash; install TestFlight, open the link on your iPhone, tap Accept |
-| **Windows** 10/11 | Coming soon | Through the Microsoft Store &mdash; [get told when it lands](https://ghostcopy.app/download#notify) |
+| **Windows** 10/11 | Available | [Get it from the Microsoft Store](https://apps.microsoft.com/detail/9NW0TTGMSF80) &mdash; signed by Microsoft, and updates itself |
 | **Android** 8+ | Next | [Get told when it lands](https://ghostcopy.app/download#notify) |
 
 Everything else &mdash; the FAQ, privacy policy and terms &mdash; is at **[ghostcopy.app](https://ghostcopy.app/)**.
