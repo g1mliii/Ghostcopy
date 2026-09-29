@@ -10,16 +10,31 @@
 --    and expired QR link tokens - exchange-link-token refuses an expired token
 --    itself (expires_at > now), so prompt deletion adds nothing. The daily run
 --    stays; the five-minute copy goes.
+--
+--    The daily job was created in the dashboard and no migration schedules
+--    it, so a database built from these migrations alone would lose its only
+--    run here. It is (re)scheduled first, by name, so this holds anywhere.
+SELECT cron.unschedule(jobid) FROM cron.job
+  WHERE jobname = 'cleanup-stale-rate-limits-daily';
+SELECT cron.schedule('cleanup-stale-rate-limits-daily', '0 3 * * *',
+  'SELECT public.cleanup_stale_rate_limits()');
 SELECT cron.unschedule(jobid) FROM cron.job
   WHERE jobname = 'cleanup-expired-transient-data';
 
 -- 2. Clip retention: every five minutes to hourly. The function is bounded -
 --    at most 1000 users and 5000 deletions a run, resuming from a cursor - so
---    hourly still drains 120,000 rows a day, far above current load. The
---    signal to speed it back up is unchanged from
---    20260916210000_relax_cleanup_cron_cadence.sql: when
---    cleanup_old_clipboard_items_deep() starts returning deleted_count = 5000
---    regularly, each run is ending with its budget spent.
+--    hourly still drains 120,000 rows a day, far above current load.
+--
+--    Two signals to speed it back up. Either one means a faster schedule:
+--      - deleted_count = 5000 regularly: each run ends with its deletion
+--        budget spent (from 20260916210000_relax_cleanup_cron_cadence.sql).
+--      - processed_users = 1000 regularly: each run visits its full 1000
+--        users, so one pass over every account spans several runs. Hourly
+--        covers 24,000 users a day; past that, some accounts wait more than
+--        a day to be trimmed while deleted_count still looks low.
+--    Both come back from:
+--      SELECT deleted_count, processed_users
+--      FROM public.cleanup_old_clipboard_items_deep();
 SELECT cron.unschedule(jobid) FROM cron.job
   WHERE jobname = 'cleanup-old-clips-bounded';
 SELECT cron.schedule('cleanup-old-clips-bounded', '7 * * * *',
