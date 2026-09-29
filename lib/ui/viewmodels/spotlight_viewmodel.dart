@@ -14,6 +14,7 @@ import '../../services/file_type_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
+import '../../utils/network_errors.dart';
 
 /// ViewModel for SpotlightScreen - handles business logic and state
 ///
@@ -450,7 +451,7 @@ class SpotlightViewModel extends ChangeNotifier {
       _setError('Security error: ${e.message}');
     } on Exception catch (e) {
       _isSending = false;
-      _setError('Failed to send: $e');
+      _setError(sendFailureMessage(e, 'Failed to send: $e'));
     }
   }
 

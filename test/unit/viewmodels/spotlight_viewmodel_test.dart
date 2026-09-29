@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
+import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
@@ -11,6 +12,7 @@ import 'package:ghostcopy/services/clipboard_sync_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
+import 'package:ghostcopy/utils/network_errors.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -435,6 +437,19 @@ void main() {
     expect(viewModel.content, isEmpty);
     expect(notificationService.toasts.last.$1, contains('Sent to all devices'));
     expect(notificationService.toasts.last.$2, NotificationType.success);
+  });
+
+  test('an offline send says there is no internet connection', () async {
+    when(() => authService.currentUserId).thenReturn('user-123');
+    when(
+      () => clipboardRepository.insert(any()),
+    ).thenThrow(NetworkException(noInternetMessage));
+
+    viewModel.updateContent('hello');
+    await viewModel.handleSend();
+
+    expect(viewModel.errorMessage, noInternetMessage);
+    expect(viewModel.isSending, isFalse);
   });
 
   test('handleSend sets an error when user is not authenticated', () async {

@@ -19,6 +19,7 @@ import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
 import '../../services/thumbnail_disk_cache.dart';
+import '../../utils/network_errors.dart';
 import '../../utils/platform_label.dart';
 import '../clipboard_repository.dart';
 
@@ -1195,8 +1196,8 @@ class ClipboardRepository implements IClipboardRepository {
       throw RepositoryException('Database error: ${error.message}');
     }
 
-    if (error is SocketException) {
-      throw NetworkException('Network error: Check your connection');
+    if (isNetworkError(error)) {
+      throw NetworkException(noInternetMessage);
     }
 
     debugPrint('[Repository] Failed to $operation: $error');
