@@ -79,6 +79,32 @@ void main() {
     expect(repository.lastDownloadWasOffline(clip), isFalse);
   });
 
+  test('a refusal after an offline attempt is no longer offline', () async {
+    // Codex review of #64: the marker cleared only on success, so a later
+    // attempt that reached the server and failed kept saying "no internet".
+    const path = 'user/then-refused/file';
+    final storage = _Storage();
+    final repository = ClipboardRepository(
+      client: SupabaseClient('https://example.com', 'anon-key'),
+      encryptionService: _Encryption(),
+      storageService: storage,
+    );
+    addTearDown(repository.dispose);
+    final clip = _fileClip(path);
+
+    when(
+      () => storage.downloadFile(path),
+    ).thenThrow(NetworkException('offline'));
+    await repository.downloadFile(clip);
+    expect(repository.lastDownloadWasOffline(clip), isTrue);
+
+    when(
+      () => storage.downloadFile(path),
+    ).thenThrow(StorageException('R2 download failed with status 404'));
+    await repository.downloadFile(clip);
+    expect(repository.lastDownloadWasOffline(clip), isFalse);
+  });
+
   test('a download the server refused is not reported as offline', () async {
     const path = 'user/refused/file';
     final storage = _Storage();

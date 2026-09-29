@@ -750,7 +750,13 @@ class ClipboardRepository implements IClipboardRepository {
       return await _decryptDownloaded(item, raw);
     } on Exception catch (e) {
       debugPrint('[Repository] ✗ Download failed: $e');
-      if (isNetworkError(e)) _offlineDownloads.add(storagePath);
+      // Reflects this attempt only. A later failure that reached the server -
+      // a 404, a refusal - must not keep reporting "no internet connection".
+      if (isNetworkError(e)) {
+        _offlineDownloads.add(storagePath);
+      } else {
+        _offlineDownloads.remove(storagePath);
+      }
       return null;
     }
   }
