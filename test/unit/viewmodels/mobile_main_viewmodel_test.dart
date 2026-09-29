@@ -598,6 +598,73 @@ void main() {
     expect(errors, [offlineFileMessage]);
   });
 
+  group('history loads', () {
+    // One app open fetched the same 15-clip page up to ten times in seven
+    // seconds: startup, realtime, resume and sign-in each asked.
+    late int fetches;
+    late List<Completer<List<ClipboardItem>>> pending;
+
+    setUp(() {
+      fetches = 0;
+      pending = [];
+      when(() => clipboardRepository.getHistory()).thenAnswer((_) {
+        fetches++;
+        final reply = Completer<List<ClipboardItem>>();
+        pending.add(reply);
+        return reply.future;
+      });
+    });
+
+    Future<void> answerAll() async {
+      while (pending.isNotEmpty) {
+        pending.removeAt(0).complete(<ClipboardItem>[]);
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    test('a burst of loads costs two fetches', () async {
+      final loads = [for (var i = 0; i < 10; i++) viewModel.loadHistory()];
+      await Future<void>.delayed(Duration.zero);
+      await answerAll();
+      await Future.wait(loads);
+
+      expect(fetches, 2);
+    });
+
+    test(
+      'a load asked for mid-fetch gets a fetch that started after it',
+      () async {
+        final first = viewModel.loadHistory();
+        await Future<void>.delayed(Duration.zero);
+        expect(fetches, 1);
+
+        // Say a clip was sent now: this caller must not settle for the fetch
+        // that began before it.
+        final second = viewModel.loadHistory();
+        pending.removeAt(0).complete(<ClipboardItem>[]);
+        await Future<void>.delayed(Duration.zero);
+        expect(fetches, 2);
+
+        await answerAll();
+        await Future.wait([first, second]);
+      },
+    );
+
+    test('a load after the last one finished fetches again', () async {
+      final first = viewModel.loadHistory();
+      await Future<void>.delayed(Duration.zero);
+      await answerAll();
+      await first;
+
+      final again = viewModel.loadHistory();
+      await Future<void>.delayed(Duration.zero);
+      await answerAll();
+      await again;
+
+      expect(fetches, 2);
+    });
+  });
+
   group('share sheet', () {
     test('a shared file with no session reports it instead of throwing', () async {
       // getInitialMedia() fires on a cold launch and can beat the anonymous
