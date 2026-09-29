@@ -28,6 +28,7 @@ import '../../services/notification_service.dart';
 import '../../services/settings_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
+import '../../utils/network_errors.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
@@ -2410,7 +2411,9 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     } on Exception catch (e) {
       debugPrint('[History] Save failed: $e');
       widget.notificationService?.showToast(
-        message: 'Failed to save file',
+        message: widget.clipboardRepository.lastDownloadWasOffline(widget.item)
+            ? offlineFileMessage
+            : 'Failed to save file',
         type: NotificationType.error,
       );
     }

@@ -75,6 +75,12 @@ abstract class IClipboardRepository {
     List<String>? targetDeviceTypes,
   });
 
+  /// Whether the last [downloadFile] of [item] returned null because the
+  /// server could not be reached, rather than because it refused or the file
+  /// could not be decrypted. Lets a caller say "no internet connection" for a
+  /// clip whose file was never downloaded to this device.
+  bool lastDownloadWasOffline(ClipboardItem item);
+
   /// Download file bytes from Supabase Storage
   ///
   /// Returns null if storage_path is null or download fails

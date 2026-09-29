@@ -485,7 +485,11 @@ class SpotlightViewModel extends ChangeNotifier {
           ? await _clipboardRepo.downloadFile(item)
           : null;
       if ((item.isImage || item.isFile) && bytes == null) {
-        _setError('Could not copy - the file could not be downloaded');
+        _setError(
+          _clipboardRepo.lastDownloadWasOffline(item)
+              ? offlineFileMessage
+              : 'Could not copy - the file could not be downloaded',
+        );
         return;
       }
 

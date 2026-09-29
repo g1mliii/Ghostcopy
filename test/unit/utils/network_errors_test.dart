@@ -17,6 +17,7 @@ void main() {
       const SocketException('Network is unreachable'),
       TimeoutException('no response'),
       AuthRetryableFetchException(),
+      const FunctionsFetchException(details: 'Failed host lookup'),
       NetworkException(noInternetMessage),
     ]) {
       expect(isNetworkError(error), isTrue, reason: '$error');

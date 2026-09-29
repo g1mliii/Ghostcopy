@@ -14,6 +14,7 @@ import 'package:ghostcopy/services/image_transcoder.dart';
 import 'package:ghostcopy/services/security_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/viewmodels/mobile_main_viewmodel.dart';
+import 'package:ghostcopy/utils/network_errors.dart';
 import 'package:ghostcopy/utils/platform_label.dart';
 import 'package:image/image.dart' as img;
 import 'package:mocktail/mocktail.dart';
@@ -568,6 +569,33 @@ void main() {
       expect(platformLabel('MacOS'), 'macOS');
       expect(platformLabel('IOS'), 'iOS');
     });
+  });
+
+  test('tapping a file that never downloaded, offline, says so', () async {
+    // Offline history lists the clip, but its file is in storage: the tap
+    // said "Failed to copy: Exception: Failed to download file".
+    when(
+      () => clipboardRepository.downloadFile(any()),
+    ).thenAnswer((_) async => null);
+    when(
+      () => clipboardRepository.lastDownloadWasOffline(any()),
+    ).thenReturn(true);
+    final errors = <String>[];
+
+    await viewModel.handleHistoryItemTap(
+      ClipboardItem(
+        id: 'pdf',
+        userId: 'u1',
+        content: '',
+        deviceType: 'windows',
+        createdAt: DateTime(2026),
+        contentType: ContentType.filePdf,
+        storagePath: 'u1/pdf',
+      ),
+      onError: errors.add,
+    );
+
+    expect(errors, [offlineFileMessage]);
   });
 
   group('share sheet', () {
