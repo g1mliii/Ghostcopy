@@ -62,6 +62,7 @@ import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/tray_menu_lifecycle.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
@@ -843,15 +844,11 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> with WindowListener {
   bool _showingTrayMenu = false;
 
-  /// When the tray menu finished opening. Opening it from the notification
-  /// area's overflow flyout closes that flyout, which can report a blur right
-  /// away; the Spotlight debounces its blur the same way.
-  DateTime? _trayMenuShownAt;
-
-  /// A blur that landed inside that grace, re-checked once it is over.
-  Timer? _trayMenuBlurRecheck;
-
-  static const Duration _trayMenuBlurGrace = Duration(milliseconds: 500);
+  late final TrayMenuLifecycle _trayMenuLifecycle = TrayMenuLifecycle(
+    isFocused: windowManager.isFocused,
+    onDismiss: _hideTrayMenu,
+  );
+  Future<void>? _trayMenuOpening;
   bool _openSettingsOnShow = false;
   bool _mobileAuthComplete = false;
   bool _servicesDisposed = false;
@@ -1033,11 +1030,16 @@ class _MyAppState extends State<MyApp> with WindowListener {
   /// Handle Ctrl+Shift+S hotkey - ensures correct state before showing
   Future<void> _handleHotkeySpotlight() async {
     // Always ensure tray menu state is false
-    if (_showingTrayMenu) {
+    final opening = _trayMenuOpening;
+    if (_showingTrayMenu || opening != null) {
+      _trayMenuLifecycle.close();
       setState(() => _showingTrayMenu = false);
-      // Wait for state to update and tray to close
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // Finish an in-flight native call before restoring Spotlight geometry.
+      await opening;
+      if (!mounted) return;
+      await renderTrayTransitionFrame();
     }
+    if (!mounted) return;
 
     // Now show spotlight
     await locator<IWindowService>().showSpotlight();
@@ -1097,7 +1099,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
 
   @override
   void dispose() {
-    _trayMenuBlurRecheck?.cancel();
+    _trayMenuLifecycle.dispose();
     if (Platform.isWindows) windowManager.removeListener(this);
     _disposeServices();
     super.dispose();
@@ -1111,25 +1113,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
   @override
   void onWindowBlur() {
     if (!_showingTrayMenu) return;
-    final shownAt = _trayMenuShownAt;
-    final sinceShown = shownAt == null
-        ? _trayMenuBlurGrace
-        : DateTime.now().difference(shownAt);
-    if (sinceShown < _trayMenuBlurGrace) {
-      // Maybe the flyout closing, maybe a real click elsewhere - there is no
-      // telling them apart from here. Dropping it outright left a menu that
-      // was clicked away from inside the grace topmost for good, since no
-      // second blur ever comes. So look again once the grace is over: the
-      // flyout's blur leaves the menu focused, a real click does not.
-      _trayMenuBlurRecheck?.cancel();
-      _trayMenuBlurRecheck = Timer(_trayMenuBlurGrace - sinceShown, () async {
-        if (!mounted || !_showingTrayMenu) return;
-        if (await windowManager.isFocused()) return;
-        if (mounted && _showingTrayMenu) _hideTrayMenu();
-      });
-      return;
-    }
-    _hideTrayMenu();
+    _trayMenuLifecycle.onWindowBlur();
   }
 
   void _disposeServices() {
@@ -1273,25 +1257,55 @@ class _MyAppState extends State<MyApp> with WindowListener {
   /// like the place to fix macOS placement was exactly the trap this note
   /// replaces.
   Future<void> _showTrayMenu() async {
+    // Coalesce repeated right-clicks while native window operations are busy.
+    if (_trayMenuOpening != null) return;
+    final opening = _openTrayMenuSafely();
+    _trayMenuOpening = opening;
+    try {
+      await opening;
+    } finally {
+      _trayMenuOpening = null;
+    }
+  }
+
+  Future<void> _openTrayMenuSafely() async {
+    try {
+      await _openTrayMenu();
+    } on Exception catch (e) {
+      debugPrint('[TrayMenu] Could not open menu: $e');
+      _trayMenuLifecycle.close();
+      if (mounted && _showingTrayMenu) _hideTrayMenu();
+    }
+  }
+
+  Future<void> _openTrayMenu() async {
+    final revision = _trayMenuLifecycle.beginOpening();
+    bool stillOpening() => mounted && _trayMenuLifecycle.isCurrent(revision);
+
     // Hide window first to prevent warping during resize
     await windowManager.hide();
+    if (!stillOpening()) return;
 
     // Update state so correct widget (TrayMenuWindow) will render
     setState(() => _showingTrayMenu = true);
 
-    // Give a frame for state to update
-    await Future<void>.delayed(
-      const Duration(milliseconds: 16),
-    ); // One frame at 60fps
+    // Wait for the menu to replace Spotlight, including removing its blur
+    // listener. A fixed delay does not guarantee that Flutter drew a frame.
+    await renderTrayTransitionFrame();
+    if (!stillOpening()) return;
 
     // Configure window for tray menu
     // Increase size to handling overflow issues on different DPIs
     await windowManager.setSize(const Size(320, 450));
+    if (!stillOpening()) return;
     await windowManager.setBackgroundColor(Colors.transparent);
+    if (!stillOpening()) return;
     await locator<IWindowService>().setFramelessForTrayMenu();
+    if (!stillOpening()) return;
 
     // Wait for resize to complete
     await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!stillOpening()) return;
 
     // Bottom-right, because the taskbar is at the bottom.
     //
@@ -1299,30 +1313,36 @@ class _MyAppState extends State<MyApp> with WindowListener {
     // never reaches this window, so a branch here could only ever be dead
     // code that looked like the place to fix macOS placement.
     await windowManager.setAlignment(Alignment.bottomRight);
+    if (!stillOpening()) return;
 
     // Show with correct size and content
     await windowManager.show();
+    if (!stillOpening()) return;
     await windowManager.focus();
-    _trayMenuShownAt = DateTime.now();
+    _trayMenuLifecycle.finishOpening(revision);
   }
 
   void _hideTrayMenu() {
+    _trayMenuLifecycle.close();
     setState(() => _showingTrayMenu = false);
-    locator<IWindowService>().hideSpotlight();
+    unawaited(locator<IWindowService>().hideSpotlight());
     // No "App closed to tray" toast: hiding to the tray is the app's normal
     // resting state, so announcing it every time is noise. It was also a
     // fire-and-forget Future.delayed that could fire after disposal.
   }
 
   Future<void> _openSettingsFromTray() async {
+    _trayMenuLifecycle.close();
     // Set flag to open settings
     setState(() {
       _openSettingsOnShow = true;
       _showingTrayMenu = false;
     });
 
-    // Wait for state to update
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await _trayMenuOpening;
+    if (!mounted) return;
+    await renderTrayTransitionFrame();
+    if (!mounted) return;
 
     // Show spotlight
     await locator<IWindowService>().showSpotlight();
