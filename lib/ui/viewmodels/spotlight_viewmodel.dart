@@ -115,6 +115,10 @@ class SpotlightViewModel extends ChangeNotifier {
   bool _accountOfferVisible = false;
   bool _accountOfferShownThisRun = false;
 
+  /// Between a focus and the next hide. Offers that land outside it - a
+  /// confirmation refresh finishing after the window went away - wait.
+  bool _spotlightOpen = false;
+
   /// The card asking a guest to make an account. Re-checks the account on
   /// read, so an upgrade finishing while it is up takes it away at once.
   bool get showAccountOffer => _accountOfferVisible && _authService.isAnonymous;
@@ -130,6 +134,8 @@ class SpotlightViewModel extends ChangeNotifier {
   Timer? _historyReloadTimer;
   Timer? _errorClearTimer;
   StreamSubscription<AuthState>? _authStateSubscription;
+  void Function()? _previousOnClipboardReceived;
+  void Function(ClipboardItem item)? _previousOnClipboardSent;
   String? _historyUserId;
   bool? _historyUserAnonymous;
   int _accountRevision = 0;
@@ -150,6 +156,9 @@ class SpotlightViewModel extends ChangeNotifier {
     _authStateSubscription = _authService.authStateChanges.listen((state) {
       final user = state.session?.user;
       final userId = user?.id;
+      // An upgrade answers the offer for good. Cleared rather than masked,
+      // or signing out to a fresh guest would bring the old card back.
+      if (user != null && !user.isAnonymous) _accountOfferVisible = false;
       if (userId == _historyUserId) {
         // A guest whose upgrade was just confirmed: the same account and
         // history, but the screen still offers it Sign Up.
@@ -172,12 +181,24 @@ class SpotlightViewModel extends ChangeNotifier {
     // Load initial history
     await _loadHistory(revision: _accountRevision);
 
-    // Set up Realtime callback for history updates
-    _syncService.onClipboardReceived = _debouncedLoadHistory;
+    // Chained, not replaced: in hybrid mode LifecycleController has already
+    // wrapped both to reset its inactivity timer, and overwriting them sent a
+    // busy hidden app to polling. Restored in dispose.
+    final previousReceived = _previousOnClipboardReceived =
+        _syncService.onClipboardReceived;
+    _syncService.onClipboardReceived = () {
+      previousReceived?.call();
+      _debouncedLoadHistory();
+    };
 
     // Auto-send uploads without passing through handleSend, and a guest who
     // only ever auto-sends has shown the app working just the same.
-    _syncService.onClipboardSent = (_) => _recordSend();
+    final previousSent = _previousOnClipboardSent =
+        _syncService.onClipboardSent;
+    _syncService.onClipboardSent = (item) {
+      previousSent?.call(item);
+      _recordSend();
+    };
   }
 
   // ========== PUBLIC METHODS ==========
@@ -269,14 +290,23 @@ class SpotlightViewModel extends ChangeNotifier {
   /// should read as signed in, not as the guest it was.
   /// [composerVisible] is false while a panel covers the composer, where
   /// the card would be drawn unseen and still use up this run's showing.
-  void onWindowFocused({bool composerVisible = true}) {
-    unawaited(_authService.refreshIfAwaitingConfirmation());
+  ///
+  /// The offer waits for the confirmation check: a guest who confirmed an
+  /// upgrade in the browser is still anonymous here until it finishes.
+  Future<void> onWindowFocused({bool composerVisible = true}) async {
+    _spotlightOpen = true;
+    try {
+      await _authService.refreshIfAwaitingConfirmation();
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Confirmation check failed: $e');
+    }
     if (composerVisible) offerAccountIfDue();
   }
 
   /// Spotlight went back to the tray. A card the user looked at and left is
   /// this run's one showing, so it does not come back on the next opening.
   void onSpotlightHidden() {
+    _spotlightOpen = false;
     if (!_accountOfferVisible) return;
     _accountOfferVisible = false;
     notifyListeners();
@@ -294,7 +324,7 @@ class SpotlightViewModel extends ChangeNotifier {
   /// one never got its chance at focus.
   void offerAccountIfDue() {
     final store = _accountPromptStore;
-    if (store == null || _accountOfferShownThisRun) return;
+    if (store == null || _accountOfferShownThisRun || !_spotlightOpen) return;
     if (!_authService.isAnonymous || !store.hasSent || store.isOfferSnoozed) {
       return;
     }
@@ -759,8 +789,10 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
 
-    // Clear Realtime callback
-    _syncService.onClipboardReceived = null;
+    // Hand the callbacks back as they were before initialize
+    _syncService
+      ..onClipboardReceived = _previousOnClipboardReceived
+      ..onClipboardSent = _previousOnClipboardSent;
 
     // Clear cached futures
     _jwtTransformFuture = null;

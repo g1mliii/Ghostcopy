@@ -1733,6 +1733,18 @@ Future<({bool ok, String message})> _sendSharedFile(
       targetDeviceTypes: targets.isEmpty ? null : targets.toList(),
     );
 
+    // Counts toward the account offer like any other send. The Explorer path
+    // exits before the store is registered, hence opening it here. Its own
+    // try: the file has gone, and a prefs failure must not report otherwise.
+    try {
+      final prompts = locator.isRegistered<AccountPromptStore>()
+          ? locator<AccountPromptStore>()
+          : await AccountPromptStore.open();
+      await prompts.recordSend();
+    } on Exception catch (e) {
+      debugPrint('[SendFile] Could not record the send: $e');
+    }
+
     final where = targets.isEmpty
         ? 'your other devices'
         : targets.map(platformLabel).join(', ');

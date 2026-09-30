@@ -491,8 +491,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   @override
   void onWindowFocus() {
     _lastFocusTime = DateTime.now();
-    _viewModel.onWindowFocused(
-      composerVisible: _activePanel == SpotlightPanel.none,
+    unawaited(
+      _viewModel.onWindowFocused(
+        composerVisible: _activePanel == SpotlightPanel.none,
+      ),
     );
     // Wait for window to be fully sized/positioned before animating
     // This prevents warped appearance on first few launches
