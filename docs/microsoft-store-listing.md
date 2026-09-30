@@ -7,6 +7,12 @@ in `lib/`; keep it that way when editing.
 Reserved name: **GhostCopy**. Store ID `9NW0TTGMSF80`, listing URL
 https://apps.microsoft.com/detail/9NW0TTGMSF80.
 
+Anything meant to be pasted into Partner Center is in a ```` ```text ```` block,
+one line per paragraph or bullet. Copy the block's contents as they are: the
+Store keeps every line break, and this doc once held its copy as `>` quotes
+hard-wrapped at 80 columns, which put the `>` marks and mid-sentence breaks
+on the live listing.
+
 ## Two ways this differs from the App Store draft
 
 Both are easy to get wrong by adapting `docs/app-store-listing.md` line by
@@ -124,26 +130,27 @@ it - anything here reads as an update note on a product nobody has yet.
 
 ### Product features (bulleted, up to 20)
 
-> - Send what you copy to your phone with a global hotkey
-> - Right-click any file in File Explorer and send it, without opening the app
-> - Works with Mac, iPhone and Android as well as Windows
-> - Optional end-to-end encryption with a passphrase only your own devices hold
-> - Recent clipboard history on every device
-> - Choose which devices receive each clip
-> - Received clips can be copied to your clipboard automatically
-> - Lives in the system tray and opens on a hotkey you choose
-> - Game Mode holds notifications back while you are in a fullscreen app
-> - Text and links up to 100 KB; images and files up to 10 MB
-> - No ads, no analytics, no tracking
+```text
+- Send what you copy to your phone with a global hotkey
+- Right-click any file in File Explorer and send it, without opening the app
+- Works with Mac, iPhone and Android as well as Windows
+- Optional end-to-end encryption with a passphrase only your own devices hold
+- Recent clipboard history on every device
+- Choose which devices receive each clip
+- Received clips can be copied to your clipboard automatically
+- Lives in the system tray and opens on a hotkey you choose
+- Game Mode holds notifications back while you are in a fullscreen app
+- Text and links up to 100 KB; images and files up to 10 MB
+- No ads, no analytics, no tracking
+```
 
 ### Short description (270 recommended)
 
 Shorter than the 500 the field allows - 270 is what actually displays.
 
-> Copy on your PC and it is on your phone's clipboard a second later.
-> GhostCopy syncs text, links, images and files between Windows, Mac, iPhone
-> and Android, with a global hotkey, a File Explorer right-click, and optional
-> end-to-end encryption.
+```text
+Copy on your PC and it is on your phone's clipboard a second later. GhostCopy syncs text, links, images and files between Windows, Mac, iPhone and Android, with a global hotkey, a File Explorer right-click, and optional end-to-end encryption.
+```
 
 ### Keywords (7 max, 40 chars each, 21 words total)
 
@@ -170,7 +177,9 @@ this is the field that can carry it today without touching the manifest.
 
 ### Copyright and trademark info
 
-> (c) 2026 *legal name* - fill in; it is shown publicly
+```text
+(c) 2026 *legal name* - fill in; it is shown publicly
+```
 
 ### Additional license terms
 
@@ -217,48 +226,36 @@ desktop is the one that has to carry the listing.
 
 Shown in search results and on the product tile, so it has to stand alone.
 
-> Copy on your PC, send it, and it is on your phone's clipboard a second
-> later. GhostCopy moves text, links, images and files between your Windows
-> PC, Mac, iPhone and Android devices - with a global hotkey, a right-click in
-> File Explorer, and optional end-to-end encryption with a passphrase only
-> your own devices hold.
+```text
+Copy on your PC, send it, and it is on your phone's clipboard a second later. GhostCopy moves text, links, images and files between your Windows PC, Mac, iPhone and Android devices - with a global hotkey, a right-click in File Explorer, and optional end-to-end encryption with a passphrase only your own devices hold.
+```
 
 ## Description
 
-> GhostCopy moves what you copy between your computer and your phone.
->
-> Press Ctrl+Shift+S anywhere in Windows and GhostCopy opens over whatever you
-> are doing. Send what you copied, and it lands on your phone as a
-> notification - tap it and the text is already on the clipboard. Right-click
-> any file in File Explorer and choose "Send with GhostCopy" to send it
-> without opening anything.
->
-> Going the other way is just as short: send from your phone and it arrives on
-> the PC, ready to paste.
->
-> PRIVATE BY DESIGN
-> - Set a passphrase and every clip, file and image is encrypted on your
->   device with AES-256-GCM before it leaves. We store ciphertext and cannot
->   read it.
-> - The passphrase never leaves your devices. Adding a new one is a QR code
->   scanned from a device you already have.
-> - No ads, no analytics, no tracking.
->
-> BUILT FOR EVERY DAY
-> - Lives in the system tray and stays out of the way. Opens on a hotkey you
->   choose.
-> - Recent history on every device, so a clip you missed is still there.
-> - Text and links up to 100 KB; images and files up to 10 MB.
-> - Choose which devices receive each clip.
-> - Received clips can be copied to your clipboard automatically.
-> - Game Mode holds notifications back while you are in a fullscreen app.
-> - Sign in with Apple, Google or email to keep your history across devices
->   and reinstalls.
->
-> WORKS WITH YOUR OTHER DEVICES
-> GhostCopy is also available for Mac, iPhone and Android, and syncing between
-> them is the point - a clip from your PC reaches whichever of your devices
-> you choose.
+```text
+GhostCopy moves what you copy between your computer and your phone.
+
+Press Ctrl+Shift+S anywhere in Windows and GhostCopy opens over whatever you are doing. Send what you copied, and it lands on your phone as a notification - tap it and the text is already on the clipboard. Right-click any file in File Explorer and choose "Send with GhostCopy" to send it without opening anything.
+
+Going the other way is just as short: send from your phone and it arrives on the PC, ready to paste.
+
+PRIVATE BY DESIGN
+- Set a passphrase and every clip, file and image is encrypted on your device with AES-256-GCM before it leaves. We store ciphertext and cannot read it.
+- The passphrase never leaves your devices. Adding a new one is a QR code scanned from a device you already have.
+- No ads, no analytics, no tracking.
+
+BUILT FOR EVERY DAY
+- Lives in the system tray and stays out of the way. Opens on a hotkey you choose.
+- Recent history on every device, so a clip you missed is still there.
+- Text and links up to 100 KB; images and files up to 10 MB.
+- Choose which devices receive each clip.
+- Received clips can be copied to your clipboard automatically.
+- Game Mode holds notifications back while you are in a fullscreen app.
+- Sign in with Apple, Google or email to keep your history across devices and reinstalls.
+
+WORKS WITH YOUR OTHER DEVICES
+GhostCopy is also available for Mac, iPhone and Android, and syncing between them is the point - a clip from your PC reaches whichever of your devices you choose.
+```
 
 ## Search terms (up to 7, 30 chars each)
 
@@ -279,7 +276,9 @@ repeated here.
 
 First release, so keep it plain:
 
-> First release of GhostCopy for Windows.
+```text
+First release of GhostCopy for Windows.
+```
 
 ## Screenshots (to take)
 
@@ -363,18 +362,15 @@ the underlying law is the same, so two things still apply:
 Certification is automated plus a human pass, and the app's main feature needs
 a second device, so say so:
 
-> GhostCopy syncs the clipboard between a user's own devices, so its main
-> feature needs a second device signed in to the same account.
->
-> To test on one machine: press Ctrl+Shift+S, paste text into the composer and
-> send. It appears in the history below. Right-clicking a file in File
-> Explorer and choosing "Send with GhostCopy" sends it the same way.
->
-> A demo account is provided below. Encryption is optional and off by default.
-> Account deletion is in the app under Settings.
->
-> The app runs in the system tray and has no window on launch by design - open
-> it with Ctrl+Shift+S or from the tray icon.
+```text
+GhostCopy syncs the clipboard between a user's own devices, so its main feature needs a second device signed in to the same account.
+
+To test on one machine: press Ctrl+Shift+S, paste text into the composer and send. It appears in the history below. Right-clicking a file in File Explorer and choosing "Send with GhostCopy" sends it the same way.
+
+A demo account is provided below. Encryption is optional and off by default. Account deletion is in the app under Settings.
+
+The app runs in the system tray and has no window on launch by design - open it with Ctrl+Shift+S or from the tray icon.
+```
 
 That last paragraph matters: a tester who launches the app and sees no window
 may report it as failing to start.
@@ -453,25 +449,17 @@ appears. It can be released with one click afterwards.
 The field asks for as much detail as possible, so it gets it. This is a
 restricted capability, and a thin answer invites a follow-up:
 
-> GhostCopy is a Win32 desktop application packaged with MSIX
-> (Windows.FullTrustApplication). Full trust is required because every core
-> function of the app is unavailable to a sandboxed application:
->
-> - A system-wide global hotkey (Ctrl+Shift+S by default), so the user can
->   summon the clipboard window from any application without leaving what
->   they are doing.
-> - Reading and writing the Windows clipboard, including images and files.
->   This is the entire purpose of the product.
-> - A system tray icon with a context menu; the app runs in the background
->   between uses.
-> - A File Explorer context menu entry ("Send with GhostCopy"), implemented
->   as an IExplorerCommand handler and declared in the manifest under
->   desktop4:FileExplorerContextMenus.
-> - Launching at login through the declared uap5:StartupTask.
->
-> Full trust is not used to read other applications' data, change system
-> settings, or install drivers or services. Network access is limited to the
-> app's own backend (Supabase) and Cloudflare R2 for file storage.
+```text
+GhostCopy is a Win32 desktop application packaged with MSIX (Windows.FullTrustApplication). Full trust is required because every core function of the app is unavailable to a sandboxed application:
+
+- A system-wide global hotkey (Ctrl+Shift+S by default), so the user can summon the clipboard window from any application without leaving what they are doing.
+- Reading and writing the Windows clipboard, including images and files. This is the entire purpose of the product.
+- A system tray icon with a context menu; the app runs in the background between uses.
+- A File Explorer context menu entry ("Send with GhostCopy"), implemented as an IExplorerCommand handler and declared in the manifest under desktop4:FileExplorerContextMenus.
+- Launching at login through the declared uap5:StartupTask.
+
+Full trust is not used to read other applications' data, change system settings, or install drivers or services. Network access is limited to the app's own backend (Supabase) and Cloudflare R2 for file storage.
+```
 
 ### Administrator consent - leave blank
 
@@ -491,29 +479,22 @@ how to exercise the app fails it.
 
 ### Notes for certification
 
-> GhostCopy syncs the clipboard between a user's own devices.
->
-> NO SIGN-IN IS NEEDED TO TEST. The app creates a guest account on first
-> launch, so everything below works immediately.
->
-> The window opens on launch. Once closed it keeps running in the system
-> tray, which is where a background clipboard utility belongs; reopen it with
-> Ctrl+Shift+S or by clicking the tray icon.
->
-> To exercise the app on a single machine:
-> 1. Type or paste text into the box at the top and press Send.
-> 2. It appears in the history list below.
-> 3. Right-click any file in File Explorer and choose "Send with GhostCopy".
->    A Windows notification confirms it was sent.
->
-> The headline feature - a clip arriving on a phone or Mac - needs a second
-> device signed in to the same account, which we appreciate may not be
-> available. Optional credentials for an account with existing history are in
-> the Credentials section; signing in with them shows history and device
-> targeting populated.
->
-> Encryption is optional and off by default (Settings > Encryption). Account
-> deletion is in Settings.
+```text
+GhostCopy syncs the clipboard between a user's own devices.
+
+NO SIGN-IN IS NEEDED TO TEST. The app creates a guest account on first launch, so everything below works immediately.
+
+The window opens on launch. Once closed it keeps running in the system tray, which is where a background clipboard utility belongs; reopen it with Ctrl+Shift+S or by clicking the tray icon.
+
+To exercise the app on a single machine:
+1. Type or paste text into the box at the top and press Send.
+2. It appears in the history list below.
+3. Right-click any file in File Explorer and choose "Send with GhostCopy". A Windows notification confirms it was sent.
+
+The headline feature - a clip arriving on a phone or Mac - needs a second device signed in to the same account, which we appreciate may not be available. Optional credentials for an account with existing history are in the Credentials section; signing in with them shows history and device targeting populated.
+
+Encryption is optional and off by default (Settings > Encryption). Account deletion is in Settings.
+```
 
 ### Credentials
 
