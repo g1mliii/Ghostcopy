@@ -767,6 +767,44 @@ void main() {
       expect(lifecycleSent, 2);
     });
 
+    test('a panel opened during the confirmation check wins', () async {
+      await build();
+      final check = Completer<void>();
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) => check.future);
+      var panelOpen = false;
+
+      final focusing = offering.onWindowFocused(
+        composerVisible: () => !panelOpen,
+      );
+      panelOpen = true;
+      check.complete();
+      await focusing;
+
+      expect(offering.showAccountOffer, isFalse);
+    });
+
+    test('initializing again does not stack the callbacks', () async {
+      var lifecycleSent = 0;
+      clipboardSyncService.onClipboardSent = (_) => lifecycleSent++;
+      await build(sent: false);
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => <ClipboardItem>[]);
+      await offering.initialize();
+      final installed = clipboardSyncService.onClipboardSent;
+
+      // A new SpotlightScreen binding, as after the Windows tray menu.
+      await offering.initialize();
+
+      expect(clipboardSyncService.onClipboardSent, same(installed));
+      clipboardSyncService.onClipboardSent!(
+        _clipboardItem(id: '1', content: 'auto'),
+      );
+      expect(lifecycleSent, 1);
+    });
+
     test('an auto-send counts as the first send', () async {
       await build(sent: false);
       when(
@@ -784,7 +822,7 @@ void main() {
 
     test('not used up behind a panel; shown when the panel closes', () async {
       await build();
-      await offering.onWindowFocused(composerVisible: false);
+      await offering.onWindowFocused(composerVisible: () => false);
       expect(offering.showAccountOffer, isFalse);
 
       offering.offerAccountIfDue();

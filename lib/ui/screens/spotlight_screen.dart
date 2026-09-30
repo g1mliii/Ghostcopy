@@ -493,7 +493,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     _lastFocusTime = DateTime.now();
     unawaited(
       _viewModel.onWindowFocused(
-        composerVisible: _activePanel == SpotlightPanel.none,
+        composerVisible: () => mounted && _activePanel == SpotlightPanel.none,
       ),
     );
     // Wait for window to be fully sized/positioned before animating
@@ -875,10 +875,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                 children: [
                                   _buildHeader(),
                                   const SizedBox(height: 12),
-                                  if (_viewModel.showAccountOffer) ...[
-                                    _buildAccountOffer(),
-                                    const SizedBox(height: 10),
-                                  ],
                                   Flexible(
                                     child: SingleChildScrollView(
                                       physics: const ClampingScrollPhysics(),
@@ -887,6 +883,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                         crossAxisAlignment:
                                             CrossAxisAlignment.stretch,
                                         children: [
+                                          // Inside the scroll view, so at
+                                          // large text sizes its extra height
+                                          // scrolls instead of overflowing.
+                                          if (_viewModel.showAccountOffer) ...[
+                                            _buildAccountOffer(),
+                                            const SizedBox(height: 10),
+                                          ],
                                           _buildTextField(),
                                           const SizedBox(height: 10),
                                           // Empty for JSON and plain text, so
@@ -985,37 +988,53 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: GhostColors.primaryAlpha30),
       ),
-      child: Row(
+      // Message above, actions below in a Wrap: one row could not fit both
+      // buttons beside the text at large text sizes in a 500px window.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.cloud_done_outlined,
-            size: 18,
-            color: GhostColors.primary,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Keep your clips if you reinstall or switch computers.',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textPrimary,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.cloud_done_outlined,
+                size: 18,
+                color: GhostColors.primary,
               ),
-            ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Keep your clips if you reinstall or switch computers.',
+                  style: GhostTypography.caption.copyWith(
+                    color: GhostColors.textPrimary,
+                  ),
+                ),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: _viewModel.dismissAccountOffer,
-            style: TextButton.styleFrom(
-              foregroundColor: GhostColors.textMuted,
-              visualDensity: VisualDensity.compact,
-            ),
-            child: const Text('Not now'),
-          ),
-          FilledButton(
-            onPressed: _openCreateAccount,
-            style: FilledButton.styleFrom(
-              backgroundColor: GhostColors.primary,
-              visualDensity: VisualDensity.compact,
-            ),
-            child: const Text('Create account'),
+          const SizedBox(height: 6),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              TextButton(
+                onPressed: _viewModel.dismissAccountOffer,
+                style: TextButton.styleFrom(
+                  foregroundColor: GhostColors.textMuted,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text('Not now'),
+              ),
+              FilledButton(
+                onPressed: _openCreateAccount,
+                style: FilledButton.styleFrom(
+                  backgroundColor: GhostColors.primary,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text('Create account'),
+              ),
+            ],
           ),
         ],
       ),

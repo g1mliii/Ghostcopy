@@ -134,6 +134,7 @@ class SpotlightViewModel extends ChangeNotifier {
   Timer? _historyReloadTimer;
   Timer? _errorClearTimer;
   StreamSubscription<AuthState>? _authStateSubscription;
+  bool _callbacksInstalled = false;
   void Function()? _previousOnClipboardReceived;
   void Function(ClipboardItem item)? _previousOnClipboardSent;
   String? _historyUserId;
@@ -153,6 +154,10 @@ class SpotlightViewModel extends ChangeNotifier {
     // then kept showing that empty list after sign-in until the user toggled
     // encryption (the settings callback happened to refresh history). Reload
     // the repository as soon as Supabase announces the new user instead.
+    // initialize runs again whenever a new SpotlightScreen binds to this
+    // singleton - on Windows, every return from the tray menu. The old
+    // subscription would otherwise live on beside the new one.
+    unawaited(_authStateSubscription?.cancel());
     _authStateSubscription = _authService.authStateChanges.listen((state) {
       final user = state.session?.user;
       final userId = user?.id;
@@ -183,7 +188,11 @@ class SpotlightViewModel extends ChangeNotifier {
 
     // Chained, not replaced: in hybrid mode LifecycleController has already
     // wrapped both to reset its inactivity timer, and overwriting them sent a
-    // busy hidden app to polling. Restored in dispose.
+    // busy hidden app to polling. Restored in dispose. Installed once: a
+    // second initialize would wrap its own wrappers, and every send and
+    // receive would run through one more layer per tray-menu opening.
+    if (_callbacksInstalled) return;
+    _callbacksInstalled = true;
     final previousReceived = _previousOnClipboardReceived =
         _syncService.onClipboardReceived;
     _syncService.onClipboardReceived = () {
@@ -290,17 +299,18 @@ class SpotlightViewModel extends ChangeNotifier {
   /// should read as signed in, not as the guest it was.
   /// [composerVisible] is false while a panel covers the composer, where
   /// the card would be drawn unseen and still use up this run's showing.
+  /// Asked after the await, not before: a panel can open during it.
   ///
   /// The offer waits for the confirmation check: a guest who confirmed an
   /// upgrade in the browser is still anonymous here until it finishes.
-  Future<void> onWindowFocused({bool composerVisible = true}) async {
+  Future<void> onWindowFocused({bool Function()? composerVisible}) async {
     _spotlightOpen = true;
     try {
       await _authService.refreshIfAwaitingConfirmation();
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Confirmation check failed: $e');
     }
-    if (composerVisible) offerAccountIfDue();
+    if (composerVisible?.call() ?? true) offerAccountIfDue();
   }
 
   /// Spotlight went back to the tray. A card the user looked at and left is
