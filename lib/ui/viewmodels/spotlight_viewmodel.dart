@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/account_prompt_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
@@ -41,6 +42,8 @@ class SpotlightViewModel extends ChangeNotifier {
     required this._transformerService,
     required this._notificationService,
     IClipboardService? clipboardService,
+    this._accountPromptStore,
+    this._isGameModeActive,
   }) : _clipboardRepo = clipboardRepository,
        _syncService = clipboardSyncService,
        _clipboardService = clipboardService ?? ClipboardService.instance;
@@ -51,6 +54,10 @@ class SpotlightViewModel extends ChangeNotifier {
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
   final IClipboardService _clipboardService;
+
+  /// Null turns the account offer and the guest badge off entirely.
+  final AccountPromptStore? _accountPromptStore;
+  final bool Function()? _isGameModeActive;
 
   // ========== SEND STATE ==========
 
@@ -103,12 +110,33 @@ class SpotlightViewModel extends ChangeNotifier {
   Future<TransformationResult>? _jwtTransformFuture;
   Future<TransformationResult>? get jwtTransformFuture => _jwtTransformFuture;
 
+  // ========== ACCOUNT OFFER ==========
+
+  bool _accountOfferVisible = false;
+  bool _accountOfferShownThisRun = false;
+
+  /// Between a focus and the next hide. Offers that land outside it - a
+  /// confirmation refresh finishing after the window went away - wait.
+  bool _spotlightOpen = false;
+
+  /// The card asking a guest to make an account. Re-checks the account on
+  /// read, so an upgrade finishing while it is up takes it away at once.
+  bool get showAccountOffer => _accountOfferVisible && _authService.isAnonymous;
+
+  /// The small "Guest" label in the header, the way to an account that is
+  /// always there and never interrupts.
+  bool get showGuestBadge =>
+      _accountPromptStore != null && _authService.isAnonymous;
+
   // ========== TIMERS ==========
 
   Timer? _contentDetectionTimer;
   Timer? _historyReloadTimer;
   Timer? _errorClearTimer;
   StreamSubscription<AuthState>? _authStateSubscription;
+  bool _callbacksInstalled = false;
+  void Function()? _previousOnClipboardReceived;
+  void Function(ClipboardItem item)? _previousOnClipboardSent;
   String? _historyUserId;
   bool? _historyUserAnonymous;
   int _accountRevision = 0;
@@ -126,9 +154,16 @@ class SpotlightViewModel extends ChangeNotifier {
     // then kept showing that empty list after sign-in until the user toggled
     // encryption (the settings callback happened to refresh history). Reload
     // the repository as soon as Supabase announces the new user instead.
+    // initialize runs again whenever a new SpotlightScreen binds to this
+    // singleton - on Windows, every return from the tray menu. The old
+    // subscription would otherwise live on beside the new one.
+    unawaited(_authStateSubscription?.cancel());
     _authStateSubscription = _authService.authStateChanges.listen((state) {
       final user = state.session?.user;
       final userId = user?.id;
+      // An upgrade answers the offer for good. Cleared rather than masked,
+      // or signing out to a fresh guest would bring the old card back.
+      if (user != null && !user.isAnonymous) _accountOfferVisible = false;
       if (userId == _historyUserId) {
         // A guest whose upgrade was just confirmed: the same account and
         // history, but the screen still offers it Sign Up.
@@ -151,8 +186,28 @@ class SpotlightViewModel extends ChangeNotifier {
     // Load initial history
     await _loadHistory(revision: _accountRevision);
 
-    // Set up Realtime callback for history updates
-    _syncService.onClipboardReceived = _debouncedLoadHistory;
+    // Chained, not replaced: in hybrid mode LifecycleController has already
+    // wrapped both to reset its inactivity timer, and overwriting them sent a
+    // busy hidden app to polling. Restored in dispose. Installed once: a
+    // second initialize would wrap its own wrappers, and every send and
+    // receive would run through one more layer per tray-menu opening.
+    if (_callbacksInstalled) return;
+    _callbacksInstalled = true;
+    final previousReceived = _previousOnClipboardReceived =
+        _syncService.onClipboardReceived;
+    _syncService.onClipboardReceived = () {
+      previousReceived?.call();
+      _debouncedLoadHistory();
+    };
+
+    // Auto-send uploads without passing through handleSend, and a guest who
+    // only ever auto-sends has shown the app working just the same.
+    final previousSent = _previousOnClipboardSent =
+        _syncService.onClipboardSent;
+    _syncService.onClipboardSent = (item) {
+      previousSent?.call(item);
+      _recordSend();
+    };
   }
 
   // ========== PUBLIC METHODS ==========
@@ -242,8 +297,69 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// The window came forward. A sign-up confirmed in a browser meanwhile
   /// should read as signed in, not as the guest it was.
-  void onWindowFocused() =>
-      unawaited(_authService.refreshIfAwaitingConfirmation());
+  /// [composerVisible] is false while a panel covers the composer, where
+  /// the card would be drawn unseen and still use up this run's showing.
+  /// Asked after the await, not before: a panel can open during it.
+  ///
+  /// The offer waits for the confirmation check: a guest who confirmed an
+  /// upgrade in the browser is still anonymous here until it finishes.
+  Future<void> onWindowFocused({bool Function()? composerVisible}) async {
+    _spotlightOpen = true;
+    try {
+      await _authService.refreshIfAwaitingConfirmation();
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Confirmation check failed: $e');
+    }
+    if (composerVisible?.call() ?? true) offerAccountIfDue();
+  }
+
+  /// Spotlight went back to the tray. A card the user looked at and left is
+  /// this run's one showing, so it does not come back on the next opening.
+  void onSpotlightHidden() {
+    _spotlightOpen = false;
+    if (!_accountOfferVisible) return;
+    _accountOfferVisible = false;
+    notifyListeners();
+  }
+
+  /// Offer a guest an account, at most once per run of the app.
+  ///
+  /// Only after the first clip this install has sent, so the app has shown
+  /// what it is for before asking for anything; not while "Not now" holds;
+  /// and not during Game Mode, which exists so nothing asks for attention.
+  /// Checked on focus rather than on show because focus is what every
+  /// opening reaches - the first one after launch never leaves tray mode.
+  ///
+  /// Also called when a panel closes, since an opening that began behind
+  /// one never got its chance at focus.
+  void offerAccountIfDue() {
+    final store = _accountPromptStore;
+    if (store == null || _accountOfferShownThisRun || !_spotlightOpen) return;
+    if (!_authService.isAnonymous || !store.hasSent || store.isOfferSnoozed) {
+      return;
+    }
+    if (_isGameModeActive?.call() ?? false) return;
+    _accountOfferShownThisRun = true;
+    _accountOfferVisible = true;
+    notifyListeners();
+  }
+
+  /// "Not now", or Create Account opened from anywhere - the card, the badge
+  /// or the link-device dialog. Opening the form snoozes too: someone who
+  /// closes it without finishing has said not yet, and the guest badge is
+  /// still there for them.
+  void dismissAccountOffer() {
+    final store = _accountPromptStore;
+    if (store != null) unawaited(store.snoozeOffer());
+    if (!_accountOfferVisible) return;
+    _accountOfferVisible = false;
+    notifyListeners();
+  }
+
+  void _recordSend() {
+    final store = _accountPromptStore;
+    if (store != null) unawaited(store.recordSend());
+  }
 
   /// Populate content from system clipboard
   /// Returns ClipboardContent if there's something to paste
@@ -434,6 +550,8 @@ class SpotlightViewModel extends ChangeNotifier {
         message: 'Sent to $targetText',
         type: NotificationType.success,
       );
+
+      _recordSend();
 
       // Clear content after successful send
       _content = '';
@@ -681,8 +799,10 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
 
-    // Clear Realtime callback
-    _syncService.onClipboardReceived = null;
+    // Hand the callbacks back as they were before initialize
+    _syncService
+      ..onClipboardReceived = _previousOnClipboardReceived
+      ..onClipboardSent = _previousOnClipboardSent;
 
     // Clear cached futures
     _jwtTransformFuture = null;

@@ -47,6 +47,7 @@ class SettingsPanel extends StatefulWidget {
     this.hotkeyService,
     this.deviceService,
     this.encryptionService,
+    this.onCreateAccount,
     super.key,
   });
 
@@ -61,6 +62,9 @@ class SettingsPanel extends StatefulWidget {
   final AutoReceiveBehavior autoReceiveBehavior;
   final VoidCallback onClose;
   final VoidCallback onOpenAuth;
+
+  /// Open the account panel on Create Account. Falls back to [onOpenAuth].
+  final VoidCallback? onCreateAccount;
   final ValueChanged<bool> onAutoSendChanged;
   final ValueChanged<int> onStaleDurationChanged;
   final ValueChanged<AutoReceiveBehavior> onAutoReceiveBehaviorChanged;
@@ -769,11 +773,16 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                 backgroundColor: GhostColors.primary,
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
-              onPressed: () => showLinkDeviceDialog(
-                context,
-                widget.authService,
-                widget.encryptionService!,
-              ),
+              onPressed: () async {
+                final createAccount = await showLinkDeviceDialog(
+                  context,
+                  widget.authService,
+                  widget.encryptionService!,
+                );
+                if (createAccount && mounted) {
+                  (widget.onCreateAccount ?? widget.onOpenAuth)();
+                }
+              },
             ),
           ),
           const SizedBox(height: 20),

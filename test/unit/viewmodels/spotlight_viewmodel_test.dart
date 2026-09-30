@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/account_prompt_store.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
@@ -14,6 +15,7 @@ import 'package:ghostcopy/services/transformer_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
 import 'package:ghostcopy/utils/network_errors.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _MockAuthService extends Mock implements IAuthService {}
@@ -621,6 +623,288 @@ void main() {
       expect(notificationService.toasts.last.$2, NotificationType.success);
     },
   );
+
+  group('account offer', () {
+    late DateTime now;
+    late AccountPromptStore store;
+    late bool gameMode;
+    late SpotlightViewModel offering;
+
+    Future<void> build({
+      bool sent = true,
+      bool anonymous = true,
+      bool disposeAfter = true,
+    }) async {
+      SharedPreferences.setMockInitialValues({
+        if (sent) 'account_offer_has_sent': true,
+      });
+      now = DateTime(2026, 9, 30);
+      store = AccountPromptStore(
+        await SharedPreferences.getInstance(),
+        clock: () => now,
+      );
+      gameMode = false;
+      when(() => authService.isAnonymous).thenReturn(anonymous);
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      offering = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        accountPromptStore: store,
+        isGameModeActive: () => gameMode,
+      );
+      if (disposeAfter) addTearDown(offering.dispose);
+    }
+
+    test('shows on opening once the guest has sent a clip', () async {
+      await build();
+      expect(offering.showAccountOffer, isFalse);
+
+      await offering.onWindowFocused();
+
+      expect(offering.showAccountOffer, isTrue);
+      expect(offering.showGuestBadge, isTrue);
+    });
+
+    test('waits for the first send, and that send is remembered', () async {
+      await build(sent: false);
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+
+      when(() => authService.currentUserId).thenReturn('guest');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) async => _clipboardItem(id: '1', content: 'hi'));
+      offering.updateContent('hi');
+      await offering.handleSend();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasSent, isTrue);
+      // The send hid Spotlight; the card waits for the next opening.
+      offering.onSpotlightHidden();
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+    });
+
+    test(
+      'an upgrade clears the card, so a later guest does not inherit it',
+      () async {
+        final auth = StreamController<AuthState>.broadcast();
+        addTearDown(auth.close);
+        await build();
+        when(() => authService.authStateChanges).thenAnswer((_) => auth.stream);
+        when(() => authService.currentUserId).thenReturn('guest');
+        when(
+          () => clipboardRepository.getHistory(),
+        ).thenAnswer((_) async => <ClipboardItem>[]);
+        await offering.initialize();
+        await offering.onWindowFocused();
+        expect(offering.showAccountOffer, isTrue);
+
+        Session session(User user) =>
+            Session(accessToken: 'a', tokenType: 'bearer', user: user);
+        auth.add(
+          AuthState(
+            AuthChangeEvent.userUpdated,
+            session(_user(anonymous: false)),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        // Signed out to a fresh guest, without restarting.
+        when(() => authService.isAnonymous).thenReturn(true);
+        expect(offering.showAccountOffer, isFalse);
+      },
+    );
+
+    test('waits for the confirmation check before offering', () async {
+      await build();
+      final check = Completer<void>();
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) => check.future);
+
+      final focusing = offering.onWindowFocused();
+      await Future<void>.delayed(Duration.zero);
+      expect(offering.showAccountOffer, isFalse);
+
+      // The check found the upgrade confirmed in the browser.
+      when(() => authService.isAnonymous).thenReturn(false);
+      check.complete();
+      await focusing;
+      expect(offering.showAccountOffer, isFalse);
+    });
+
+    test('chains the callbacks that were already there', () async {
+      var lifecycleSent = 0;
+      var lifecycleReceived = 0;
+      clipboardSyncService
+        ..onClipboardSent = ((_) => lifecycleSent++)
+        ..onClipboardReceived = (() => lifecycleReceived++);
+      await build(sent: false, disposeAfter: false);
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => <ClipboardItem>[]);
+      await offering.initialize();
+
+      clipboardSyncService.onClipboardSent!(
+        _clipboardItem(id: '1', content: 'auto'),
+      );
+      clipboardSyncService.onClipboardReceived!();
+      expect(lifecycleSent, 1);
+      expect(lifecycleReceived, 1);
+
+      final original = clipboardSyncService.onClipboardSent;
+      offering.dispose();
+      expect(clipboardSyncService.onClipboardSent, isNot(same(original)));
+      clipboardSyncService.onClipboardSent!(
+        _clipboardItem(id: '2', content: 'auto'),
+      );
+      expect(lifecycleSent, 2);
+    });
+
+    test('a panel opened during the confirmation check wins', () async {
+      await build();
+      final check = Completer<void>();
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) => check.future);
+      var panelOpen = false;
+
+      final focusing = offering.onWindowFocused(
+        composerVisible: () => !panelOpen,
+      );
+      panelOpen = true;
+      check.complete();
+      await focusing;
+
+      expect(offering.showAccountOffer, isFalse);
+    });
+
+    test('initializing again does not stack the callbacks', () async {
+      var lifecycleSent = 0;
+      clipboardSyncService.onClipboardSent = (_) => lifecycleSent++;
+      await build(sent: false);
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => <ClipboardItem>[]);
+      await offering.initialize();
+      final installed = clipboardSyncService.onClipboardSent;
+
+      // A new SpotlightScreen binding, as after the Windows tray menu.
+      await offering.initialize();
+
+      expect(clipboardSyncService.onClipboardSent, same(installed));
+      clipboardSyncService.onClipboardSent!(
+        _clipboardItem(id: '1', content: 'auto'),
+      );
+      expect(lifecycleSent, 1);
+    });
+
+    test('an auto-send counts as the first send', () async {
+      await build(sent: false);
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => <ClipboardItem>[]);
+      await offering.initialize();
+
+      clipboardSyncService.onClipboardSent!(
+        _clipboardItem(id: '1', content: 'auto'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasSent, isTrue);
+    });
+
+    test('not used up behind a panel; shown when the panel closes', () async {
+      await build();
+      await offering.onWindowFocused(composerVisible: () => false);
+      expect(offering.showAccountOffer, isFalse);
+
+      offering.offerAccountIfDue();
+      expect(offering.showAccountOffer, isTrue);
+    });
+
+    test('Create Account from the badge snoozes with no card up', () async {
+      await build();
+      expect(offering.showAccountOffer, isFalse);
+
+      offering.dismissAccountOffer();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.isOfferSnoozed, isTrue);
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+    });
+
+    test('once per run: left alone, it does not come back', () async {
+      await build();
+      await offering.onWindowFocused();
+      // Focus moving around inside one opening keeps it up.
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+
+      offering.onSpotlightHidden();
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+    });
+
+    test('Not now keeps it away for a week', () async {
+      await build();
+      await offering.onWindowFocused();
+      offering.dismissAccountOffer();
+      await Future<void>.delayed(Duration.zero);
+      expect(offering.showAccountOffer, isFalse);
+
+      now = now.add(const Duration(days: 6));
+      expect(store.isOfferSnoozed, isTrue);
+      now = now.add(const Duration(days: 2));
+      expect(store.isOfferSnoozed, isFalse);
+    });
+
+    test('not during Game Mode', () async {
+      await build();
+      gameMode = true;
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+
+      // Not used up either: the next opening outside Game Mode still gets it.
+      gameMode = false;
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+    });
+
+    test('never for a signed-in account', () async {
+      await build(anonymous: false);
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+      expect(offering.showGuestBadge, isFalse);
+    });
+
+    test('an upgrade finishing takes the card and badge away', () async {
+      await build();
+      await offering.onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+
+      when(() => authService.isAnonymous).thenReturn(false);
+      expect(offering.showAccountOffer, isFalse);
+      expect(offering.showGuestBadge, isFalse);
+    });
+
+    test('off entirely without a store', () async {
+      when(() => authService.isAnonymous).thenReturn(true);
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      await viewModel.onWindowFocused();
+      expect(viewModel.showAccountOffer, isFalse);
+      expect(viewModel.showGuestBadge, isFalse);
+    });
+  });
 }
 
 ClipboardItem _clipboardItem({required String id, required String content}) {
