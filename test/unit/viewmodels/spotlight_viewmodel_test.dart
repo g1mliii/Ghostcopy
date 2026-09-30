@@ -687,6 +687,42 @@ void main() {
       expect(offering.showAccountOffer, isTrue);
     });
 
+    test('an auto-send counts as the first send', () async {
+      await build(sent: false);
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) async => <ClipboardItem>[]);
+      await offering.initialize();
+
+      clipboardSyncService.onClipboardSent!(
+        _clipboardItem(id: '1', content: 'auto'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasSent, isTrue);
+    });
+
+    test('not used up behind a panel; shown when the panel closes', () async {
+      await build();
+      offering.onWindowFocused(composerVisible: false);
+      expect(offering.showAccountOffer, isFalse);
+
+      offering.offerAccountIfDue();
+      expect(offering.showAccountOffer, isTrue);
+    });
+
+    test('Create Account from the badge snoozes with no card up', () async {
+      await build();
+      expect(offering.showAccountOffer, isFalse);
+
+      offering.dismissAccountOffer();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.isOfferSnoozed, isTrue);
+      offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+    });
+
     test('once per run: left alone, it does not come back', () async {
       await build();
       offering

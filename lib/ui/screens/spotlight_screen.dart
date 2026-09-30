@@ -383,6 +383,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
     if (mounted) {
       setState(() => _activePanel = SpotlightPanel.none);
+      // The composer is showing again. Not after Create Account, which
+      // opened a panel of its own and has already had its answer.
+      if (panel != SpotlightPanel.auth) _viewModel.offerAccountIfDue();
     }
   }
 
@@ -488,7 +491,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   @override
   void onWindowFocus() {
     _lastFocusTime = DateTime.now();
-    _viewModel.onWindowFocused();
+    _viewModel.onWindowFocused(
+      composerVisible: _activePanel == SpotlightPanel.none,
+    );
     // Wait for window to be fully sized/positioned before animating
     // This prevents warped appearance on first few launches
     WidgetsBinding.instance.addPostFrameCallback((_) {

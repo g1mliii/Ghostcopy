@@ -174,6 +174,10 @@ class SpotlightViewModel extends ChangeNotifier {
 
     // Set up Realtime callback for history updates
     _syncService.onClipboardReceived = _debouncedLoadHistory;
+
+    // Auto-send uploads without passing through handleSend, and a guest who
+    // only ever auto-sends has shown the app working just the same.
+    _syncService.onClipboardSent = (_) => _recordSend();
   }
 
   // ========== PUBLIC METHODS ==========
@@ -263,9 +267,11 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// The window came forward. A sign-up confirmed in a browser meanwhile
   /// should read as signed in, not as the guest it was.
-  void onWindowFocused() {
+  /// [composerVisible] is false while a panel covers the composer, where
+  /// the card would be drawn unseen and still use up this run's showing.
+  void onWindowFocused({bool composerVisible = true}) {
     unawaited(_authService.refreshIfAwaitingConfirmation());
-    _maybeOfferAccount();
+    if (composerVisible) offerAccountIfDue();
   }
 
   /// Spotlight went back to the tray. A card the user looked at and left is
@@ -283,7 +289,10 @@ class SpotlightViewModel extends ChangeNotifier {
   /// and not during Game Mode, which exists so nothing asks for attention.
   /// Checked on focus rather than on show because focus is what every
   /// opening reaches - the first one after launch never leaves tray mode.
-  void _maybeOfferAccount() {
+  ///
+  /// Also called when a panel closes, since an opening that began behind
+  /// one never got its chance at focus.
+  void offerAccountIfDue() {
     final store = _accountPromptStore;
     if (store == null || _accountOfferShownThisRun) return;
     if (!_authService.isAnonymous || !store.hasSent || store.isOfferSnoozed) {
@@ -295,15 +304,21 @@ class SpotlightViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// "Not now", or "Create account" - either way the card has had its answer.
-  /// Accepting snoozes too: someone who opens the form and closes it without
-  /// finishing has said not yet, and the guest badge is still there for them.
+  /// "Not now", or Create Account opened from anywhere - the card, the badge
+  /// or the link-device dialog. Opening the form snoozes too: someone who
+  /// closes it without finishing has said not yet, and the guest badge is
+  /// still there for them.
   void dismissAccountOffer() {
+    final store = _accountPromptStore;
+    if (store != null) unawaited(store.snoozeOffer());
     if (!_accountOfferVisible) return;
     _accountOfferVisible = false;
     notifyListeners();
+  }
+
+  void _recordSend() {
     final store = _accountPromptStore;
-    if (store != null) unawaited(store.snoozeOffer());
+    if (store != null) unawaited(store.recordSend());
   }
 
   /// Populate content from system clipboard
@@ -496,8 +511,7 @@ class SpotlightViewModel extends ChangeNotifier {
         type: NotificationType.success,
       );
 
-      final store = _accountPromptStore;
-      if (store != null) unawaited(store.recordSend());
+      _recordSend();
 
       // Clear content after successful send
       _content = '';
