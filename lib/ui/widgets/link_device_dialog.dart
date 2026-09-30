@@ -343,6 +343,23 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
                 ),
               ),
 
+              // A guest's pairing lasts only as long as this computer's guest
+              // session: reinstall or sign out and the phone is linked to an
+              // account nothing can reach again. An account survives both.
+              if (widget.authService.isAnonymous) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Or create an account and sign in on both devices. It stays '
+                  'linked after a reinstall or a new computer.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Create account'),
+                ),
+              ],
+
               const SizedBox(height: 24),
 
               // Close button
@@ -395,8 +412,11 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
   }
 }
 
-/// Show link device dialog
-Future<void> showLinkDeviceDialog(
+/// Show link device dialog.
+///
+/// True when a guest chose "Create account" instead of pairing, so the caller
+/// can open the account panel once the window is back to its own size.
+Future<bool> showLinkDeviceDialog(
   BuildContext context,
   IAuthService authService,
   IEncryptionService encryptionService,
@@ -407,14 +427,15 @@ Future<void> showLinkDeviceDialog(
   final windowService = locator<IWindowService>();
   try {
     await windowService.growToHeight(_dialogWindowHeight);
-    if (!context.mounted) return;
-    await showDialog<void>(
+    if (!context.mounted) return false;
+    final createAccount = await showDialog<bool>(
       context: context,
       builder: (context) => LinkDeviceDialog(
         authService: authService,
         encryptionService: encryptionService,
       ),
     );
+    return createAccount ?? false;
   } finally {
     await windowService.restoreSpotlightSize();
   }

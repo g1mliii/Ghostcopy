@@ -23,6 +23,7 @@ class AuthPanel extends StatefulWidget {
     required this.notificationService,
     required this.clipboardSyncService,
     required this.onClose,
+    this.startInSignUp = false,
     super.key,
   });
 
@@ -30,6 +31,11 @@ class AuthPanel extends StatefulWidget {
   final INotificationService notificationService;
   final IClipboardSyncService clipboardSyncService;
   final VoidCallback onClose;
+
+  /// Open on Create Account rather than Sign In. For the prompts that asked
+  /// a guest to make one; the settings entry still opens on Sign In, since
+  /// a guest there may well have an account already.
+  final bool startInSignUp;
 
   @override
   State<AuthPanel> createState() => _AuthPanelState();
@@ -41,7 +47,7 @@ class _AuthPanelState extends State<AuthPanel> {
   final TextEditingController _passwordController = TextEditingController();
 
   // Auth state
-  bool _isLogin = true; // true = login, false = signup
+  late bool _isLogin = !widget.startInSignUp; // true = login, false = signup
   bool _authLoading = false;
 
   /// A provider sign-in is waiting on the browser, which may never come back

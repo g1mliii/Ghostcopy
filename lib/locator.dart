@@ -1,8 +1,10 @@
 import 'package:get_it/get_it.dart';
 
 import 'repositories/clipboard_repository.dart';
+import 'services/account_prompt_store.dart';
 import 'services/auth_service.dart';
 import 'services/clipboard_sync_service.dart';
+import 'services/game_mode_service.dart';
 import 'services/notification_service.dart';
 import 'services/transformer_service.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
@@ -22,6 +24,12 @@ void setupLocator() {
       clipboardSyncService: locator<IClipboardSyncService>(),
       transformerService: locator<ITransformerService>(),
       notificationService: locator<INotificationService>(),
+      accountPromptStore: locator.isRegistered<AccountPromptStore>()
+          ? locator<AccountPromptStore>()
+          : null,
+      isGameModeActive: locator.isRegistered<IGameModeService>()
+          ? () => locator<IGameModeService>().isActive
+          : null,
     ),
   );
 }

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/account_prompt_store.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
@@ -14,6 +15,7 @@ import 'package:ghostcopy/services/transformer_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
 import 'package:ghostcopy/utils/network_errors.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _MockAuthService extends Mock implements IAuthService {}
@@ -621,6 +623,137 @@ void main() {
       expect(notificationService.toasts.last.$2, NotificationType.success);
     },
   );
+
+  group('account offer', () {
+    late DateTime now;
+    late AccountPromptStore store;
+    late bool gameMode;
+    late SpotlightViewModel offering;
+
+    Future<void> build({bool sent = true, bool anonymous = true}) async {
+      SharedPreferences.setMockInitialValues({
+        if (sent) 'account_offer_has_sent': true,
+      });
+      now = DateTime(2026, 9, 30);
+      store = AccountPromptStore(
+        await SharedPreferences.getInstance(),
+        clock: () => now,
+      );
+      gameMode = false;
+      when(() => authService.isAnonymous).thenReturn(anonymous);
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      offering = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        accountPromptStore: store,
+        isGameModeActive: () => gameMode,
+      );
+      addTearDown(offering.dispose);
+    }
+
+    test('shows on opening once the guest has sent a clip', () async {
+      await build();
+      expect(offering.showAccountOffer, isFalse);
+
+      offering.onWindowFocused();
+
+      expect(offering.showAccountOffer, isTrue);
+      expect(offering.showGuestBadge, isTrue);
+    });
+
+    test('waits for the first send, and that send is remembered', () async {
+      await build(sent: false);
+      offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+
+      when(() => authService.currentUserId).thenReturn('guest');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) async => _clipboardItem(id: '1', content: 'hi'));
+      offering.updateContent('hi');
+      await offering.handleSend();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasSent, isTrue);
+      // The send hid Spotlight; the card waits for the next opening.
+      offering
+        ..onSpotlightHidden()
+        ..onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+    });
+
+    test('once per run: left alone, it does not come back', () async {
+      await build();
+      offering
+        ..onWindowFocused()
+        // Focus moving around inside one opening keeps it up.
+        ..onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+
+      offering
+        ..onSpotlightHidden()
+        ..onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+    });
+
+    test('Not now keeps it away for a week', () async {
+      await build();
+      offering
+        ..onWindowFocused()
+        ..dismissAccountOffer();
+      await Future<void>.delayed(Duration.zero);
+      expect(offering.showAccountOffer, isFalse);
+
+      now = now.add(const Duration(days: 6));
+      expect(store.isOfferSnoozed, isTrue);
+      now = now.add(const Duration(days: 2));
+      expect(store.isOfferSnoozed, isFalse);
+    });
+
+    test('not during Game Mode', () async {
+      await build();
+      gameMode = true;
+      offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+
+      // Not used up either: the next opening outside Game Mode still gets it.
+      gameMode = false;
+      offering.onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+    });
+
+    test('never for a signed-in account', () async {
+      await build(anonymous: false);
+      offering.onWindowFocused();
+      expect(offering.showAccountOffer, isFalse);
+      expect(offering.showGuestBadge, isFalse);
+    });
+
+    test('an upgrade finishing takes the card and badge away', () async {
+      await build();
+      offering.onWindowFocused();
+      expect(offering.showAccountOffer, isTrue);
+
+      when(() => authService.isAnonymous).thenReturn(false);
+      expect(offering.showAccountOffer, isFalse);
+      expect(offering.showGuestBadge, isFalse);
+    });
+
+    test('off entirely without a store', () {
+      when(() => authService.isAnonymous).thenReturn(true);
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      viewModel.onWindowFocused();
+      expect(viewModel.showAccountOffer, isFalse);
+      expect(viewModel.showGuestBadge, isFalse);
+    });
+  });
 }
 
 ClipboardItem _clipboardItem({required String id, required String content}) {

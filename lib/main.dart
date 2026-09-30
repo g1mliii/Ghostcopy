@@ -18,6 +18,7 @@ import 'locator.dart';
 import 'models/clipboard_item.dart';
 import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
+import 'services/account_prompt_store.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
@@ -472,6 +473,9 @@ Future<void> _appMain(
 
     // Initialize settings service first (required by other services)
     await settingsService.initialize();
+    locator.registerSingleton<AccountPromptStore>(
+      await AccountPromptStore.open(),
+    );
 
     // Before the sync service, which announces received clips from the moment
     // it subscribes. The window service it also uses depends on the sync
@@ -643,8 +647,12 @@ Future<void> _appMain(
       settingsService.initialize(),
     ]);
     debugPrint('[App] ✅ Settings service initialized for mobile');
+    // Before runApp: MyApp.initState reads it synchronously to decide whether
+    // the welcome screen shows. The prefs instance is already loaded above.
+    final accountPromptStore = await AccountPromptStore.open();
     locator
       ..registerSingleton<ISettingsService>(settingsService)
+      ..registerSingleton<AccountPromptStore>(accountPromptStore)
       // Core mobile services required by screens/viewmodels even when
       // Firebase/FCM is not configured.
       ..registerSingleton<IClipboardRepository>(ClipboardRepository.instance)
@@ -981,8 +989,11 @@ class _MyAppState extends State<MyApp> with WindowListener {
     } else {
       // Mobile: Check if user is already signed in
       final currentUser = locator<IAuthService>().currentUser;
-      if (currentUser != null && !currentUser.isAnonymous) {
-        // User is already authenticated, skip welcome screen
+      if (canSkipMobileWelcome(
+        currentUser,
+        linkedGuestUserId: locator<AccountPromptStore>().linkedGuestUserId,
+      )) {
+        // Signed in, or the guest this phone was linked into by QR
         _mobileAuthComplete = true;
         debugPrint('[Mobile] User already signed in, skipping welcome screen');
 

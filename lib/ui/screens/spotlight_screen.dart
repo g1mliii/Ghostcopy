@@ -117,6 +117,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late PausableAnimationController _pausableHistorySlideController;
   late PausableAnimationController _pausableSettingsSlideController;
   late PausableAnimationController _pausableAuthSlideController;
+  late final _HiddenListener _hiddenListener = _HiddenListener(
+    () => _viewModel.onSpotlightHidden(),
+  );
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
@@ -160,6 +163,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   bool get _showHistory => _activePanel == SpotlightPanel.history;
   bool get _showSettings => _activePanel == SpotlightPanel.settings;
   bool get _showAuth => _activePanel == SpotlightPanel.auth;
+
+  /// Whether the auth panel opens on Create Account. Set by the prompts that
+  /// asked for one; the settings entry opens it on Sign In.
+  bool _authStartsInSignUp = false;
 
   // Text controller listener for cleanup (Task: Memory leak fix)
   VoidCallback? _textControllerListener;
@@ -258,6 +265,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       _pausableHistorySlideController,
       _pausableSettingsSlideController,
       _pausableAuthSlideController,
+      _hiddenListener,
     ];
 
     for (final pausable in pausables) {
@@ -421,6 +429,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       // Remove Pausable wrappers from LifecycleController before disposing (Task 12.1)
       // This prevents memory leaks from unbounded Set growth
       _lifecycleController
+        ..removePausable(_hiddenListener)
         ..removePausable(_pausableAuthSlideController)
         ..removePausable(_pausableSettingsSlideController)
         ..removePausable(_pausableHistorySlideController)
@@ -859,6 +868,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                 children: [
                                   _buildHeader(),
                                   const SizedBox(height: 12),
+                                  if (_viewModel.showAccountOffer) ...[
+                                    _buildAccountOffer(),
+                                    const SizedBox(height: 10),
+                                  ],
                                   Flexible(
                                     child: SingleChildScrollView(
                                       physics: const ClampingScrollPhysics(),
@@ -895,6 +908,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   ), // Close IgnorePointer
                   // Settings button - Top Left
                   Positioned(top: 12, left: 12, child: _buildSettingsButton()),
+                  // Beside it, centred on the 42px button
+                  if (_viewModel.showGuestBadge)
+                    Positioned(top: 21, left: 60, child: _buildGuestBadge()),
                   // History button - Top Right
                   Positioned(top: 12, right: 12, child: _buildHistoryButton()),
                   // Click-outside overlay to close any active panel
@@ -934,6 +950,102 @@ class _SpotlightScreenState extends State<SpotlightScreen>
         'GhostCopy',
         style: GhostTypography.headline.copyWith(
           color: GhostColors.textPrimary,
+        ),
+      ),
+    );
+  }
+
+  /// Open the auth panel on Create Account, from whichever panel is up.
+  Future<void> _openCreateAccount() async {
+    _viewModel.dismissAccountOffer();
+    if (_showAuth) return;
+    await _closeActivePanel();
+    if (!mounted) return;
+    setState(() {
+      _authStartsInSignUp = true;
+      _activePanel = SpotlightPanel.auth;
+    });
+    unawaited(_authSlideController.forward());
+  }
+
+  /// The card asking a guest to make an account. The rules for when it shows
+  /// live in SpotlightViewModel.showAccountOffer.
+  Widget _buildAccountOffer() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: GhostColors.primaryAlpha10,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: GhostColors.primaryAlpha30),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.cloud_done_outlined,
+            size: 18,
+            color: GhostColors.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Keep your clips if you reinstall or switch computers.',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textPrimary,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _viewModel.dismissAccountOffer,
+            style: TextButton.styleFrom(
+              foregroundColor: GhostColors.textMuted,
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: _openCreateAccount,
+            style: FilledButton.styleFrom(
+              backgroundColor: GhostColors.primary,
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('Create account'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "Guest" beside the settings button: a standing way to an account for a
+  /// user who is not one yet, which never asks for anything by itself.
+  Widget _buildGuestBadge() {
+    return Tooltip(
+      message: 'Using a guest account. Create one to keep your clips.',
+      child: InkWell(
+        onTap: _openCreateAccount,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: GhostColors.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.person_outline,
+                size: 13,
+                color: GhostColors.textMuted,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Guest',
+                style: GhostTypography.caption.copyWith(
+                  color: GhostColors.textMuted,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1673,9 +1785,13 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                   // Close settings panel first, then open auth
                   await _settingsSlideController.reverse();
                   if (!mounted) return;
-                  setState(() => _activePanel = SpotlightPanel.auth);
+                  setState(() {
+                    _authStartsInSignUp = false;
+                    _activePanel = SpotlightPanel.auth;
+                  });
                   unawaited(_authSlideController.forward());
                 },
+                onCreateAccount: _openCreateAccount,
                 onAutoSendChanged: (value) {
                   setState(() => _autoSendEnabled = value);
                   // Start/stop clipboard monitoring in background service
@@ -1757,6 +1873,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 notificationService: _notificationService,
                 clipboardSyncService: _syncService,
                 onClose: _handleAuthClose,
+                startInSignUp: _authStartsInSignUp,
               ),
             ),
           ],
@@ -2665,6 +2782,20 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
 /// This widget manages its own hover state to prevent parent widget rebuilds
 /// when the user hovers over the button. This is a significant performance
 /// optimization for large parent widgets like SpotlightScreen.
+/// Tells the ViewModel when Spotlight goes back to the tray. A Pausable
+/// because that is the one hook every hideSpotlight goes through.
+class _HiddenListener implements Pausable {
+  _HiddenListener(this._onHidden);
+
+  final VoidCallback _onHidden;
+
+  @override
+  void pause() => _onHidden();
+
+  @override
+  void resume() {}
+}
+
 class _HoverableIconButton extends StatefulWidget {
   const _HoverableIconButton({
     required this.icon,

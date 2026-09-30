@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../locator.dart';
 import '../../main.dart';
+import '../../services/account_prompt_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
@@ -885,6 +886,14 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       await locator<IAuthService>().signInWithRefreshToken(refreshToken);
 
       debugPrint('[QR] ✅ Session set');
+
+      // A desktop that never made an account hands over its guest session.
+      // Remembered so the next launch opens straight to the clips instead of
+      // this screen - see canSkipMobileWelcome.
+      final linked = locator<IAuthService>().currentUser;
+      if (linked != null && linked.isAnonymous) {
+        await locator<AccountPromptStore>().rememberLinkedGuest(linked.id);
+      }
 
       // The QR deliberately no longer carries the passphrase - it used to be
       // "encrypted" with a key placed in the same payload, so a photograph of

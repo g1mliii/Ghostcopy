@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/account_prompt_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
@@ -41,6 +42,8 @@ class SpotlightViewModel extends ChangeNotifier {
     required this._transformerService,
     required this._notificationService,
     IClipboardService? clipboardService,
+    this._accountPromptStore,
+    this._isGameModeActive,
   }) : _clipboardRepo = clipboardRepository,
        _syncService = clipboardSyncService,
        _clipboardService = clipboardService ?? ClipboardService.instance;
@@ -51,6 +54,10 @@ class SpotlightViewModel extends ChangeNotifier {
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
   final IClipboardService _clipboardService;
+
+  /// Null turns the account offer and the guest badge off entirely.
+  final AccountPromptStore? _accountPromptStore;
+  final bool Function()? _isGameModeActive;
 
   // ========== SEND STATE ==========
 
@@ -102,6 +109,20 @@ class SpotlightViewModel extends ChangeNotifier {
 
   Future<TransformationResult>? _jwtTransformFuture;
   Future<TransformationResult>? get jwtTransformFuture => _jwtTransformFuture;
+
+  // ========== ACCOUNT OFFER ==========
+
+  bool _accountOfferVisible = false;
+  bool _accountOfferShownThisRun = false;
+
+  /// The card asking a guest to make an account. Re-checks the account on
+  /// read, so an upgrade finishing while it is up takes it away at once.
+  bool get showAccountOffer => _accountOfferVisible && _authService.isAnonymous;
+
+  /// The small "Guest" label in the header, the way to an account that is
+  /// always there and never interrupts.
+  bool get showGuestBadge =>
+      _accountPromptStore != null && _authService.isAnonymous;
 
   // ========== TIMERS ==========
 
@@ -242,8 +263,48 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// The window came forward. A sign-up confirmed in a browser meanwhile
   /// should read as signed in, not as the guest it was.
-  void onWindowFocused() =>
-      unawaited(_authService.refreshIfAwaitingConfirmation());
+  void onWindowFocused() {
+    unawaited(_authService.refreshIfAwaitingConfirmation());
+    _maybeOfferAccount();
+  }
+
+  /// Spotlight went back to the tray. A card the user looked at and left is
+  /// this run's one showing, so it does not come back on the next opening.
+  void onSpotlightHidden() {
+    if (!_accountOfferVisible) return;
+    _accountOfferVisible = false;
+    notifyListeners();
+  }
+
+  /// Offer a guest an account, at most once per run of the app.
+  ///
+  /// Only after the first clip this install has sent, so the app has shown
+  /// what it is for before asking for anything; not while "Not now" holds;
+  /// and not during Game Mode, which exists so nothing asks for attention.
+  /// Checked on focus rather than on show because focus is what every
+  /// opening reaches - the first one after launch never leaves tray mode.
+  void _maybeOfferAccount() {
+    final store = _accountPromptStore;
+    if (store == null || _accountOfferShownThisRun) return;
+    if (!_authService.isAnonymous || !store.hasSent || store.isOfferSnoozed) {
+      return;
+    }
+    if (_isGameModeActive?.call() ?? false) return;
+    _accountOfferShownThisRun = true;
+    _accountOfferVisible = true;
+    notifyListeners();
+  }
+
+  /// "Not now", or "Create account" - either way the card has had its answer.
+  /// Accepting snoozes too: someone who opens the form and closes it without
+  /// finishing has said not yet, and the guest badge is still there for them.
+  void dismissAccountOffer() {
+    if (!_accountOfferVisible) return;
+    _accountOfferVisible = false;
+    notifyListeners();
+    final store = _accountPromptStore;
+    if (store != null) unawaited(store.snoozeOffer());
+  }
 
   /// Populate content from system clipboard
   /// Returns ClipboardContent if there's something to paste
@@ -434,6 +495,9 @@ class SpotlightViewModel extends ChangeNotifier {
         message: 'Sent to $targetText',
         type: NotificationType.success,
       );
+
+      final store = _accountPromptStore;
+      if (store != null) unawaited(store.recordSend());
 
       // Clear content after successful send
       _content = '';
