@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
+import { sharedKeysSource } from './shared_keys.mjs';
 
-const source = stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/delete-account/index.ts', import.meta.url), 'utf8'))
+const source = sharedKeysSource + stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/delete-account/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .*\r?\n/gm, ''));
 
 // A real P-256 key in PKCS#8 PEM, the shape of Apple's .p8, so the signing

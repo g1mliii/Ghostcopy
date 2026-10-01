@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { sharedKeysSource } from './shared_keys.mjs';
 
 // Execute the deployed handler with local Supabase/FCM doubles. Its runtime
 // code is JavaScript; only the Deno-specific imports need replacing here.
-const source = (await readFile(new URL('../../supabase/functions/send-clipboard-notification/index.ts', import.meta.url), 'utf8'))
+const source = sharedKeysSource + (await readFile(new URL('../../supabase/functions/send-clipboard-notification/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, '');
 
-function fixture(count = 10, sendResult = null) {
+function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KEY: 'service-secret' }) {
   let handler;
   const messages = [];
   const updates = [];
@@ -31,12 +32,12 @@ function fixture(count = 10, sendResult = null) {
     },
   };
   const context = vm.createContext({
-    console, Date, Math,
+    console, Date, Math, TextEncoder,
     createClient: () => client,
     json: (body, status = 200) => ({ body, status }),
     corsPreflight: () => ({ status: 204 }),
     Deno: {
-      env: { get: (name) => name === 'SUPABASE_SERVICE_ROLE_KEY' ? 'service-secret' : '' },
+      env: { get: (name) => env[name] ?? '' },
       serve: (callback) => { handler = callback; },
     },
     admin: {
@@ -66,6 +67,23 @@ test('accepted tenth insert still sends its notification', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.devices_notified, 1);
   assert.equal(f.messages[0].data.clipboard_id, '10');
+});
+
+test('the trigger is accepted on a current secret key alone', async () => {
+  // Legacy keys disabled: no SUPABASE_SERVICE_ROLE_KEY at all, only the JSON
+  // the platform provides now, holding more than one named key.
+  const f = fixture(10, null, {
+    SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a', rotated: 'sb_secret_b' }),
+  });
+  assert.equal((await f.request('sb_secret_b')).status, 200);
+  assert.equal(f.messages.length, 1);
+});
+
+test('a key that is not one of the project\'s is not the trigger', async () => {
+  const f = fixture(10, null, {
+    SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),
+  });
+  assert.equal((await f.request('sb_secret_ab')).status, 429);
 });
 
 test('earlier queued notification survives a subsequently full insert window', async () => {

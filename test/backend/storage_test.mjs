@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
+import { sharedKeysSource } from './shared_keys.mjs';
 
-const source = stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
+const source = sharedKeysSource + stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, ''));
 class Command { constructor(input) { this.input = input; } }
 function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], missingKeys = [], failDelete = false } = {}) {
@@ -28,7 +29,7 @@ function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKey
     },
   };
   vm.runInContext(source, vm.createContext({
-    console, Date, Math, Set, Map,
+    console, Date, Math, Set, Map, TextEncoder,
     createClient: () => client,
     DeleteObjectCommand: Command, DeleteObjectsCommand: Command,
     GetObjectCommand: Command, PutObjectCommand: Command,
