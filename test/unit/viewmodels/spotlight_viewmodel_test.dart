@@ -1194,6 +1194,56 @@ void main() {
       expect(clipboardSyncService.lastManualSendContent, 'hello');
     });
 
+    test('a send that finishes late leaves newer work alone', () async {
+      final inserting = Completer<ClipboardItem>();
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) => inserting.future);
+      composer.updateContent('first message');
+      var hidWindow = false;
+
+      final sending = composer.handleSend(
+        onSendSuccess: () => hidWindow = true,
+      );
+      composer.updateContent('second message');
+      inserting.complete(_clipboardItem(id: '1', content: 'first message'));
+      await sending;
+
+      expect(composer.content, 'second message');
+      expect(composer.hasDraft, isTrue);
+      expect(hidWindow, isFalse);
+    });
+
+    test('a file staged after the hide is released like one before', () async {
+      clipboardHolds('from clipboard');
+      composer.onSpotlightHidden();
+
+      stage([1, 2, 3]);
+
+      expect(composer.clipboardContent, isNull);
+      await composer.restoreOrPopulateComposer();
+      expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+    });
+
+    test('a restored file keeps the name it was staged under', () async {
+      clipboardHolds('from clipboard');
+      // A picker cache copy: the path's name is not the file's.
+      final cached = File('${tmp.path}/cache-7f3a.tmp')
+        ..writeAsBytesSync([1, 2, 3]);
+      composer
+        ..setFileContent(
+          ClipboardContent.file(Uint8List.fromList([1, 2, 3]), 'Report.pdf'),
+          'File ready to send: Report.pdf',
+          sourcePath: cached.path,
+        )
+        ..onSpotlightHidden();
+
+      await composer.restoreOrPopulateComposer();
+
+      expect(composer.clipboardContent?.filename, 'Report.pdf');
+    });
+
     test('sending ends the draft', () async {
       when(() => authService.currentUserId).thenReturn('user-123');
       when(

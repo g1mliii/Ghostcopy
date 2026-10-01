@@ -148,11 +148,24 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Where a staged file came from, so a hide can drop its bytes and the
   /// next opening read it again.
   String? _draftFilePath;
+
+  /// The name the file was staged under. A picker can hand over a cache copy
+  /// whose path has a generated name; the upload must keep the real one.
+  String? _draftFileName;
   DateTime? _hiddenAt;
 
   /// Bumped by every change to the composer, so a clipboard read that took a
   /// while can tell the user put something else there meanwhile.
   int _composerRevision = 0;
+
+  /// Like [_composerRevision], but not bumped by a hide: whether the user
+  /// changed the composer, which is what a send finishing late must not
+  /// overwrite.
+  int _editRevision = 0;
+
+  /// Between a hide and the next focus. A file whose staging finishes in
+  /// that window is released as the hide would have released it.
+  bool _hidden = false;
 
   /// Bumped by every hide, so a kept file still being read when the window
   /// goes away again is not installed into a hidden composer.
@@ -180,6 +193,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _isDraft = false;
     _draftRestored = false;
     _draftFilePath = null;
+    _draftFileName = null;
     _hiddenAt = null;
   }
 
@@ -290,6 +304,7 @@ class SpotlightViewModel extends ChangeNotifier {
     if (_content == newContent) return;
     _content = newContent;
     _composerRevision++;
+    _editRevision++;
     // Only typing reaches here with a change: auto-paste sets _content
     // first, so the text field echoing it back is equal and returns above.
     if (newContent.trim().isEmpty && _clipboardContent == null) {
@@ -308,6 +323,7 @@ class SpotlightViewModel extends ChangeNotifier {
   void updateClipboardContent(ClipboardContent? content) {
     _clipboardContent = content;
     _composerRevision++;
+    _editRevision++;
     notifyListeners();
   }
 
@@ -325,6 +341,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _clipboardContent = null;
     _clearDraft();
     _composerRevision++;
+    _editRevision++;
 
     if (clearText) {
       _content = '';
@@ -393,6 +410,7 @@ class SpotlightViewModel extends ChangeNotifier {
   /// upgrade in the browser is still anonymous here until it finishes.
   Future<void> onWindowFocused({bool Function()? composerVisible}) async {
     _spotlightOpen = true;
+    _hidden = false;
     try {
       await _authService.refreshIfAwaitingConfirmation();
     } on Exception catch (e) {
@@ -407,6 +425,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _spotlightOpen = false;
     _hideCount++;
     _composerRevision++;
+    _hidden = true;
     _accountOfferVisible = false;
     _releaseComposerForHide();
     notifyListeners();
@@ -463,6 +482,7 @@ class SpotlightViewModel extends ChangeNotifier {
       }
       _resetComposer();
       _composerRevision++;
+      _editRevision++;
       notifyListeners();
     }
     await populateFromClipboard();
@@ -489,7 +509,7 @@ class SpotlightViewModel extends ChangeNotifier {
       final bytes = await file.readAsBytes();
       // Checked again on what was read: the file may have grown since.
       if (bytes.length > ClipboardLimits.maxFileBytes) return failed;
-      final filename = file.uri.pathSegments.last;
+      final filename = _draftFileName ?? file.uri.pathSegments.last;
       final type = FileTypeService.instance.detectFromBytes(bytes, filename);
       return (
         ok: true,
@@ -561,6 +581,7 @@ class SpotlightViewModel extends ChangeNotifier {
       }
       if (force) _clearDraft();
       _composerRevision++;
+      _editRevision++;
       // Sizes only. A large clipboard is where a hang would start.
       recordDiagnostic(
         'clipboard',
@@ -645,6 +666,7 @@ class SpotlightViewModel extends ChangeNotifier {
     // what was sent, not what the composer holds by then.
     final sentText = _content;
     final sentClipboard = _clipboardContent;
+    final edits = _editRevision;
 
     try {
       // mark last send time early to avoid races
@@ -755,11 +777,18 @@ class SpotlightViewModel extends ChangeNotifier {
 
       _recordSend();
 
+      _isSending = false;
+      // The user typed or staged something else while this was uploading:
+      // that is theirs, so neither clear it nor hide the window on them.
+      if (edits != _editRevision) {
+        notifyListeners();
+        return;
+      }
+
       // Clear content after successful send
       _content = '';
       _clipboardContent = null;
       _clearDraft();
-      _isSending = false;
       notifyListeners();
 
       // Call success callback for UI actions (clear text controller, hide window)
@@ -792,7 +821,13 @@ class SpotlightViewModel extends ChangeNotifier {
     _isDraft = true;
     _draftRestored = false;
     _draftFilePath = sourcePath;
+    _draftFileName = content.filename;
     _composerRevision++;
+    _editRevision++;
+    // Staging read the file after the window had already hidden: release it
+    // now, as the hide would have, rather than hold the bytes until the next
+    // opening - which would then also skip the restore and the auto-paste.
+    if (_hidden) _releaseComposerForHide();
     notifyListeners();
     debugPrint(
       '[SpotlightVM] File loaded: ${content.filename} (${content.fileBytes?.length ?? 0} bytes)',
