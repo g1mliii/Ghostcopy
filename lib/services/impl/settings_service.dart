@@ -35,6 +35,7 @@ class SettingsService implements ISettingsService {
   static const String _keyObsidianEnabled = 'obsidian_enabled';
   static const String _keyObsidianVaultPath = 'obsidian_vault_path';
   static const String _keyObsidianFileName = 'obsidian_file_name';
+  static const String _keySpotlightPinned = 'spotlight_pinned';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
@@ -297,6 +298,18 @@ class SettingsService implements ISettingsService {
       await _prefs!.setString(_keyObsidianVaultPath, path);
       debugPrint('Obsidian vault path set');
     }
+  }
+
+  @override
+  Future<bool> getSpotlightPinned() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keySpotlightPinned) ?? false;
+  }
+
+  @override
+  Future<void> setSpotlightPinned({required bool pinned}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keySpotlightPinned, pinned);
   }
 
   @override

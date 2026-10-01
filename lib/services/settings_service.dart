@@ -117,6 +117,13 @@ abstract class ISettingsService {
 
   // ========== FEATURE FLAGS ==========
 
+  /// Whether the Spotlight is pinned: kept open and above other windows
+  /// rather than hiding when it loses focus. Desktop only. Defaults to off.
+  Future<bool> getSpotlightPinned();
+
+  /// Persist the pin, so a Spotlight pinned today is pinned tomorrow.
+  Future<void> setSpotlightPinned({required bool pinned});
+
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   /// Returns false by default if error or not found
   Future<bool> isHybridModeEnabled();

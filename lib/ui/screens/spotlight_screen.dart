@@ -117,9 +117,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late PausableAnimationController _pausableHistorySlideController;
   late PausableAnimationController _pausableSettingsSlideController;
   late PausableAnimationController _pausableAuthSlideController;
-  late final _HiddenListener _hiddenListener = _HiddenListener(
-    () => _viewModel.onSpotlightHidden(),
-  );
+  late final _HiddenListener _hiddenListener = _HiddenListener(() {
+    _hiddenSinceFocus = true;
+    _viewModel.onSpotlightHidden();
+  });
+
+  /// Whether the window went back to the tray since it last had focus. A
+  /// pinned window regains focus every time it is clicked into, and the
+  /// opening animation is for an opening, not for each of those.
+  bool _hiddenSinceFocus = true;
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
@@ -214,6 +220,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     // Load settings for UI state
     _initializeSettings();
+    unawaited(_restorePin());
 
     // Set up animations (100ms, ease-out - snappy spotlight appear)
     _animationController = AnimationController(
@@ -501,7 +508,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // Trigger animation after window is ready
-        _animationController.forward(from: 0);
+        if (!_viewModel.isPinned || _hiddenSinceFocus) {
+          _animationController.forward(from: 0);
+        }
+        _hiddenSinceFocus = false;
 
         // Populate from clipboard and focus
         _viewModel.populateFromClipboard();
@@ -523,6 +533,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     if (_viewModel.isFilePickerOpen) {
       return;
     }
+
+    // Pinned: the window stays, so none of the tray optimizations below
+    // apply either - they clear images and payloads from a window that is
+    // still on screen. Escape, the tray icon and unpinning still hide it.
+    if (_viewModel.isPinned) return;
 
     // Hide window when it loses focus (user clicks outside)
     _windowService.hideSpotlight();
@@ -923,6 +938,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                     Positioned(top: 21, left: 60, child: _buildGuestBadge()),
                   // History button - Top Right
                   Positioned(top: 12, right: 12, child: _buildHistoryButton()),
+                  // Pin - beside History, where window controls sit
+                  Positioned(top: 12, right: 60, child: _buildPinButton()),
                   // Click-outside overlay to close any active panel
                   // Uses HitTestBehavior.opaque to catch taps without walking
                   // child tree (perf: stops hit-test traversal immediately)
@@ -1091,6 +1108,31 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           _settingsSlideController.forward();
         }
       },
+    );
+  }
+
+  /// Put the saved pin back on the window at startup.
+  Future<void> _restorePin() async {
+    await _viewModel.loadPinned();
+    if (_viewModel.isPinned) await _windowService.setPinned(pinned: true);
+  }
+
+  Future<void> _togglePin() async {
+    final pinned = !_viewModel.isPinned;
+    await _viewModel.setPinned(pinned: pinned);
+    await _windowService.setPinned(pinned: pinned);
+  }
+
+  /// Pinned, the Spotlight behaves like a window: it stays open and on top
+  /// when focus moves elsewhere. The control lives here, at the moment the
+  /// auto-hide gets in the way, rather than as a setting to go looking for.
+  Widget _buildPinButton() {
+    final pinned = _viewModel.isPinned;
+    return _HoverableIconButton(
+      icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
+      tooltip: pinned ? 'Unpin - hide when clicking away' : 'Keep open',
+      isActive: pinned,
+      onTap: () => unawaited(_togglePin()),
     );
   }
 

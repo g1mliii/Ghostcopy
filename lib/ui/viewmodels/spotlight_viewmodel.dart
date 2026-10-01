@@ -13,6 +13,7 @@ import '../../services/clipboard_sync_service.dart';
 import '../../services/crash_reporting_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/settings_service.dart';
 import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
 import '../../utils/network_errors.dart';
@@ -44,6 +45,7 @@ class SpotlightViewModel extends ChangeNotifier {
     IClipboardService? clipboardService,
     this._accountPromptStore,
     this._isGameModeActive,
+    this._settingsService,
   }) : _clipboardRepo = clipboardRepository,
        _syncService = clipboardSyncService,
        _clipboardService = clipboardService ?? ClipboardService.instance;
@@ -54,6 +56,9 @@ class SpotlightViewModel extends ChangeNotifier {
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
   final IClipboardService _clipboardService;
+
+  /// Where the pin is kept. Null keeps it for this run only.
+  final ISettingsService? _settingsService;
 
   /// Null turns the account offer and the guest badge off entirely.
   final AccountPromptStore? _accountPromptStore;
@@ -109,6 +114,43 @@ class SpotlightViewModel extends ChangeNotifier {
 
   Future<TransformationResult>? _jwtTransformFuture;
   Future<TransformationResult>? get jwtTransformFuture => _jwtTransformFuture;
+
+  // ========== PIN ==========
+  //
+  // Pinned, the Spotlight behaves like an ordinary window: it stays open and
+  // on top when focus goes elsewhere, for copying something in another app
+  // and coming back to send it, dragging a file in, or keeping history in
+  // view. Unpinned it hides on blur, as Spotlight-style launchers do.
+
+  bool _isPinned = false;
+  bool get isPinned => _isPinned;
+
+  /// Read the saved pin. A failure leaves it unpinned, the default behaviour.
+  Future<void> loadPinned() async {
+    final settings = _settingsService;
+    if (settings == null) return;
+    try {
+      final pinned = await settings.getSpotlightPinned();
+      if (pinned == _isPinned) return;
+      _isPinned = pinned;
+      notifyListeners();
+    } on Object catch (e) {
+      debugPrint('[SpotlightVM] Could not read the pin: $e');
+    }
+  }
+
+  /// Pin or unpin, and remember it. The pin takes effect even if saving it
+  /// fails; it just will not survive a restart.
+  Future<void> setPinned({required bool pinned}) async {
+    if (pinned == _isPinned) return;
+    _isPinned = pinned;
+    notifyListeners();
+    try {
+      await _settingsService?.setSpotlightPinned(pinned: pinned);
+    } on Object catch (e) {
+      debugPrint('[SpotlightVM] Could not save the pin: $e');
+    }
+  }
 
   // ========== ACCOUNT OFFER ==========
 

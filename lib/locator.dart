@@ -6,6 +6,7 @@ import 'services/auth_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/notification_service.dart';
+import 'services/settings_service.dart';
 import 'services/transformer_service.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 
@@ -29,6 +30,9 @@ void setupLocator() {
           : null,
       isGameModeActive: locator.isRegistered<IGameModeService>()
           ? () => locator<IGameModeService>().isActive
+          : null,
+      settingsService: locator.isRegistered<ISettingsService>()
+          ? locator<ISettingsService>()
           : null,
     ),
   );

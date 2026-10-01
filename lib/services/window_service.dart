@@ -27,6 +27,11 @@ abstract class IWindowService {
   /// Focus the window
   Future<void> focusWindow();
 
+  /// Keep the Spotlight above other windows while [pinned]. A pinned window
+  /// that lost the z-order to whatever was clicked would be out of sight,
+  /// which is exactly what pinning it was meant to prevent.
+  Future<void> setPinned({required bool pinned});
+
   /// Check if the window is currently visible
   bool get isVisible;
 

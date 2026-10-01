@@ -11,6 +11,7 @@ import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
+import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
 import 'package:ghostcopy/utils/network_errors.dart';
@@ -34,6 +35,8 @@ class _MockClipboardRepository extends Mock implements IClipboardRepository {}
 class _MockTransformerService extends Mock implements ITransformerService {}
 
 class _MockClipboardService extends Mock implements IClipboardService {}
+
+class _MockSettingsService extends Mock implements ISettingsService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
@@ -903,6 +906,72 @@ void main() {
       await viewModel.onWindowFocused();
       expect(viewModel.showAccountOffer, isFalse);
       expect(viewModel.showGuestBadge, isFalse);
+    });
+  });
+
+  group('pin', () {
+    late _MockSettingsService settings;
+    late SpotlightViewModel pinning;
+
+    setUp(() {
+      settings = _MockSettingsService();
+      when(
+        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenAnswer((_) async {});
+      pinning = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        settingsService: settings,
+      );
+      addTearDown(pinning.dispose);
+    });
+
+    test('starts unpinned, and a saved pin comes back', () async {
+      when(() => settings.getSpotlightPinned()).thenAnswer((_) async => true);
+      expect(pinning.isPinned, isFalse);
+
+      await pinning.loadPinned();
+
+      expect(pinning.isPinned, isTrue);
+    });
+
+    test('pinning is saved, and unpinning too', () async {
+      await pinning.setPinned(pinned: true);
+      expect(pinning.isPinned, isTrue);
+      verify(() => settings.setSpotlightPinned(pinned: true)).called(1);
+
+      await pinning.setPinned(pinned: false);
+      verify(() => settings.setSpotlightPinned(pinned: false)).called(1);
+    });
+
+    test('a pin that cannot be saved still pins for this run', () async {
+      when(
+        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenThrow(StateError('prefs unavailable'));
+
+      await pinning.setPinned(pinned: true);
+
+      expect(pinning.isPinned, isTrue);
+    });
+
+    test('a saved pin that cannot be read leaves it unpinned', () async {
+      when(
+        () => settings.getSpotlightPinned(),
+      ).thenThrow(StateError('prefs unavailable'));
+
+      await pinning.loadPinned();
+
+      expect(pinning.isPinned, isFalse);
+    });
+
+    test('works without settings, for this run only', () async {
+      await viewModel.setPinned(pinned: true);
+      expect(viewModel.isPinned, isTrue);
+      await viewModel.loadPinned();
+      expect(viewModel.isPinned, isTrue);
     });
   });
 }

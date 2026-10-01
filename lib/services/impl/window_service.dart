@@ -86,6 +86,10 @@ class WindowService implements IWindowService {
   /// the frame back.
   bool _framelessForTrayMenu = false;
 
+  /// Kept here rather than read from settings, so [showSpotlight] can put
+  /// the topmost flag back after the tray menu clears it.
+  bool _pinned = false;
+
   @override
   Future<void> setFramelessForTrayMenu() async {
     _framelessForTrayMenu = true;
@@ -141,6 +145,8 @@ class WindowService implements IWindowService {
       // changes are undone.
       await windowManager.setAlwaysOnTop(false);
     }
+    // Pinned means topmost; the tray menu's undo above just cleared it.
+    if (_pinned) await windowManager.setAlwaysOnTop(true);
 
     // Set to Spotlight size and center (do this while hidden)
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
@@ -151,6 +157,13 @@ class WindowService implements IWindowService {
     await windowManager.focus();
     _isVisible = true;
     debugPrint('[WindowService] Spotlight shown');
+  }
+
+  @override
+  Future<void> setPinned({required bool pinned}) async {
+    _pinned = pinned;
+    if (!_isDesktop()) return;
+    await windowManager.setAlwaysOnTop(pinned);
   }
 
   @override
