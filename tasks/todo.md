@@ -163,11 +163,6 @@ should start as early as a build allows.
 - [ ] `flutter build appbundle --release`, verify it is not debug-signed
 - [ ] Create the app in Console; privacy policy, data safety, content rating
 - [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
-- [ ] **Android Apple sign-in - confirm on a device.** The button now shows
-      on Android, as the browser flow, with a Cancel under it while it waits.
-      Check sign-in and Sign Up (the guest upgrade) both come back through
-      `ghostcopy://auth-callback`, and that Cancel after closing the browser
-      tab leaves the form usable
 
 ## Next update: a pin for the Spotlight
 
