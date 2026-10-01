@@ -4,6 +4,8 @@
 
 #include <shobjidl.h>
 
+#include <cwchar>
+
 #include "flutter_window.h"
 #include "utils.h"
 
@@ -18,6 +20,25 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Initialize OLE (required for super_clipboard drag & drop and clipboard)
   // OleInitialize includes COM initialization plus OLE functionality
   ::OleInitialize(nullptr);
+
+  // Come back after a Microsoft Store update. The update closes the app to
+  // replace it and nothing else starts it again, so the tray icon and hotkey
+  // were gone until the next login. A packaged app that registered here is
+  // relaunched once the update finishes - Windows' documented way for a
+  // full-trust MSIX app. Started as a login launch would be: hidden, in the
+  // tray, because that is where it was.
+  //
+  // Only the update case. Not after a crash or hang (a crash on startup would
+  // loop), and not after a reboot, which is the startup task's job and only
+  // if the user turned it on. Windows also ignores a process that ran for
+  // under 60 seconds. --send-file is a one-shot upload that should never come
+  // back as a tray app; a second instance handing its arguments over also
+  // registers, but it exits before any update could catch it.
+  if (std::wcsstr(command_line, L"--send-file") == nullptr) {
+    ::RegisterApplicationRestart(
+        L"--launched-at-startup",
+        RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT);
+  }
 
   flutter::DartProject project(L"data");
 

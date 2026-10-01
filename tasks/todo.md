@@ -2,16 +2,6 @@
 
 ## Windows
 
-- [ ] **Store updates pause ~92 s at "Almost done".** Seen on both Store
-      updates so far (1.0.10 -> 1.0.16 -> 1.0.17). The download is seconds;
-      the wait is a fixed timeout while the COM Surrogate hosting the
-      "Send with GhostCopy" verb fails to shut down. Evidence and the next
-      test (restart Explorer, do not right-click a file, then update) are in
-      [`docs/windows-store-update-investigation.md`](../docs/windows-store-update-investigation.md)
-- [ ] **Relaunch after an update.** A Store update closes GhostCopy and
-      nothing starts it again, so the tray app is gone until the next login.
-      `RegisterApplicationRestart` at startup is Microsoft's documented way
-      for a full-trust MSIX app; confirm it on a real Store update
 - [ ] **Verify the clipboard counter change by hand.** `OleFlushClipboard`
       replaced the owner check, and the two halves pull against each other -
       none of it is covered by tests:
@@ -37,9 +27,6 @@
       running opens the window - it never did before. Check sign-in still
       completes (same delivery path), and that "Send with GhostCopy" sends
       WITHOUT popping the Spotlight open.
-- [ ] **Decide whether Windows needs an update signal in the UI.** macOS has
-      the dot by the menu bar icon because Sparkle needs the user to act. The
-      Store updates silently, so probably nothing - but make it a decision.
 - [ ] If a clip is ever slow again but the *next* one is instant, the death
       was silent (no status to react to) and the evidence-based rejoin
       caught it. The next lever then is opting the process out of Windows
