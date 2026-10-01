@@ -204,11 +204,6 @@ the person it is meant to help, who would have to go looking for it.
         Settings row, or it becomes the setting this was chosen over
   - [ ] The header is on a 400px panel; check the icon does not crowd the
         close button
-- [ ] **Separately, and worth doing whether or not the pin lands: blur
-      discards the composer.** `onWindowBlur` clears the text controller and
-      the clipboard payload when there is an attachment, so clicking away
-      mid-compose loses what was typed or attached. That is a sharper problem
-      than the window closing, and it is a bug rather than a preference.
 
 ## Later: clipboard export and import
 

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/clipboard_item.dart';
+import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/account_prompt_store.dart';
@@ -44,7 +46,9 @@ class SpotlightViewModel extends ChangeNotifier {
     IClipboardService? clipboardService,
     this._accountPromptStore,
     this._isGameModeActive,
-  }) : _clipboardRepo = clipboardRepository,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now,
+       _clipboardRepo = clipboardRepository,
        _syncService = clipboardSyncService,
        _clipboardService = clipboardService ?? ClipboardService.instance;
 
@@ -54,6 +58,8 @@ class SpotlightViewModel extends ChangeNotifier {
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
   final IClipboardService _clipboardService;
+
+  final DateTime Function() _clock;
 
   /// Null turns the account offer and the guest badge off entirely.
   final AccountPromptStore? _accountPromptStore;
@@ -109,6 +115,47 @@ class SpotlightViewModel extends ChangeNotifier {
 
   Future<TransformationResult>? _jwtTransformFuture;
   Future<TransformationResult>? get jwtTransformFuture => _jwtTransformFuture;
+
+  // ========== DRAFT ==========
+  //
+  // The composer holds one of two things: whatever auto-paste read off the
+  // clipboard, or something the user put there - typed, picked or dropped.
+  // Auto-paste used to overwrite both on every focus, and blur cleared any
+  // attachment, so a picked file or a half-typed message was gone the moment
+  // the user clicked away. A draft now survives the hide. Memory is the
+  // constraint, so a hidden draft keeps a staged file's path, never its
+  // bytes, and nothing is kept past [draftLifetime].
+
+  /// How long a draft waits in the tray before the next opening forgets it.
+  static const Duration draftLifetime = Duration(minutes: 10);
+
+  /// Typed text above this is not kept: it would be the one thing a hidden
+  /// draft holds that is not small.
+  static const int maxKeptDraftChars = 100000;
+
+  bool _isDraft = false;
+
+  /// Whether the composer holds the user's own content rather than
+  /// auto-paste's.
+  bool get hasDraft => _isDraft;
+
+  bool _draftRestored = false;
+
+  /// The opening found a kept draft instead of auto-pasting - the cue for
+  /// "Paste clipboard instead".
+  bool get draftRestored => _draftRestored;
+
+  /// Where a staged file came from, so a hide can drop its bytes and the
+  /// next opening read it again.
+  String? _draftFilePath;
+  DateTime? _hiddenAt;
+
+  void _clearDraft() {
+    _isDraft = false;
+    _draftRestored = false;
+    _draftFilePath = null;
+    _hiddenAt = null;
+  }
 
   // ========== ACCOUNT OFFER ==========
 
@@ -216,6 +263,14 @@ class SpotlightViewModel extends ChangeNotifier {
   void updateContent(String newContent) {
     if (_content == newContent) return;
     _content = newContent;
+    // Only typing reaches here with a change: auto-paste sets _content
+    // first, so the text field echoing it back is equal and returns above.
+    if (newContent.trim().isEmpty && _clipboardContent == null) {
+      _clearDraft();
+    } else {
+      _isDraft = true;
+      _draftRestored = false;
+    }
     _debouncedDetectContentType();
   }
 
@@ -237,6 +292,7 @@ class SpotlightViewModel extends ChangeNotifier {
     }
 
     _clipboardContent = null;
+    _clearDraft();
 
     if (clearText) {
       _content = '';
@@ -317,9 +373,80 @@ class SpotlightViewModel extends ChangeNotifier {
   /// this run's one showing, so it does not come back on the next opening.
   void onSpotlightHidden() {
     _spotlightOpen = false;
-    if (!_accountOfferVisible) return;
     _accountOfferVisible = false;
+    _releaseComposerForHide();
     notifyListeners();
+  }
+
+  /// Give back what a hidden window has no use for. Auto-paste's content
+  /// goes entirely - the next opening reads the clipboard again anyway. A
+  /// draft keeps only what is small: its text, and a staged file's path in
+  /// place of its bytes. Anything else in a draft (an image pasted with
+  /// Ctrl+V, a very long text) cannot be kept cheaply, so it goes too.
+  void _releaseComposerForHide() {
+    final payload = _clipboardContent;
+    final keepable =
+        _isDraft &&
+        _content.length <= maxKeptDraftChars &&
+        (payload == null ||
+            (payload.hasHtml && payload.html!.length <= maxKeptDraftChars) ||
+            (payload.hasFile && _draftFilePath != null));
+    if (!keepable) {
+      _clearDraft();
+      _clipboardContent = null;
+      _content = '';
+      _detectedContentType = null;
+      _transformationResult = null;
+      _jwtTransformFuture = null;
+      return;
+    }
+    if (payload != null && payload.hasFile) {
+      _clipboardContent = null; // the bytes; the path brings them back
+    }
+    _hiddenAt = _clock();
+  }
+
+  /// Fill the composer for an opening: the kept draft if there is one and
+  /// it is still fresh, otherwise the clipboard.
+  Future<void> restoreOrPopulateComposer() async {
+    if (_isDraft && _hiddenAt != null) {
+      final expired = _clock().difference(_hiddenAt!) >= draftLifetime;
+      final restored = !expired && await _reloadDraftFile();
+      _hiddenAt = null;
+      if (restored) {
+        _draftRestored = true;
+        notifyListeners();
+        return;
+      }
+      _clearDraft();
+      _clipboardContent = null;
+      _content = '';
+      notifyListeners();
+    }
+    await populateFromClipboard();
+  }
+
+  /// Read a kept file back from disk. True when there was nothing to read,
+  /// or it read; false when the file is gone, changed past the limit, or
+  /// unreadable - the draft is then dropped rather than half-restored.
+  Future<bool> _reloadDraftFile() async {
+    final path = _draftFilePath;
+    if (path == null || _clipboardContent != null) return true;
+    try {
+      final file = File(path);
+      if (!file.existsSync() ||
+          await file.length() > ClipboardLimits.maxFileBytes) {
+        return false;
+      }
+      final bytes = await file.readAsBytes();
+      final filename = file.uri.pathSegments.last;
+      final type = FileTypeService.instance.detectFromBytes(bytes, filename);
+      _clipboardContent = ClipboardContent.file(bytes, filename, type.mimeType);
+      return true;
+    } on FileSystemException catch (e) {
+      debugPrint('[SpotlightVM] Kept file could not be read again: $e');
+      return false;
+    }
   }
 
   /// Offer a guest an account, at most once per run of the app.
@@ -363,9 +490,22 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Populate content from system clipboard
   /// Returns ClipboardContent if there's something to paste
-  Future<ClipboardContent?> populateFromClipboard() async {
+  ///
+  /// Leaves a draft alone unless [force]d by "Paste clipboard instead".
+  Future<ClipboardContent?> populateFromClipboard({bool force = false}) async {
+    if (_isDraft && !force) return null;
     try {
       final content = await _clipboardService.read();
+      // The user may have typed or staged something during the read.
+      if (_isDraft && !force) return null;
+      // An empty clipboard replaces nothing, a draft included.
+      if (!content.hasImage &&
+          !content.hasFile &&
+          !content.hasHtml &&
+          !content.hasText) {
+        return null;
+      }
+      if (force) _clearDraft();
       // Sizes only. A large clipboard is where a hang would start.
       recordDiagnostic(
         'clipboard',
@@ -556,6 +696,7 @@ class SpotlightViewModel extends ChangeNotifier {
       // Clear content after successful send
       _content = '';
       _clipboardContent = null;
+      _clearDraft();
       _isSending = false;
       notifyListeners();
 
@@ -576,9 +717,19 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Set file content after file picker completes
   /// The widget handles FilePicker UI (dialogs, validation)
   /// This just stores the result
-  void setFileContent(ClipboardContent content, String displayText) {
+  ///
+  /// [sourcePath] lets a hide release the bytes and the next opening read
+  /// them back; without it the file cannot outlive a hide.
+  void setFileContent(
+    ClipboardContent content,
+    String displayText, {
+    String? sourcePath,
+  }) {
     _clipboardContent = content;
     _content = displayText;
+    _isDraft = true;
+    _draftRestored = false;
+    _draftFilePath = sourcePath;
     notifyListeners();
     debugPrint(
       '[SpotlightVM] File loaded: ${content.filename} (${content.fileBytes?.length ?? 0} bytes)',
