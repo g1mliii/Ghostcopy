@@ -307,6 +307,16 @@ class SpotlightViewModel extends ChangeNotifier {
     _editRevision++;
     // Only typing reaches here with a change: auto-paste sets _content
     // first, so the text field echoing it back is equal and returns above.
+    final payload = _clipboardContent;
+    if (payload != null &&
+        payload.hasHtml &&
+        !payload.hasFile &&
+        !payload.hasImage) {
+      // An edited HTML preview is the user's text now. Left attached, the
+      // HTML would be what goes out, without the edit.
+      _clipboardContent = null;
+    }
+    final wasRestored = _draftRestored;
     if (newContent.trim().isEmpty && _clipboardContent == null) {
       _clearDraft();
     } else {
@@ -315,6 +325,12 @@ class SpotlightViewModel extends ChangeNotifier {
       if (isRestoringDraft) _draftFilePath = null;
       _isDraft = true;
       _draftRestored = false;
+    }
+    // The detector notifies only when the type changes, which an edit to
+    // plain text does not; without this the "Kept from before" row stays,
+    // offering to paste over what was just typed.
+    if (wasRestored != _draftRestored || payload != _clipboardContent) {
+      notifyListeners();
     }
     _debouncedDetectContentType();
   }
@@ -460,6 +476,10 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Fill the composer for an opening: the kept draft if there is one and
   /// it is still fresh, otherwise the clipboard.
   Future<void> restoreOrPopulateComposer() async {
+    // Queued by a focus the window was hidden again after: snapshotting the
+    // hide count now would miss that hide, and the restore would fill a
+    // hidden composer and clear the draft's expiry.
+    if (_hidden) return;
     final hiddenAt = _hiddenAt;
     if (_isDraft && hiddenAt != null) {
       final hides = _hideCount;

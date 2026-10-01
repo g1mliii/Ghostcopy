@@ -309,16 +309,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Check if window is already focused when widget mounts.
     // If so, trigger the entry animation manually because onWindowFocus listener
     // might have been registered after the focus event already fired.
+    // All of the focus, not just its animation and restore: the view model
+    // outlives this widget, and a restore without the focus that clears its
+    // hidden flag after a hide does nothing.
     windowManager.isFocused().then((isFocused) {
-      if (isFocused && mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _animationController.forward(from: 0);
-            unawaited(_viewModel.restoreOrPopulateComposer());
-            _textFieldFocusNode.requestFocus();
-          }
-        });
-      }
+      if (isFocused && mounted) onWindowFocus();
     });
   }
 
@@ -607,8 +602,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Widget _buildDraftKeptHint() {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
+      // Wrap, not Row: at large text scales the two do not fit on one line
+      // of a 500px window.
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Text(
             'Kept from before',

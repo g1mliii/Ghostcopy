@@ -915,6 +915,9 @@ void main() {
 
     setUp(() {
       clipboard = _MockClipboardService();
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
       now = DateTime(2026, 10, 1, 9);
       tmp = Directory.systemTemp.createTempSync('draft_test');
       addTearDown(() => tmp.deleteSync(recursive: true));
@@ -934,6 +937,13 @@ void main() {
       () => clipboard.read(),
     ).thenAnswer((_) async => ClipboardContent.text(text));
 
+    // An opening, in the order the screen runs it: the focus clears the
+    // hidden flag, then its post-frame callback fills the composer.
+    Future<void> reopen() {
+      unawaited(composer.onWindowFocused());
+      return composer.restoreOrPopulateComposer();
+    }
+
     File stage(List<int> bytes) {
       final file = File('${tmp.path}/notes.txt')..writeAsBytesSync(bytes);
       composer.setFileContent(
@@ -946,7 +956,7 @@ void main() {
 
     test('auto-paste fills an empty composer, and a hide clears it', () async {
       clipboardHolds('from clipboard');
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       expect(composer.content, 'from clipboard');
       expect(composer.hasDraft, isFalse);
 
@@ -961,7 +971,7 @@ void main() {
         ..onSpotlightHidden();
       expect(composer.content, 'half a message');
 
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       expect(composer.content, 'half a message');
       expect(composer.draftRestored, isTrue);
       verifyNever(() => clipboard.read());
@@ -975,7 +985,7 @@ void main() {
       expect(composer.clipboardContent, isNull);
       expect(composer.content, 'File ready to send: notes.txt');
 
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
       expect(composer.clipboardContent?.filename, 'notes.txt');
     });
@@ -985,7 +995,7 @@ void main() {
       stage([1, 2, 3]).deleteSync();
 
       composer.onSpotlightHidden();
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       expect(composer.hasDraft, isFalse);
       expect(composer.clipboardContent, isNull);
@@ -999,7 +1009,7 @@ void main() {
         ..onSpotlightHidden();
 
       now = now.add(SpotlightViewModel.draftLifetime);
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       expect(composer.hasDraft, isFalse);
       expect(composer.content, 'from clipboard');
@@ -1033,7 +1043,7 @@ void main() {
       clipboardHolds('from clipboard');
       stage([1, 2, 3]);
 
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
       verifyNever(() => clipboard.read());
@@ -1044,7 +1054,7 @@ void main() {
       composer
         ..updateContent('half a message')
         ..onSpotlightHidden();
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       await composer.populateFromClipboard(force: true);
 
@@ -1070,7 +1080,7 @@ void main() {
       composer.clearClipboardPayload(clearText: true);
       expect(composer.hasDraft, isFalse);
 
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       expect(composer.content, 'from clipboard');
     });
 
@@ -1103,14 +1113,14 @@ void main() {
       stage([1, 2, 3]);
       composer.onSpotlightHidden();
 
-      final restoring = composer.restoreOrPopulateComposer();
+      final restoring = reopen();
       composer.onSpotlightHidden();
       await restoring;
 
       expect(composer.clipboardContent, isNull);
       expect(composer.hasDraft, isTrue);
       // Still timed from the first hide, and still restorable later.
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
     });
 
@@ -1123,7 +1133,7 @@ void main() {
       now = now.add(SpotlightViewModel.draftLifetime);
       // Windows remounting the screen behind the tray menu.
       composer.onSpotlightHidden();
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       expect(composer.content, 'from clipboard');
     });
@@ -1151,7 +1161,7 @@ void main() {
         ..onSpotlightHidden();
 
       now = now.add(SpotlightViewModel.draftLifetime);
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       // Past the detection debounce: it was cancelled, not just pending.
       await Future<void>.delayed(const Duration(milliseconds: 350));
 
@@ -1165,7 +1175,7 @@ void main() {
       stage([1, 2, 3]);
       composer.onSpotlightHidden();
 
-      final restoring = composer.restoreOrPopulateComposer();
+      final restoring = reopen();
       composer.updateContent('typed instead');
       await restoring;
 
@@ -1183,7 +1193,7 @@ void main() {
         () => clipboardRepository.insert(any()),
       ).thenAnswer((_) => inserting.future);
       clipboardHolds('hello');
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       final sending = composer.handleSend();
       composer.onSpotlightHidden();
@@ -1222,7 +1232,7 @@ void main() {
       stage([1, 2, 3]);
 
       expect(composer.clipboardContent, isNull);
-      await composer.restoreOrPopulateComposer();
+      await reopen();
       expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
     });
 
@@ -1239,9 +1249,59 @@ void main() {
         )
         ..onSpotlightHidden();
 
-      await composer.restoreOrPopulateComposer();
+      await reopen();
 
       expect(composer.clipboardContent?.filename, 'Report.pdf');
+    });
+
+    test('a restore queued before a hide does nothing after it', () async {
+      clipboardHolds('from clipboard');
+      composer.updateContent('half a message');
+      unawaited(composer.onWindowFocused());
+      // Escape before the focus's post-frame restore runs.
+      composer.onSpotlightHidden();
+
+      await composer.restoreOrPopulateComposer();
+      expect(composer.draftRestored, isFalse);
+      verifyNever(() => clipboard.read());
+
+      // The ten minutes were not reset by the restore that did not happen.
+      now = now.add(SpotlightViewModel.draftLifetime);
+      await reopen();
+      expect(composer.content, 'from clipboard');
+    });
+
+    test('editing a restored draft takes the hint away', () async {
+      composer
+        ..updateContent('half a message')
+        ..onSpotlightHidden();
+      await reopen();
+      expect(composer.draftRestored, isTrue);
+
+      var notified = 0;
+      composer
+        ..addListener(() => notified++)
+        ..updateContent('half a message, finished');
+
+      expect(composer.draftRestored, isFalse);
+      expect(notified, 1);
+    });
+
+    test('an edited HTML preview sends as the edited text', () async {
+      when(
+        () => clipboard.read(),
+      ).thenAnswer((_) async => ClipboardContent.html('<b>original</b>'));
+      await composer.populateFromClipboard();
+      expect(composer.clipboardContent?.hasHtml, isTrue);
+
+      composer.updateContent('edited');
+      expect(composer.clipboardContent, isNull);
+      expect(composer.hasDraft, isTrue);
+
+      composer.onSpotlightHidden();
+      await reopen();
+      expect(composer.content, 'edited');
+      expect(composer.clipboardContent, isNull);
     });
 
     test('sending ends the draft', () async {
