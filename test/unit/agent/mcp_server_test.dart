@@ -123,6 +123,40 @@ void main() {
     expect((reply!['result']! as Map)['isError'], isTrue);
   });
 
+  test('a malformed "to" is refused, never widened to the defaults', () async {
+    for (final to in <Object?>[
+      'phone',
+      [1],
+      {'a': 'b'},
+    ]) {
+      final reply = await call({
+        'jsonrpc': '2.0',
+        'id': 8,
+        'method': 'tools/call',
+        'params': {
+          'name': 'send_text',
+          'arguments': {'text': 'secret', 'to': to},
+        },
+      });
+      expect((reply!['result']! as Map)['isError'], isTrue, reason: '$to');
+    }
+    expect(client.requests, isEmpty);
+  });
+
+  test('send_file wants an absolute path', () async {
+    final reply = await call({
+      'jsonrpc': '2.0',
+      'id': 9,
+      'method': 'tools/call',
+      'params': {
+        'name': 'send_file',
+        'arguments': {'path': 'notes.txt'},
+      },
+    });
+    expect((reply!['result']! as Map)['isError'], isTrue);
+    expect(client.requests, isEmpty);
+  });
+
   test('empty text never reaches the app', () async {
     final reply = await call({
       'jsonrpc': '2.0',

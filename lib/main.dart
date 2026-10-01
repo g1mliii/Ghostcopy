@@ -595,6 +595,9 @@ Future<void> _appMain(
       settingsService: locator<ISettingsService>(),
       sendFile: (path, targets) =>
           _sendSharedFile(path, authService, targets: targets),
+      accountPromptStore: locator.isRegistered<AccountPromptStore>()
+          ? locator<AccountPromptStore>()
+          : null,
     ).handle;
 
     SingleInstance.instance.listen((forwarded) {

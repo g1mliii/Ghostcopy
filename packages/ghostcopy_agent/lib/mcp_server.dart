@@ -8,6 +8,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'agent_protocol.dart';
 
@@ -18,8 +19,20 @@ const List<String> mcpProtocolVersions = [
   '2024-11-05',
 ];
 
+/// What `to` accepts, in the schema an assistant reads.
+const List<String> _targetNames = [
+  'phone',
+  'desktop',
+  'ios',
+  'android',
+  'macos',
+  'windows',
+  'linux',
+];
+
 const String _targetsDescription =
-    'Where to send it. Any of: phone, desktop, ios, android, macos, windows. '
+    'Where to send it. Any of: phone, desktop, ios, android, macos, windows, '
+    'linux. '
     "Leave out to use the user's default devices.";
 
 /// The tools, as tools/list describes them.
@@ -37,10 +50,7 @@ const List<Map<String, Object?>> mcpTools = [
         'text': {'type': 'string', 'description': 'The text or link to send.'},
         'to': {
           'type': 'array',
-          'items': {
-            'type': 'string',
-            'enum': ['phone', 'desktop', 'ios', 'android', 'macos', 'windows'],
-          },
+          'items': {'type': 'string', 'enum': _targetNames},
           'description': _targetsDescription,
         },
       },
@@ -60,10 +70,7 @@ const List<Map<String, Object?>> mcpTools = [
         'path': {'type': 'string', 'description': 'Absolute path to the file.'},
         'to': {
           'type': 'array',
-          'items': {
-            'type': 'string',
-            'enum': ['phone', 'desktop', 'ios', 'android', 'macos', 'windows'],
-          },
+          'items': {'type': 'string', 'enum': _targetNames},
           'description': _targetsDescription,
         },
       },
@@ -168,9 +175,16 @@ class McpServer {
   ) async {
     final Map<String, Object?> request;
     try {
+      // Strict: a malformed `to` must not fall through to the defaults, which
+      // can mean every device - wider than whatever the caller meant.
       final to = arguments['to'];
+      if (to != null && (to is! List || to.any((t) => t is! String))) {
+        return _toolError(
+          'to must be a list of device names, such as ["phone"].',
+        );
+      }
       final targets = resolveDeviceTargets(
-        to is List ? to.whereType<String>() : const [],
+        to == null ? const <String>[] : (to as List).cast<String>(),
       );
       switch (name) {
         case 'send_text':
@@ -183,6 +197,12 @@ class McpServer {
           final path = arguments['path'];
           if (path is! String || path.trim().isEmpty) {
             return _toolError('path is required.');
+          }
+          // The app is another process with its own working directory, so a
+          // relative path would resolve somewhere else - possibly to a
+          // different file of the same name.
+          if (!File(path).isAbsolute) {
+            return _toolError('path must be absolute: $path');
           }
           request = {'name': 'send_file', 'path': path, 'to': targets};
         case 'list_devices':

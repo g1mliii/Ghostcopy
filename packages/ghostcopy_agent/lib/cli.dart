@@ -35,7 +35,7 @@ Usage:
 
 Options:
   --to <devices>   Comma-separated: phone, desktop, ios, android, macos,
-                   windows. Default: the "Send to devices" setting.
+                   windows, linux. Default: the "Send to devices" setting.
   --json           Print machine-readable JSON.
   -h, --help       Show this help.
 

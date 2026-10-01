@@ -3,6 +3,7 @@ import '../models/clipboard_item.dart';
 import '../models/exceptions.dart';
 import '../repositories/clipboard_repository.dart';
 import '../utils/network_errors.dart';
+import 'account_prompt_store.dart';
 import 'auth_service.dart';
 import 'device_service.dart';
 import 'settings_service.dart';
@@ -28,16 +29,22 @@ class AgentCommandHandler {
     required IDeviceService deviceService,
     required ISettingsService settingsService,
     required this._sendFile,
+    AccountPromptStore? accountPromptStore,
   }) : _auth = authService,
        _clips = clipboardRepository,
        _devices = deviceService,
-       _settings = settingsService;
+       _settings = settingsService,
+       _accountPrompts = accountPromptStore;
 
   final IAuthService _auth;
   final IClipboardRepository _clips;
   final IDeviceService _devices;
   final ISettingsService _settings;
   final SendFileAtPath _sendFile;
+
+  /// Counts a successful send toward the guest account offer, as every other
+  /// way of sending does. The file path records its own.
+  final AccountPromptStore? _accountPrompts;
 
   Future<Map<String, Object?>> handle(Map<String, Object?> command) async {
     if (!await _settings.getAgentAccessEnabled()) {
@@ -109,6 +116,7 @@ class AgentCommandHandler {
     } on Exception catch (e) {
       return _failed(sendFailureMessage(e, 'The send failed: $e'));
     }
+    await _accountPrompts?.recordSend();
     return {
       'ok': true,
       'status': 'sent',
@@ -167,6 +175,7 @@ class AgentCommandHandler {
       'android': 'Android',
       'macos': 'Mac',
       'windows': 'Windows',
+      'linux': 'Linux',
     };
     return targets.map((t) => names[t] ?? t).join(', ');
   }

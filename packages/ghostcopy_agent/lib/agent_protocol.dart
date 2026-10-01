@@ -14,23 +14,50 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-/// The loopback port the running app listens on. Shared with SingleInstance.
-const int agentPort = 47821;
+/// Where per-user ports start. Shared with SingleInstance.
+const int agentBasePort = 47821;
+
+/// The loopback port this user's app listens on.
+///
+/// Per user, not one for the machine: loopback is shared by every login
+/// session, so with a fixed port a second user's GhostCopy found the first
+/// user's holding it, "forwarded" its launch there - accepted by the socket,
+/// refused by the secret - and quit, and its command line talked to the wrong
+/// app. Derived from the home folder, which the app and the command line see
+/// alike, into a 1000-port range. Two users landing on the same port is the
+/// old behaviour, not a new failure.
+int agentPortFor({Map<String, String>? environment}) {
+  final env = environment ?? Platform.environment;
+  final home = env['USERPROFILE'] ?? env['HOME'];
+  if (home == null || home.isEmpty) return agentBasePort;
+  // FNV-1a: stable across runs and Dart versions, unlike String.hashCode.
+  var hash = 0x811c9dc5;
+  for (final unit in utf8.encode(home.toLowerCase())) {
+    hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
+  }
+  return agentBasePort + hash % 1000;
+}
 
 /// Sent first, so the app can tell GhostCopy from an unrelated process that
 /// happens to hold the port, and the other way round.
 const String agentHandshakeMagic = 'ghostcopy/1';
 
 /// The device types a clip can be addressed to.
-const List<String> deviceTypes = ['windows', 'macos', 'android', 'ios'];
+const List<String> deviceTypes = [
+  'windows',
+  'macos',
+  'linux',
+  'android',
+  'ios',
+];
 
 /// Friendlier names an agent or a person is likely to use.
 const Map<String, List<String>> deviceAliases = {
   'phone': ['android', 'ios'],
   'mobile': ['android', 'ios'],
   'iphone': ['ios'],
-  'desktop': ['windows', 'macos'],
-  'computer': ['windows', 'macos'],
+  'desktop': ['windows', 'macos', 'linux'],
+  'computer': ['windows', 'macos', 'linux'],
   'mac': ['macos'],
   'pc': ['windows'],
 };
@@ -91,10 +118,11 @@ class AgentException implements Exception {
 /// Asks the running app to do something and returns its answer.
 class AgentClient {
   AgentClient({
-    this.port = agentPort,
+    int? port,
     String? secretPath,
     this.timeout = const Duration(seconds: 60),
-  }) : secretPath = secretPath ?? defaultSecretPath();
+  }) : port = port ?? agentPortFor(),
+       secretPath = secretPath ?? defaultSecretPath();
 
   final int port;
   final String secretPath;
@@ -147,6 +175,13 @@ class AgentClient {
         );
       }
       return decoded;
+    } on SocketException {
+      // Connected, then lost: the app quit or restarted mid-request.
+      throw const AgentException(
+        'not_running',
+        'GhostCopy closed the connection. Make sure it is running, then try '
+            'again.',
+      );
     } on TimeoutException {
       throw const AgentException(
         'timeout',

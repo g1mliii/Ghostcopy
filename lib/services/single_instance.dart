@@ -34,9 +34,10 @@ class SingleInstance {
 
   static final SingleInstance instance = SingleInstance._();
 
-  /// Arbitrary high port. Only ever contacted by another copy of this app,
-  /// or by the `ghostcopy` command line (packages/ghostcopy_agent).
-  static const int _defaultPort = agentPort;
+  /// This user's port (see agentPortFor). Only ever contacted by another
+  /// copy of this app, or by the `ghostcopy` command line
+  /// (packages/ghostcopy_agent).
+  static final int _defaultPort = agentPortFor();
 
   /// The loopback port the primary instance owns.
   ///

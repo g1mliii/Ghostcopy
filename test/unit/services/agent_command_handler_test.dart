@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/models/exceptions.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/account_prompt_store.dart';
 import 'package:ghostcopy/services/agent_command_handler.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/device_service.dart';
@@ -12,6 +13,7 @@ import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/single_instance.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _Auth extends Mock implements IAuthService {}
 
@@ -101,6 +103,23 @@ void main() {
     final item = inserted();
     expect(item.targetDeviceTypes, ['ios']);
     expect(item.userId, 'user-1');
+  });
+
+  test('a text send counts toward the guest account offer', () async {
+    SharedPreferences.setMockInitialValues({});
+    final store = await AccountPromptStore.open();
+    final counting = AgentCommandHandler(
+      authService: auth,
+      clipboardRepository: clips,
+      deviceService: devices,
+      settingsService: settings,
+      sendFile: (path, targets) async => (ok: true, message: ''),
+      accountPromptStore: store,
+    );
+
+    await counting.handle({'name': 'send_text', 'text': 'hi'});
+
+    expect(store.hasSent, isTrue);
   });
 
   test('an empty default setting means every device', () async {

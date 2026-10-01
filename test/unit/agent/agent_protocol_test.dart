@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
 
@@ -9,7 +11,8 @@ void main() {
 
     test('expands the names people use', () {
       expect(resolveDeviceTargets(['phone']), ['android', 'ios']);
-      expect(resolveDeviceTargets(['Desktop']), ['windows', 'macos']);
+      expect(resolveDeviceTargets(['Desktop']), ['windows', 'macos', 'linux']);
+      expect(resolveDeviceTargets(['linux']), ['linux']);
       expect(resolveDeviceTargets(['phone', 'ios']), ['android', 'ios']);
     });
 
@@ -30,6 +33,49 @@ void main() {
         ),
       );
     });
+  });
+
+  group('agentPortFor', () {
+    test('is the same for the same user, every time', () {
+      final env = {'HOME': '/Users/sam'};
+      expect(agentPortFor(environment: env), agentPortFor(environment: env));
+    });
+
+    test('differs between users, inside the range', () {
+      final a = agentPortFor(environment: {'HOME': '/Users/sam'});
+      final b = agentPortFor(environment: {'HOME': '/Users/alex'});
+      expect(a, isNot(b));
+      for (final port in [a, b]) {
+        expect(port, inInclusiveRange(agentBasePort, agentBasePort + 999));
+      }
+    });
+
+    test('Windows home folders compare without case', () {
+      expect(
+        agentPortFor(environment: {'USERPROFILE': r'C:\Users\Sam'}),
+        agentPortFor(environment: {'USERPROFILE': r'c:\users\sam'}),
+      );
+    });
+
+    test('no home folder falls back to the base port', () {
+      expect(agentPortFor(environment: const {}), agentBasePort);
+    });
+  });
+
+  test('an app that drops the connection is an AgentException', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    server.listen((socket) => socket.destroy());
+    final secret = File('${Directory.systemTemp.createTempSync('a').path}/s')
+      ..writeAsStringSync('x' * 40);
+
+    await expectLater(
+      AgentClient(
+        port: server.port,
+        secretPath: secret.path,
+      ).request({'name': 'list_devices'}),
+      throwsA(isA<AgentException>()),
+    );
   });
 
   test('the secret path can be overridden', () {
