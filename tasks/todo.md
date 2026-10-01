@@ -110,10 +110,6 @@ isolated from a dev build.
       the owner's name for a device is the point. If granted, add the key to
       `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
       prefers `ios.name`
-- [ ] **`primary` as a foreground is 4.44:1 on `surface`**, just under AA.
-      Used as a foreground in ~104 places: either the token moves, or call
-      sites move to `accentText` (8.98:1) one at a time, as the email templates
-      did
 - [ ] `flutter logs` returns nothing from a profile build on device. The
       background isolate is only observable by writing files to the app
       container and reading them with `devicectl device info files`
@@ -167,13 +163,11 @@ should start as early as a build allows.
 - [ ] `flutter build appbundle --release`, verify it is not debug-signed
 - [ ] Create the app in Console; privacy policy, data safety, content rating
 - [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
-- [ ] **Android Apple sign-in.** Hidden on Android for now. Apple is the
-      browser flow there; AuthService already waits for the callback's
-      session (`awaitBrowserSession`), so no UI-level wait is needed. Give the
-      welcome screen a Cancel while it waits (the desktop auth panel has one),
-      then show the button (remove the `Platform.isIOS` gate) and test on a
-      device. Supabase and Apple Developer need nothing more - it uses the
-      same Services ID as Windows
+- [ ] **Android Apple sign-in - confirm on a device.** The button now shows
+      on Android, as the browser flow, with a Cancel under it while it waits.
+      Check sign-in and Sign Up (the guest upgrade) both come back through
+      `ghostcopy://auth-callback`, and that Cancel after closing the browser
+      tab leaves the form usable
 
 ## Next update: a pin for the Spotlight
 
