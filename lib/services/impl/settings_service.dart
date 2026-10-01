@@ -35,6 +35,7 @@ class SettingsService implements ISettingsService {
   static const String _keyObsidianEnabled = 'obsidian_enabled';
   static const String _keyObsidianVaultPath = 'obsidian_vault_path';
   static const String _keyObsidianFileName = 'obsidian_file_name';
+  static const String _keyAgentAccessEnabled = 'agent_access_enabled';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
@@ -297,6 +298,18 @@ class SettingsService implements ISettingsService {
       await _prefs!.setString(_keyObsidianVaultPath, path);
       debugPrint('Obsidian vault path set');
     }
+  }
+
+  @override
+  Future<bool> getAgentAccessEnabled() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keyAgentAccessEnabled) ?? false;
+  }
+
+  @override
+  Future<void> setAgentAccessEnabled({required bool enabled}) async {
+    _ensureInitialized();
+    await _prefs!.setBool(_keyAgentAccessEnabled, enabled);
   }
 
   @override

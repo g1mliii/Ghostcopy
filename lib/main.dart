@@ -19,6 +19,7 @@ import 'models/clipboard_item.dart';
 import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/account_prompt_store.dart';
+import 'services/agent_command_handler.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
@@ -584,6 +585,18 @@ Future<void> _appMain(
     // runs only after Supabase and the rest of desktop setup. A broadcast
     // stream has no replay, so a callback forwarded in that window would be
     // dropped. listen() flushes that backlog.
+    // The `ghostcopy` command line and its MCP server, on the same channel.
+    // Wired here, with everything a send needs in place; until now the
+    // channel tells a command GhostCopy is still starting.
+    SingleInstance.instance.commandHandler = AgentCommandHandler(
+      authService: authService,
+      clipboardRepository: locator<IClipboardRepository>(),
+      deviceService: deviceService,
+      settingsService: locator<ISettingsService>(),
+      sendFile: (path, targets) =>
+          _sendSharedFile(path, authService, targets: targets),
+    ).handle;
+
     SingleInstance.instance.listen((forwarded) {
       unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
       // Whether to surface the window, by what the launch was for. The rule
@@ -1671,7 +1684,9 @@ Future<({bool ok, String message})> _sendSharedFile(
   String path,
   IAuthService authService, {
   bool initializeAuth = false,
+  List<String>? targets,
 }) async {
+  final overrideTargets = targets;
   try {
     // Directories are rejected by name rather than falling through to the
     // existsSync check below, which is false for a directory and would report
@@ -1716,7 +1731,10 @@ Future<({bool ok, String message})> _sendSharedFile(
       settings = SettingsService();
       await settings.initialize();
     }
-    final targets = await settings.getAutoSendTargetDevices();
+    // An explicit choice from the command line wins over the setting.
+    final targets = overrideTargets != null
+        ? overrideTargets.toSet()
+        : await settings.getAutoSendTargetDevices();
 
     final bytes = await file.readAsBytes();
     final filename = file.uri.pathSegments.last;

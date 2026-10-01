@@ -525,6 +525,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "9.2.1"
+  ghostcopy_agent:
+    dependency: "direct main"
+    description:
+      path: "packages/ghostcopy_agent"
+      relative: true
+    source: path
+    version: "1.0.0"
   glados:
     dependency: "direct dev"
     description:

@@ -58,6 +58,10 @@ dependencies:
   flutter_local_notifications: ^22.3.0
   flutter_secure_storage: ^10.0.0
   get_it: ^9.2.1
+  # The ghostcopy command line and MCP server, and the protocol the app
+  # answers them on. See packages/ghostcopy_agent.
+  ghostcopy_agent:
+    path: packages/ghostcopy_agent
   google_sign_in: ^6.2.2
   hotkey_manager: ^0.2.0
   http: ^1.2.0

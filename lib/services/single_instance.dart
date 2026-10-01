@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:ghostcopy_agent/agent_protocol.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -33,8 +34,9 @@ class SingleInstance {
 
   static final SingleInstance instance = SingleInstance._();
 
-  /// Arbitrary high port. Only ever contacted by another copy of this app.
-  static const int _defaultPort = 47821;
+  /// Arbitrary high port. Only ever contacted by another copy of this app,
+  /// or by the `ghostcopy` command line (packages/ghostcopy_agent).
+  static const int _defaultPort = agentPort;
 
   /// The loopback port the primary instance owns.
   ///
@@ -48,7 +50,7 @@ class SingleInstance {
   /// Sent ahead of the payload so the primary can recognise a peer that is
   /// actually GhostCopy, and so a second launch can tell GhostCopy apart from
   /// an unrelated process that happens to hold the port.
-  static const String _handshakeMagic = 'ghostcopy/1';
+  static const String _handshakeMagic = agentHandshakeMagic;
 
   /// A squatted port must not hang startup; these are generous for loopback.
   static const Duration _connectTimeout = Duration(seconds: 2);
@@ -56,6 +58,13 @@ class SingleInstance {
 
   ServerSocket? _server;
   String? _secret;
+
+  /// Answers commands from the `ghostcopy` command line and its MCP server,
+  /// which arrive on the same authenticated channel as a second launch's
+  /// arguments but expect a reply. Null until main.dart has the services
+  /// they need; a command before then is told so rather than left hanging.
+  Future<Map<String, Object?>> Function(Map<String, Object?> command)?
+  commandHandler;
 
   final StreamController<String> _incoming =
       StreamController<String>.broadcast();
@@ -196,40 +205,75 @@ class SingleInstance {
   }
 
   void _handleConnection(Socket socket) {
-    // One JSON line: {"magic": ..., "secret": ..., "args": [...]}.
-    socket
-        .cast<List<int>>()
-        .transform(utf8.decoder)
-        .join()
-        .timeout(_handshakeTimeout)
-        .then((payload) {
-          final args = _verifyAndExtract(payload);
-          if (args == null) {
-            debugPrint(
-              '[SingleInstance] ✗ Rejected unauthenticated connection',
-            );
-            return;
-          }
-          debugPrint('[SingleInstance] ← Received from second launch: $args');
-          // Delivered even when empty, which is the commonest case of all:
-          // launching the app while it is already running, with no arguments.
-          // That is the user asking for the window, and main.dart handles it
-          // explicitly - "a second launch without a URL is the user asking for
-          // the app, so show the window rather than silently doing nothing".
-          // An `args.isNotEmpty` guard here meant that case was dropped before
-          // it ever reached that code, so clicking the app while it sat in the
-          // tray did nothing at all.
-          _deliver(args);
-        })
-        .catchError((Object e) {
-          debugPrint('[SingleInstance] ⚠️ Connection error: $e');
-        })
-        .whenComplete(() => socket.destroy());
+    unawaited(_serve(socket));
   }
 
-  /// Returns the forwarded argument string, or null if the peer did not prove
-  /// it is another copy of this app running as this user.
-  String? _verifyAndExtract(String payload) {
+  Future<void> _serve(Socket socket) async {
+    try {
+      // One JSON object: {"magic", "secret", and either "args" from a second
+      // launch or "command" from the command line}. Read to the end - the
+      // sender half-closes once it has written it.
+      final payload = await utf8.decoder
+          .bind(socket)
+          .join()
+          .timeout(_handshakeTimeout);
+      final message = _authenticate(payload);
+      if (message == null) {
+        debugPrint('[SingleInstance] ✗ Rejected unauthenticated connection');
+        return;
+      }
+
+      final command = message['command'];
+      if (command is Map<String, Object?>) {
+        socket.add(utf8.encode(jsonEncode(await _answer(command))));
+        await socket.flush();
+        return;
+      }
+
+      final args = message['args'];
+      if (args is! List) return;
+      final joined = args.whereType<String>().join(' ').trim();
+      debugPrint('[SingleInstance] ← Received from second launch: $joined');
+      // Delivered even when empty, which is the commonest case of all:
+      // launching the app while it is already running, with no arguments.
+      // That is the user asking for the window, and main.dart handles it
+      // explicitly - "a second launch without a URL is the user asking for
+      // the app, so show the window rather than silently doing nothing".
+      // An `args.isNotEmpty` guard here meant that case was dropped before
+      // it ever reached that code, so clicking the app while it sat in the
+      // tray did nothing at all.
+      _deliver(joined);
+    } on Object catch (e) {
+      debugPrint('[SingleInstance] ⚠️ Connection error: $e');
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  Future<Map<String, Object?>> _answer(Map<String, Object?> command) async {
+    final handler = commandHandler;
+    if (handler == null) {
+      return {
+        'ok': false,
+        'error': 'not_ready',
+        'message': 'GhostCopy is still starting. Try again in a moment.',
+      };
+    }
+    try {
+      return await handler(command);
+    } on Object catch (e) {
+      debugPrint('[SingleInstance] ⚠️ Command failed: $e');
+      return {
+        'ok': false,
+        'error': 'send_failed',
+        'message': 'GhostCopy could not do that: $e',
+      };
+    }
+  }
+
+  /// The message, if the peer proved it is GhostCopy (or its command line)
+  /// running as this user; null otherwise.
+  Map<String, Object?>? _authenticate(String payload) {
     final trimmed = payload.trim();
     if (trimmed.isEmpty) return null;
 
@@ -239,7 +283,7 @@ class SingleInstance {
     } on FormatException {
       return null;
     }
-    if (decoded is! Map<String, dynamic>) return null;
+    if (decoded is! Map<String, Object?>) return null;
 
     if (decoded['magic'] != _handshakeMagic) return null;
 
@@ -248,9 +292,7 @@ class SingleInstance {
     if (offered is! String || expected == null) return null;
     if (!_constantTimeEquals(offered, expected)) return null;
 
-    final args = decoded['args'];
-    if (args is! List) return null;
-    return args.whereType<String>().join(' ').trim();
+    return decoded;
   }
 
   /// Compares without leaking where the first difference is.

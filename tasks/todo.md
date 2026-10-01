@@ -228,20 +228,25 @@ it better, and also covers backups and leaving without losing anything.
 - [ ] Does not need to be instant. A queued job that emails or exposes a
       signed download is cheaper and sidesteps timeouts on large histories
 
-## Later: AI assistant integration via MCP
+## AI assistants: the `ghostcopy` command and MCP server
 
-Let users ask an assistant to "send this to my phone" or send a generated file
-to another device through GhostCopy on macOS and Windows. Local MCP first, for
-Claude Desktop and ChatGPT/Codex, reusing GhostCopy's sending services, account
-and encryption. A CLI can follow on the same implementation.
+Built in `packages/ghostcopy_agent`: `ghostcopy send/send-file/devices`, with
+`--to phone` and `--json`, and `ghostcopy mcp` exposing the same as tools. Both
+ask the running app over the authenticated single-instance channel, behind the
+"Command line & AI tools" setting, so the session, encryption and device
+targets are the app's own. What is left:
 
-- [ ] Tools to list devices, send text or links, and send files
-- [ ] Target a device by ID, resolving names such as "my phone"
-- [ ] Opt-in connection; clipboard-history access a separate permission
-- [ ] Report queued/sent accurately; only report received with a delivery
-      acknowledgement
-- [ ] Straightforward setup, verified on both desktop platforms
-- [ ] Trial "send this to my phone" before expanding scope
+- [ ] **Ship the binary with the apps.** macOS: compile it in
+      `installer/macos/build-release.sh`, put it in `Contents/Helpers/`, sign
+      it with the hardened runtime before the app is signed, and offer a way
+      onto PATH (an "Install command line tool" action, or documented
+      `ln -s`). Windows: build it in CI next to the runner and declare a
+      `uap5:AppExecutionAlias` in the MSIX so `ghostcopy` is on PATH
+- [ ] **Try it end to end on both desktops** - `ghostcopy send --to phone`
+      from a terminal, and Claude Desktop with the MCP config from the README
+- [ ] Report "received" only once there is a delivery acknowledgement; until
+      then it says "sent", which is all the app knows
+- [ ] Clipboard-history access, if ever, as a separate permission from sending
 
 ## Later: widget extraction
 

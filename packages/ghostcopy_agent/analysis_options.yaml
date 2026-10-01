@@ -1,0 +1,7 @@
+# No include: this package has no dependencies, so flutter_lints from the app's
+# analysis_options is not resolvable here. The app's analyzer still checks
+# this code through its path dependency.
+analyzer:
+  language:
+    strict-casts: true
+    strict-raw-types: true
