@@ -1160,6 +1160,40 @@ void main() {
       expect(composer.transformationResult, isNull);
     });
 
+    test('typing during a file restore wins over the old file', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+      composer.onSpotlightHidden();
+
+      final restoring = composer.restoreOrPopulateComposer();
+      composer.updateContent('typed instead');
+      await restoring;
+
+      expect(composer.clipboardContent, isNull);
+      expect(composer.content, 'typed instead');
+      // A text draft now, so Send is not held waiting for a file.
+      expect(composer.isRestoringDraft, isFalse);
+      expect(composer.hasDraft, isTrue);
+    });
+
+    test('a hide during a send records what was sent', () async {
+      final inserting = Completer<ClipboardItem>();
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) => inserting.future);
+      clipboardHolds('hello');
+      await composer.restoreOrPopulateComposer();
+
+      final sending = composer.handleSend();
+      composer.onSpotlightHidden();
+      inserting.complete(_clipboardItem(id: '1', content: 'hello'));
+      await sending;
+
+      // What stops auto-send from sending the unchanged clipboard again.
+      expect(clipboardSyncService.lastManualSendContent, 'hello');
+    });
+
     test('sending ends the draft', () async {
       when(() => authService.currentUserId).thenReturn('user-123');
       when(
