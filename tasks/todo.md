@@ -123,9 +123,11 @@ isolated from a dev build.
 - [ ] **Tapping the same email sign-in link twice** gives the "already used"
       message, not a raw error. The crash it used to cause is fixed
       (`d37141f`); the message itself has not been checked
-- [ ] **Do not disable legacy API keys** until every released build carries
-      the publishable key. It is compiled in; an update is the only way to
-      change it, which is why the macOS updater had to land first
+- [ ] **Disable the legacy API keys** (Supabase dashboard, Settings -> API
+      Keys) once the edge functions reading `_shared/keys.ts` have deployed.
+      Nothing else uses them: every released build and the website carry the
+      publishable key. Watch one push arrive and one QR link afterwards; the
+      dashboard can re-enable them if anything was missed
 
 ## Monitoring, error tracking and cost guards
 

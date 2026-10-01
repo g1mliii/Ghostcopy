@@ -3,6 +3,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.600.0';
 import { corsPreflight, json } from '../_shared/http.ts';
+import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
 const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID') ?? '';
 const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
@@ -22,14 +23,13 @@ async function authenticate(req: Request): Promise<
   { userId: string; error: null } | { userId: null; error: Response }
 > {
   const authHeader = req.headers.get('Authorization') ?? '';
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  if (serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`) {
+  if (isSecretKeyCaller(authHeader)) {
     return {
       userId: 'service-role',
       error: null
     };
   }
-  const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
+  const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', publishableKey(), {
     global: {
       headers: {
         Authorization: authHeader
@@ -49,7 +49,7 @@ async function authenticate(req: Request): Promise<
   };
 }
 function serviceClient() {
-  return createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
+  return createClient(Deno.env.get('SUPABASE_URL') ?? '', secretKey(), {
     auth: { persistSession: false, autoRefreshToken: false }
   });
 }

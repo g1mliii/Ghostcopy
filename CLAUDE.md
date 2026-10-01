@@ -191,13 +191,16 @@ publishable key is public by design, and the security boundary is Supabase's
 RLS policies, not concealment of the key.
 
 It is the `sb_publishable_...` key from Supabase's current API key scheme, not
-the legacy `anon` JWT. Do not disable legacy API keys until every released
-build carries the publishable key - it is compiled in, so an old install keeps
-sending whatever it shipped with. The server-side counterpart is the
-`sb_secret_...` key: `SUPABASE_SERVICE_ROLE_KEY` in an Edge Function now holds
-that, and the `fcm_service_role_key` vault secret the notification trigger
-sends must match it byte for byte or `send-clipboard-notification` returns 401
-and push stops with nothing surfacing the failure.
+the legacy `anon` JWT. Every released build carries it (the switch landed
+2026-09-17, before the first release on 2026-09-22), and the website's scripts
+use it too. The server-side counterpart is the `sb_secret_...` key. Edge
+Functions read both through `supabase/functions/_shared/keys.ts`
+(`SUPABASE_PUBLISHABLE_KEYS` / `SUPABASE_SECRET_KEYS`), never the legacy
+`SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`, which stop working once
+legacy keys are disabled. The `fcm_service_role_key` vault secret the
+notification trigger sends must be one of the project's secret keys, or
+`send-clipboard-notification` returns 401 and push stops with nothing
+surfacing the failure.
 
 Two config files are gitignored and must be copied across (or re-downloaded
 from the Firebase console) when setting up a new machine for mobile work:

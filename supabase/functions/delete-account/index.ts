@@ -22,6 +22,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/http.ts'
+import { publishableKey, secretKey } from '../_shared/keys.ts'
 
 const APPLE_TEAM_ID = 'R9TKT8U45R'
 const APPLE_KEY_ID = 'Y8NRLTKXG3'
@@ -161,8 +162,8 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405)
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  const anonKey = publishableKey()
+  const serviceRoleKey = secretKey()
 
   // Who is asking is taken from their session, never from the body: the only
   // account this can delete is the caller's own.
