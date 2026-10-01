@@ -1,90 +1,17 @@
 # Current Work
 
-## Active Task
+## Windows
 
-**Windows Store submission.** Everything buildable is built; what remains is
-testing, the listing, and a macOS/iOS pass afterwards. All of it is on the
-branch `feat/windows-store-release` - six commits, **one PR**, split so a bad
-test result can revert a single change rather than the lot.
-
-
-### Two things the plan is easy to leave out
-
-- **The unexplained native crash is a decision, not a formality.** Two
-  `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` reports. A defensive fix landed -
-  the clipboard flush was being called from inside a window procedure, where
-  it can pump messages and re-enter - but the first crash predates that code,
-  so it cannot be claimed as the cause. The Flutter engine's symbols are now
-  uploaded, so a recurrence will be readable rather than a wall of `?`. If
-  nothing recurs across the test days, shipping is reasonable; decide it
-  rather than let it pass unnoticed.
-- **macOS and mobile are NOT untouched.** Most of this work lives in `lib/`
-  and ships everywhere: the startup crash fix, the second-launch fix
-  (clicking a running app did nothing on macOS too), the thumbnail cache, the
-  auth panel condensing, and mobile background memory trimming. macOS
-  1.0.0 (8) and TestFlight 1.0.0 (7) are behind it; both are being rebuilt as
-  1.0.0 (11) (Windows took 10, as `msix_version` 1.0.10.0).
-
-## macOS: what's left
-
-- [ ] **On 1.0.0 (11):** encrypted history still decrypts with the existing
-      passphrase, tray menu, Option+Space, a clip each way
-## Windows: nextre**, decided 2026-09-19. Registration is free
-for Individual and Company accounts via https://storedeveloper.microsoft.com -
-that entry point specifically; Partner Center and Visual Studio still route to
-the paid legacy flow. Re-checked 2026-09-25: Company became free in May 2026
-(sign-up with an Entra ID work account), Individual in September 2025 (ID and
-selfie). Publishing is free; Microsoft only shares revenue from paid apps and
-in-app purchases, which GhostCopy has none of. The Store signs the package and handles updates, which
-avoids a code-signing certificate and removes the WinSparkle half of the
-updater. Unsigned direct download is worse than it sounds: SmartScreen
-reputation accrues per certificate, and unsigned it accrues per file hash, so
-every release and every auto-update re-triggers the warning.
-
-CI already builds Windows on `windows-latest`, so no Windows machine is needed
-to package - but everything below marked "verify" does need one.
-
-- [ ] **AppData is NOT redirected for a full-trust MSIX**, contrary to the
-      note this file used to carry. Measured during the sideload: the packaged
-      app wrote its sentry-native database straight to the real
-      `%LOCALAPPDATA%` and the container's `LocalCache` stayed empty, so the
-      packaged and unpackaged builds share `%APPDATA%\com.ghostcopy` - the
-      same session, settings and passphrase. Harmless for the crash database,
-      but it means the sideload test was never isolated from the dev build,
-      and anything that assumes per-package state is wrong
-- [ ] **WNS is not used and needs no setup.** The Partner Center WNS/MPNS page
-      applies to apps receiving cloud push through Windows Push Notification
-      Services. GhostCopy desktop has no FCM and no push: it holds a Supabase
-      Realtime socket and raises a *local* toast through
-      flutter_local_notifications. Nothing to configure, and it has no bearing
-      on the account type
-  - Separately, and NOT fixed: the mark's bounding box is centred to the pixel
-    but its mass is not - the centroid sits 5.9px left and 59px high of centre
-    at 1024 (0.6% and 5.8%). Optical centring would shift it to match, but
-    that moves the iOS, macOS and Android icons too, including ones already
-    through review, so it is a deliberate call rather than a bug fix
-- [ ] **Two unexplained native crashes - decide before submitting.**
-      `EXCEPTION_ACCESS_VIOLATION_READ / 0x10` on 2026-09-25 at 19:59 UTC
-      (dist 5) and 21:39 UTC (dist 9), same user, same shape. Reading 0x10 is
-      a null dereference at a member offset.
-      **Narrowed, 2026-09-25:** the only frame worth trusting is
-      `FlutterViewController::HandleTopLevelWindowProc`. `SetWaitableTimer`
-      appears in both but nothing in this repo calls it, so treat it as stack
-      noise from an unsymbolicated walk rather than a caller. That left one
-      pattern that fits: something the app calls from inside the window
-      procedure pumping messages and re-entering it. Both candidates are now
-      gone - the `MessageBoxW` the send-file path used (present in dist 5) was
-      deleted, and `OleFlushClipboard` (added in dist 9) is posted rather than
-      called. Consistent with the evidence, but NOT proven: the frames above
-      it were never resolved.
-      **What changed since:** `flutter_windows.dll.pdb` ships with the Flutter
-      SDK and had never been uploaded, which is why every engine frame read
-      `?`. It is uploaded now and `build-store.ps1` sends it per release, so
-      the debug id cannot drift on a Flutter upgrade. Sentry reprocesses
-      native events when symbols arrive late, so the two existing reports may
-      resolve on their own - **check them before deciding.**
-      If nothing recurs over the test days and the existing two stay
-      unexplained, shipping is defensible; make it a decision.
+- [ ] **Store updates pause ~92 s at "Almost done".** Seen on both Store
+      updates so far (1.0.10 -> 1.0.16 -> 1.0.17). The download is seconds;
+      the wait is a fixed timeout while the COM Surrogate hosting the
+      "Send with GhostCopy" verb fails to shut down. Evidence and the next
+      test (restart Explorer, do not right-click a file, then update) are in
+      [`docs/windows-store-update-investigation.md`](../docs/windows-store-update-investigation.md)
+- [ ] **Relaunch after an update.** A Store update closes GhostCopy and
+      nothing starts it again, so the tray app is gone until the next login.
+      `RegisterApplicationRestart` at startup is Microsoft's documented way
+      for a full-trust MSIX app; confirm it on a real Store update
 - [ ] **Verify the clipboard counter change by hand.** `OleFlushClipboard`
       replaced the owner check, and the two halves pull against each other -
       none of it is covered by tests:
@@ -106,82 +33,57 @@ to package - but everything below marked "verify" does need one.
   - [ ] A full-size preview is not a blurry upscale
   - [ ] Encrypted clips still render; deleting a clip drops its thumbnail;
         signing out wipes the cache
-
 - [ ] **Verify the second-launch fix.** Clicking the app while it is already
       running opens the window - it never did before. Check sign-in still
       completes (same delivery path), and that "Send with GhostCopy" sends
       WITHOUT popping the Spotlight open.
-- [ ] **Windows updates: cannot be tested until published.** A sideloaded
-      package does not auto-update; only a Store-installed one does. After
-      the first release, submit a higher `msix_version` and confirm it
-      arrives (Store > Library > Get updates forces it).
 - [ ] **Decide whether Windows needs an update signal in the UI.** macOS has
       the dot by the menu bar icon because Sparkle needs the user to act. The
       Store updates silently, so probably nothing - but make it a decision.
+- [ ] If a clip is ever slow again but the *next* one is instant, the death
+      was silent (no status to react to) and the evidence-based rejoin
+      caught it. The next lever then is opting the process out of Windows
+      power throttling (EcoQoS) - the root rather than the recovery. Not
+      done pre-emptively: it fights the OS's power management and sits
+      beside the working-set trim.
+- [ ] **Icon: the mark's bounding box is centred to the pixel but its mass is
+      not** - the centroid sits 5.9px left and 59px high of centre at 1024
+      (0.6% and 5.8%). Optical centring would shift it to match, but that
+      moves the iOS, macOS and Android icons too, including ones already
+      through review, so it is a deliberate call rather than a bug fix
 
-  - [ ] If a clip is ever slow again but the *next* one is instant, the death
-        was silent (no status to react to) and the evidence-based rejoin
-        caught it. The next lever then is opting the process out of Windows
-        power throttling (EcoQoS) - the root rather than the recovery. Not
-        done pre-emptively: it fights the OS's power management and sits
-        beside the working-set trim.
-- [ ] **Store submission.** Drafted in
-      [`docs/microsoft-store-listing.md`](../docs/microsoft-store-listing.md)
-      against the code, not adapted line by line from the App Store one -
-      two things differ. Microsoft has no equivalent of Apple's 2.3.10, so
-      the Windows listing names Mac, iPhone and Android plainly, which is the
-      whole point of the app. And the publisher display name Partner Center
-      issued is `g1mli`, a handle, which is public under the app title and
-      has to match `msix_config` - decide it before submitting rather than
-      after people have installed.
-
-  - [ ] Declare Sentry in the privacy answers, as on the App Store
-  - [ ] Decide whether France is excluded for the first release, and keep it
-        consistent with the App Store decision
+Worth knowing rather than doing: **AppData is NOT redirected for a full-trust
+MSIX.** Measured during the sideload: the packaged app wrote straight to the
+real `%LOCALAPPDATA%` and the container's `LocalCache` stayed empty, so a
+packaged and an unpackaged build on the same machine share
+`%APPDATA%\com.ghostcopy` - the same session, settings and passphrase.
+Anything that assumes per-package state is wrong, and a Store install is not
+isolated from a dev build.
 
 ## iOS: open
 
-- [ ] **Paste hang, FLUTTER-8** (fixed on `fix/mobile-offline-history`,
-      verify on device): pasting a 409 KB Jetsam log into the composer hung
-      the main thread - iOS Pencil handwriting support measures every
-      character of a focused field after each layout. The composer now turns
-      handwriting off above 2,000 characters. Verify: paste a large log on the
-      iPhone, the app stays responsive and it sends
-- [ ] **Share extension rewrite - not compiled yet** (branch
-      `fix/mobile-offline-history`, `ios/ShareExtension/ShareViewController.swift`).
+- [ ] **Share extension rewrite - confirm on device** (merged to main in
+      `7d1f6d2`, `ios/ShareExtension/ShareViewController.swift`).
       The package's loader asked a document for `public.text`, got a file URL
       back and silently never finished, so sharing a .txt/.ips hung the sheet.
       Attachments now load in our own code: a file on disk is sent as a file,
       only real text as text, and every share completes (60 s backstop).
-      Written on Windows: build on the Mac (or `build-check.yml` with
-      platform `ios`), then on device share - a .txt from Files, a Jetsam log
-      from Analytics Data, a photo, a Safari page, a message from Messages,
-      two files at once - and confirm each arrives as the right kind of clip
-- [ ] **WatchdogTermination, FLUTTER-7**, 2026-09-27 23:55 UTC - probably
-      not ours to fix. Came from a third install (`3340F209`, geo US, no
-      device model or OS) - not the iPhone (`406CE11B`, Milton) or the Mac
-      (`5754A4DF`, Milton), and Windows reports through a different SDK. Likely
-      another tester or an Apple review device. It predates the paste hang,
-      and the phone's newest Jetsam log (12:59 EDT) killed
-      `communicationtrustd`, not GhostCopy. The next build carries lifecycle,
-      memory-warning and size-only diagnostic breadcrumbs, so a recurrence
-      will say whether it was memory, a freeze or a force-quit
-- [ ] **Offline history** (`HistoryDiskCache`, branch
-      `fix/mobile-offline-history`): on a phone, open once online, then in
-      airplane mode force-quit and reopen - the list shows with "saved ·
-      offline" and a text clip copies. Also sign out and back in as someone
-      else offline: nothing of the first account shows. Files and images only
-      open offline if they were opened before (MediaDiskCache)
-
+      Written on Windows, so check it compiles on the Mac first. On device,
+      share a .txt from Files, a Jetsam log from Analytics Data, a photo, a
+      Safari page, a message from Messages, and two files at once - and
+      confirm each arrives as the right kind of clip
+- [ ] **Offline history** (`HistoryDiskCache`, merged in `52df3d2`): on a
+      phone, open once online, then in airplane mode force-quit and reopen -
+      the list shows with "saved · offline" and a text clip copies. Also sign
+      out and back in as someone else offline: nothing of the first account
+      shows. Files and images only open offline if they were opened before
+      (MediaDiskCache)
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set
       `ITSAppUsesNonExemptEncryption` to NO. Answer the questionnaire on the
       first upload ("standard algorithms in addition to the OS"), then set
       the Info.plist key(s) it points to so later uploads skip it
-- [ ] **Demo account for App Review** - no guest path on the iOS welcome
-      screen and sign-up waits on a confirmation email. Create one on a real
-      inbox, no passphrase, a few clips, the Mac linked. See the listing doc
 - [ ] **Screenshots** (6.9" iPhone, 13" iPad) - taken with the demo account
       once it exists; needs it signed in on the simulator
 - [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
@@ -218,29 +120,16 @@ to package - but everything below marked "verify" does need one.
 
 ## All platforms
 
-
-  - [ ] Tapping the same link twice gives the "already used" message, not a
-        raw error
-      ImageIO is right there on macOS - the same Swift would do
+- [ ] **Tapping the same email sign-in link twice** gives the "already used"
+      message, not a raw error. The crash it used to cause is fixed
+      (`d37141f`); the message itself has not been checked
 - [ ] **Do not disable legacy API keys** until every released build carries
       the publishable key. It is compiled in; an update is the only way to
       change it, which is why the macOS updater had to land first
-- [ ] Version scheme, from 1.0.1: a real version people see, plus a build
-      number that only ever goes up. `pubspec.yaml` is `1.0.1+13` - 1.0.1 is
-      shown everywhere; 13 is hidden and carries on from the 1.0.0 builds
-      (the last was 12), and Windows' `msix_version` puts it in the third
-      part, `1.0.13.0`. The build number cannot reset with the version:
-      Sparkle compares only it, so a lower one is never offered to a Mac, and
-      Play and TestFlight reject one they have seen. Bump the version by what
-      changed and the build number by one, every release, every platform
 
 ## Monitoring, error tracking and cost guards
 
-From a monitoring plan reviewed 2026-09-22. Most of its cost-control advice is
-already implemented here, and more strictly than it suggested - recorded below
-so nobody builds it twice.
-
-
+From a monitoring plan reviewed 2026-09-22.
 
 ### After Windows, iOS and macOS are out
 
@@ -288,9 +177,9 @@ should start as early as a build allows.
 
 ## Next update: a pin for the Spotlight
 
-Decided 2026-09-26, deliberately **after** the Store submission - it is new
-behaviour and wants its own testing pass rather than riding in on a package
-that has already been validated. Store updates are free and automatic.
+Decided 2026-09-26 to follow the Store submission, which is done - it is new
+behaviour and wants its own testing pass. Store updates are free and
+automatic.
 
 Auto-hide on blur is right for a Spotlight-style tool and matches Spotlight,
 Alfred, Raycast and PowerToys Run. But it fights three workflows a clipboard
