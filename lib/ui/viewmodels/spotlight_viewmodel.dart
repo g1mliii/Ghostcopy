@@ -137,6 +137,7 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Whether the composer holds the user's own content rather than
   /// auto-paste's.
+  @visibleForTesting
   bool get hasDraft => _isDraft;
 
   bool _draftRestored = false;
@@ -146,12 +147,10 @@ class SpotlightViewModel extends ChangeNotifier {
   bool get draftRestored => _draftRestored;
 
   /// Where a staged file came from, so a hide can drop its bytes and the
-  /// next opening read it again.
-  String? _draftFilePath;
-
-  /// The name the file was staged under. A picker can hand over a cache copy
-  /// whose path has a generated name; the upload must keep the real one.
-  String? _draftFileName;
+  /// next opening read it again. The name and type are the ones staging
+  /// settled on: a picker can hand over a cache copy whose path has a
+  /// generated name, and the upload must keep the real one.
+  ({String path, String name, String? mimeType})? _draftFile;
   DateTime? _hiddenAt;
 
   /// Bumped by every change to the composer, so a clipboard read that took a
@@ -165,6 +164,10 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Between a hide and the next focus. A file whose staging finishes in
   /// that window is released as the hide would have released it.
+  ///
+  /// Not `!_spotlightOpen`: the two differ before the first focus, when the
+  /// window can be up without its focus having been seen - a file dropped
+  /// onto it then must not be released as if it were in the tray.
   bool _hidden = false;
 
   /// Bumped by every hide, so a kept file still being read when the window
@@ -174,7 +177,11 @@ class SpotlightViewModel extends ChangeNotifier {
   /// A kept file whose bytes are not back yet. The composer still shows its
   /// "File ready to send" line, which must not go out as text.
   bool get isRestoringDraft =>
-      _isDraft && _draftFilePath != null && _clipboardContent == null;
+      _isDraft && _draftFile != null && _clipboardContent == null;
+
+  /// The restore in flight, which a second focus for the same opening joins.
+  Future<void>? _restore;
+  int _restoreHides = -1;
 
   /// Empty the composer, along with everything derived from what was in it -
   /// a decoded JWT or a colour preview must not outlive the text it came from.
@@ -182,6 +189,10 @@ class SpotlightViewModel extends ChangeNotifier {
     _clearDraft();
     _clipboardContent = null;
     _content = '';
+    _clearDetection();
+  }
+
+  void _clearDetection() {
     _detectedContentType = null;
     _transformationResult = null;
     _jwtTransformFuture = null;
@@ -192,8 +203,7 @@ class SpotlightViewModel extends ChangeNotifier {
   void _clearDraft() {
     _isDraft = false;
     _draftRestored = false;
-    _draftFilePath = null;
-    _draftFileName = null;
+    _draftFile = null;
     _hiddenAt = null;
   }
 
@@ -322,7 +332,7 @@ class SpotlightViewModel extends ChangeNotifier {
     } else {
       // Editing a kept file's "File ready to send" line before its bytes
       // are back: the user is writing text now, and the file goes.
-      if (isRestoringDraft) _draftFilePath = null;
+      if (isRestoringDraft) _draftFile = null;
       _isDraft = true;
       _draftRestored = false;
     }
@@ -335,7 +345,10 @@ class SpotlightViewModel extends ChangeNotifier {
     _debouncedDetectContentType();
   }
 
-  /// Update clipboard content (for images, files, HTML)
+  /// Stage an image, file or HTML payload as auto-paste would: not a draft,
+  /// so the next hide releases it. The screen stages through
+  /// [populateFromClipboard] and [setFileContent]; this is for tests.
+  @visibleForTesting
   void updateClipboardContent(ClipboardContent? content) {
     _clipboardContent = content;
     _composerRevision++;
@@ -361,11 +374,7 @@ class SpotlightViewModel extends ChangeNotifier {
 
     if (clearText) {
       _content = '';
-      _detectedContentType = null;
-      _transformationResult = null;
-      _jwtTransformFuture = null;
-      _contentDetectionTimer?.cancel();
-      _contentDetectionTimer = null;
+      _clearDetection();
     }
 
     notifyListeners();
@@ -438,28 +447,39 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Spotlight went back to the tray. A card the user looked at and left is
   /// this run's one showing, so it does not come back on the next opening.
   void onSpotlightHidden() {
+    // Every hide reaches here, and a tray-menu remount reports one for a
+    // window already hidden - redraw only for what this one changed.
+    final before = _visibleState;
     _spotlightOpen = false;
     _hideCount++;
     _composerRevision++;
     _hidden = true;
     _accountOfferVisible = false;
     _releaseComposerForHide();
-    notifyListeners();
+    if (_visibleState != before) notifyListeners();
   }
+
+  Object get _visibleState => (
+    _content,
+    _clipboardContent,
+    _draftRestored,
+    _detectedContentType,
+    _accountOfferVisible,
+  );
 
   /// Give back what a hidden window has no use for. Auto-paste's content
   /// goes entirely - the next opening reads the clipboard again anyway. A
   /// draft keeps only what is small: its text, and a staged file's path in
-  /// place of its bytes. Anything else in a draft (an image pasted with
-  /// Ctrl+V, a very long text) cannot be kept cheaply, so it goes too.
+  /// place of its bytes. Anything else in a draft (an auto-pasted image the
+  /// user typed a caption under, a very long text) cannot be kept cheaply,
+  /// so it goes too. HTML never reaches here as a draft: editing its preview
+  /// drops it, in [updateContent].
   void _releaseComposerForHide() {
     final payload = _clipboardContent;
     final keepable =
         _isDraft &&
         _content.length <= maxKeptDraftChars &&
-        (payload == null ||
-            (payload.hasHtml && payload.html!.length <= maxKeptDraftChars) ||
-            (payload.hasFile && _draftFilePath != null));
+        (payload == null || (payload.hasFile && _draftFile != null));
     if (!keepable) {
       _resetComposer();
       return;
@@ -475,11 +495,25 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Fill the composer for an opening: the kept draft if there is one and
   /// it is still fresh, otherwise the clipboard.
-  Future<void> restoreOrPopulateComposer() async {
+  ///
+  /// A second call for the same opening joins the first rather than reading
+  /// the kept file again.
+  Future<void> restoreOrPopulateComposer() {
     // Queued by a focus the window was hidden again after: snapshotting the
     // hide count now would miss that hide, and the restore would fill a
     // hidden composer and clear the draft's expiry.
-    if (_hidden) return;
+    if (_hidden) return Future.value();
+    final pending = _restore;
+    if (pending != null && _restoreHides == _hideCount) return pending;
+    _restoreHides = _hideCount;
+    late final Future<void> restore;
+    restore = _restoreOrPopulate().whenComplete(() {
+      if (identical(_restore, restore)) _restore = null;
+    });
+    return _restore = restore;
+  }
+
+  Future<void> _restoreOrPopulate() async {
     final hiddenAt = _hiddenAt;
     if (_isDraft && hiddenAt != null) {
       final hides = _hideCount;
@@ -500,10 +534,17 @@ class SpotlightViewModel extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      final lostFile = file != null ? _draftFile?.name : null;
       _resetComposer();
       _composerRevision++;
       _editRevision++;
       notifyListeners();
+      // Expiry is the documented end of a draft; a file that vanished is
+      // not, and the clipboard taking its place unannounced reads as the
+      // app having lost it.
+      if (lostFile != null) {
+        _setError('$lostFile is no longer there - it was moved or deleted');
+      }
     }
     await populateFromClipboard();
   }
@@ -512,13 +553,13 @@ class SpotlightViewModel extends ChangeNotifier {
   /// nothing to read; not ok when the file is gone, now over the limit, or
   /// unreadable - the draft is then dropped rather than half-restored.
   Future<({bool ok, ClipboardContent? content})> _readDraftFile() async {
-    final path = _draftFilePath;
-    if (path == null || _clipboardContent != null) {
+    final kept = _draftFile;
+    if (kept == null || _clipboardContent != null) {
       return (ok: true, content: null);
     }
     const failed = (ok: false, content: null);
     try {
-      final file = File(path);
+      final file = File(kept.path);
       // Not existsSync: on a stalled network share or removable drive it
       // would freeze the opening on the UI isolate.
       // ignore: avoid_slow_async_io
@@ -529,11 +570,11 @@ class SpotlightViewModel extends ChangeNotifier {
       final bytes = await file.readAsBytes();
       // Checked again on what was read: the file may have grown since.
       if (bytes.length > ClipboardLimits.maxFileBytes) return failed;
-      final filename = _draftFileName ?? file.uri.pathSegments.last;
-      final type = FileTypeService.instance.detectFromBytes(bytes, filename);
+      // The type staging detected, not detected again: the send detects
+      // from the bytes anyway, and this only has to put back what was there.
       return (
         ok: true,
-        content: ClipboardContent.file(bytes, filename, type.mimeType),
+        content: ClipboardContent.file(bytes, kept.name, kept.mimeType),
       );
     } on FileSystemException catch (e) {
       debugPrint('[SpotlightVM] Kept file could not be read again: $e');
@@ -602,6 +643,13 @@ class SpotlightViewModel extends ChangeNotifier {
       if (force) _clearDraft();
       _composerRevision++;
       _editRevision++;
+      // What the replaced content was detected as - a forced paste replaces
+      // a draft that may have been a JWT or a colour. Only text is detected,
+      // and it detects again below, so its preview is left to be replaced
+      // rather than blinking out for the debounce.
+      if (content.hasImage || content.hasFile || content.hasHtml) {
+        _clearDetection();
+      }
       // Sizes only. A large clipboard is where a hang would start.
       recordDiagnostic(
         'clipboard',
@@ -657,7 +705,7 @@ class SpotlightViewModel extends ChangeNotifier {
   /// - onSendError: Called on error (optional, error state is already set in ViewModel)
   Future<void> handleSend({VoidCallback? onSendSuccess}) async {
     // Its bytes are still being read back; sending now would send the
-    // "File ready to send" line as text.
+    // "File ready to send" line as text. The screen disables Send for it.
     if (isRestoringDraft) return;
     final hasTextPayload = _content.trim().isNotEmpty;
     final hasClipboardPayload =
@@ -805,10 +853,11 @@ class SpotlightViewModel extends ChangeNotifier {
         return;
       }
 
-      // Clear content after successful send
-      _content = '';
-      _clipboardContent = null;
-      _clearDraft();
+      // Clear content after successful send. A revision, like any other
+      // change to the composer: a kept file being read back after a hide
+      // during the upload would otherwise put the file just sent back.
+      _resetComposer();
+      _composerRevision++;
       notifyListeners();
 
       // Call success callback for UI actions (clear text controller, hide window)
@@ -840,8 +889,13 @@ class SpotlightViewModel extends ChangeNotifier {
     _content = displayText;
     _isDraft = true;
     _draftRestored = false;
-    _draftFilePath = sourcePath;
-    _draftFileName = content.filename;
+    _draftFile = sourcePath == null
+        ? null
+        : (
+            path: sourcePath,
+            name: content.filename ?? File(sourcePath).uri.pathSegments.last,
+            mimeType: content.mimeType,
+          );
     _composerRevision++;
     _editRevision++;
     // Staging read the file after the window had already hidden: release it

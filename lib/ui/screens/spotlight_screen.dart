@@ -312,8 +312,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // All of the focus, not just its animation and restore: the view model
     // outlives this widget, and a restore without the focus that clears its
     // hidden flag after a hide does nothing.
+    // Not in tray mode, though: a remount behind the tray menu finds the
+    // menu's window focused while the Spotlight is still hidden. Going to
+    // the Spotlight from there runs showSpotlight, whose own focus follows;
+    // answering this one too would open a composer in a hidden window.
     windowManager.isFocused().then((isFocused) {
-      if (isFocused && mounted) onWindowFocus();
+      if (isFocused && mounted && !_lifecycleController.isInTrayMode) {
+        onWindowFocus();
+      }
     });
   }
 
@@ -1691,8 +1697,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
             ),
           // Send button
+          // Also off while a kept file is read back, which would otherwise
+          // swallow the press: its bytes are not there to send yet.
           ElevatedButton(
-            onPressed: _viewModel.isSending ? null : _handleSend,
+            onPressed: _viewModel.isSending || _viewModel.isRestoringDraft
+                ? null
+                : _handleSend,
             style: ElevatedButton.styleFrom(
               backgroundColor: GhostColors.primary,
               minimumSize: const Size(double.infinity, 48),
@@ -1701,7 +1711,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: _viewModel.isSending
+            child: _viewModel.isSending || _viewModel.isRestoringDraft
                 ? const SizedBox(
                     height: 20,
                     width: 20,

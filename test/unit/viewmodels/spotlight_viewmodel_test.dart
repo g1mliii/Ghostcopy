@@ -1000,6 +1000,8 @@ void main() {
       expect(composer.hasDraft, isFalse);
       expect(composer.clipboardContent, isNull);
       expect(composer.content, 'from clipboard');
+      // Not silently: the clipboard in its place reads as the app losing it.
+      expect(composer.errorMessage, contains('notes.txt'));
     });
 
     test('a draft expires after ten minutes in the tray', () async {
@@ -1013,6 +1015,8 @@ void main() {
 
       expect(composer.hasDraft, isFalse);
       expect(composer.content, 'from clipboard');
+      // Expiry is how a draft is meant to end; it is not an error.
+      expect(composer.errorMessage, isNull);
     });
 
     test('an image with no file behind it is not kept', () {
@@ -1314,6 +1318,103 @@ void main() {
       await composer.handleSend();
 
       expect(composer.hasDraft, isFalse);
+    });
+
+    test('a send finishing during a file restore does not bring the file '
+        'back', () async {
+      final inserting = Completer<ClipboardItem>();
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insertFile(
+          userId: any(named: 'userId'),
+          deviceType: any(named: 'deviceType'),
+          deviceName: any(named: 'deviceName'),
+          fileBytes: any(named: 'fileBytes'),
+          mimeType: any(named: 'mimeType'),
+          contentType: any(named: 'contentType'),
+          originalFilename: any(named: 'originalFilename'),
+          targetDeviceTypes: any(named: 'targetDeviceTypes'),
+        ),
+      ).thenAnswer((_) => inserting.future);
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+
+      // Send, click away during the upload, and come back: the reopening
+      // starts reading the kept file while the upload is still out.
+      final sending = composer.handleSend();
+      composer.onSpotlightHidden();
+      final restoring = reopen();
+      inserting.complete(_clipboardItem(id: '1', content: ''));
+      await sending;
+      await restoring;
+
+      expect(composer.clipboardContent, isNull);
+      expect(composer.content, isEmpty);
+      expect(composer.draftRestored, isFalse);
+    });
+
+    test('a second focus for the same opening reads the file once', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+      composer.onSpotlightHidden();
+      var restored = 0;
+      composer.addListener(() {
+        if (composer.draftRestored) restored++;
+      });
+
+      // A remount's focus and showSpotlight's, both for one opening.
+      unawaited(composer.onWindowFocused());
+      final first = composer.restoreOrPopulateComposer();
+      final second = composer.restoreOrPopulateComposer();
+      await Future.wait([first, second]);
+
+      expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+      expect(restored, 1);
+    });
+
+    test('Paste clipboard instead takes the old preview with the draft', () async {
+      when(() => transformerService.detectContentType('#ff0000')).thenAnswer(
+        (_) async =>
+            const ContentDetectionResult(type: TransformerContentType.hexColor),
+      );
+      when(() => clipboard.read()).thenAnswer(
+        (_) async =>
+            ClipboardContent.image(Uint8List.fromList([9, 9]), 'image/png'),
+      );
+      composer.updateContent('#ff0000');
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      expect(
+        composer.detectedContentType?.type,
+        TransformerContentType.hexColor,
+      );
+
+      await composer.populateFromClipboard(force: true);
+
+      expect(composer.clipboardContent?.hasImage, isTrue);
+      expect(composer.detectedContentType, isNull);
+    });
+
+    test('a hide that releases nothing does not redraw', () async {
+      var notified = 0;
+      composer
+        ..addListener(() => notified++)
+        // Nothing in the composer, then a kept draft whose text stays put.
+        ..onSpotlightHidden()
+        ..updateContent('half a message');
+      notified = 0;
+      composer
+        ..onSpotlightHidden()
+        // Windows remounting the screen behind the tray menu.
+        ..onSpotlightHidden();
+      expect(notified, 0);
+
+      clipboardHolds('from clipboard');
+      composer.clearClipboardPayload(clearText: true);
+      await reopen();
+      notified = 0;
+      composer.onSpotlightHidden();
+      expect(notified, 1);
+      expect(composer.content, isEmpty);
     });
   });
 }
