@@ -134,7 +134,7 @@ class SpotlightViewModel extends ChangeNotifier {
       if (pinned == _isPinned) return;
       _isPinned = pinned;
       notifyListeners();
-    } on Object catch (e) {
+    } on Exception catch (e) {
       debugPrint('[SpotlightVM] Could not read the pin: $e');
     }
   }
@@ -147,7 +147,7 @@ class SpotlightViewModel extends ChangeNotifier {
     notifyListeners();
     try {
       await _settingsService?.setSpotlightPinned(pinned: pinned);
-    } on Object catch (e) {
+    } on Exception catch (e) {
       debugPrint('[SpotlightVM] Could not save the pin: $e');
     }
   }

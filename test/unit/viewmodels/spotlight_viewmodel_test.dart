@@ -950,7 +950,7 @@ void main() {
     test('a pin that cannot be saved still pins for this run', () async {
       when(
         () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
-      ).thenThrow(StateError('prefs unavailable'));
+      ).thenThrow(Exception('prefs unavailable'));
 
       await pinning.setPinned(pinned: true);
 
@@ -960,7 +960,7 @@ void main() {
     test('a saved pin that cannot be read leaves it unpinned', () async {
       when(
         () => settings.getSpotlightPinned(),
-      ).thenThrow(StateError('prefs unavailable'));
+      ).thenThrow(Exception('prefs unavailable'));
 
       await pinning.loadPinned();
 
