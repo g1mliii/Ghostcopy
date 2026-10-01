@@ -1372,27 +1372,31 @@ void main() {
       expect(restored, 1);
     });
 
-    test('Paste clipboard instead takes the old preview with the draft', () async {
-      when(() => transformerService.detectContentType('#ff0000')).thenAnswer(
-        (_) async =>
-            const ContentDetectionResult(type: TransformerContentType.hexColor),
-      );
-      when(() => clipboard.read()).thenAnswer(
-        (_) async =>
-            ClipboardContent.image(Uint8List.fromList([9, 9]), 'image/png'),
-      );
-      composer.updateContent('#ff0000');
-      await Future<void>.delayed(const Duration(milliseconds: 350));
-      expect(
-        composer.detectedContentType?.type,
-        TransformerContentType.hexColor,
-      );
+    test(
+      'Paste clipboard instead takes the old preview with the draft',
+      () async {
+        when(() => transformerService.detectContentType('#ff0000')).thenAnswer(
+          (_) async => const ContentDetectionResult(
+            type: TransformerContentType.hexColor,
+          ),
+        );
+        when(() => clipboard.read()).thenAnswer(
+          (_) async =>
+              ClipboardContent.image(Uint8List.fromList([9, 9]), 'image/png'),
+        );
+        composer.updateContent('#ff0000');
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        expect(
+          composer.detectedContentType?.type,
+          TransformerContentType.hexColor,
+        );
 
-      await composer.populateFromClipboard(force: true);
+        await composer.populateFromClipboard(force: true);
 
-      expect(composer.clipboardContent?.hasImage, isTrue);
-      expect(composer.detectedContentType, isNull);
-    });
+        expect(composer.clipboardContent?.hasImage, isTrue);
+        expect(composer.detectedContentType, isNull);
+      },
+    );
 
     test('a hide that releases nothing does not redraw', () async {
       var notified = 0;
