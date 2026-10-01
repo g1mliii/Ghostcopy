@@ -47,18 +47,21 @@ export function secretKey(): string {
  * Whether the request carries one of the project's secret keys - how the
  * database triggers authenticate over pg_net. Any named secret key counts,
  * not only `default`, so the vault secret the triggers send can be rotated to
- * a new key before the old one is revoked. The legacy service-role key counts
- * until it is disabled.
+ * a new key before the old one is revoked.
+ *
+ * The legacy service-role key counts only where no current secret keys are
+ * provided (local serve). Supabase can go on injecting it after it has been
+ * disabled, and send-clipboard-notification and storage-presign skip the
+ * platform's JWT gate - accepting it alongside would leave a revoked key able
+ * to act as the trigger.
  */
 export function isSecretKeyCaller(authorization: string | null): boolean {
   if (!authorization?.startsWith('Bearer ')) return false
   const presented = authorization.slice('Bearer '.length)
   if (!presented) return false
+  const current = Object.values(named('SUPABASE_SECRET_KEYS'))
   const legacy = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  const accepted = [
-    ...Object.values(named('SUPABASE_SECRET_KEYS')),
-    ...(legacy ? [legacy] : []),
-  ]
+  const accepted = current.length > 0 ? current : legacy ? [legacy] : []
   return accepted.some((key) => timingSafeEqual(presented, key))
 }
 

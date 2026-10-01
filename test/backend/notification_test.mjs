@@ -79,6 +79,15 @@ test('the trigger is accepted on a current secret key alone', async () => {
   assert.equal(f.messages.length, 1);
 });
 
+test('a disabled legacy key is not the trigger once current keys exist', async () => {
+  // Supabase may keep injecting the legacy key after it is disabled.
+  const f = fixture(10, null, {
+    SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),
+    SUPABASE_SERVICE_ROLE_KEY: 'legacy-service-jwt',
+  });
+  assert.equal((await f.request('legacy-service-jwt')).status, 429);
+});
+
 test('a key that is not one of the project\'s is not the trigger', async () => {
   const f = fixture(10, null, {
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),

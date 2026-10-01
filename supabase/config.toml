@@ -23,6 +23,13 @@ project_id = "xhbggxftvnlkotvehwmj"
 [functions.send-clipboard-notification]
 verify_jwt = false
 
+# Same reason: dispatch_storage_cleanup() calls this over pg_net with the
+# same `sb_secret_...` key from the vault. The function authenticates every
+# caller itself (isSecretKeyCaller, else auth.getUser()), so the platform gate
+# only adds a way for queued R2 deletions to be refused before it runs.
+[functions.storage-presign]
+verify_jwt = false
+
 # Auth email templates, deployed by `supabase config push` in
 # .github/workflows/deploy.yml. Before this, supabase/email-templates/ was only
 # a version-controlled copy of what someone had pasted into the dashboard, and
