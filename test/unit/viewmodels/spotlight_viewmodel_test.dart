@@ -1074,6 +1074,92 @@ void main() {
       expect(composer.content, 'from clipboard');
     });
 
+    test('nothing sends while a kept file is still being read', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+      composer.onSpotlightHidden();
+      expect(composer.isRestoringDraft, isTrue);
+
+      // Enter before the bytes are back would have sent the placeholder line.
+      await composer.handleSend();
+
+      verifyNever(() => clipboardRepository.insert(any()));
+      verifyNever(
+        () => clipboardRepository.insertFile(
+          userId: any(named: 'userId'),
+          deviceType: any(named: 'deviceType'),
+          deviceName: any(named: 'deviceName'),
+          fileBytes: any(named: 'fileBytes'),
+          mimeType: any(named: 'mimeType'),
+          contentType: any(named: 'contentType'),
+          originalFilename: any(named: 'originalFilename'),
+          targetDeviceTypes: any(named: 'targetDeviceTypes'),
+        ),
+      );
+    });
+
+    test('a file read that finishes after another hide is dropped', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+      composer.onSpotlightHidden();
+
+      final restoring = composer.restoreOrPopulateComposer();
+      composer.onSpotlightHidden();
+      await restoring;
+
+      expect(composer.clipboardContent, isNull);
+      expect(composer.hasDraft, isTrue);
+      // Still timed from the first hide, and still restorable later.
+      await composer.restoreOrPopulateComposer();
+      expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+    });
+
+    test('a repeated hide does not renew the ten minutes', () async {
+      clipboardHolds('from clipboard');
+      composer
+        ..updateContent('half a message')
+        ..onSpotlightHidden();
+
+      now = now.add(SpotlightViewModel.draftLifetime);
+      // Windows remounting the screen behind the tray menu.
+      composer.onSpotlightHidden();
+      await composer.restoreOrPopulateComposer();
+
+      expect(composer.content, 'from clipboard');
+    });
+
+    test('a forced paste gives way to what was typed during it', () async {
+      final read = Completer<ClipboardContent>();
+      when(() => clipboard.read()).thenAnswer((_) => read.future);
+      composer.updateContent('first');
+
+      final pasting = composer.populateFromClipboard(force: true);
+      composer.updateContent('typed meanwhile');
+      read.complete(ClipboardContent.text('from clipboard'));
+      await pasting;
+
+      expect(composer.content, 'typed meanwhile');
+      expect(composer.hasDraft, isTrue);
+    });
+
+    test('an expired draft takes its previews with it', () async {
+      when(
+        () => clipboard.read(),
+      ).thenAnswer((_) async => ClipboardContent.text(''));
+      composer
+        ..updateContent('#ff0000')
+        ..onSpotlightHidden();
+
+      now = now.add(SpotlightViewModel.draftLifetime);
+      await composer.restoreOrPopulateComposer();
+      // Past the detection debounce: it was cancelled, not just pending.
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+
+      expect(composer.content, isEmpty);
+      expect(composer.detectedContentType, isNull);
+      expect(composer.transformationResult, isNull);
+    });
+
     test('sending ends the draft', () async {
       when(() => authService.currentUserId).thenReturn('user-123');
       when(
