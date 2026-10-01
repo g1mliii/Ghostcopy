@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -46,9 +47,7 @@ class SpotlightViewModel extends ChangeNotifier {
     IClipboardService? clipboardService,
     this._accountPromptStore,
     this._isGameModeActive,
-    DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now,
-       _clipboardRepo = clipboardRepository,
+  }) : _clipboardRepo = clipboardRepository,
        _syncService = clipboardSyncService,
        _clipboardService = clipboardService ?? ClipboardService.instance;
 
@@ -58,8 +57,6 @@ class SpotlightViewModel extends ChangeNotifier {
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
   final IClipboardService _clipboardService;
-
-  final DateTime Function() _clock;
 
   /// Null turns the account offer and the guest badge off entirely.
   final AccountPromptStore? _accountPromptStore;
@@ -162,13 +159,18 @@ class SpotlightViewModel extends ChangeNotifier {
   /// overwrite.
   int _editRevision = 0;
 
+  /// A change the user, or auto-paste on their behalf, made to the
+  /// composer. Hides and a send's own clear bump [_composerRevision] alone.
+  void _markEdited() {
+    _composerRevision++;
+    _editRevision++;
+  }
+
   /// Between a hide and the next focus. A file whose staging finishes in
-  /// that window is released as the hide would have released it.
-  ///
-  /// Not `!_spotlightOpen`: the two differ before the first focus, when the
-  /// window can be up without its focus having been seen - a file dropped
-  /// onto it then must not be released as if it were in the tray.
-  bool _hidden = false;
+  /// that window is released as the hide would have released it. Not just
+  /// `!_spotlightOpen`: before the first focus the window can be up without
+  /// its focus having been seen.
+  bool get _hidden => !_spotlightOpen && _hideCount > 0;
 
   /// Bumped by every hide, so a kept file still being read when the window
   /// goes away again is not installed into a hidden composer.
@@ -181,7 +183,6 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// The restore in flight, which a second focus for the same opening joins.
   Future<void>? _restore;
-  int _restoreHides = -1;
 
   /// Empty the composer, along with everything derived from what was in it -
   /// a decoded JWT or a colour preview must not outlive the text it came from.
@@ -313,8 +314,7 @@ class SpotlightViewModel extends ChangeNotifier {
   void updateContent(String newContent) {
     if (_content == newContent) return;
     _content = newContent;
-    _composerRevision++;
-    _editRevision++;
+    _markEdited();
     // Only typing reaches here with a change: auto-paste sets _content
     // first, so the text field echoing it back is equal and returns above.
     final payload = _clipboardContent;
@@ -351,32 +351,16 @@ class SpotlightViewModel extends ChangeNotifier {
   @visibleForTesting
   void updateClipboardContent(ClipboardContent? content) {
     _clipboardContent = content;
-    _composerRevision++;
-    _editRevision++;
+    _markEdited();
     notifyListeners();
   }
 
-  /// Clear pending clipboard payload from paste/upload preview.
-  ///
-  /// If [clearText] is true, also clears the text payload and transformation state
-  /// so the composer returns to an empty text-entry state.
-  void clearClipboardPayload({bool clearText = false}) {
-    final hasClipboardPayload = _clipboardContent != null;
-    final hasTextPayload = _content.isNotEmpty;
-    if (!hasClipboardPayload && (!clearText || !hasTextPayload)) {
-      return;
-    }
-
-    _clipboardContent = null;
-    _clearDraft();
-    _composerRevision++;
-    _editRevision++;
-
-    if (clearText) {
-      _content = '';
-      _clearDetection();
-    }
-
+  /// Clear a pending paste or upload preview, and the text with it, so the
+  /// composer returns to an empty text-entry state.
+  void clearClipboardPayload() {
+    if (_clipboardContent == null && _content.isEmpty) return;
+    _resetComposer();
+    _markEdited();
     notifyListeners();
   }
 
@@ -435,7 +419,6 @@ class SpotlightViewModel extends ChangeNotifier {
   /// upgrade in the browser is still anonymous here until it finishes.
   Future<void> onWindowFocused({bool Function()? composerVisible}) async {
     _spotlightOpen = true;
-    _hidden = false;
     try {
       await _authService.refreshIfAwaitingConfirmation();
     } on Exception catch (e) {
@@ -453,7 +436,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _spotlightOpen = false;
     _hideCount++;
     _composerRevision++;
-    _hidden = true;
+    _restore = null;
     _accountOfferVisible = false;
     _releaseComposerForHide();
     if (_visibleState != before) notifyListeners();
@@ -490,7 +473,7 @@ class SpotlightViewModel extends ChangeNotifier {
     // Only the first: Windows remounting the screen behind the tray menu
     // reports a hide again for a window that never came back, and renewing
     // the time there would revive a draft that had already expired.
-    _hiddenAt ??= _clock();
+    _hiddenAt ??= clock.now();
   }
 
   /// Fill the composer for an opening: the kept draft if there is one and
@@ -504,8 +487,7 @@ class SpotlightViewModel extends ChangeNotifier {
     // hidden composer and clear the draft's expiry.
     if (_hidden) return Future.value();
     final pending = _restore;
-    if (pending != null && _restoreHides == _hideCount) return pending;
-    _restoreHides = _hideCount;
+    if (pending != null) return pending;
     late final Future<void> restore;
     restore = _restoreOrPopulate().whenComplete(() {
       if (identical(_restore, restore)) _restore = null;
@@ -518,8 +500,10 @@ class SpotlightViewModel extends ChangeNotifier {
     if (_isDraft && hiddenAt != null) {
       final hides = _hideCount;
       final revision = _composerRevision;
-      final expired = _clock().difference(hiddenAt) >= draftLifetime;
-      final file = expired ? null : await _readDraftFile();
+      final expired = clock.now().difference(hiddenAt) >= draftLifetime;
+      // Only a kept file whose bytes the hide released has anything to read.
+      final reading = !expired && isRestoringDraft;
+      final file = reading ? await _readDraftFile() : null;
       // Hidden again while the file was read: that opening is over, and
       // its bytes have no business in a hidden window.
       if (hides != _hideCount) return;
@@ -528,16 +512,15 @@ class SpotlightViewModel extends ChangeNotifier {
       // what the user did since is the composer now, and the old file must
       // not be installed under it.
       if (revision != _composerRevision) return;
-      if (file != null && file.ok) {
-        if (file.content != null) _clipboardContent = file.content;
+      if (!expired && (!reading || file != null)) {
+        if (file != null) _clipboardContent = file;
         _draftRestored = true;
         notifyListeners();
         return;
       }
-      final lostFile = file != null ? _draftFile?.name : null;
+      final lostFile = reading ? _draftFile?.name : null;
       _resetComposer();
-      _composerRevision++;
-      _editRevision++;
+      _markEdited();
       notifyListeners();
       // Expiry is the documented end of a draft; a file that vanished is
       // not, and the clipboard taking its place unannounced reads as the
@@ -549,36 +532,30 @@ class SpotlightViewModel extends ChangeNotifier {
     await populateFromClipboard();
   }
 
-  /// Read a kept file back from disk. ok with no content when there was
-  /// nothing to read; not ok when the file is gone, now over the limit, or
-  /// unreadable - the draft is then dropped rather than half-restored.
-  Future<({bool ok, ClipboardContent? content})> _readDraftFile() async {
-    final kept = _draftFile;
-    if (kept == null || _clipboardContent != null) {
-      return (ok: true, content: null);
-    }
-    const failed = (ok: false, content: null);
+  /// Read the kept file back from disk. Null when it is gone, now over the
+  /// limit, or unreadable - the draft is then dropped rather than
+  /// half-restored.
+  Future<ClipboardContent?> _readDraftFile() async {
+    final kept = _draftFile!;
+    RandomAccessFile? handle;
     try {
-      final file = File(kept.path);
-      // Not existsSync: on a stalled network share or removable drive it
-      // would freeze the opening on the UI isolate.
-      // ignore: avoid_slow_async_io
-      if (!await file.exists() ||
-          await file.length() > ClipboardLimits.maxFileBytes) {
-        return failed;
-      }
-      final bytes = await file.readAsBytes();
-      // Checked again on what was read: the file may have grown since.
-      if (bytes.length > ClipboardLimits.maxFileBytes) return failed;
+      // One open for the size check and the read, and a missing file throws
+      // here. Async throughout: on a stalled network share or removable
+      // drive a sync call would freeze the opening on the UI isolate.
+      handle = await File(kept.path).open();
+      final length = await handle.length();
+      if (length > ClipboardLimits.maxFileBytes) return null;
+      // Reads at most length bytes, so a file growing meanwhile cannot take
+      // this past the limit.
+      final bytes = await handle.read(length);
       // The type staging detected, not detected again: the send detects
       // from the bytes anyway, and this only has to put back what was there.
-      return (
-        ok: true,
-        content: ClipboardContent.file(bytes, kept.name, kept.mimeType),
-      );
+      return ClipboardContent.file(bytes, kept.name, kept.mimeType);
     } on FileSystemException catch (e) {
       debugPrint('[SpotlightVM] Kept file could not be read again: $e');
-      return failed;
+      return null;
+    } finally {
+      await handle?.close();
     }
   }
 
@@ -634,15 +611,9 @@ class SpotlightViewModel extends ChangeNotifier {
       // or not, what they did since is newer than this clipboard.
       if (revision != _composerRevision) return null;
       // An empty clipboard replaces nothing, a draft included.
-      if (!content.hasImage &&
-          !content.hasFile &&
-          !content.hasHtml &&
-          !content.hasText) {
-        return null;
-      }
+      if (content.isEmpty) return null;
       if (force) _clearDraft();
-      _composerRevision++;
-      _editRevision++;
+      _markEdited();
       // What the replaced content was detected as - a forced paste replaces
       // a draft that may have been a JWT or a colour. Only text is detected,
       // and it detects again below, so its preview is left to be replaced
@@ -896,8 +867,7 @@ class SpotlightViewModel extends ChangeNotifier {
             name: content.filename ?? File(sourcePath).uri.pathSegments.last,
             mimeType: content.mimeType,
           );
-    _composerRevision++;
-    _editRevision++;
+    _markEdited();
     // Staging read the file after the window had already hidden: release it
     // now, as the hide would have, rather than hold the bytes until the next
     // opening - which would then also skip the restore and the auto-paste.

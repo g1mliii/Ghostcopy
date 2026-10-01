@@ -205,6 +205,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             TextPosition(offset: _textController.text.length),
           );
         }
+        // Now, not at the next build: a hide releases the payload, and a
+        // hidden window may not draw again to drop this reference to it.
+        if (_viewModel.clipboardContent == null) {
+          _cachedFilePreviewItem = null;
+          _cachedFilePreviewSourceContent = null;
+        }
         scheduleRebuild();
       }
     };
@@ -581,7 +587,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
-  void _clearPendingAttachmentPreview({bool requestFocus = true}) {
+  void _clearPendingAttachmentPreview() {
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
         (_viewModel.clipboardContent?.hasImage ?? false);
@@ -589,16 +595,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       return;
     }
 
-    _viewModel.clearClipboardPayload(clearText: true);
+    _viewModel.clearClipboardPayload();
     _textController.clear();
 
-    if (requestFocus) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _textFieldFocusNode.requestFocus();
-        }
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _textFieldFocusNode.requestFocus();
+      }
+    });
 
     debugPrint('[Spotlight] Cleared pending attachment preview');
   }
@@ -1662,6 +1666,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                         .toLowerCase(),
                   )
                   .join(', '));
+    // Also busy while a kept file is read back, which would otherwise
+    // swallow the press: its bytes are not there to send yet.
+    final busy = _viewModel.isSending || _viewModel.isRestoringDraft;
 
     return RepaintBoundary(
       // Isolate send button repaints
@@ -1697,12 +1704,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
             ),
           // Send button
-          // Also off while a kept file is read back, which would otherwise
-          // swallow the press: its bytes are not there to send yet.
           ElevatedButton(
-            onPressed: _viewModel.isSending || _viewModel.isRestoringDraft
-                ? null
-                : _handleSend,
+            onPressed: busy ? null : _handleSend,
             style: ElevatedButton.styleFrom(
               backgroundColor: GhostColors.primary,
               minimumSize: const Size(double.infinity, 48),
@@ -1711,7 +1714,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: _viewModel.isSending || _viewModel.isRestoringDraft
+            child: busy
                 ? const SizedBox(
                     height: 20,
                     width: 20,
