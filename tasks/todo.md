@@ -228,26 +228,6 @@ it better, and also covers backups and leaving without losing anything.
 - [ ] Does not need to be instant. A queued job that emails or exposes a
       signed download is cheaper and sidesteps timeouts on large histories
 
-## AI assistants: the `ghostcopy` command and MCP server
-
-Built in `packages/ghostcopy_agent`: `ghostcopy send/send-file/devices`, with
-`--to phone` and `--json`, and `ghostcopy mcp` exposing the same as tools. Both
-ask the running app over the authenticated single-instance channel, behind the
-"Command line & AI tools" setting, so the session, encryption and device
-targets are the app's own. What is left:
-
-- [ ] **Ship the binary with the apps.** macOS: compile it in
-      `installer/macos/build-release.sh`, put it in `Contents/Helpers/`, sign
-      it with the hardened runtime before the app is signed, and offer a way
-      onto PATH (an "Install command line tool" action, or documented
-      `ln -s`). Windows: build it in CI next to the runner and declare a
-      `uap5:AppExecutionAlias` in the MSIX so `ghostcopy` is on PATH
-- [ ] **Try it end to end on both desktops** - `ghostcopy send --to phone`
-      from a terminal, and Claude Desktop with the MCP config from the README
-- [ ] Report "received" only once there is a delivery acknowledgement; until
-      then it says "sent", which is all the app knows
-- [ ] Clipboard-history access, if ever, as a separate permission from sending
-
 ## Later: widget extraction
 
 Left over from the February ViewModel refactor (Phases 1.1 and 1.2 done).
