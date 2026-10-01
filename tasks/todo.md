@@ -8,10 +8,12 @@
       "Send with GhostCopy" verb fails to shut down. Evidence and the next
       test (restart Explorer, do not right-click a file, then update) are in
       [`docs/windows-store-update-investigation.md`](../docs/windows-store-update-investigation.md)
-- [ ] **Relaunch after an update.** A Store update closes GhostCopy and
-      nothing starts it again, so the tray app is gone until the next login.
-      `RegisterApplicationRestart` at startup is Microsoft's documented way
-      for a full-trust MSIX app; confirm it on a real Store update
+- [ ] **Relaunch after an update - confirm on a real Store update.** The
+      runner now calls `RegisterApplicationRestart` at startup
+      (`windows/runner/main.cpp`), relaunching with `--launched-at-startup`.
+      With GhostCopy running for over a minute, let the Store update it: the
+      tray icon should come back by itself, hidden, with the hotkey working.
+      A crash, a hang or a reboot should NOT relaunch it
 - [ ] **Verify the clipboard counter change by hand.** `OleFlushClipboard`
       replaced the owner check, and the two halves pull against each other -
       none of it is covered by tests:
