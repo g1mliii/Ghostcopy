@@ -109,6 +109,30 @@ class WindowService implements IWindowService {
   Future<void> _applyTopmost() =>
       windowManager.setAlwaysOnTop(_framelessForTrayMenu || _onTop);
 
+  /// Whether the app is in the app switcher right now - Cmd-Tab and the Dock
+  /// on macOS, Alt-Tab and the taskbar on Windows. It starts out of both
+  /// (LSUIElement, and skipTaskbar in [initialize]).
+  bool _inAppSwitcher = false;
+
+  /// An ordinary pin makes the Spotlight a normal window, and a normal window
+  /// is one you can Cmd-Tab or Alt-Tab back to once another app covers it.
+  /// Only while it is up: hidden, or lent to the tray menu, it is the tray
+  /// utility again, with no Dock icon or taskbar button standing for nothing.
+  /// The on-top pin needs none of it - it cannot be covered.
+  ///
+  /// On macOS window_manager's setSkipTaskbar is the activation policy
+  /// (accessory or regular); on Windows it is the taskbar button.
+  Future<void> _applyAppPresence() async {
+    final wanted = _pinned && !_onTop && _showingSpotlight;
+    if (wanted == _inAppSwitcher) return;
+    _inAppSwitcher = wanted;
+    try {
+      await windowManager.setSkipTaskbar(!wanted);
+    } on Exception catch (e) {
+      debugPrint('[WindowService] Could not change app switcher presence: $e');
+    }
+  }
+
   /// Where a pinned Spotlight was when it last left the screen or grew for a
   /// dialog, so it comes back there rather than recentred. Null while
   /// unpinned.
@@ -123,6 +147,7 @@ class WindowService implements IWindowService {
     // pinned Spotlight was first. Hidden and resized by now, not yet moved.
     await _rememberPinnedPosition();
     _framelessForTrayMenu = true;
+    await _applyAppPresence();
     await windowManager.setAsFrameless();
     // Topmost, or the menu loses the z-order fight it is guaranteed to have.
     //
@@ -198,6 +223,7 @@ class WindowService implements IWindowService {
     await windowManager.show();
     await windowManager.focus();
     _isVisible = true;
+    await _applyAppPresence();
     debugPrint('[WindowService] Spotlight shown');
   }
 
@@ -208,6 +234,7 @@ class WindowService implements IWindowService {
     if (!pinned) _pinnedPosition = null;
     if (!_isDesktop()) return;
     await _applyTopmost();
+    await _applyAppPresence();
   }
 
   @override
@@ -220,6 +247,7 @@ class WindowService implements IWindowService {
     await Future.wait([windowManager.hide(), _rememberPinnedPosition()]);
     debugPrint('[WindowService] Hiding spotlight window');
     _isVisible = false;
+    await _applyAppPresence();
 
     // Enter Tray Mode AFTER hiding window to pause UI animations
     // Note: Only pauses UI-related resources (AnimationControllers, etc.)
