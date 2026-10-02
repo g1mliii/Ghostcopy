@@ -120,14 +120,16 @@ class AgentClient {
   AgentClient({
     int? port,
     String? secretPath,
-    this.timeout = const Duration(seconds: 60),
+    this.timeout = const Duration(minutes: 6),
   }) : port = port ?? agentPortFor(),
        secretPath = secretPath ?? defaultSecretPath();
 
   final int port;
   final String secretPath;
 
-  /// Long enough for a 10 MB upload on a slow connection.
+  /// Longer than the app's own upload deadline (five minutes, in
+  /// TimeoutHttpClient). Giving up first would report a failure while the
+  /// app goes on to finish the upload - and a retry would send it twice.
   final Duration timeout;
 
   Future<Map<String, Object?>> request(Map<String, Object?> command) async {
@@ -207,6 +209,14 @@ class AgentClient {
             'first.',
       );
     }
-    return (await file.readAsString()).trim();
+    try {
+      return (await file.readAsString()).trim();
+    } on FileSystemException catch (e) {
+      throw AgentException(
+        'not_installed',
+        "GhostCopy's settings could not be read (${e.message}). Open GhostCopy "
+            'and try again.',
+      );
+    }
   }
 }

@@ -78,6 +78,22 @@ void main() {
     );
   });
 
+  test(
+    'an unreadable secret file is an AgentException, not a crash',
+    () async {
+      final secret = File('${Directory.systemTemp.createTempSync('u').path}/s')
+        ..writeAsStringSync('x' * 40);
+      await Process.run('chmod', ['000', secret.path]);
+      addTearDown(() => Process.run('chmod', ['600', secret.path]));
+
+      await expectLater(
+        AgentClient(secretPath: secret.path).request({'name': 'list_devices'}),
+        throwsA(isA<AgentException>()),
+      );
+    },
+    skip: Platform.isWindows ? 'chmod is POSIX' : false,
+  );
+
   test('the secret path can be overridden', () {
     expect(
       defaultSecretPath(environment: {'GHOSTCOPY_SECRET_FILE': '/tmp/s'}),

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
 import '../models/clipboard_item.dart';
 import '../models/exceptions.dart';
@@ -116,7 +117,13 @@ class AgentCommandHandler {
     } on Exception catch (e) {
       return _failed(sendFailureMessage(e, 'The send failed: $e'));
     }
-    await _accountPrompts?.recordSend();
+    // Best effort: the clip has gone. A failed write here reported as a
+    // failed send would invite a retry, and a second copy of the clip.
+    try {
+      await _accountPrompts?.recordSend();
+    } on Exception catch (e) {
+      debugPrint('[Agent] Could not record the send: $e');
+    }
     return {
       'ok': true,
       'status': 'sent',
@@ -146,6 +153,14 @@ class AgentCommandHandler {
   Future<Map<String, Object?>> _listDevices() async {
     final here = _devices.getCurrentDeviceId();
     final devices = await _devices.getUserDevices(forceRefresh: true);
+    // A failed fetch comes back as an empty list, and a signed-in desktop is
+    // always on its own account - so empty here means "could not tell", and
+    // saying "no devices" would have callers target on false data.
+    if (devices.isEmpty) {
+      return _failed(
+        'Could not load your devices. Check your connection and try again.',
+      );
+    }
     return {
       'ok': true,
       'devices': [

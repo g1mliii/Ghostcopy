@@ -122,6 +122,41 @@ void main() {
     expect(store.hasSent, isTrue);
   });
 
+  test(
+    'a send that worked is reported as sent even if the bookkeeping fails',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final failing = _FailingPromptStore(
+        await SharedPreferences.getInstance(),
+      );
+      final counting = AgentCommandHandler(
+        authService: auth,
+        clipboardRepository: clips,
+        deviceService: devices,
+        settingsService: settings,
+        sendFile: (path, targets) async => (ok: true, message: ''),
+        accountPromptStore: failing,
+      );
+
+      final reply = await counting.handle({'name': 'send_text', 'text': 'hi'});
+
+      // Reported as failed, a caller would retry and send it twice.
+      expect(reply['ok'], isTrue);
+    },
+  );
+
+  test('a device list that could not load is not "no devices"', () async {
+    when(() => devices.getCurrentDeviceId()).thenReturn('d1');
+    when(
+      () => devices.getUserDevices(forceRefresh: true),
+    ).thenAnswer((_) async => []);
+
+    final reply = await handler.handle({'name': 'list_devices'});
+
+    expect(reply['ok'], isFalse);
+    expect(reply['message'], contains('Could not load your devices'));
+  });
+
   test('an empty default setting means every device', () async {
     final reply = await handler.handle({'name': 'send_text', 'text': 'hi'});
     expect(reply['to'], 'all');
@@ -257,4 +292,11 @@ void main() {
       throwsA(isA<AgentException>().having((e) => e.code, 'code', 'no_answer')),
     );
   });
+}
+
+class _FailingPromptStore extends AccountPromptStore {
+  _FailingPromptStore(super.prefs);
+
+  @override
+  Future<void> recordSend() async => throw Exception('disk full');
 }

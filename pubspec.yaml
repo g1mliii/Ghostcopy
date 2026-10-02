@@ -21,7 +21,7 @@ publish_to: 'none'
 # build so far therefore reported itself to Sentry as 1.0.0+5 no matter what
 # was in it. Bumped to match the other platforms; raise it for each build that
 # leaves this machine.
-version: 1.0.7+19
+version: 1.0.7+20
 
 environment:
   sdk: ^3.12.0
@@ -195,7 +195,7 @@ msix_config:
   # draft submission is not: delete the package in Partner Center and the same
   # version uploads again. So a rebuild during drafting can keep its number,
   # and only a released version forces a bump.
-  msix_version: 1.0.19.0
+  msix_version: 1.0.20.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
   # The Store signs the package; a signature applied here would be replaced.
