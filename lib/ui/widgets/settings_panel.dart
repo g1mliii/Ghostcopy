@@ -855,10 +855,12 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                 'this app',
             value: _agentAccessEnabled,
             onChanged: (value) async {
-              await widget.settingsService.setAgentAccessEnabled(
+              final saved = await widget.settingsService.setAgentAccessEnabled(
                 enabled: value,
               );
-              if (mounted) setState(() => _agentAccessEnabled = value);
+              // The handler reads the saved value on every request, so the
+              // switch shows that, not what was asked for.
+              if (mounted && saved) setState(() => _agentAccessEnabled = value);
             },
           ),
           const SizedBox(height: 10),

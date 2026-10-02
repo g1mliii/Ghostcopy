@@ -152,11 +152,10 @@ class AgentCommandHandler {
 
   Future<Map<String, Object?>> _listDevices() async {
     final here = _devices.getCurrentDeviceId();
-    final devices = await _devices.getUserDevices(forceRefresh: true);
-    // A failed fetch comes back as an empty list, the same as an account
-    // with none registered. Saying "no devices" for a failure would have
-    // callers target on false data, so ask which it was.
-    if (_devices.lastFetchFailed) {
+    final devices = await _devices.fetchUserDevices();
+    // Null is a failed fetch. Saying "no devices" for it would have callers
+    // target on false data; an empty list is an account with none.
+    if (devices == null) {
       return _failed(
         'Could not load your devices. Check your connection and try again.',
       );

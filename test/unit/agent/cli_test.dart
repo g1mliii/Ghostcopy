@@ -89,6 +89,29 @@ void main() {
     expect(client.requests.single['text'], '--help me');
   });
 
+  test('--json reports usage mistakes as JSON too', () async {
+    for (final args in [
+      ['--json', 'send'],
+      ['send', '--json'],
+      ['--json', 'send', 'x', '--to', 'toaster'],
+      ['--json', 'send-file'],
+      ['--json', 'launch-rockets'],
+      ['--json'],
+    ]) {
+      out.clear();
+      expect(await run(args), CliExit.usage, reason: '$args');
+      final reply = jsonDecode(out.toString()) as Map<String, Object?>;
+      expect(reply['ok'], isFalse, reason: '$args');
+      expect(reply['error'], 'usage', reason: '$args');
+    }
+    expect(client.requests, isEmpty);
+  });
+
+  test('--json after -- is text, not the flag', () async {
+    expect(await run(['send', '--', '--json']), CliExit.ok);
+    expect(client.requests.single['text'], '--json');
+  });
+
   group('exit codes', () {
     test('GhostCopy not running is 2, with the reason', () async {
       client.error = const AgentException('not_running', 'Open GhostCopy.');

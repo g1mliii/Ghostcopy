@@ -313,9 +313,9 @@ class SettingsService implements ISettingsService {
   }
 
   @override
-  Future<void> setAgentAccessEnabled({required bool enabled}) async {
+  Future<bool> setAgentAccessEnabled({required bool enabled}) async {
     _ensureInitialized();
-    await _prefs!.setBool(_keyAgentAccessEnabled, enabled);
+    return _prefs!.setBool(_keyAgentAccessEnabled, enabled);
   }
 
   @override

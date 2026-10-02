@@ -134,7 +134,9 @@ abstract class ISettingsService {
   /// their account without them having asked for that.
   Future<bool> getAgentAccessEnabled();
 
-  Future<void> setAgentAccessEnabled({required bool enabled});
+  /// Returns false when the write did not persist - which, turning access
+  /// off, would leave it on after a restart while the switch said off.
+  Future<bool> setAgentAccessEnabled({required bool enabled});
 
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   /// Returns false by default if error or not found

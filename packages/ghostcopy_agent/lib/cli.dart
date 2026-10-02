@@ -58,9 +58,27 @@ Future<int> runCli(
   final errors = err ?? stderr;
   final agent = client ?? AgentClient();
 
+  // Known before parsing, so a usage error found before reaching it is
+  // still reported the way --json promises.
+  final dashDash = arguments.indexOf('--');
+  final json = (dashDash == -1 ? arguments : arguments.take(dashDash)).contains(
+    '--json',
+  );
+
+  /// A usage mistake, in the form the caller asked for.
+  int fail(String message) {
+    if (json) {
+      output.writeln(
+        jsonEncode({'ok': false, 'error': 'usage', 'message': message}),
+      );
+    } else {
+      errors.writeln(message);
+    }
+    return CliExit.usage;
+  }
+
   final positional = <String>[];
   final to = <String>[];
-  var json = false;
   var endOfOptions = false;
   for (var i = 0; i < arguments.length; i++) {
     final arg = arguments[i];
@@ -74,24 +92,25 @@ Future<int> runCli(
       output.writeln(cliUsage);
       return CliExit.ok;
     } else if (arg == '--json') {
-      json = true;
+      // Read above.
     } else if (arg == '--to') {
       if (i + 1 >= arguments.length) {
-        errors.writeln('--to needs a value, such as --to phone');
-        return CliExit.usage;
+        return fail('--to needs a value, such as --to phone');
       }
       to.addAll(arguments[++i].split(','));
     } else if (arg.startsWith('--to=')) {
       to.addAll(arg.substring('--to='.length).split(','));
     } else if (arg.startsWith('--')) {
-      errors.writeln('Unknown option $arg\n\n$cliUsage');
-      return CliExit.usage;
+      return fail(
+        json ? 'Unknown option $arg' : 'Unknown option $arg\n\n$cliUsage',
+      );
     } else {
       positional.add(arg);
     }
   }
 
   if (positional.isEmpty) {
+    if (json) return fail('No command given.');
     output.writeln(cliUsage);
     return CliExit.usage;
   }
@@ -100,8 +119,7 @@ Future<int> runCli(
   try {
     targets = resolveDeviceTargets(to);
   } on FormatException catch (e) {
-    errors.writeln(e.message);
-    return CliExit.usage;
+    return fail(e.message);
   }
 
   final command = positional.first;
@@ -110,21 +128,18 @@ Future<int> runCli(
   switch (command) {
     case 'send':
       if (rest.isEmpty) {
-        errors.writeln('Nothing to send. Usage: ghostcopy send <text>');
-        return CliExit.usage;
+        return fail('Nothing to send. Usage: ghostcopy send <text>');
       }
       final text = rest.length == 1 && rest.single == '-'
           ? await (stdinText ?? _readStdin)()
           : rest.join(' ');
       if (text.trim().isEmpty) {
-        errors.writeln('Nothing to send: the text is empty.');
-        return CliExit.usage;
+        return fail('Nothing to send: the text is empty.');
       }
       request = {'name': 'send_text', 'text': text, 'to': targets};
     case 'send-file':
       if (rest.length != 1) {
-        errors.writeln('Usage: ghostcopy send-file <path>');
-        return CliExit.usage;
+        return fail('Usage: ghostcopy send-file <path>');
       }
       // Absolute here: the app resolves paths from its own directory, not
       // from wherever this command was run.
@@ -141,8 +156,11 @@ Future<int> runCli(
       ).serve(mcpInput ?? stdin, mcpOutput ?? stdout, log: errors);
       return CliExit.ok;
     default:
-      errors.writeln('Unknown command "$command".\n\n$cliUsage');
-      return CliExit.usage;
+      return fail(
+        json
+            ? 'Unknown command "$command".'
+            : 'Unknown command "$command".\n\n$cliUsage',
+      );
   }
 
   final Map<String, Object?> reply;

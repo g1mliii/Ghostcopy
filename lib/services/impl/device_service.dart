@@ -219,10 +219,12 @@ class DeviceService implements IDeviceService {
     }
   }
 
-  bool _lastFetchFailed = false;
-
   @override
-  bool get lastFetchFailed => _lastFetchFailed;
+  Future<List<Device>?> fetchUserDevices() async {
+    _ensureInitialized();
+    if (_supabase.auth.currentUser == null) return const [];
+    return _fetchDevices();
+  }
 
   @override
   Future<List<Device>> getUserDevices({bool forceRefresh = false}) async {
@@ -239,6 +241,11 @@ class DeviceService implements IDeviceService {
       return _cachedDevices!;
     }
 
+    return await _fetchDevices() ?? [];
+  }
+
+  /// The devices from the server, cached; null when the fetch failed.
+  Future<List<Device>?> _fetchDevices() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
 
@@ -255,7 +262,6 @@ class DeviceService implements IDeviceService {
       // Update cache
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
-      _lastFetchFailed = false;
 
       debugPrint(
         '[DeviceService] Fetched and cached ${devices.length} device(s)',
@@ -266,12 +272,10 @@ class DeviceService implements IDeviceService {
       debugPrint(
         '[DeviceService] ❌ Postgres error fetching devices: ${e.message}',
       );
-      _lastFetchFailed = true;
-      return [];
+      return null;
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to fetch devices: $e');
-      _lastFetchFailed = true;
-      return [];
+      return null;
     }
   }
 
