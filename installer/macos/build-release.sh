@@ -38,7 +38,8 @@ python3 "$script_dir/verify-app.py" "$app" --require-updater \
 certs="$(mktemp -d)"
 (cd "$certs" && codesign -d --extract-certificates=cert "$app" 2>/dev/null)
 identity="$(openssl x509 -inform DER -in "$certs/cert0" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
-issuer="$(openssl x509 -inform DER -in "$certs/cert0" -noout -issuer)"
+# Spaces stripped: LibreSSL prints OU=G2, OpenSSL 3 (Homebrew's) OU = G2.
+issuer="$(openssl x509 -inform DER -in "$certs/cert0" -noout -issuer | tr -d ' ')"
 rm -rf "$certs"
 if [[ "$issuer" != *"OU=G2"* ]]; then
     echo "The app was signed by a certificate from the old Developer ID authority" >&2

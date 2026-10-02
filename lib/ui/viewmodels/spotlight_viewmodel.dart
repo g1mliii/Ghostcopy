@@ -425,19 +425,28 @@ class SpotlightViewModel extends ChangeNotifier {
       _clipboardContent = null;
     }
     final wasRestored = _draftRestored;
+    final wasRestoring = isRestoringDraft;
     if (newContent.trim().isEmpty && _clipboardContent == null) {
       _clearDraft();
     } else {
       // Editing a kept file's "File ready to send" line before its bytes
-      // are back: the user is writing text now, and the file goes.
-      if (isRestoringDraft) _draftFile = null;
+      // are back: the user is writing text now, and the file goes. So does
+      // its hide time - this text is a new draft, and the next hide starts
+      // its own ten minutes rather than finishing the file's.
+      if (wasRestoring) {
+        _draftFile = null;
+        _hiddenAt = null;
+      }
       _isDraft = true;
       _draftRestored = false;
     }
     // The detector notifies only when the type changes, which an edit to
     // plain text does not; without this the "Kept from before" row stays,
-    // offering to paste over what was just typed.
-    if (wasRestored != _draftRestored || payload != _clipboardContent) {
+    // offering to paste over what was just typed, and Send stays busy on a
+    // file that is no longer coming.
+    if (wasRestored != _draftRestored ||
+        wasRestoring != isRestoringDraft ||
+        payload != _clipboardContent) {
       notifyListeners();
     }
     _debouncedDetectContentType();
@@ -657,7 +666,13 @@ class SpotlightViewModel extends ChangeNotifier {
       debugPrint('[SpotlightVM] Kept file could not be read again: $e');
       return null;
     } finally {
-      await handle?.close();
+      // A drive that went away during the read can fail the close too. Left
+      // to escape, restoration never finished and Send stayed busy.
+      try {
+        await handle?.close();
+      } on FileSystemException catch (e) {
+        debugPrint('[SpotlightVM] Kept file could not be closed: $e');
+      }
     }
   }
 
