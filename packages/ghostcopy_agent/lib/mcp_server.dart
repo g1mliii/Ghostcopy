@@ -19,26 +19,19 @@ const List<String> mcpProtocolVersions = [
   '2024-11-05',
 ];
 
-/// What `to` accepts, in the schema an assistant reads.
-const List<String> _targetNames = [
-  'phone',
-  'desktop',
-  'ios',
-  'android',
-  'macos',
-  'windows',
-  'linux',
-];
-
-const String _targetsDescription =
-    'Where to send it. Any of: phone, desktop, ios, android, macos, windows, '
-    'linux. '
-    "Leave out to use the user's default devices.";
+/// `to`, as both send tools describe it: every name the app accepts.
+final Map<String, Object?> _toProperty = {
+  'type': 'array',
+  'items': {'type': 'string', 'enum': deviceTargetNames},
+  'description':
+      'Where to send it. Any of: ${deviceTargetNames.join(', ')}. '
+      "Leave out to use the user's default devices.",
+};
 
 /// The tools, as tools/list describes them.
-const List<Map<String, Object?>> mcpTools = [
+final List<Map<String, Object?>> mcpTools = [
   {
-    'name': 'send_text',
+    'name': AgentCommand.sendText,
     'title': 'Send text with GhostCopy',
     'description':
         "Send text or a link to the user's other devices through GhostCopy. "
@@ -48,18 +41,14 @@ const List<Map<String, Object?>> mcpTools = [
       'type': 'object',
       'properties': {
         'text': {'type': 'string', 'description': 'The text or link to send.'},
-        'to': {
-          'type': 'array',
-          'items': {'type': 'string', 'enum': _targetNames},
-          'description': _targetsDescription,
-        },
+        'to': _toProperty,
       },
       'required': ['text'],
     },
     'annotations': {'readOnlyHint': false, 'destructiveHint': false},
   },
   {
-    'name': 'send_file',
+    'name': AgentCommand.sendFile,
     'title': 'Send a file with GhostCopy',
     'description':
         "Send a file on this computer to the user's other devices through "
@@ -68,18 +57,14 @@ const List<Map<String, Object?>> mcpTools = [
       'type': 'object',
       'properties': {
         'path': {'type': 'string', 'description': 'Absolute path to the file.'},
-        'to': {
-          'type': 'array',
-          'items': {'type': 'string', 'enum': _targetNames},
-          'description': _targetsDescription,
-        },
+        'to': _toProperty,
       },
       'required': ['path'],
     },
     'annotations': {'readOnlyHint': false, 'destructiveHint': false},
   },
   {
-    'name': 'list_devices',
+    'name': AgentCommand.listDevices,
     'title': 'List GhostCopy devices',
     'description':
         "List the devices on the user's GhostCopy account, with their type, "
@@ -191,25 +176,25 @@ class McpServer {
   ) async {
     final Map<String, Object?> request;
     try {
-      // Strict: a malformed `to` must not fall through to the defaults, which
-      // can mean every device - wider than whatever the caller meant.
-      final to = arguments['to'];
-      if (to != null && (to is! List || to.any((t) => t is! String))) {
-        return _toolError(
-          'to must be a list of device names, such as ["phone"].',
-        );
-      }
-      final targets = resolveDeviceTargets(
-        to == null ? const <String>[] : (to as List).cast<String>(),
-      );
+      final targets = parseDeviceTargets(arguments['to']);
       switch (name) {
-        case 'send_text':
+        case AgentCommand.sendText:
           final text = arguments['text'];
           if (text is! String || text.trim().isEmpty) {
             return _toolError('text is required and cannot be empty.');
           }
-          request = {'name': 'send_text', 'text': text, 'to': targets};
-        case 'send_file':
+          if (text.length > agentMaxTextLength) {
+            return _toolError(
+              'text is too long: GhostCopy takes up to $agentMaxTextLength '
+              'characters. Save it to a file and use send_file instead.',
+            );
+          }
+          request = {
+            'name': AgentCommand.sendText,
+            'text': text,
+            'to': targets,
+          };
+        case AgentCommand.sendFile:
           final path = arguments['path'];
           if (path is! String || path.trim().isEmpty) {
             return _toolError('path is required.');
@@ -220,9 +205,13 @@ class McpServer {
           if (!File(path).isAbsolute) {
             return _toolError('path must be absolute: $path');
           }
-          request = {'name': 'send_file', 'path': path, 'to': targets};
-        case 'list_devices':
-          request = {'name': 'list_devices'};
+          request = {
+            'name': AgentCommand.sendFile,
+            'path': path,
+            'to': targets,
+          };
+        case AgentCommand.listDevices:
+          request = {'name': AgentCommand.listDevices};
         default:
           return _toolError('Unknown tool: $name');
       }
@@ -235,7 +224,7 @@ class McpServer {
       if (reply['ok'] != true) {
         return _toolError(reply['message'] as String? ?? 'GhostCopy refused.');
       }
-      if (name == 'list_devices') {
+      if (name == AgentCommand.listDevices) {
         return {
           'content': [
             {'type': 'text', 'text': jsonEncode(reply['devices'] ?? const [])},

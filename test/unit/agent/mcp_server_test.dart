@@ -53,6 +53,21 @@ void main() {
     expect(all.map((l) => (jsonDecode(l) as Map)['id']), [2, 1]);
   });
 
+  // The schema used to list a hand-picked few, so an assistant validating
+  // against it could not use names the app accepts, such as "mac".
+  test('the send tools offer every name the app accepts', () async {
+    final reply = await call({
+      'jsonrpc': '2.0',
+      'id': 3,
+      'method': 'tools/list',
+    });
+    final sendText =
+        ((reply!['result']! as Map)['tools']! as List).first as Map;
+    final to = (sendText['inputSchema']! as Map)['properties']! as Map;
+    final names = ((to['to']! as Map)['items']! as Map)['enum'];
+    expect(names, containsAll(['mac', 'pc', 'phone', 'ios', 'linux']));
+  });
+
   test('initialize agrees a protocol version the client asked for', () async {
     final reply = await call({
       'jsonrpc': '2.0',

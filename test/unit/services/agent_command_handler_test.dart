@@ -297,6 +297,13 @@ void main() {
         'text': 'hi',
         'to': [' '],
       },
+      // Not a list: used to be read as "no devices named", the defaults.
+      {'name': 'send_text', 'text': 'hi', 'to': 'phone'},
+      {
+        'name': 'send_text',
+        'text': 'hi',
+        'to': [42],
+      },
       {'name': 'send_file'},
       {'name': 'format_disk'},
     ]) {
@@ -348,6 +355,28 @@ void main() {
     final refused = await client.request({'name': 'list_devices'});
     expect(refused['error'], 'unauthorized');
     expect(refused.keys, unorderedEquals(['ok', 'error', 'message']));
+
+    // Past the size cap the app stops reading and answers nothing, before
+    // the secret is ever looked at.
+    final flood = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      SingleInstance.port,
+    );
+    final answer = <int>[];
+    final closed = flood
+        .listen(answer.addAll)
+        .asFuture<void>()
+        .catchError((Object _) {});
+    try {
+      flood.add(List.filled(2 * 1024 * 1024, 0x20));
+      await flood.close();
+    } on SocketException {
+      // The app hanging up mid-write is the point.
+    }
+    await closed.timeout(const Duration(seconds: 5));
+    expect(answer, isEmpty);
+    // The one insert above was verified; nothing has been sent since.
+    verifyNever(() => clips.insert(any()));
   });
 }
 

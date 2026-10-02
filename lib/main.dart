@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:ghostcopy_agent/agent_protocol.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -1727,7 +1728,7 @@ Future<SendFileResult> _sendSharedFile(
       return (
         ok: false,
         message: 'Folders cannot be sent. Select a file instead.',
-        refusal: 'bad_request',
+        refusal: AgentError.badRequest,
       );
     }
     final file = File(path);
@@ -1735,7 +1736,7 @@ Future<SendFileResult> _sendSharedFile(
       return (
         ok: false,
         message: 'The selected file no longer exists.',
-        refusal: 'bad_request',
+        refusal: AgentError.badRequest,
       );
     }
     // Check the size before allocating a potentially multi-GB file in RAM.
@@ -1745,14 +1746,14 @@ Future<SendFileResult> _sendSharedFile(
         message:
             'This file is too large. GhostCopy supports files up to '
             '${ClipboardLimits.maxFileLabel}.',
-        refusal: 'bad_request',
+        refusal: AgentError.badRequest,
       );
     }
     if (authService.currentUserId == null) {
       return (
         ok: false,
         message: 'Open GhostCopy and sign in before sending a file.',
-        refusal: 'signed_out',
+        refusal: AgentError.signedOut,
       );
     }
 

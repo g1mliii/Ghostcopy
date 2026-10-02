@@ -169,6 +169,11 @@ void main() {
       expect(await run(['send']), CliExit.usage);
       expect(await run(['send', '   ']), CliExit.usage);
       expect(await run(['send', 'x', '--to', 'toaster']), CliExit.usage);
+      // Text the app would refuse is not shipped across to be refused there.
+      expect(
+        await run(['send', 'x' * (agentMaxTextLength + 1)]),
+        CliExit.usage,
+      );
       // An empty shell variable must not widen the send to every device.
       expect(await run(['send', 'x', '--to', '']), CliExit.usage);
       expect(await run(['send', 'x', '--to=']), CliExit.usage);

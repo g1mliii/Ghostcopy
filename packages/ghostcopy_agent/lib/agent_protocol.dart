@@ -14,7 +14,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-/// Where per-user ports start. Shared with SingleInstance.
+/// The one port every user's GhostCopy listened on before the command line,
+/// and so where an out-of-date copy is still found. Per-user ports start
+/// just above it, so anything here really is one of those.
 const int agentBasePort = 47821;
 
 /// The loopback port this user's app listens on.
@@ -24,8 +26,8 @@ const int agentBasePort = 47821;
 /// user's holding it, "forwarded" its launch there - accepted by the socket,
 /// refused by the secret - and quit, and its command line talked to the wrong
 /// app. Derived from the home folder, which the app and the command line see
-/// alike, into a 1000-port range. Two users landing on the same port is the
-/// old behaviour, not a new failure.
+/// alike, into a 1000-port range above [agentBasePort]. Two users landing on
+/// the same port is the old behaviour, not a new failure.
 ///
 /// Case is folded only on Windows, whose paths ignore it; on Linux
 /// `/home/Sam` and `/home/sam` are two users.
@@ -33,26 +35,27 @@ int agentPortFor({Map<String, String>? environment, bool? windows}) {
   final env = environment ?? Platform.environment;
   final foldCase = windows ?? Platform.isWindows;
   final home = env['USERPROFILE'] ?? env['HOME'];
-  if (home == null || home.isEmpty) return agentBasePort;
+  if (home == null || home.isEmpty) return agentBasePort + 1;
   // FNV-1a: stable across runs and Dart versions, unlike String.hashCode.
   var hash = 0x811c9dc5;
   for (final unit in utf8.encode(foldCase ? home.toLowerCase() : home)) {
     hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
   }
-  return agentBasePort + hash % 1000;
+  return agentBasePort + 1 + hash % 1000;
 }
 
 /// Sent first, so the app can tell GhostCopy from an unrelated process that
 /// happens to hold the port, and the other way round.
 const String agentHandshakeMagic = 'ghostcopy/1';
 
-/// The device types a clip can be addressed to.
+/// The device types a clip can be addressed to, in the order the app lists
+/// them. ClipboardRepository.validDeviceTypes is this list.
 const List<String> deviceTypes = [
   'windows',
   'macos',
-  'linux',
   'android',
   'ios',
+  'linux',
 ];
 
 /// Friendlier names an agent or a person is likely to use.
@@ -65,6 +68,102 @@ const Map<String, List<String>> deviceAliases = {
   'mac': ['macos'],
   'pc': ['windows'],
 };
+
+/// Every name a destination accepts: the friendly ones, then the types.
+final List<String> deviceTargetNames = List.unmodifiable([
+  ...deviceAliases.keys,
+  ...deviceTypes,
+]);
+
+/// The most text one clip can carry, in UTF-16 code units - what
+/// ClipboardRepository accepts. Checked before sending, so text the app
+/// would refuse never crosses the loopback channel.
+const int agentMaxTextLength = 102400;
+
+/// The shared secret's file name, in the app's support directory.
+const String agentSecretFileName = 'single_instance.secret';
+
+/// The commands the app answers. Also the MCP tool names.
+abstract final class AgentCommand {
+  static const String sendText = 'send_text';
+  static const String sendFile = 'send_file';
+  static const String listDevices = 'list_devices';
+}
+
+/// What an `error` code means for whoever asked.
+enum AgentErrorKind {
+  /// The request was malformed before it was sent.
+  usage,
+
+  /// GhostCopy could not be asked, or not yet: worth trying again later.
+  unreachable,
+
+  /// GhostCopy answered no. Asking again the same way will not change that.
+  refused,
+
+  /// GhostCopy tried, and the send failed - offline, rate limited.
+  failed,
+
+  /// The request went and no answer came back, so it may have happened.
+  unconfirmed,
+}
+
+/// The `error` codes in an answer and in an [AgentException], stable for
+/// scripts. One list, so the app and the command line cannot drift apart.
+abstract final class AgentError {
+  static const String usage = 'usage';
+  static const String disabled = 'disabled';
+  static const String signedOut = 'signed_out';
+  static const String badRequest = 'bad_request';
+  static const String sendFailed = 'send_failed';
+  static const String notReady = 'not_ready';
+  static const String unauthorized = 'unauthorized';
+  static const String notInstalled = 'not_installed';
+  static const String notRunning = 'not_running';
+  static const String outdated = 'outdated';
+  static const String noAnswer = 'no_answer';
+  static const String badAnswer = 'bad_answer';
+  static const String timeout = 'timeout';
+  static const String connectionLost = 'connection_lost';
+
+  /// Anything unknown - an app newer than this command line - is a refusal,
+  /// which at least does not invite a retry.
+  static AgentErrorKind kindOf(Object? code) => switch (code) {
+    AgentError.usage => AgentErrorKind.usage,
+    AgentError.sendFailed => AgentErrorKind.failed,
+    AgentError.timeout ||
+    AgentError.connectionLost => AgentErrorKind.unconfirmed,
+    AgentError.notReady ||
+    AgentError.unauthorized ||
+    AgentError.notInstalled ||
+    AgentError.notRunning ||
+    AgentError.outdated ||
+    AgentError.noAnswer ||
+    AgentError.badAnswer => AgentErrorKind.unreachable,
+    _ => AgentErrorKind.refused,
+  };
+}
+
+/// A failed answer: `ok`, the [AgentError] code, and a message for a person.
+Map<String, Object?> agentErrorReply(String code, String message) => {
+  'ok': false,
+  'error': code,
+  'message': message,
+};
+
+/// [to] as it arrives from outside - an assistant, another process - checked
+/// for shape before [resolveDeviceTargets]. Null is the default devices;
+/// anything but a list of names is a [FormatException], never the defaults,
+/// which can be every device.
+List<String> parseDeviceTargets(Object? to) {
+  if (to == null) return const [];
+  if (to is! List || to.any((t) => t is! String)) {
+    throw const FormatException(
+      'to must be a list of device names, such as ["phone"].',
+    );
+  }
+  return resolveDeviceTargets(to.cast<String>());
+}
 
 /// Turn what the caller asked for into device types, or throw a
 /// [FormatException] naming what was not understood. Empty in, empty out -
@@ -89,8 +188,7 @@ List<String> resolveDeviceTargets(Iterable<String> requested) {
       resolved.addAll(deviceAliases[name]!);
     } else {
       throw FormatException(
-        'Unknown device "$raw". Use one of: '
-        '${[...deviceAliases.keys, ...deviceTypes].join(', ')}.',
+        'Unknown device "$raw". Use one of: ${deviceTargetNames.join(', ')}.',
       );
     }
   }
@@ -104,7 +202,7 @@ String defaultSecretPath({Map<String, String>? environment}) {
   final env = environment ?? Platform.environment;
   final override = env['GHOSTCOPY_SECRET_FILE'];
   if (override != null && override.isNotEmpty) return override;
-  const file = 'single_instance.secret';
+  const file = agentSecretFileName;
   if (Platform.isWindows) {
     return '${env['APPDATA']}\\com.ghostcopy\\ghostcopy\\$file';
   }
@@ -179,39 +277,33 @@ class AgentClient {
       // that took the handshake and said nothing predates commands.
       if (reply.trim().isEmpty) {
         throw const AgentException(
-          'no_answer',
+          AgentError.noAnswer,
           'GhostCopy did not answer. Update it to the latest version - older '
-              'versions cannot be used from the command line.',
+          'versions cannot be used from the command line.',
         );
       }
       final decoded = jsonDecode(reply);
-      if (decoded is! Map<String, Object?>) {
-        throw const AgentException(
-          'bad_answer',
-          'GhostCopy gave an answer '
-              'this command does not understand.',
-        );
-      }
+      // Valid JSON of the wrong shape is as unreadable as invalid JSON.
+      if (decoded is! Map<String, Object?>) throw const FormatException();
       return decoded;
     } on SocketException {
       // Connected, then lost: the app quit or restarted mid-request, perhaps
       // after the send had gone. Not "not running", which invites a retry.
       throw const AgentException(
-        'connection_lost',
+        AgentError.connectionLost,
         'GhostCopy closed the connection before answering. It may still have '
-            'sent this - check your history before trying again.',
+        'sent this - check your history before trying again.',
       );
     } on TimeoutException {
       throw const AgentException(
-        'timeout',
+        AgentError.timeout,
         'GhostCopy took too long to answer. It may still have sent this - '
-            'check your history before trying again.',
+        'check your history before trying again.',
       );
     } on FormatException {
       throw const AgentException(
-        'bad_answer',
-        'GhostCopy gave an answer this '
-            'command does not understand.',
+        AgentError.badAnswer,
+        'GhostCopy gave an answer this command does not understand.',
       );
     } finally {
       socket.destroy();
@@ -232,16 +324,16 @@ class AgentClient {
         );
         legacy.destroy();
         return const AgentException(
-          'outdated',
+          AgentError.outdated,
           'GhostCopy is running but is too old to use from the command line. '
-              'Update it to the latest version, then try again.',
+          'Update it to the latest version, then try again.',
         );
       } on SocketException {
         // Nothing there either.
       }
     }
     return const AgentException(
-      'not_running',
+      AgentError.notRunning,
       'GhostCopy is not running. Open it, then try again.',
     );
   }
@@ -250,18 +342,18 @@ class AgentClient {
     final file = File(secretPath);
     if (!file.existsSync()) {
       throw const AgentException(
-        'not_installed',
+        AgentError.notInstalled,
         'GhostCopy has not run on this computer yet. Install and open it '
-            'first.',
+        'first.',
       );
     }
     try {
       return (await file.readAsString()).trim();
     } on FileSystemException catch (e) {
       throw AgentException(
-        'not_installed',
+        AgentError.notInstalled,
         "GhostCopy's settings could not be read (${e.message}). Open GhostCopy "
-            'and try again.',
+        'and try again.',
       );
     }
   }

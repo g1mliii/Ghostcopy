@@ -45,42 +45,41 @@ class AgentCommandHandler implements IAgentCommandHandler {
   @override
   Future<Map<String, Object?>> handle(Map<String, Object?> command) async {
     if (!await _settings.getAgentAccessEnabled()) {
-      return _refused(
-        'disabled',
+      return agentErrorReply(
+        AgentError.disabled,
         'The command line is turned off. In GhostCopy, open Settings and turn '
-            'on "Command line & AI tools".',
+        'on "Command line & AI tools".',
       );
     }
     final userId = _auth.currentUserId;
     if (userId == null) {
-      return _refused(
-        'signed_out',
+      return agentErrorReply(
+        AgentError.signedOut,
         'GhostCopy is not signed in. Open it and sign in first.',
       );
     }
 
+    // Strict here, the trust boundary: a malformed `to` must not fall through
+    // to the defaults, whichever client sent it.
     final List<String> requested;
     try {
-      final to = command['to'];
-      requested = resolveDeviceTargets(
-        to is List ? to.whereType<String>() : const [],
-      );
+      requested = parseDeviceTargets(command['to']);
     } on FormatException catch (e) {
-      return _refused('bad_request', e.message);
+      return agentErrorReply(AgentError.badRequest, e.message);
     }
 
     switch (command['name']) {
-      case 'send_text':
+      case AgentCommand.sendText:
         return _sendText(userId, command['text'], requested);
-      case 'send_file':
+      case AgentCommand.sendFile:
         return _sendFileCommand(command['path'], requested);
-      case 'list_devices':
+      case AgentCommand.listDevices:
         return _listDevices();
       default:
-        return _refused(
-          'bad_request',
+        return agentErrorReply(
+          AgentError.badRequest,
           'Unknown command "${command['name']}". Update the ghostcopy command '
-              'to match this app.',
+          'to match this app.',
         );
     }
   }
@@ -91,7 +90,10 @@ class AgentCommandHandler implements IAgentCommandHandler {
     List<String> requested,
   ) async {
     if (text is! String || text.trim().isEmpty) {
-      return _refused('bad_request', 'Nothing to send: the text is empty.');
+      return agentErrorReply(
+        AgentError.badRequest,
+        'Nothing to send: the text is empty.',
+      );
     }
     final targets = await _targets(requested);
     try {
@@ -107,9 +109,9 @@ class AgentCommandHandler implements IAgentCommandHandler {
         ),
       );
     } on ValidationException catch (e) {
-      return _refused('bad_request', e.message);
+      return agentErrorReply(AgentError.badRequest, e.message);
     } on SecurityException catch (e) {
-      return _refused('bad_request', e.message);
+      return agentErrorReply(AgentError.badRequest, e.message);
     } on Exception catch (e) {
       return _failed(sendFailureMessage(e, 'The send failed: $e'));
     }
@@ -120,12 +122,7 @@ class AgentCommandHandler implements IAgentCommandHandler {
     } on Exception catch (e) {
       debugPrint('[Agent] Could not record the send: $e');
     }
-    return {
-      'ok': true,
-      'status': 'sent',
-      'to': targets ?? 'all',
-      'message': 'Sent to ${_describe(targets)}.',
-    };
+    return _sent(targets, 'Sent to ${_describe(targets)}.');
   }
 
   Future<Map<String, Object?>> _sendFileCommand(
@@ -133,7 +130,7 @@ class AgentCommandHandler implements IAgentCommandHandler {
     List<String> requested,
   ) async {
     if (path is! String || path.trim().isEmpty) {
-      return _refused('bad_request', 'No file given.');
+      return agentErrorReply(AgentError.badRequest, 'No file given.');
     }
     final targets = await _targets(requested);
     // Resolved already, so an empty list - every device - rather than null,
@@ -143,17 +140,12 @@ class AgentCommandHandler implements IAgentCommandHandler {
       // A file that cannot be sent as it is - a folder, gone, too large - is
       // a refusal, not a failure: retrying it, as a failure invites, cannot
       // ever work.
-      final refusal = result.refusal;
-      return refusal == null
-          ? _failed(result.message)
-          : _refused(refusal, result.message);
+      return agentErrorReply(
+        result.refusal ?? AgentError.sendFailed,
+        result.message,
+      );
     }
-    return {
-      'ok': true,
-      'status': 'sent',
-      'to': targets ?? 'all',
-      'message': result.message,
-    };
+    return _sent(targets, result.message);
   }
 
   Future<Map<String, Object?>> _listDevices() async {
@@ -192,15 +184,13 @@ class AgentCommandHandler implements IAgentCommandHandler {
       ? 'all your devices'
       : targets.map(platformLabel).join(', ');
 
-  static Map<String, Object?> _refused(String code, String message) => {
-    'ok': false,
-    'error': code,
+  static Map<String, Object?> _sent(List<String>? targets, String message) => {
+    'ok': true,
+    'status': 'sent',
+    'to': targets ?? 'all',
     'message': message,
   };
 
-  static Map<String, Object?> _failed(String message) => {
-    'ok': false,
-    'error': 'send_failed',
-    'message': message,
-  };
+  static Map<String, Object?> _failed(String message) =>
+      agentErrorReply(AgentError.sendFailed, message);
 }

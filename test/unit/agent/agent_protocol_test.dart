@@ -50,6 +50,39 @@ void main() {
     });
   });
 
+  group('parseDeviceTargets', () {
+    test('null is the defaults, a list is resolved', () {
+      expect(parseDeviceTargets(null), isEmpty);
+      expect(parseDeviceTargets(['mac']), ['macos']);
+    });
+
+    // From outside, a malformed `to` must never become the defaults.
+    test('anything but a list of names is an error', () {
+      for (final bad in [
+        'phone',
+        [1],
+        ['phone', null],
+        {'to': 'phone'},
+      ]) {
+        expect(
+          () => parseDeviceTargets(bad),
+          throwsFormatException,
+          reason: '$bad',
+        );
+      }
+    });
+  });
+
+  test('every error code has the kind the command line exits with', () {
+    expect(AgentError.kindOf(AgentError.timeout), AgentErrorKind.unconfirmed);
+    expect(AgentError.kindOf(AgentError.sendFailed), AgentErrorKind.failed);
+    expect(AgentError.kindOf(AgentError.notReady), AgentErrorKind.unreachable);
+    expect(AgentError.kindOf(AgentError.outdated), AgentErrorKind.unreachable);
+    expect(AgentError.kindOf(AgentError.disabled), AgentErrorKind.refused);
+    // A code from an app newer than this command line.
+    expect(AgentError.kindOf('quota_exceeded'), AgentErrorKind.refused);
+  });
+
   group('agentPortFor', () {
     test('is the same for the same user, every time', () {
       final env = {'HOME': '/Users/sam'};
@@ -61,7 +94,7 @@ void main() {
       final b = agentPortFor(environment: {'HOME': '/Users/alex'});
       expect(a, isNot(b));
       for (final port in [a, b]) {
-        expect(port, inInclusiveRange(agentBasePort, agentBasePort + 999));
+        expect(port, inInclusiveRange(agentBasePort + 1, agentBasePort + 1000));
       }
     });
 
@@ -86,7 +119,7 @@ void main() {
     });
 
     test('no home folder falls back to the base port', () {
-      expect(agentPortFor(environment: const {}), agentBasePort);
+      expect(agentPortFor(environment: const {}), agentBasePort + 1);
     });
   });
 

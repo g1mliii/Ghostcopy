@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
@@ -56,6 +57,12 @@ class SingleInstance {
   /// A squatted port must not hang startup; these are generous for loopback.
   static const Duration _connectTimeout = Duration(seconds: 2);
   static const Duration _handshakeTimeout = Duration(seconds: 3);
+
+  /// The most a peer may send before it has proved anything. The largest
+  /// genuine request is a clip of agentMaxTextLength characters, well under
+  /// this even JSON-escaped; without a cap any local process could fill the
+  /// UI isolate's memory for the three seconds before the secret is checked.
+  static const int _maxPayloadBytes = 1024 * 1024;
 
   ServerSocket? _server;
   String? _secret;
@@ -175,7 +182,7 @@ class SingleInstance {
   Future<String> _loadOrCreateSecret() async {
     try {
       final dir = await getApplicationSupportDirectory();
-      final file = File(p.join(dir.path, 'single_instance.secret'));
+      final file = File(p.join(dir.path, agentSecretFileName));
 
       if (file.existsSync()) {
         final existing = (await file.readAsString()).trim();
@@ -214,28 +221,26 @@ class SingleInstance {
       // One JSON object: {"magic", "secret", and either "args" from a second
       // launch or "command" from the command line}. Read to the end - the
       // sender half-closes once it has written it.
-      final payload = await utf8.decoder
-          .bind(socket)
-          .join()
-          .timeout(_handshakeTimeout);
-      final message = _authenticate(payload);
-      if (message == null) {
+      final payload = await _readPayload(socket).timeout(_handshakeTimeout);
+      final message = payload == null ? null : _decode(payload);
+      if (message == null || !_isAuthentic(message)) {
         debugPrint('[SingleInstance] ✗ Rejected unauthenticated connection');
         // A command line holding a secret this app no longer accepts - a
         // stale GHOSTCOPY_SECRET_FILE, or a secret that could not be saved -
         // is told so. Left with an empty reply it told the user to update an
         // app that was already current. The fact only, nothing about the
         // secret; a second launch's args get no reply, as before.
-        if (_isCommandAttempt(payload)) {
+        if (message?['magic'] == _handshakeMagic &&
+            message?['command'] is Map) {
           socket.add(
             utf8.encode(
-              jsonEncode({
-                'ok': false,
-                'error': 'unauthorized',
-                'message':
-                    'GhostCopy did not accept this command. Quit and reopen '
-                    'GhostCopy, then try again.',
-              }),
+              jsonEncode(
+                agentErrorReply(
+                  AgentError.unauthorized,
+                  'GhostCopy did not accept this command. Quit and reopen '
+                  'GhostCopy, then try again.',
+                ),
+              ),
             ),
           );
           await socket.flush();
@@ -273,59 +278,51 @@ class SingleInstance {
   Future<Map<String, Object?>> _answer(Map<String, Object?> command) async {
     final handler = commandHandler;
     if (handler == null) {
-      return {
-        'ok': false,
-        'error': 'not_ready',
-        'message': 'GhostCopy is still starting. Try again in a moment.',
-      };
+      return agentErrorReply(
+        AgentError.notReady,
+        'GhostCopy is still starting. Try again in a moment.',
+      );
     }
     try {
       return await handler(command);
     } on Object catch (e) {
       debugPrint('[SingleInstance] ⚠️ Command failed: $e');
-      return {
-        'ok': false,
-        'error': 'send_failed',
-        'message': 'GhostCopy could not do that: $e',
-      };
+      return agentErrorReply(
+        AgentError.sendFailed,
+        'GhostCopy could not do that: $e',
+      );
     }
   }
 
-  /// The message, if the peer proved it is GhostCopy (or its command line)
-  /// running as this user; null otherwise.
-  Map<String, Object?>? _authenticate(String payload) {
-    final trimmed = payload.trim();
-    if (trimmed.isEmpty) return null;
+  /// Everything the peer sent, or null once it passes [_maxPayloadBytes].
+  static Future<String?> _readPayload(Socket socket) async {
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in socket) {
+      bytes.add(chunk);
+      if (bytes.length > _maxPayloadBytes) return null;
+    }
+    return utf8.decode(bytes.takeBytes());
+  }
 
-    Object? decoded;
+  /// [payload] as a JSON object, or null if it is not one.
+  static Map<String, Object?>? _decode(String payload) {
     try {
-      decoded = jsonDecode(trimmed);
+      final decoded = jsonDecode(payload);
+      return decoded is Map<String, Object?> ? decoded : null;
     } on FormatException {
       return null;
     }
-    if (decoded is! Map<String, Object?>) return null;
-
-    if (decoded['magic'] != _handshakeMagic) return null;
-
-    final offered = decoded['secret'];
-    final expected = _secret;
-    if (offered is! String || expected == null) return null;
-    if (!_constantTimeEquals(offered, expected)) return null;
-
-    return decoded;
   }
 
-  /// Whether [payload] is the command line speaking this protocol, whatever
-  /// its secret.
-  static bool _isCommandAttempt(String payload) {
-    try {
-      final decoded = jsonDecode(payload.trim());
-      return decoded is Map<String, Object?> &&
-          decoded['magic'] == _handshakeMagic &&
-          decoded['command'] is Map;
-    } on FormatException {
-      return false;
-    }
+  /// Whether [message] proves its sender is GhostCopy (or its command line)
+  /// running as this user.
+  bool _isAuthentic(Map<String, Object?> message) {
+    if (message['magic'] != _handshakeMagic) return false;
+    final offered = message['secret'];
+    final expected = _secret;
+    return offered is String &&
+        expected != null &&
+        _constantTimeEquals(offered, expected);
   }
 
   /// Compares without leaking where the first difference is.

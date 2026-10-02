@@ -27,11 +27,15 @@ abstract final class CliExit {
   /// the connection dropped - so it may have been sent. Not one to retry
   /// blindly: that is how a clip arrives twice.
   static const int unconfirmed = 5;
-}
 
-/// Failures to reach GhostCopy after the request had gone, so the send may
-/// have happened.
-const Set<String> _unconfirmedCodes = {'timeout', 'connection_lost'};
+  static int of(AgentErrorKind kind) => switch (kind) {
+    AgentErrorKind.usage => usage,
+    AgentErrorKind.unreachable => unreachable,
+    AgentErrorKind.refused => refused,
+    AgentErrorKind.failed => failed,
+    AgentErrorKind.unconfirmed => unconfirmed,
+  };
+}
 
 const String cliUsage = '''
 Send things to your other devices through GhostCopy.
@@ -74,16 +78,19 @@ Future<int> runCli(
     '--json',
   );
 
-  /// A usage mistake, in the form the caller asked for.
-  int fail(String message) {
+  /// A failure, in the form the caller asked for, and its exit code.
+  /// [withUsage] adds the help text for a person; JSON is for a program.
+  int fail(
+    String message, {
+    String code = AgentError.usage,
+    bool withUsage = false,
+  }) {
     if (json) {
-      output.writeln(
-        jsonEncode({'ok': false, 'error': 'usage', 'message': message}),
-      );
+      output.writeln(jsonEncode(agentErrorReply(code, message)));
     } else {
-      errors.writeln(message);
+      errors.writeln(withUsage ? '$message\n\n$cliUsage' : message);
     }
-    return CliExit.usage;
+    return CliExit.of(AgentError.kindOf(code));
   }
 
   final positional = <String>[];
@@ -110,9 +117,7 @@ Future<int> runCli(
     } else if (arg.startsWith('--to=')) {
       to.addAll(arg.substring('--to='.length).split(','));
     } else if (arg.startsWith('--')) {
-      return fail(
-        json ? 'Unknown option $arg' : 'Unknown option $arg\n\n$cliUsage',
-      );
+      return fail('Unknown option $arg', withUsage: true);
     } else {
       positional.add(arg);
     }
@@ -145,7 +150,14 @@ Future<int> runCli(
       if (text.trim().isEmpty) {
         return fail('Nothing to send: the text is empty.');
       }
-      request = {'name': 'send_text', 'text': text, 'to': targets};
+      if (text.length > agentMaxTextLength) {
+        return fail(
+          'The text is too long to send: GhostCopy takes up to '
+          '$agentMaxTextLength characters. Save it to a file and use '
+          'send-file instead.',
+        );
+      }
+      request = {'name': AgentCommand.sendText, 'text': text, 'to': targets};
     case 'send-file':
       if (rest.length != 1) {
         return fail('Usage: ghostcopy send-file <path>');
@@ -153,40 +165,26 @@ Future<int> runCli(
       // Absolute here: the app resolves paths from its own directory, not
       // from wherever this command was run.
       request = {
-        'name': 'send_file',
+        'name': AgentCommand.sendFile,
         'path': File(rest.single).absolute.path,
         'to': targets,
       };
     case 'devices':
-      request = {'name': 'list_devices'};
+      request = {'name': AgentCommand.listDevices};
     case 'mcp':
       await McpServer(
         agent,
       ).serve(mcpInput ?? stdin, mcpOutput ?? stdout, log: errors);
       return CliExit.ok;
     default:
-      return fail(
-        json
-            ? 'Unknown command "$command".'
-            : 'Unknown command "$command".\n\n$cliUsage',
-      );
+      return fail('Unknown command "$command".', withUsage: true);
   }
 
   final Map<String, Object?> reply;
   try {
     reply = await agent.request(request);
   } on AgentException catch (e) {
-    _report(
-      output,
-      errors,
-      json: json,
-      ok: false,
-      code: e.code,
-      message: e.message,
-    );
-    return _unconfirmedCodes.contains(e.code)
-        ? CliExit.unconfirmed
-        : CliExit.unreachable;
+    return fail(e.message, code: e.code);
   }
 
   final ok = reply['ok'] == true;
@@ -198,29 +196,7 @@ Future<int> runCli(
   } else {
     (ok ? output : errors).writeln(message);
   }
-  if (ok) return CliExit.ok;
-  return switch (reply['error']) {
-    'send_failed' => CliExit.failed,
-    // Still starting up: try again shortly, not a refusal to give up on.
-    // And a secret the app no longer accepts, which a restart of it fixes.
-    'not_ready' || 'unauthorized' => CliExit.unreachable,
-    _ => CliExit.refused,
-  };
-}
-
-void _report(
-  StringSink output,
-  StringSink errors, {
-  required bool json,
-  required bool ok,
-  required String code,
-  required String message,
-}) {
-  if (json) {
-    output.writeln(jsonEncode({'ok': ok, 'error': code, 'message': message}));
-  } else {
-    errors.writeln(message);
-  }
+  return ok ? CliExit.ok : CliExit.of(AgentError.kindOf(reply['error']));
 }
 
 /// One device per line: name, type, and which one this is.
