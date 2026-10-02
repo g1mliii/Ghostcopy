@@ -47,20 +47,34 @@ LRESULT CALLBACK ListenerProc(HWND window, UINT message, WPARAM wparam,
   return ::DefWindowProcW(window, message, wparam, lparam);
 }
 
-DWORD WINAPI ListenerThread(void* module) {
+// Set once the listener's window exists, or has failed to. Never closed: it
+// is created once per process, and a start that stopped waiting must not
+// leave the thread signalling a handle that has gone.
+HANDLE g_window_settled = nullptr;
+
+// How long the first activation waits for the window. Creating it takes
+// microseconds; this only bounds a thread that never got scheduled, so
+// Explorer's right-click cannot hang on it.
+constexpr DWORD kWindowWaitMs = 5000;
+
+HWND CreateListenerWindow(HINSTANCE module) {
   WNDCLASSEXW window_class = {};
   window_class.cbSize = sizeof(window_class);
   window_class.lpfnWndProc = ListenerProc;
-  window_class.hInstance = static_cast<HINSTANCE>(module);
+  window_class.hInstance = module;
   window_class.lpszClassName = kWindowClass;
-  if (!::RegisterClassExW(&window_class)) return 0;
+  if (!::RegisterClassExW(&window_class)) return nullptr;
 
   // Top-level, never shown, and kept off the taskbar and Alt+Tab. Not
   // HWND_MESSAGE: a message-only window is exactly what the surrogate
   // already had, and end-session messages are not sent to one.
-  const HWND window = ::CreateWindowExW(
-      WS_EX_TOOLWINDOW, kWindowClass, L"", WS_POPUP, 0, 0, 0, 0, nullptr,
-      nullptr, static_cast<HINSTANCE>(module), nullptr);
+  return ::CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"", WS_POPUP, 0,
+                           0, 0, 0, nullptr, nullptr, module, nullptr);
+}
+
+DWORD WINAPI ListenerThread(void* module) {
+  const HWND window = CreateListenerWindow(static_cast<HINSTANCE>(module));
+  if (g_window_settled) ::SetEvent(g_window_settled);
   if (!window) return 0;
 
   MSG message;
@@ -86,9 +100,17 @@ BOOL CALLBACK StartOnce(PINIT_ONCE, void*, void**) {
     return TRUE;
   }
 
+  g_window_settled = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
   const HANDLE thread =
       ::CreateThread(nullptr, 0, ListenerThread, module, 0, nullptr);
-  if (thread) ::CloseHandle(thread);
+  if (!thread) return TRUE;
+  ::CloseHandle(thread);
+  // Not returned to COM until the window exists: until then the surrogate
+  // is as windowless as before, and an update that asks it to close in that
+  // gap would wait out the full timeout this is here to remove.
+  if (g_window_settled) {
+    ::WaitForSingleObject(g_window_settled, kWindowWaitMs);
+  }
   return TRUE;
 }
 

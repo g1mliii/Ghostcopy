@@ -4,7 +4,8 @@
 namespace ghostcopy {
 
 // Gives the COM surrogate this DLL is hosted in a way to hear Windows ask it
-// to close. Safe to call repeatedly; does nothing outside dllhost.exe.
+// to close. Safe to call repeatedly; does nothing outside dllhost.exe. The
+// first call returns once the window it listens with exists.
 //
 // The surrogate runs under GhostCopy's package identity, so a package update
 // has to close it, and asks by sending end-session messages to the process's
