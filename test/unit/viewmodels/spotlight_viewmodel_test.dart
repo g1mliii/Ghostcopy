@@ -1500,6 +1500,51 @@ void main() {
       expect(composer.hasDraft, isTrue);
     });
 
+    draftTest(
+      'text typed over a restoring file gets its own ten minutes',
+      () async {
+        clipboardHolds('from clipboard');
+        stage([1, 2, 3]);
+        composer.onSpotlightHidden();
+
+        // Nine minutes on, the file starts coming back - and the user types
+        // over it before it has, then hides again.
+        now = now.add(const Duration(minutes: 9));
+        final restoring = reopen();
+        composer
+          ..updateContent('typed instead')
+          ..onSpotlightHidden();
+        await restoring;
+
+        // Eleven minutes after the file's hide, two after the text's: the
+        // text is still within its own lifetime.
+        now = now.add(const Duration(minutes: 2));
+        await reopen();
+
+        expect(composer.content, 'typed instead');
+      },
+    );
+
+    draftTest(
+      'typing over a restoring file tells the screen at once',
+      () async {
+        clipboardHolds('from clipboard');
+        stage([1, 2, 3]);
+        composer.onSpotlightHidden();
+        final restoring = reopen();
+        expect(composer.isRestoringDraft, isTrue);
+        var notified = 0;
+        composer
+          ..addListener(() => notified++)
+          ..updateContent('typed instead');
+
+        // Synchronously: Send must stop showing busy for a file not coming.
+        expect(composer.isRestoringDraft, isFalse);
+        expect(notified, greaterThan(0));
+        await restoring;
+      },
+    );
+
     draftTest('a hide during a send records what was sent', () async {
       final inserting = Completer<ClipboardItem>();
       when(() => authService.currentUserId).thenReturn('user-123');
