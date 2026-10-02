@@ -130,8 +130,11 @@ Two separate stores, and they are not interchangeable:
 | **Edge Function secrets** | `Deno.env.get()` | `FIREBASE_SERVICE_ACCOUNT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` |
 
 Edge functions run in Deno and **cannot read Vault** — they only see
-environment variables. `SUPABASE_URL`, `SUPABASE_ANON_KEY` and
-`SUPABASE_SERVICE_ROLE_KEY` are injected automatically; do not set them.
+environment variables. `SUPABASE_URL` and the project's API keys are
+injected automatically; do not set them. Functions read the keys through
+`functions/_shared/keys.ts`, which takes the current `SUPABASE_PUBLISHABLE_KEYS`
+and `SUPABASE_SECRET_KEYS` (JSON keyed by name) and falls back to the legacy
+`SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` only where those are unset.
 
 Before the pending queue migration, `cleanup_storage_on_clipboard_delete()`
 warns and drops the cleanup request if Vault secrets are missing. After the

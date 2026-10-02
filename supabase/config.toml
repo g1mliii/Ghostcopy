@@ -23,6 +23,15 @@ project_id = "xhbggxftvnlkotvehwmj"
 [functions.send-clipboard-notification]
 verify_jwt = false
 
+# Same reason: dispatch_storage_cleanup() calls this over pg_net with the
+# same `sb_secret_...` key from the vault, and that key is not a JWT for the
+# platform gate to verify. The function authenticates every caller itself
+# before reading the body - isSecretKeyCaller, else a bearer that must look
+# like a session token before auth.getUser() is asked - so an anonymous
+# request still costs nothing past the first check.
+[functions.storage-presign]
+verify_jwt = false
+
 # Auth email templates, deployed by `supabase config push` in
 # .github/workflows/deploy.yml. Before this, supabase/email-templates/ was only
 # a version-controlled copy of what someone had pasted into the dashboard, and

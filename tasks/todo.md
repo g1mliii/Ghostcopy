@@ -2,16 +2,6 @@
 
 ## Windows
 
-- [ ] **Store updates pause ~92 s at "Almost done".** Seen on both Store
-      updates so far (1.0.10 -> 1.0.16 -> 1.0.17). The download is seconds;
-      the wait is a fixed timeout while the COM Surrogate hosting the
-      "Send with GhostCopy" verb fails to shut down. Evidence and the next
-      test (restart Explorer, do not right-click a file, then update) are in
-      [`docs/windows-store-update-investigation.md`](../docs/windows-store-update-investigation.md)
-- [ ] **Relaunch after an update.** A Store update closes GhostCopy and
-      nothing starts it again, so the tray app is gone until the next login.
-      `RegisterApplicationRestart` at startup is Microsoft's documented way
-      for a full-trust MSIX app; confirm it on a real Store update
 - [ ] **Verify the clipboard counter change by hand.** `OleFlushClipboard`
       replaced the owner check, and the two halves pull against each other -
       none of it is covered by tests:
@@ -37,9 +27,6 @@
       running opens the window - it never did before. Check sign-in still
       completes (same delivery path), and that "Send with GhostCopy" sends
       WITHOUT popping the Spotlight open.
-- [ ] **Decide whether Windows needs an update signal in the UI.** macOS has
-      the dot by the menu bar icon because Sparkle needs the user to act. The
-      Store updates silently, so probably nothing - but make it a decision.
 - [ ] If a clip is ever slow again but the *next* one is instant, the death
       was silent (no status to react to) and the evidence-based rejoin
       caught it. The next lever then is opting the process out of Windows
@@ -110,10 +97,6 @@ isolated from a dev build.
       the owner's name for a device is the point. If granted, add the key to
       `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
       prefers `ios.name`
-- [ ] **`primary` as a foreground is 4.44:1 on `surface`**, just under AA.
-      Used as a foreground in ~104 places: either the token moves, or call
-      sites move to `accentText` (8.98:1) one at a time, as the email templates
-      did
 - [ ] `flutter logs` returns nothing from a profile build on device. The
       background isolate is only observable by writing files to the app
       container and reading them with `devicectl device info files`
@@ -123,9 +106,11 @@ isolated from a dev build.
 - [ ] **Tapping the same email sign-in link twice** gives the "already used"
       message, not a raw error. The crash it used to cause is fixed
       (`d37141f`); the message itself has not been checked
-- [ ] **Do not disable legacy API keys** until every released build carries
-      the publishable key. It is compiled in; an update is the only way to
-      change it, which is why the macOS updater had to land first
+- [ ] **Disable the legacy API keys** (Supabase dashboard, Settings -> API
+      Keys) once the edge functions reading `_shared/keys.ts` have deployed.
+      Nothing else uses them: every released build and the website carry the
+      publishable key. Watch one push arrive and one QR link afterwards; the
+      dashboard can re-enable them if anything was missed
 
 ## Monitoring, error tracking and cost guards
 
@@ -167,48 +152,6 @@ should start as early as a build allows.
 - [ ] `flutter build appbundle --release`, verify it is not debug-signed
 - [ ] Create the app in Console; privacy policy, data safety, content rating
 - [ ] Upload to closed testing and recruit 20 testers — **starts the 14 days**
-- [ ] **Android Apple sign-in.** Hidden on Android for now. Apple is the
-      browser flow there; AuthService already waits for the callback's
-      session (`awaitBrowserSession`), so no UI-level wait is needed. Give the
-      welcome screen a Cancel while it waits (the desktop auth panel has one),
-      then show the button (remove the `Platform.isIOS` gate) and test on a
-      device. Supabase and Apple Developer need nothing more - it uses the
-      same Services ID as Windows
-
-## Next update: a pin for the Spotlight
-
-Decided 2026-09-26 to follow the Store submission, which is done - it is new
-behaviour and wants its own testing pass. Store updates are free and
-automatic.
-
-Auto-hide on blur is right for a Spotlight-style tool and matches Spotlight,
-Alfred, Raycast and PowerToys Run. But it fights three workflows a clipboard
-app actually has: copying something in another app and coming back to send
-it, dragging a file in from Explorer or Finder, and keeping history visible
-while working. All three need the window to survive losing focus.
-
-Chosen shape: **a pin toggle in the window's own header**, not a setting. It
-is discoverable at the moment it is wanted - the user is looking at the
-window when the auto-hide annoys them - and it leaves the default behaviour
-alone, so the ephemeral character survives. A Settings switch fails exactly
-the person it is meant to help, who would have to go looking for it.
-
-- [ ] Pin toggle in the Spotlight header, on Windows and macOS
-  - [ ] Pinned means `onWindowBlur` returns early - and that has to skip the
-        whole tray-optimization block, not just `hideSpotlight`. That block
-        clears the image cache, trims media and schedules the working-set
-        trim, none of which is right for a window that is still on screen
-  - [ ] Decide whether the pin persists across launches. Leaning yes, through
-        SettingsService - someone who pins it probably wants it pinned
-        tomorrow - but keep the *control* in the window rather than adding a
-        Settings row, or it becomes the setting this was chosen over
-  - [ ] The header is on a 400px panel; check the icon does not crowd the
-        close button
-- [ ] **Separately, and worth doing whether or not the pin lands: blur
-      discards the composer.** `onWindowBlur` clears the text controller and
-      the clipboard payload when there is an attachment, so clicking away
-      mid-compose loses what was typed or attached. That is a sharper problem
-      than the window closing, and it is a bug rather than a preference.
 
 ## Later: clipboard export and import
 

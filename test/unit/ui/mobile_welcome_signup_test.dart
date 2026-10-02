@@ -54,6 +54,24 @@ class _FakeAuth implements IAuthService {
     });
   }
 
+  /// Apple on Android: out in the browser until it returns or is cancelled.
+  Completer<bool>? browser;
+
+  @override
+  Future<bool> linkAppleIdentity() {
+    browser = Completer<bool>();
+    return browser!.future;
+  }
+
+  @override
+  bool get isAwaitingBrowserSignIn => browser != null;
+
+  @override
+  void cancelBrowserSignIn() {
+    browser?.complete(false);
+    browser = null;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -132,5 +150,34 @@ void main() {
 
     expect(completions, 1);
     expect(devices.registrations, 1);
+  });
+
+  testWidgets('a browser sign-in can be cancelled from the welcome screen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MobileWelcomeScreen(onAuthComplete: () => completions++),
+      ),
+    );
+    await tester.tap(find.text('Sign In'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sign Up').first);
+    await tester.pumpAndSettle();
+
+    final apple = find.bySemanticsLabel('Continue with Apple');
+    await tester.ensureVisible(apple);
+    await tester.tap(apple);
+    await tester.pump();
+    expect(find.text('Finish signing in in your browser.'), findsOneWidget);
+
+    // Below the buttons, past the bottom of the test surface.
+    await tester.ensureVisible(find.text('Cancel'));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Finish signing in in your browser.'), findsNothing);
+    expect(auth.browser, isNull);
+    expect(completions, 0);
   });
 }
