@@ -13,6 +13,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 
 /// The one port every user's GhostCopy listened on before the command line,
 /// and so where an out-of-date copy is still found. Per-user ports start
@@ -45,8 +48,10 @@ int agentPortFor({Map<String, String>? environment, bool? windows}) {
 }
 
 /// Sent first, so the app can tell GhostCopy from an unrelated process that
-/// happens to hold the port, and the other way round.
-const String agentHandshakeMagic = 'ghostcopy/1';
+/// happens to hold the port. Also in every proof, so a proof made for one
+/// version of the handshake means nothing to another. Version 1 sent the
+/// secret itself; see "The handshake" below.
+const String agentHandshakeMagic = 'ghostcopy/2';
 
 /// The device types a clip can be addressed to, in the order the app lists
 /// them. ClipboardRepository.validDeviceTypes is this list.
@@ -121,8 +126,7 @@ abstract final class AgentError {
   static const String notInstalled = 'not_installed';
   static const String notRunning = 'not_running';
   static const String outdated = 'outdated';
-  static const String noAnswer = 'no_answer';
-  static const String badAnswer = 'bad_answer';
+  static const String untrusted = 'untrusted';
   static const String timeout = 'timeout';
   static const String connectionLost = 'connection_lost';
 
@@ -132,14 +136,13 @@ abstract final class AgentError {
     AgentError.usage => AgentErrorKind.usage,
     AgentError.sendFailed => AgentErrorKind.failed,
     AgentError.timeout ||
-    AgentError.noAnswer ||
     AgentError.connectionLost => AgentErrorKind.unconfirmed,
     AgentError.notReady ||
     AgentError.unauthorized ||
     AgentError.notInstalled ||
     AgentError.notRunning ||
     AgentError.outdated ||
-    AgentError.badAnswer => AgentErrorKind.unreachable,
+    AgentError.untrusted => AgentErrorKind.unreachable,
     _ => AgentErrorKind.refused,
   };
 }
@@ -249,64 +252,17 @@ class AgentClient {
 
   Future<Map<String, Object?>> request(Map<String, Object?> command) async {
     final secret = await _readSecret();
-    final Socket socket;
     try {
-      socket = await Socket.connect(
-        InternetAddress.loopbackIPv4,
-        port,
-        timeout: const Duration(seconds: 2),
+      final reply = await agentSend(
+        port: port,
+        secret: secret,
+        body: {'command': command},
+        replyTimeout: timeout,
       );
-    } on SocketException {
-      throw await _notRunning();
-    }
-    try {
-      socket.add(
-        utf8.encode(
-          jsonEncode({
-            'magic': agentHandshakeMagic,
-            'secret': secret,
-            'command': command,
-          }),
-        ),
-      );
-      // Half-close: the app reads until the end of the request, then answers
-      // on the same connection.
-      await socket.close();
-      final reply = await utf8.decoder.bind(socket).join().timeout(timeout);
-      // The app may have stored the clip, then quit before answering.
-      // An empty reply cannot distinguish that from an older app.
-      if (reply.trim().isEmpty) {
-        throw const AgentException(
-          AgentError.noAnswer,
-          'GhostCopy closed the connection before answering. It may still have '
-          'sent this - check your history before trying again.',
-        );
-      }
-      final decoded = jsonDecode(reply);
-      // Valid JSON of the wrong shape is as unreadable as invalid JSON.
-      if (decoded is! Map<String, Object?>) throw const FormatException();
-      return decoded;
-    } on SocketException {
-      // Connected, then lost: the app quit or restarted mid-request, perhaps
-      // after the send had gone. Not "not running", which invites a retry.
-      throw const AgentException(
-        AgentError.connectionLost,
-        'GhostCopy closed the connection before answering. It may still have '
-        'sent this - check your history before trying again.',
-      );
-    } on TimeoutException {
-      throw const AgentException(
-        AgentError.timeout,
-        'GhostCopy took too long to answer. It may still have sent this - '
-        'check your history before trying again.',
-      );
-    } on FormatException {
-      throw const AgentException(
-        AgentError.badAnswer,
-        'GhostCopy gave an answer this command does not understand.',
-      );
-    } finally {
-      socket.destroy();
+      return reply!;
+    } on AgentException catch (e) {
+      if (e.code == AgentError.notRunning) throw await _notRunning();
+      rethrow;
     }
   }
 
@@ -358,3 +314,190 @@ class AgentClient {
     }
   }
 }
+
+// ========== THE HANDSHAKE ==========
+//
+// Both ends hold the same secret, and neither ever sends it. Each proves it
+// knows it with an HMAC over two fresh nonces, one from each side:
+//
+//   client -> {"magic", "nonce": c}
+//   app    -> {"nonce": s, "proof": HMAC(secret, "app" | c | s)}
+//   client -> {"proof": HMAC(secret, "client" | c | s), "command" or "args"}
+//   app    -> the answer, to a command
+//
+// The client checks the app's proof before it sends anything that matters,
+// so a process squatting the port - another user's, while GhostCopy is
+// closed - learns neither the secret nor the request. Version 1 sent the
+// secret first and unchecked, so whoever held the port got both, and with
+// the secret could later hand the real app a ghostcopy:// sign-in of their
+// choosing. The role is in each proof so one side's can never be replayed
+// as the other's, and with a fresh nonce from each side no proof is any use
+// a second time.
+//
+// One JSON object per line, in each direction.
+
+/// A fresh random value for one handshake.
+String agentNonce() {
+  final random = Random.secure();
+  return base64Url.encode(List<int>.generate(32, (_) => random.nextInt(256)));
+}
+
+/// What [role] (`app` or `client`) sends to prove it holds [secret], for
+/// this pair of nonces.
+String agentProof(
+  String secret,
+  String role,
+  String clientNonce,
+  String serverNonce,
+) => base64Url.encode(
+  Hmac(sha256, utf8.encode(secret))
+      .convert(
+        utf8.encode('$agentHandshakeMagic|$role|$clientNonce|$serverNonce'),
+      )
+      .bytes,
+);
+
+/// Whether [offered] is [expected], compared without leaking where the first
+/// difference is.
+bool agentProofMatches(Object? offered, String expected) {
+  if (offered is! String) return false;
+  final a = utf8.encode(offered);
+  final b = utf8.encode(expected);
+  if (a.length != b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff == 0;
+}
+
+/// [message] as one handshake line.
+List<int> agentFrame(Map<String, Object?> message) =>
+    utf8.encode('${jsonEncode(message)}\n');
+
+/// The messages arriving on one connection, a line at a time.
+///
+/// Bounded: [next] gives up once [maxBytes] arrive without a line ending,
+/// so a peer cannot make the reader hold more than that.
+class AgentFrames {
+  AgentFrames(Stream<List<int>> input, {this.maxBytes = 1024 * 1024})
+    : _input = StreamIterator(input);
+
+  final StreamIterator<List<int>> _input;
+  final int maxBytes;
+  final List<int> _pending = [];
+
+  /// How much of [_pending] is known to hold no line ending.
+  int _scanned = 0;
+
+  /// The next message, or null: the connection ended, the line was not a
+  /// JSON object, or it ran past [maxBytes].
+  Future<Map<String, Object?>?> next() async {
+    while (true) {
+      final end = _pending.indexOf(0x0A, _scanned);
+      if (end != -1) {
+        final line = _pending.sublist(0, end);
+        _pending.removeRange(0, end + 1);
+        _scanned = 0;
+        try {
+          final decoded = jsonDecode(utf8.decode(line));
+          return decoded is Map<String, Object?> ? decoded : null;
+        } on FormatException {
+          return null;
+        }
+      }
+      _scanned = _pending.length;
+      if (_pending.length > maxBytes) return null;
+      if (!await _input.moveNext()) return null;
+      _pending.addAll(_input.current);
+    }
+  }
+}
+
+/// Run the client side of the handshake with the GhostCopy on [port], then
+/// send [body] - a `command`, or a second launch's `args`. Returns the
+/// answer, or null when not [awaitReply].
+///
+/// Throws an [AgentException]: [AgentError.notRunning] when nothing is
+/// listening, [AgentError.untrusted] when what is listening cannot prove it
+/// is GhostCopy - in which case nothing in [body] was sent - and, once
+/// [body] has gone, [AgentError.timeout] or [AgentError.connectionLost].
+Future<Map<String, Object?>?> agentSend({
+  required int port,
+  required String secret,
+  required Map<String, Object?> body,
+  bool awaitReply = true,
+  Duration connectTimeout = const Duration(seconds: 2),
+  Duration handshakeTimeout = const Duration(seconds: 5),
+  Duration replyTimeout = const Duration(minutes: 6),
+}) async {
+  final Socket socket;
+  try {
+    socket = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      port,
+      timeout: connectTimeout,
+    );
+  } on SocketException {
+    throw const AgentException(
+      AgentError.notRunning,
+      'GhostCopy is not running. Open it, then try again.',
+    );
+  }
+  final frames = AgentFrames(socket);
+  var sent = false;
+  try {
+    final clientNonce = agentNonce();
+    socket.add(
+      agentFrame({'magic': agentHandshakeMagic, 'nonce': clientNonce}),
+    );
+    final hello = await frames.next().timeout(handshakeTimeout);
+    final serverNonce = hello?['nonce'];
+    if (serverNonce is! String ||
+        !agentProofMatches(
+          hello!['proof'],
+          agentProof(secret, 'app', clientNonce, serverNonce),
+        )) {
+      throw const AgentException(AgentError.untrusted, _untrustedMessage);
+    }
+    socket.add(
+      agentFrame({
+        'proof': agentProof(secret, 'client', clientNonce, serverNonce),
+        ...body,
+      }),
+    );
+    await socket.flush();
+    sent = true;
+    if (!awaitReply) return null;
+    final reply = await frames.next().timeout(replyTimeout);
+    if (reply == null) throw const SocketException('closed without an answer');
+    return reply;
+  } on AgentException {
+    rethrow;
+  } on Object catch (e) {
+    if (!sent) {
+      throw const AgentException(AgentError.untrusted, _untrustedMessage);
+    }
+    // The request had gone, so it may have been acted on: not "not
+    // running", which invites a retry that sends it twice.
+    if (e is TimeoutException) {
+      throw const AgentException(
+        AgentError.timeout,
+        'GhostCopy took too long to answer. It may still have sent this - '
+        'check your history before trying again.',
+      );
+    }
+    throw const AgentException(
+      AgentError.connectionLost,
+      'GhostCopy closed the connection before answering. It may still have '
+      'sent this - check your history before trying again.',
+    );
+  } finally {
+    socket.destroy();
+  }
+}
+
+const String _untrustedMessage =
+    "Something is answering on GhostCopy's port but could not prove it is "
+    'GhostCopy, so nothing was sent to it. If GhostCopy is open, quit and '
+    'reopen it, then try again.';

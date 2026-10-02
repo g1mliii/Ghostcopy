@@ -358,12 +358,34 @@ void main() {
     expect(reply['ok'], isTrue);
     expect(inserted().content, 'hello');
 
-    // The wrong secret is told so - not left with an empty reply, which the
-    // command line reads as an out-of-date app - and gets nothing else.
+    // A command line with the wrong secret cannot check the app's proof, so
+    // it stops there, before sending the command.
     secretFile.writeAsStringSync(base64Url.encode(List.filled(32, 7)));
-    final refused = await client.request({'name': 'list_devices'});
-    expect(refused['error'], 'unauthorized');
-    expect(refused.keys, unorderedEquals(['ok', 'error', 'message']));
+    await expectLater(
+      client.request({'name': 'send_text', 'text': 'not this'}),
+      throwsA(isA<AgentException>().having((e) => e.code, 'code', 'untrusted')),
+    );
+
+    // Anything else that gets the app's proof and answers with a wrong one
+    // is told so, and gets nothing else.
+    final peer = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      SingleInstance.port,
+    );
+    final frames = AgentFrames(peer);
+    peer.add(agentFrame({'magic': agentHandshakeMagic, 'nonce': 'n'}));
+    final hello = await frames.next();
+    expect(hello?['proof'], isA<String>());
+    peer.add(
+      agentFrame({
+        'proof': 'forged',
+        'command': {'name': 'list_devices'},
+      }),
+    );
+    final refused = await frames.next();
+    peer.destroy();
+    expect(refused?['error'], 'unauthorized');
+    expect(refused?.keys, unorderedEquals(['ok', 'error', 'message']));
 
     // Past the size cap the app stops reading and answers nothing, before
     // the secret is ever looked at.

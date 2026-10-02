@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
@@ -29,7 +28,9 @@ import 'package:path_provider/path_provider.dart';
 /// unauthenticated channel would let any local process complete OAuth into an
 /// account of its choosing and then read everything the victim copies. Both
 /// ends therefore prove knowledge of a shared secret, stored in a file only
-/// this user can read, before any payload is accepted.
+/// this user can read, before any payload is accepted - and prove it without
+/// sending it, so whatever holds the port when this app does not learns
+/// nothing it can use. The handshake is agentSend's, in agent_protocol.dart.
 class SingleInstance {
   SingleInstance._();
 
@@ -49,20 +50,9 @@ class SingleInstance {
   @visibleForTesting
   static int port = _defaultPort;
 
-  /// Sent ahead of the payload so the primary can recognise a peer that is
-  /// actually GhostCopy, and so a second launch can tell GhostCopy apart from
-  /// an unrelated process that happens to hold the port.
-  static const String _handshakeMagic = agentHandshakeMagic;
-
-  /// A squatted port must not hang startup; these are generous for loopback.
-  static const Duration _connectTimeout = Duration(seconds: 2);
+  /// A squatted port must not hang startup; generous for loopback. Connecting
+  /// gets agentSend's own two seconds.
   static const Duration _handshakeTimeout = Duration(seconds: 3);
-
-  /// The most a peer may send before it has proved anything. The largest
-  /// genuine request is a clip of agentMaxTextLength characters, well under
-  /// this even JSON-escaped; without a cap any local process could fill the
-  /// UI isolate's memory for the three seconds before the secret is checked.
-  static const int _maxPayloadBytes = 1024 * 1024;
 
   ServerSocket? _server;
   String? _secret;
@@ -117,11 +107,8 @@ class SingleInstance {
   ///
   /// The delivery bug these cover was in the socket handling, so a test has to
   /// speak the real handshake to a real primary instance; that needs the port,
-  /// the magic and this process's secret. Exposed narrowly rather than
+  /// and this process's secret. Exposed narrowly rather than
   /// loosening the fields themselves.
-  @visibleForTesting
-  static const String handshakeMagic = _handshakeMagic;
-
   @visibleForTesting
   String? get secret => _secret;
 
@@ -217,29 +204,53 @@ class SingleInstance {
   }
 
   Future<void> _serve(Socket socket) async {
+    // Bounded by AgentFrames, a megabyte a line: the largest genuine line is
+    // a clip of agentMaxTextLength characters, well under that even
+    // JSON-escaped, and without a cap any local process could fill the UI
+    // isolate's memory before it had proved anything.
+    final frames = AgentFrames(socket);
     try {
-      // One JSON object: {"magic", "secret", and either "args" from a second
-      // launch or "command" from the command line}. Read to the end - the
-      // sender half-closes once it has written it.
-      final payload = await _readPayload(socket).timeout(_handshakeTimeout);
-      final message = payload == null ? null : _decode(payload);
-      if (message == null || !_isAuthentic(message)) {
+      // The handshake (agent_protocol.dart): the peer's nonce, this app's
+      // proof over it, then the peer's proof and what it came for - a
+      // second launch's "args", or a "command" from the command line.
+      final hello = await frames.next().timeout(_handshakeTimeout);
+      final clientNonce = hello?['nonce'];
+      final secret = _secret;
+      if (hello?['magic'] != agentHandshakeMagic ||
+          clientNonce is! String ||
+          secret == null) {
+        debugPrint(
+          '[SingleInstance] ✗ Rejected a connection that is not GhostCopy',
+        );
+        return;
+      }
+      final serverNonce = agentNonce();
+      socket.add(
+        agentFrame({
+          'nonce': serverNonce,
+          'proof': agentProof(secret, 'app', clientNonce, serverNonce),
+        }),
+      );
+      await socket.flush();
+
+      final message = await frames.next().timeout(_handshakeTimeout);
+      if (message == null) return;
+      if (!agentProofMatches(
+        message['proof'],
+        agentProof(secret, 'client', clientNonce, serverNonce),
+      )) {
         debugPrint('[SingleInstance] ✗ Rejected unauthenticated connection');
-        // A command line holding a secret this app no longer accepts - a
-        // stale GHOSTCOPY_SECRET_FILE, or a secret that could not be saved -
-        // is told so. Left with an empty reply it told the user to update an
-        // app that was already current. The fact only, nothing about the
-        // secret; a second launch's args get no reply, as before.
-        if (message?['magic'] == _handshakeMagic &&
-            message?['command'] is Map) {
+        // Told so rather than left with no answer. A genuine command line
+        // with the wrong secret stops before this, at this app's proof; this
+        // is for anything else speaking the protocol. A second launch's args
+        // get no reply.
+        if (message['command'] is Map) {
           socket.add(
-            utf8.encode(
-              jsonEncode(
-                agentErrorReply(
-                  AgentError.unauthorized,
-                  'GhostCopy did not accept this command. Quit and reopen '
-                  'GhostCopy, then try again.',
-                ),
+            agentFrame(
+              agentErrorReply(
+                AgentError.unauthorized,
+                'GhostCopy did not accept this command. Quit and reopen '
+                'GhostCopy, then try again.',
               ),
             ),
           );
@@ -250,7 +261,7 @@ class SingleInstance {
 
       final command = message['command'];
       if (command is Map<String, Object?>) {
-        socket.add(utf8.encode(jsonEncode(await _answer(command))));
+        socket.add(agentFrame(await _answer(command)));
         await socket.flush();
         return;
       }
@@ -294,80 +305,28 @@ class SingleInstance {
     }
   }
 
-  /// Everything the peer sent, or null once it passes [_maxPayloadBytes].
-  static Future<String?> _readPayload(Socket socket) async {
-    final bytes = BytesBuilder(copy: false);
-    await for (final chunk in socket) {
-      bytes.add(chunk);
-      if (bytes.length > _maxPayloadBytes) return null;
-    }
-    return utf8.decode(bytes.takeBytes());
-  }
-
-  /// [payload] as a JSON object, or null if it is not one.
-  static Map<String, Object?>? _decode(String payload) {
-    try {
-      final decoded = jsonDecode(payload);
-      return decoded is Map<String, Object?> ? decoded : null;
-    } on FormatException {
-      return null;
-    }
-  }
-
-  /// Whether [message] proves its sender is GhostCopy (or its command line)
-  /// running as this user.
-  bool _isAuthentic(Map<String, Object?> message) {
-    if (message['magic'] != _handshakeMagic) return false;
-    final offered = message['secret'];
-    final expected = _secret;
-    return offered is String &&
-        expected != null &&
-        _constantTimeEquals(offered, expected);
-  }
-
-  /// Compares without leaking where the first difference is.
-  ///
-  /// The secret is local and long, so this is defence in depth rather than a
-  /// response to a practical timing attack - but there is no reason to write
-  /// the leaky version.
-  static bool _constantTimeEquals(String a, String b) {
-    final aBytes = utf8.encode(a);
-    final bBytes = utf8.encode(b);
-    if (aBytes.length != bBytes.length) return false;
-    var diff = 0;
-    for (var i = 0; i < aBytes.length; i++) {
-      diff |= aBytes[i] ^ bBytes[i];
-    }
-    return diff == 0;
-  }
-
   /// Hands [args] to the running primary. Returns whether that succeeded, which
-  /// is also the answer to "is the process holding the port actually us?".
+  /// is also the answer to "is the process holding the port actually us?" -
+  /// asked by the handshake, so a process that is not learns neither the
+  /// secret nor the arguments, which can be a sign-in callback.
   Future<bool> _forward(List<String> args) async {
-    Socket? socket;
+    final secret = _secret;
+    if (secret == null) return false;
     try {
-      socket = await Socket.connect(
-        InternetAddress.loopbackIPv4,
-        port,
-        timeout: _connectTimeout,
+      await agentSend(
+        port: port,
+        secret: secret,
+        body: {'args': args},
+        awaitReply: false,
+        handshakeTimeout: _handshakeTimeout,
       );
-      final payload = jsonEncode({
-        'magic': _handshakeMagic,
-        'secret': _secret,
-        'args': args,
-      });
-      socket.add(utf8.encode(payload));
-      // close() flushes anything still buffered before the future completes.
-      await socket.close();
       debugPrint('[SingleInstance] → Forwarded args to primary instance');
       return true;
-    } on Object catch (e) {
-      // Either the primary is shutting down, or the port belongs to an
-      // unrelated process. Either way we could not hand off.
-      debugPrint('[SingleInstance] ⚠️ Could not forward args: $e');
+    } on AgentException catch (e) {
+      // Either the primary is shutting down, or the port belongs to something
+      // that is not this user's GhostCopy. Either way we could not hand off.
+      debugPrint('[SingleInstance] ⚠️ Could not forward args: ${e.code}');
       return false;
-    } finally {
-      socket?.destroy();
     }
   }
 
