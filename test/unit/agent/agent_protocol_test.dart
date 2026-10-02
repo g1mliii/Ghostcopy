@@ -362,6 +362,30 @@ void main() {
     skip: Platform.isWindows ? 'chmod is POSIX' : false,
   );
 
+  test(
+    "on Windows a Store install's secret is found in its package",
+    () {
+      final env = {
+        'APPDATA': r'C:\Users\sam\AppData\Roaming',
+        'LOCALAPPDATA': r'C:\Users\sam\AppData\Local',
+      };
+      final packaged =
+          r'C:\Users\sam\AppData\Local\Packages\g1mli.GhostCopy_41asz506sbn22'
+          r'\LocalState\single_instance.secret';
+      expect(
+        defaultSecretPath(environment: env, exists: (p) => p == packaged),
+        packaged,
+      );
+      // No Store install: the unpackaged build's.
+      expect(
+        defaultSecretPath(environment: env, exists: (_) => false),
+        r'C:\Users\sam\AppData\Roaming\com.ghostcopy\ghostcopy'
+        r'\single_instance.secret',
+      );
+    },
+    skip: Platform.isWindows ? false : 'Windows paths',
+  );
+
   test('the secret path can be overridden', () {
     expect(
       defaultSecretPath(environment: {'GHOSTCOPY_SECRET_FILE': '/tmp/s'}),

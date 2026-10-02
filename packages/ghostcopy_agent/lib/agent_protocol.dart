@@ -198,15 +198,37 @@ List<String> resolveDeviceTargets(Iterable<String> requested) {
   return resolved.toList();
 }
 
-/// Where the shared secret lives: the app's support directory, as
-/// path_provider computes it. Windows is %APPDATA%\<CompanyName>\<ProductName>
-/// from Runner.rc, and an MSIX install is not redirected (see CLAUDE.md).
-String defaultSecretPath({Map<String, String>? environment}) {
+/// The Microsoft Store package's family name: the Partner Center
+/// reservation's identity and publisher (msix_config in the app's
+/// pubspec.yaml). Spelled out because the command line runs outside the
+/// package and cannot ask Windows for it.
+const String storePackageFamilyName = 'g1mli.GhostCopy_41asz506sbn22';
+
+/// Where the shared secret lives: the app's support directory.
+///
+/// On Windows that depends on how GhostCopy was installed. A Store install
+/// keeps its data in its package's LocalState, which Windows deletes with it
+/// (the app's PackagedAppData); an unpackaged build uses path_provider's
+/// %APPDATA%\<CompanyName>\<ProductName>, from Runner.rc. The Store one is
+/// tried first, since that is how GhostCopy is installed. [exists] is for
+/// tests.
+String defaultSecretPath({
+  Map<String, String>? environment,
+  bool Function(String path)? exists,
+}) {
   final env = environment ?? Platform.environment;
   final override = env['GHOSTCOPY_SECRET_FILE'];
   if (override != null && override.isNotEmpty) return override;
   const file = agentSecretFileName;
   if (Platform.isWindows) {
+    final local = env['LOCALAPPDATA'];
+    if (local != null && local.isNotEmpty) {
+      final packaged =
+          '$local\\Packages\\$storePackageFamilyName\\LocalState\\$file';
+      if ((exists ?? (path) => File(path).existsSync())(packaged)) {
+        return packaged;
+      }
+    }
     return '${env['APPDATA']}\\com.ghostcopy\\ghostcopy\\$file';
   }
   final home = env['HOME'] ?? '';
