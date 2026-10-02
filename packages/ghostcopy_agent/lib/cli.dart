@@ -28,7 +28,8 @@ const String cliUsage = '''
 Send things to your other devices through GhostCopy.
 
 Usage:
-  ghostcopy send <text>        Send text or a link ("-" reads standard input)
+  ghostcopy send <text>        Send text or a link ("-" reads standard input;
+                               "--" first if the text starts with a dash)
   ghostcopy send-file <path>   Send a file, up to 10 MB
   ghostcopy devices            List the devices on your account
   ghostcopy mcp                Run as an MCP server over standard input/output
@@ -60,9 +61,16 @@ Future<int> runCli(
   final positional = <String>[];
   final to = <String>[];
   var json = false;
+  var endOfOptions = false;
   for (var i = 0; i < arguments.length; i++) {
     final arg = arguments[i];
-    if (arg == '-h' || arg == '--help') {
+    // After `--`, everything is text: `ghostcopy send -- --help` sends the
+    // words "--help" rather than printing this.
+    if (endOfOptions) {
+      positional.add(arg);
+    } else if (arg == '--') {
+      endOfOptions = true;
+    } else if (arg == '-h' || arg == '--help') {
       output.writeln(cliUsage);
       return CliExit.ok;
     } else if (arg == '--json') {
@@ -162,7 +170,12 @@ Future<int> runCli(
     (ok ? output : errors).writeln(message);
   }
   if (ok) return CliExit.ok;
-  return reply['error'] == 'send_failed' ? CliExit.failed : CliExit.refused;
+  return switch (reply['error']) {
+    'send_failed' => CliExit.failed,
+    // Still starting up: try again shortly, not a refusal to give up on.
+    'not_ready' => CliExit.unreachable,
+    _ => CliExit.refused,
+  };
 }
 
 void _report(

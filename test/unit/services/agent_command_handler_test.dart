@@ -56,6 +56,7 @@ void main() {
       () => settings.getAutoSendTargetDevices(),
     ).thenAnswer((_) async => <String>{});
     when(() => auth.currentUserId).thenReturn('user-1');
+    when(() => devices.lastFetchFailed).thenReturn(false);
     when(() => clips.insert(any())).thenAnswer(
       (call) async => call.positionalArguments.single as ClipboardItem,
     );
@@ -150,11 +151,25 @@ void main() {
     when(
       () => devices.getUserDevices(forceRefresh: true),
     ).thenAnswer((_) async => []);
+    when(() => devices.lastFetchFailed).thenReturn(true);
 
     final reply = await handler.handle({'name': 'list_devices'});
 
     expect(reply['ok'], isFalse);
     expect(reply['message'], contains('Could not load your devices'));
+  });
+
+  test('an account with no devices registered is a true empty list', () async {
+    // Startup lets a desktop run when its own registration failed.
+    when(() => devices.getCurrentDeviceId()).thenReturn(null);
+    when(
+      () => devices.getUserDevices(forceRefresh: true),
+    ).thenAnswer((_) async => []);
+
+    final reply = await handler.handle({'name': 'list_devices'});
+
+    expect(reply['ok'], isTrue);
+    expect(reply['devices'], isEmpty);
   });
 
   test('an empty default setting means every device', () async {

@@ -10,6 +10,8 @@ import 'package:ghostcopy_agent/cli.dart';
 
 Future<void> main(List<String> arguments) async {
   final code = await runCli(arguments);
-  await stdout.flush();
+  // Both: every failure explains itself on stderr, and exit() does not wait
+  // for a sink still writing to a pipe or a file.
+  await Future.wait([stdout.flush(), stderr.flush()]);
   exit(code);
 }

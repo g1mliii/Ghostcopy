@@ -84,6 +84,11 @@ void main() {
     });
   });
 
+  test('-- sends what follows as text, options and all', () async {
+    expect(await run(['send', '--', '--help', 'me']), CliExit.ok);
+    expect(client.requests.single['text'], '--help me');
+  });
+
   group('exit codes', () {
     test('GhostCopy not running is 2, with the reason', () async {
       client.error = const AgentException('not_running', 'Open GhostCopy.');
@@ -99,6 +104,15 @@ void main() {
       };
       expect(await run(['send', 'x']), CliExit.refused);
       expect(err.toString(), contains('Turned off.'));
+    });
+
+    test('still starting is 2, worth retrying, not a refusal', () async {
+      client.reply = (_) => {
+        'ok': false,
+        'error': 'not_ready',
+        'message': 'GhostCopy is still starting.',
+      };
+      expect(await run(['send', 'x']), CliExit.unreachable);
     });
 
     test('a failed send is 4', () async {

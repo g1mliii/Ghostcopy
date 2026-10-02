@@ -36,6 +36,11 @@ abstract class IDeviceService {
   /// [forceRefresh] bypasses cache and fetches fresh data from server.
   Future<List<Device>> getUserDevices({bool forceRefresh = false});
 
+  /// Whether the last [getUserDevices] fetch failed. It returns an empty list
+  /// then, which is also what a real empty account looks like - this is how
+  /// a caller tells the two apart.
+  bool get lastFetchFailed;
+
   /// Update the FCM token for the current device
   ///
   /// Only applicable for mobile devices (Android/iOS).

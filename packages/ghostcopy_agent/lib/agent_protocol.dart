@@ -26,13 +26,17 @@ const int agentBasePort = 47821;
 /// app. Derived from the home folder, which the app and the command line see
 /// alike, into a 1000-port range. Two users landing on the same port is the
 /// old behaviour, not a new failure.
-int agentPortFor({Map<String, String>? environment}) {
+///
+/// Case is folded only on Windows, whose paths ignore it; on Linux
+/// `/home/Sam` and `/home/sam` are two users.
+int agentPortFor({Map<String, String>? environment, bool? windows}) {
   final env = environment ?? Platform.environment;
+  final foldCase = windows ?? Platform.isWindows;
   final home = env['USERPROFILE'] ?? env['HOME'];
   if (home == null || home.isEmpty) return agentBasePort;
   // FNV-1a: stable across runs and Dart versions, unlike String.hashCode.
   var hash = 0x811c9dc5;
-  for (final unit in utf8.encode(home.toLowerCase())) {
+  for (final unit in utf8.encode(foldCase ? home.toLowerCase() : home)) {
     hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
   }
   return agentBasePort + hash % 1000;

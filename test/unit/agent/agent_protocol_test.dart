@@ -52,8 +52,21 @@ void main() {
 
     test('Windows home folders compare without case', () {
       expect(
-        agentPortFor(environment: {'USERPROFILE': r'C:\Users\Sam'}),
-        agentPortFor(environment: {'USERPROFILE': r'c:\users\sam'}),
+        agentPortFor(
+          environment: {'USERPROFILE': r'C:\Users\Sam'},
+          windows: true,
+        ),
+        agentPortFor(
+          environment: {'USERPROFILE': r'c:\users\sam'},
+          windows: true,
+        ),
+      );
+    });
+
+    test('elsewhere, case-distinct homes are different users', () {
+      expect(
+        agentPortFor(environment: {'HOME': '/home/Sam'}, windows: false),
+        isNot(agentPortFor(environment: {'HOME': '/home/sam'}, windows: false)),
       );
     });
 
