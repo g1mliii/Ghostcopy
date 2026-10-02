@@ -45,6 +45,10 @@ registration itself 109 ms):
   is message-only - and an update closes a package's processes by sending
   end-session messages to their top-level windows. The request went
   unanswered until the update timed out and killed it.
+- It is not particular to this DLL. The same machine's WER archive holds
+  the same `dllhost.exe` quiesce hang (`0x200000`) for VS Code, OneDrive and
+  another packaged app with an Explorer verb: any windowless packaged
+  surrogate an update has to close.
 - A polite Restart Manager close of that surrogate returns `351`
   (`ERROR_FAIL_NOACTION_REBOOT`): there is nothing in it to ask. The same
   request to `ghostcopy.exe` closed it in 0.1 s, so the app itself was never

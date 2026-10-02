@@ -9,14 +9,10 @@ namespace ghostcopy {
 // window it listens with exists, and a call that failed is retried by the
 // next.
 //
-// The surrogate runs under GhostCopy's package identity, so a package update
-// has to close it, and asks by sending end-session messages to the process's
-// top-level windows. dllhost has none - COM's own window is message-only,
-// which those messages never reach - so the request went unanswered until
-// the update gave up and killed it: a MoAppHang (hang type 0x200000,
-// quiesce) on every Store update since the verb shipped, holding the Store
-// at 100% for about ninety seconds each time. Explorer keeps the handler
-// loaded after any right-click, so the surrogate was almost always there.
+// A package update closes the package's processes by sending end-session
+// messages to their top-level windows, and dllhost has none, so every Store
+// update waited out a ninety-second timeout to kill it. The history is in
+// docs/windows-store-update-investigation.md.
 void StartShutdownListener();
 
 // Held for the length of an Invoke, so a close request lets a send already

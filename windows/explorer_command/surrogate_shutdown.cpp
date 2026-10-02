@@ -5,7 +5,6 @@
 #include <appmodel.h>
 #include <wchar.h>
 
-#include <new>
 #include <string>
 
 #include "module.h"
@@ -31,6 +30,10 @@ constexpr ULONGLONG kDrainLimitMs = 10000;
 // dllhost without it - one shared with other COM servers under a generic
 // AppID, say - is not ours to take down. The name check is what keeps an
 // in-process registration from taking Explorer down with it.
+//
+// Stricter than the runner's IsPackaged(), which counts any answer but "no
+// package" as packaged: before a TerminateProcess, only the one answer that
+// means a package is there will do.
 bool IsSurrogateHost() {
   UINT32 length = 0;
   if (::GetCurrentPackageFullName(&length, nullptr) !=
@@ -38,17 +41,12 @@ bool IsSurrogateHost() {
     return false;
   }
   const std::wstring path = ModulePath(nullptr);
-  const size_t separator = path.find_last_of(L'\\');
-  const wchar_t* name = path.c_str() + (separator == std::wstring::npos
-                                             ? 0
-                                             : separator + 1);
-  return !path.empty() && ::_wcsicmp(name, L"dllhost.exe") == 0;
+  // npos + 1 is 0, so a path without a separator is compared whole.
+  return ::_wcsicmp(path.substr(path.find_last_of(L'\\') + 1).c_str(),
+                    L"dllhost.exe") == 0;
 }
 
-// Sends under way, so a close request lets them finish. Guarded by a lock
-// rather than an interlocked count because the close waits on it.
-SRWLOCK g_invoke_lock = SRWLOCK_INIT;
-CONDITION_VARIABLE g_invokes_done = CONDITION_VARIABLE_INIT;
+// Sends under way, so a close request lets them finish.
 LONG g_invokes = 0;
 
 // Ends the surrogate outright, once any send already under way is done or
@@ -56,25 +54,21 @@ LONG g_invokes = 0;
 // command hands its work to ghostcopy.exe and returns - and ExitProcess would
 // run every loaded module's detach code with Explorer's calls still in
 // flight on other threads. Explorer sees the server disconnect, and the next
-// right-click starts a fresh one.
+// right-click starts a fresh one. Polled rather than signalled: it runs once,
+// just before the process ends.
 void EndSurrogate() {
   const ULONGLONG deadline = ::GetTickCount64() + kDrainLimitMs;
-  ::AcquireSRWLockExclusive(&g_invoke_lock);
-  while (g_invokes > 0) {
-    const ULONGLONG now = ::GetTickCount64();
-    if (now >= deadline) break;
-    ::SleepConditionVariableSRW(&g_invokes_done, &g_invoke_lock,
-                                static_cast<DWORD>(deadline - now), 0);
+  while (::InterlockedCompareExchange(&g_invokes, 0, 0) > 0 &&
+         ::GetTickCount64() < deadline) {
+    ::Sleep(50);
   }
-  ::ReleaseSRWLockExclusive(&g_invoke_lock);
   ::TerminateProcess(::GetCurrentProcess(), 0);
 }
 
+// WM_QUERYENDSESSION needs no case: DefWindowProc already agrees to it.
 LRESULT CALLBACK ListenerProc(HWND window, UINT message, WPARAM wparam,
                               LPARAM lparam) {
   switch (message) {
-    case WM_QUERYENDSESSION:
-      return TRUE;
     case WM_ENDSESSION:
       // FALSE means another application vetoed: the session goes on.
       if (wparam) EndSurrogate();
@@ -86,22 +80,12 @@ LRESULT CALLBACK ListenerProc(HWND window, UINT message, WPARAM wparam,
   return ::DefWindowProcW(window, message, wparam, lparam);
 }
 
-// The handshake between the first activation and the listener thread. Two
-// references, one each, so whichever finishes last frees it - the activation
-// may stop waiting before the thread is done with it.
-struct Startup {
-  HMODULE module;
-  HANDLE settled;
-  bool created = false;
-  LONG references = 2;
-};
-
-void Release(Startup* startup) {
-  if (::InterlockedDecrement(&startup->references) == 0) {
-    ::CloseHandle(startup->settled);
-    delete startup;
-  }
-}
+// The handshake between the first activation and the listener thread. One
+// attempt at a time: a retry happens only after an attempt that finished and
+// failed, and a wait that timed out is never retried, so a thread is never
+// still writing these when the next attempt resets them.
+HANDLE g_window_settled = nullptr;
+bool g_window_created = false;
 
 HWND CreateListenerWindow(HINSTANCE module) {
   WNDCLASSEXW window_class = {};
@@ -116,23 +100,19 @@ HWND CreateListenerWindow(HINSTANCE module) {
   }
 
   // Top-level, never shown, and kept off the taskbar and Alt+Tab. Not
-  // HWND_MESSAGE: a message-only window is exactly what the surrogate
-  // already had, and end-session messages are not sent to one.
+  // HWND_MESSAGE: end-session messages are not sent to a message-only window.
   return ::CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"", WS_POPUP, 0,
                            0, 0, 0, nullptr, nullptr, module, nullptr);
 }
 
-DWORD WINAPI ListenerThread(void* parameter) {
-  auto* startup = static_cast<Startup*>(parameter);
-  const HWND window = CreateListenerWindow(startup->module);
-  startup->created = window != nullptr;
-  ::SetEvent(startup->settled);
-  Release(startup);
+DWORD WINAPI ListenerThread(void* module) {
+  const HWND window = CreateListenerWindow(static_cast<HINSTANCE>(module));
+  g_window_created = window != nullptr;
+  ::SetEvent(g_window_settled);
   if (!window) return 0;
 
   MSG message;
   while (::GetMessageW(&message, nullptr, 0, 0) > 0) {
-    ::TranslateMessage(&message);
     ::DispatchMessageW(&message);
   }
   return 0;
@@ -156,21 +136,15 @@ BOOL CALLBACK StartOnce(PINIT_ONCE, void*, void**) {
     return FALSE;
   }
 
-  auto* startup = new (std::nothrow) Startup{module};
-  if (!startup) return FALSE;
-  startup->settled = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  if (!startup->settled) {
-    delete startup;
-    return FALSE;
+  if (!g_window_settled) {
+    g_window_settled = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!g_window_settled) return FALSE;
   }
+  ::ResetEvent(g_window_settled);
 
   const HANDLE thread =
-      ::CreateThread(nullptr, 0, ListenerThread, startup, 0, nullptr);
-  if (!thread) {
-    ::CloseHandle(startup->settled);
-    delete startup;
-    return FALSE;
-  }
+      ::CreateThread(nullptr, 0, ListenerThread, module, 0, nullptr);
+  if (!thread) return FALSE;
   ::CloseHandle(thread);
 
   // Not returned to COM until the window exists: until then the surrogate
@@ -179,10 +153,8 @@ BOOL CALLBACK StartOnce(PINIT_ONCE, void*, void**) {
   // counts as started - the thread is alive and will get there - but a
   // window that failed is retried on the next activation.
   const bool settled =
-      ::WaitForSingleObject(startup->settled, kWindowWaitMs) == WAIT_OBJECT_0;
-  const bool failed = settled && !startup->created;
-  Release(startup);
-  return failed ? FALSE : TRUE;
+      ::WaitForSingleObject(g_window_settled, kWindowWaitMs) == WAIT_OBJECT_0;
+  return settled && !g_window_created ? FALSE : TRUE;
 }
 
 }  // namespace
@@ -192,16 +164,8 @@ void StartShutdownListener() {
   ::InitOnceExecuteOnce(&once, StartOnce, nullptr, nullptr);
 }
 
-InvokeInProgress::InvokeInProgress() {
-  ::AcquireSRWLockExclusive(&g_invoke_lock);
-  ++g_invokes;
-  ::ReleaseSRWLockExclusive(&g_invoke_lock);
-}
+InvokeInProgress::InvokeInProgress() { ::InterlockedIncrement(&g_invokes); }
 
-InvokeInProgress::~InvokeInProgress() {
-  ::AcquireSRWLockExclusive(&g_invoke_lock);
-  if (--g_invokes == 0) ::WakeAllConditionVariable(&g_invokes_done);
-  ::ReleaseSRWLockExclusive(&g_invoke_lock);
-}
+InvokeInProgress::~InvokeInProgress() { ::InterlockedDecrement(&g_invokes); }
 
 }  // namespace ghostcopy

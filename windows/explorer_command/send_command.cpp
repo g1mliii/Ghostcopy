@@ -114,7 +114,8 @@ IFACEMETHODIMP SendCommand::GetTitle(IShellItemArray*, LPWSTR* name) {
 }
 
 IFACEMETHODIMP SendCommand::GetIcon(IShellItemArray*, LPWSTR* icon) {
-  const std::wstring reference = ghostcopy::AppIconReference();
+  // Once: this runs on every right-click, and the module's path never moves.
+  static const std::wstring reference = ghostcopy::AppIconReference();
   if (reference.empty()) return E_NOTIMPL;
   return ::SHStrDupW(reference.c_str(), icon);
 }
