@@ -21,7 +21,8 @@ abstract class IWindowService {
   /// that content closes.
   Future<void> growToHeight(double height);
 
-  /// Return the window to the standard Spotlight size.
+  /// Return the window to the standard Spotlight size, and a pinned one to
+  /// where it was before [growToHeight] centred it.
   Future<void> restoreSpotlightSize();
 
   /// Focus the window

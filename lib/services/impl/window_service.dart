@@ -95,8 +95,9 @@ class WindowService implements IWindowService {
   Future<void> _applyTopmost() =>
       windowManager.setAlwaysOnTop(_framelessForTrayMenu || _pinned);
 
-  /// Where a pinned Spotlight was when it last left the screen, so it comes
-  /// back there rather than recentred. Null while unpinned.
+  /// Where a pinned Spotlight was when it last left the screen or grew for a
+  /// dialog, so it comes back there rather than recentred. Null while
+  /// unpinned.
   Offset? _pinnedPosition;
 
   /// The window is up with the Spotlight's geometry, not the tray menu's.
@@ -177,12 +178,7 @@ class WindowService implements IWindowService {
     // Set to Spotlight size and position (do this while hidden). A pinned
     // window goes back where it was, if that is still on a display.
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
-    final position = await pinnedPosition;
-    if (position != null) {
-      await windowManager.setPosition(position);
-    } else {
-      await windowManager.center();
-    }
+    await _place(pinnedPosition);
 
     // Show and focus
     await windowManager.show();
@@ -223,8 +219,19 @@ class WindowService implements IWindowService {
     if (!_pinned || !_showingSpotlight) return;
     try {
       _pinnedPosition = await windowManager.getPosition();
-    } on Object catch (e) {
+    } on Exception catch (e) {
       debugPrint('[WindowService] Could not read the window position: $e');
+    }
+  }
+
+  /// Put the Spotlight where a pin left it, or in the centre when there is
+  /// no such place or it is no longer on a display.
+  Future<void> _place(Future<Offset?> pinnedPosition) async {
+    final position = await pinnedPosition;
+    if (position != null) {
+      await windowManager.setPosition(position);
+    } else {
+      await windowManager.center();
     }
   }
 
@@ -237,7 +244,7 @@ class WindowService implements IWindowService {
       final centre =
           position + const Offset(_windowWidth / 2, _windowHeight / 2);
       return displayContaining(displays, centre) == null ? null : position;
-    } on Object catch (e) {
+    } on Exception catch (e) {
       debugPrint('[WindowService] Could not read displays: $e');
       return null;
     }
@@ -252,6 +259,9 @@ class WindowService implements IWindowService {
   @override
   Future<void> growToHeight(double height) async {
     if (!_isDesktop()) return;
+    // Centred to make room, so a pinned window notes its place first and
+    // restoreSpotlightSize puts it back there.
+    await _rememberPinnedPosition();
     // Resized in place rather than hidden first: the window is already on
     // screen here, and hiding it would dismiss the dialog that asked to grow.
     await windowManager.setSize(
@@ -334,7 +344,7 @@ class WindowService implements IWindowService {
   Future<void> restoreSpotlightSize() async {
     if (!_isDesktop()) return;
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
-    await windowManager.center();
+    await _place(_onScreen(_pinnedPosition));
   }
 
   @override
