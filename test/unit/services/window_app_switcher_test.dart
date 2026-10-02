@@ -98,24 +98,22 @@ void main() {
     expect(switcher, isEmpty);
   });
 
-  test(
-    'pinning while up joins at once, and leaving waits for the hide',
-    () async {
-      final window = WindowService();
-      await window.showSpotlight();
+  test('pinning while up joins at once, and on-top leaves at once', () async {
+    final window = WindowService();
+    await window.showSpotlight();
 
-      await window.setPinned(pinned: true, onTop: false);
-      expect(switcher, ['in']);
+    await window.setPinned(pinned: true, onTop: false);
+    expect(switcher, ['in']);
 
-      // On top, then off, with the window still up: no change yet.
-      await window.setPinned(pinned: true, onTop: true);
-      await window.setPinned(pinned: false, onTop: false);
-      expect(switcher, ['in']);
+    // On top stays up indefinitely, so it cannot wait for a hide.
+    await window.setPinned(pinned: true, onTop: true);
+    expect(switcher, ['in', 'out']);
 
-      await window.hideSpotlight();
-      expect(switcher, ['in', 'out']);
-    },
-  );
+    await window.hideSpotlight();
+    // macOS leaves again at the hide, the full way; Windows has nothing to
+    // redo.
+    expect(switcher, Platform.isMacOS ? ['in', 'out', 'out'] : ['in', 'out']);
+  });
 
   test(
     'a failed change is tried again, not taken as done',

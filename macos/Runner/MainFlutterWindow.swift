@@ -81,6 +81,14 @@ class AppPresence {
     }
 
     private static func leave(then done: @escaping () -> Void) {
+        // The Spotlight still up (the pin went to on-top, or off): it stays
+        // in front, so only the policy changes. WindowService leaves again,
+        // the full way, at the next hide in case this one did not take.
+        if NSApp.windows.contains(where: { $0.isVisible }) {
+            NSApp.setActivationPolicy(.accessory)
+            done()
+            return
+        }
         if NSApp.isActive { NSApp.deactivate() }
         // A turn of the run loop for the deactivation to land. If it did not
         // (nothing else to activate), hiding the app hands focus on for sure;

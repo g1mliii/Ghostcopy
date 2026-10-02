@@ -119,32 +119,46 @@ class WindowService implements IWindowService {
   /// is one you can Cmd-Tab or Alt-Tab back to once another app covers it.
   /// Hidden, or lent to the tray menu, it is the tray utility again, with no
   /// Dock icon or taskbar button standing for nothing. The on-top pin needs
-  /// none of it - it cannot be covered.
+  /// none of it - it cannot be covered - and can stay up indefinitely, so the
+  /// entry goes as soon as the pin changes, not at the next hide.
   ///
-  /// Leaving waits for the window to be off screen: switching from the
-  /// ordinary pin while it is up keeps the entry until it hides. On macOS the
-  /// policy cannot change under an app that is in front, and an entry for a
-  /// window still showing is no harm anyway.
-  ///
-  /// macOS goes through AppPresence (MainFlutterWindow.swift), which hands
-  /// focus back before dropping to an agent app; Windows uses window_manager's
-  /// setSkipTaskbar, the taskbar button. The state is cached only once the
-  /// platform has taken it, so a failure is retried on the next change.
+  /// macOS goes through AppPresence (MainFlutterWindow.swift). Leaving with
+  /// the window still up only changes the policy, and macOS may not apply
+  /// that to the active app; so the next hide leaves again, the full way -
+  /// focus handed back first. Windows uses window_manager's setSkipTaskbar,
+  /// the taskbar button. The state is cached only once the platform has taken
+  /// it, so a failure is retried on the next change.
   Future<void> _applyAppPresence() async {
     final wanted = _pinned && !_onTop && _showingSpotlight;
-    if (wanted == _inAppSwitcher) return;
-    if (!wanted && _showingSpotlight) return;
+    if (wanted == _inAppSwitcher) {
+      if (!wanted && _leaveAgainWhenHidden && !_showingSpotlight) {
+        _leaveAgainWhenHidden = false;
+        await _setAppSwitcher(inSwitcher: false);
+      }
+      return;
+    }
+    if (await _setAppSwitcher(inSwitcher: wanted)) {
+      _inAppSwitcher = wanted;
+      _leaveAgainWhenHidden = Platform.isMacOS && !wanted && _showingSpotlight;
+    }
+  }
+
+  /// Set when macOS was asked to leave with the window up.
+  bool _leaveAgainWhenHidden = false;
+
+  Future<bool> _setAppSwitcher({required bool inSwitcher}) async {
     try {
       if (Platform.isMacOS) {
         await _appPresence.invokeMethod<void>(
-          wanted ? 'enterAppSwitcher' : 'leaveAppSwitcher',
+          inSwitcher ? 'enterAppSwitcher' : 'leaveAppSwitcher',
         );
       } else {
-        await windowManager.setSkipTaskbar(!wanted);
+        await windowManager.setSkipTaskbar(!inSwitcher);
       }
-      _inAppSwitcher = wanted;
+      return true;
     } on Exception catch (e) {
       debugPrint('[WindowService] Could not change app switcher presence: $e');
+      return false;
     }
   }
 
