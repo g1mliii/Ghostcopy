@@ -93,6 +93,14 @@ void main() {
     );
   });
 
+  // One-way by definition: no reply, even for a method that has one.
+  test('a notification gets no reply, whatever its method', () async {
+    for (final method in ['ping', 'tools/list', 'notifications/initialized']) {
+      expect(await call({'jsonrpc': '2.0', 'method': method}), isNull);
+    }
+    expect(client.requests, isEmpty);
+  });
+
   test('tools/list names the three tools', () async {
     final reply = await call({
       'jsonrpc': '2.0',

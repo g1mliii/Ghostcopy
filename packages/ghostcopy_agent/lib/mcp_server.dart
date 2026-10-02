@@ -131,6 +131,11 @@ class McpServer {
     if (method is! String) {
       return isNotification ? null : _error(id, -32600, 'Invalid request');
     }
+    // A notification is one-way: answered, even `ping`, it is a response to
+    // nothing, which a strict client treats as an unknown id or a broken
+    // session. None of this server's methods does anything worth doing
+    // without its answer.
+    if (isNotification) return null;
 
     switch (method) {
       case 'initialize':
@@ -164,7 +169,6 @@ class McpServer {
           ),
         );
       default:
-        if (isNotification) return null;
         log?.writeln('[ghostcopy mcp] unsupported method $method');
         return _error(id, -32601, 'Method not found: $method');
     }

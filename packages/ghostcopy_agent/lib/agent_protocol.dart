@@ -311,6 +311,14 @@ class AgentClient {
         "GhostCopy's settings could not be read (${e.message}). Open GhostCopy "
         'and try again.',
       );
+    } on FormatException {
+      // Not UTF-8: damaged, or not the file GhostCopy wrote. Reported like
+      // any other unreadable file, not left to escape as an uncaught error.
+      throw AgentException(
+        AgentError.notInstalled,
+        "GhostCopy's settings file is damaged ($secretPath). Delete it, then "
+        'quit and reopen GhostCopy.',
+      );
     }
   }
 }

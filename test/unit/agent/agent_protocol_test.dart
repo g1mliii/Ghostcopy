@@ -369,6 +369,17 @@ void main() {
     );
   });
 
+  test('a secret file that is not UTF-8 is an AgentException', () async {
+    final secret = File('${Directory.systemTemp.createTempSync('b').path}/s')
+      ..writeAsBytesSync([0xff, 0xfe, 0x00, 0xc3]);
+    await expectLater(
+      AgentClient(secretPath: secret.path).request({'name': 'list_devices'}),
+      throwsA(
+        isA<AgentException>().having((e) => e.code, 'code', 'not_installed'),
+      ),
+    );
+  });
+
   test('a missing secret file says GhostCopy has not run here', () async {
     final client = AgentClient(secretPath: '/nonexistent/ghostcopy.secret');
     await expectLater(
