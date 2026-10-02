@@ -126,7 +126,9 @@ DWORD WINAPI ListenerThread(void* module) {
 
 // FALSE on a failure, which leaves the INIT_ONCE unset so the next
 // activation tries again: one transient failure must not leave a surrogate
-// Explorer keeps alive for days unable to hear an update.
+// Explorer keeps alive for days unable to hear an update. That retry is
+// called from CreateInstance, which runs for every command - the surrogate
+// asks for the class factory only once.
 BOOL CALLBACK StartOnce(PINIT_ONCE, void*, void**) {
   if (!IsSurrogateHost()) return TRUE;
 
