@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/impl/window_service.dart';
@@ -16,10 +18,19 @@ void main() {
     'visibleSize': {'width': 1440.0, 'height': 860.0},
     'scaleFactor': 2.0,
   };
-  late List<bool> skipTaskbar;
+  const presence = MethodChannel('com.ghostcopy/app_presence');
+
+  /// What reached the platform, either way it went: 'in' or 'out' of the
+  /// app switcher. macOS uses AppPresence, Windows setSkipTaskbar.
+  late List<String> switcher;
 
   setUp(() {
-    skipTaskbar = [];
+    switcher = [];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(presence, (call) async {
+          switcher.add(call.method == 'enterAppSwitcher' ? 'in' : 'out');
+          return null;
+        });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           screens,
@@ -36,10 +47,10 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
           switch (call.method) {
             case 'setSkipTaskbar':
-              skipTaskbar.add(
-                (call.arguments as Map<Object?, Object?>)['isSkipTaskbar']!
-                    as bool,
-              );
+              final skip =
+                  (call.arguments as Map<Object?, Object?>)['isSkipTaskbar']!
+                      as bool;
+              switcher.add(skip ? 'out' : 'in');
               return null;
 
             case 'getPosition':
@@ -60,20 +71,21 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       ..setMockMethodCallHandler(channel, null)
-      ..setMockMethodCallHandler(screens, null);
+      ..setMockMethodCallHandler(screens, null)
+      ..setMockMethodCallHandler(presence, null);
   });
 
   test('an ordinary pin joins the app switcher only while it is up', () async {
     final window = WindowService();
 
     await window.setPinned(pinned: true, onTop: false);
-    expect(skipTaskbar, isEmpty, reason: 'pinned, but not on screen yet');
+    expect(switcher, isEmpty, reason: 'pinned, but not on screen yet');
 
     await window.showSpotlight();
-    expect(skipTaskbar, [false], reason: 'up and pinned: Cmd-Tab, Alt-Tab');
+    expect(switcher, ['in'], reason: 'up and pinned: Cmd-Tab, Alt-Tab');
 
     await window.hideSpotlight();
-    expect(skipTaskbar, [false, true], reason: 'hidden: a tray app again');
+    expect(switcher, ['in', 'out'], reason: 'hidden: a tray app again');
   });
 
   test('the on-top pin and no pin stay out of it', () async {
@@ -83,20 +95,51 @@ void main() {
     await window.showSpotlight();
     await window.setPinned(pinned: false, onTop: false);
 
-    expect(skipTaskbar, isEmpty);
+    expect(switcher, isEmpty);
   });
 
-  test('changing pins while up moves it in and out', () async {
-    final window = WindowService();
-    await window.showSpotlight();
+  test(
+    'pinning while up joins at once, and leaving waits for the hide',
+    () async {
+      final window = WindowService();
+      await window.showSpotlight();
 
-    await window.setPinned(pinned: true, onTop: false);
-    await window.setPinned(pinned: true, onTop: true);
-    await window.setPinned(pinned: true, onTop: false);
-    await window.setPinned(pinned: false, onTop: false);
+      await window.setPinned(pinned: true, onTop: false);
+      expect(switcher, ['in']);
 
-    expect(skipTaskbar, [false, true, false, true]);
-  });
+      // On top, then off, with the window still up: no change yet.
+      await window.setPinned(pinned: true, onTop: true);
+      await window.setPinned(pinned: false, onTop: false);
+      expect(switcher, ['in']);
+
+      await window.hideSpotlight();
+      expect(switcher, ['in', 'out']);
+    },
+  );
+
+  test(
+    'a failed change is tried again, not taken as done',
+    () async {
+      var failNext = true;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(presence, (call) async {
+            if (failNext) {
+              failNext = false;
+              throw PlatformException(code: 'failed');
+            }
+            switcher.add(call.method == 'enterAppSwitcher' ? 'in' : 'out');
+            return null;
+          });
+      final window = WindowService();
+      await window.setPinned(pinned: true, onTop: false);
+
+      await window.showSpotlight(); // the first attempt fails
+      await window.setPinned(pinned: true, onTop: false); // tried again
+
+      expect(switcher, ['in']);
+    },
+    skip: !Platform.isMacOS ? 'drives the macOS channel' : false,
+  );
 
   test('the tray menu borrowing the window takes it out', () async {
     final window = WindowService();
@@ -105,6 +148,6 @@ void main() {
 
     await window.setFramelessForTrayMenu();
 
-    expect(skipTaskbar, [false, true]);
+    expect(switcher, ['in', 'out']);
   });
 }

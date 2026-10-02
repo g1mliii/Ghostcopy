@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../ui/theme/colors.dart';
@@ -116,22 +117,40 @@ class WindowService implements IWindowService {
 
   /// An ordinary pin makes the Spotlight a normal window, and a normal window
   /// is one you can Cmd-Tab or Alt-Tab back to once another app covers it.
-  /// Only while it is up: hidden, or lent to the tray menu, it is the tray
-  /// utility again, with no Dock icon or taskbar button standing for nothing.
-  /// The on-top pin needs none of it - it cannot be covered.
+  /// Hidden, or lent to the tray menu, it is the tray utility again, with no
+  /// Dock icon or taskbar button standing for nothing. The on-top pin needs
+  /// none of it - it cannot be covered.
   ///
-  /// On macOS window_manager's setSkipTaskbar is the activation policy
-  /// (accessory or regular); on Windows it is the taskbar button.
+  /// Leaving waits for the window to be off screen: switching from the
+  /// ordinary pin while it is up keeps the entry until it hides. On macOS the
+  /// policy cannot change under an app that is in front, and an entry for a
+  /// window still showing is no harm anyway.
+  ///
+  /// macOS goes through AppPresence (MainFlutterWindow.swift), which hands
+  /// focus back before dropping to an agent app; Windows uses window_manager's
+  /// setSkipTaskbar, the taskbar button. The state is cached only once the
+  /// platform has taken it, so a failure is retried on the next change.
   Future<void> _applyAppPresence() async {
     final wanted = _pinned && !_onTop && _showingSpotlight;
     if (wanted == _inAppSwitcher) return;
-    _inAppSwitcher = wanted;
+    if (!wanted && _showingSpotlight) return;
     try {
-      await windowManager.setSkipTaskbar(!wanted);
+      if (Platform.isMacOS) {
+        await _appPresence.invokeMethod<void>(
+          wanted ? 'enterAppSwitcher' : 'leaveAppSwitcher',
+        );
+      } else {
+        await windowManager.setSkipTaskbar(!wanted);
+      }
+      _inAppSwitcher = wanted;
     } on Exception catch (e) {
       debugPrint('[WindowService] Could not change app switcher presence: $e');
     }
   }
+
+  static const MethodChannel _appPresence = MethodChannel(
+    'com.ghostcopy/app_presence',
+  );
 
   /// Where a pinned Spotlight was when it last left the screen or grew for a
   /// dialog, so it comes back there rather than recentred. Null while
