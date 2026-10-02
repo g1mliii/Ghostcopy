@@ -14,7 +14,7 @@ abstract final class CliExit {
   static const int ok = 0;
   static const int usage = 1;
 
-  /// GhostCopy is not installed, not running, or did not answer.
+  /// GhostCopy is not installed, not running, or cannot accept the request.
   static const int unreachable = 2;
 
   /// GhostCopy answered no: command line access is off, nobody is signed in,

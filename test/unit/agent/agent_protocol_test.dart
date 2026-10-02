@@ -1,7 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
+import 'package:ghostcopy_agent/cli.dart';
 
 void main() {
   group('resolveDeviceTargets', () {
@@ -138,6 +141,60 @@ void main() {
       throwsA(isA<AgentException>()),
     );
   });
+
+  for (final jsonOutput in [false, true]) {
+    test('an empty send reply is unconfirmed (json: $jsonOutput)', () async {
+      final directory = await Directory.systemTemp.createTemp('agent-reply');
+      addTearDown(() => directory.delete(recursive: true));
+      final secret = File('${directory.path}/secret');
+      await secret.writeAsString('x' * 40);
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final received = Completer<Map<String, Object?>>();
+      final subscription = server.listen((socket) {
+        unawaited(() async {
+          try {
+            final request = await utf8.decoder.bind(socket).join();
+            received.complete(jsonDecode(request) as Map<String, Object?>);
+            // The app has consumed the request, but exits before replying.
+            await socket.close();
+          } finally {
+            socket.destroy();
+          }
+        }());
+      });
+      addTearDown(subscription.cancel);
+      final out = StringBuffer();
+      final err = StringBuffer();
+
+      final exit = await runCli(
+        ['send', 'hello', if (jsonOutput) '--json'],
+        client: AgentClient(port: server.port, secretPath: secret.path),
+        out: out,
+        err: err,
+      );
+
+      expect((await received.future)['command'], {
+        'name': 'send_text',
+        'text': 'hello',
+        'to': <String>[],
+      });
+      expect(exit, CliExit.unconfirmed);
+      final String message;
+      if (jsonOutput) {
+        final reply = jsonDecode(out.toString()) as Map<String, Object?>;
+        expect(reply['ok'], isFalse);
+        expect(reply['error'], AgentError.noAnswer);
+        message = reply['message']! as String;
+        expect(err.toString(), isEmpty);
+      } else {
+        message = err.toString();
+        expect(out.toString(), isEmpty);
+      }
+      expect(message, contains('may still have sent this'));
+      expect(message, contains('check your history before trying again'));
+    });
+  }
 
   group("nothing on this user's port", () {
     late File secret;

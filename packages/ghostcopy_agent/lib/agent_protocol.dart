@@ -132,13 +132,13 @@ abstract final class AgentError {
     AgentError.usage => AgentErrorKind.usage,
     AgentError.sendFailed => AgentErrorKind.failed,
     AgentError.timeout ||
+    AgentError.noAnswer ||
     AgentError.connectionLost => AgentErrorKind.unconfirmed,
     AgentError.notReady ||
     AgentError.unauthorized ||
     AgentError.notInstalled ||
     AgentError.notRunning ||
     AgentError.outdated ||
-    AgentError.noAnswer ||
     AgentError.badAnswer => AgentErrorKind.unreachable,
     _ => AgentErrorKind.refused,
   };
@@ -273,13 +273,13 @@ class AgentClient {
       // on the same connection.
       await socket.close();
       final reply = await utf8.decoder.bind(socket).join().timeout(timeout);
-      // A current app answers every command, a refusal included, so a peer
-      // that took the handshake and said nothing predates commands.
+      // The app may have stored the clip, then quit before answering.
+      // An empty reply cannot distinguish that from an older app.
       if (reply.trim().isEmpty) {
         throw const AgentException(
           AgentError.noAnswer,
-          'GhostCopy did not answer. Update it to the latest version - older '
-          'versions cannot be used from the command line.',
+          'GhostCopy closed the connection before answering. It may still have '
+          'sent this - check your history before trying again.',
         );
       }
       final decoded = jsonDecode(reply);
