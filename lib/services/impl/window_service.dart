@@ -86,12 +86,22 @@ class WindowService implements IWindowService {
   /// the frame back.
   bool _framelessForTrayMenu = false;
 
-  /// Kept here rather than read from settings, so [showSpotlight] can put
-  /// the topmost flag back after the tray menu clears it.
+  /// Whether the Spotlight is to be topmost, as SpotlightViewModel last
+  /// said. Kept so [showSpotlight] can put it back after the tray menu.
   bool _pinned = false;
+
+  /// Where a pinned Spotlight was when it last left the screen, so it comes
+  /// back there rather than recentred. Null while unpinned.
+  Offset? _pinnedPosition;
+
+  /// The window is up with the Spotlight's geometry, not the tray menu's.
+  bool get _showingSpotlight => _isVisible && !_framelessForTrayMenu;
 
   @override
   Future<void> setFramelessForTrayMenu() async {
+    // The menu is about to move this window to the corner; remember where a
+    // pinned Spotlight was first. Hidden and resized by now, not yet moved.
+    if (_pinned && _showingSpotlight) await _rememberPinnedPosition();
     _framelessForTrayMenu = true;
     await windowManager.setAsFrameless();
     // Topmost, or the menu loses the z-order fight it is guaranteed to have.
@@ -115,6 +125,14 @@ class WindowService implements IWindowService {
     // Exit Tray Mode BEFORE showing window to resume UI animations
     // Note: Only UI resources (AnimationControllers, etc.) are paused/resumed
     // Core services (Realtime stream, hotkeys) run 24/7
+    // A pinned window already on screen only needs bringing forward. The
+    // rest of this hides, resizes and recentres it: a blink, and the place
+    // it was dragged to lost.
+    if (_pinned && _showingSpotlight && await windowManager.isVisible()) {
+      await windowManager.focus();
+      return;
+    }
+
     _lifecycleController?.exitTrayMode();
 
     // Set background color FIRST before any visibility changes
@@ -148,9 +166,15 @@ class WindowService implements IWindowService {
     // Pinned means topmost; the tray menu's undo above just cleared it.
     if (_pinned) await windowManager.setAlwaysOnTop(true);
 
-    // Set to Spotlight size and center (do this while hidden)
+    // Set to Spotlight size and position (do this while hidden). A pinned
+    // window goes back where it was, if that is still on a display.
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
-    await windowManager.center();
+    final position = _pinned ? await _onScreen(_pinnedPosition) : null;
+    if (position != null) {
+      await windowManager.setPosition(position);
+    } else {
+      await windowManager.center();
+    }
 
     // Show and focus
     await windowManager.show();
@@ -162,7 +186,11 @@ class WindowService implements IWindowService {
   @override
   Future<void> setPinned({required bool pinned}) async {
     _pinned = pinned;
+    if (!pinned) _pinnedPosition = null;
     if (!_isDesktop()) return;
+    // The tray menu has the window and needs it topmost; showSpotlight
+    // applies the pin when the Spotlight comes back.
+    if (_framelessForTrayMenu) return;
     await windowManager.setAlwaysOnTop(pinned);
   }
 
@@ -171,6 +199,7 @@ class WindowService implements IWindowService {
     if (!_isDesktop()) return;
 
     _hideStartedAt = DateTime.now();
+    if (_pinned && _showingSpotlight) await _rememberPinnedPosition();
     await windowManager.hide();
     debugPrint('[WindowService] Hiding spotlight window');
     _isVisible = false;
@@ -179,6 +208,29 @@ class WindowService implements IWindowService {
     // Note: Only pauses UI-related resources (AnimationControllers, etc.)
     // Core services continue running: Realtime stream, hotkeys, tray
     _lifecycleController?.enterTrayMode();
+  }
+
+  Future<void> _rememberPinnedPosition() async {
+    try {
+      _pinnedPosition = await windowManager.getPosition();
+    } on Object catch (e) {
+      debugPrint('[WindowService] Could not read the window position: $e');
+    }
+  }
+
+  /// [position], if a Spotlight placed there would still be on a display -
+  /// one may have been unplugged since. Null otherwise.
+  Future<Offset?> _onScreen(Offset? position) async {
+    if (position == null) return null;
+    try {
+      final displays = await screenRetriever.getAllDisplays();
+      final centre =
+          position + const Offset(_windowWidth / 2, _windowHeight / 2);
+      return displayContaining(displays, centre) == null ? null : position;
+    } on Object catch (e) {
+      debugPrint('[WindowService] Could not read displays: $e');
+      return null;
+    }
   }
 
   @override
@@ -273,6 +325,12 @@ class WindowService implements IWindowService {
     if (!_isDesktop()) return;
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
     await windowManager.center();
+  }
+
+  @override
+  Future<void> startDragging() async {
+    if (!_isDesktop()) return;
+    await windowManager.startDragging();
   }
 
   @override

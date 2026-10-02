@@ -301,18 +301,6 @@ class SettingsService implements ISettingsService {
   }
 
   @override
-  Future<bool> getSpotlightPinned() async {
-    _ensureInitialized();
-    return _prefs!.getBool(_keySpotlightPinned) ?? false;
-  }
-
-  @override
-  Future<void> setSpotlightPinned({required bool pinned}) async {
-    _ensureInitialized();
-    await _prefs!.setBool(_keySpotlightPinned, pinned);
-  }
-
-  @override
   Future<String> getObsidianFileName() async {
     _ensureInitialized();
     return _prefs!.getString(_keyObsidianFileName) ?? _defaultObsidianFileName;
@@ -323,6 +311,20 @@ class SettingsService implements ISettingsService {
     _ensureInitialized();
     await _prefs!.setString(_keyObsidianFileName, fileName);
     debugPrint('Obsidian file name set to: $fileName');
+  }
+
+  // ========== SPOTLIGHT (DESKTOP) ==========
+
+  @override
+  Future<bool> getSpotlightPinned() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keySpotlightPinned) ?? false;
+  }
+
+  @override
+  Future<bool> setSpotlightPinned({required bool pinned}) async {
+    _ensureInitialized();
+    return _prefs!.setBool(_keySpotlightPinned, pinned);
   }
 
   // ========== FEATURE FLAGS ==========

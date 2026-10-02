@@ -15,6 +15,7 @@ import 'package:ghostcopy/services/clipboard_sync_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
+import 'package:ghostcopy/services/window_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
 import 'package:ghostcopy/utils/network_errors.dart';
 import 'package:mocktail/mocktail.dart';
@@ -39,6 +40,8 @@ class _MockTransformerService extends Mock implements ITransformerService {}
 class _MockClipboardService extends Mock implements IClipboardService {}
 
 class _MockSettingsService extends Mock implements ISettingsService {}
+
+class _MockWindowService extends Mock implements IWindowService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
@@ -913,12 +916,22 @@ void main() {
 
   group('pin', () {
     late _MockSettingsService settings;
+    late _MockWindowService window;
+    late StreamController<bool> gameModeChanges;
+    late bool gameMode;
     late SpotlightViewModel pinning;
 
     setUp(() {
       settings = _MockSettingsService();
+      window = _MockWindowService();
+      gameModeChanges = StreamController<bool>.broadcast();
+      addTearDown(gameModeChanges.close);
+      gameMode = false;
       when(
         () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenAnswer((_) async => true);
+      when(
+        () => window.setPinned(pinned: any(named: 'pinned')),
       ).thenAnswer((_) async {});
       pinning = SpotlightViewModel(
         authService: authService,
@@ -926,37 +939,73 @@ void main() {
         clipboardSyncService: clipboardSyncService,
         transformerService: transformerService,
         notificationService: notificationService,
+        isGameModeActive: () => gameMode,
+        gameModeChanges: gameModeChanges.stream,
         settingsService: settings,
+        windowService: window,
       );
       addTearDown(pinning.dispose);
     });
 
-    test('starts unpinned, and a saved pin comes back', () async {
+    test('starts unpinned, and a saved pin comes back on the window', () async {
       when(() => settings.getSpotlightPinned()).thenAnswer((_) async => true);
       expect(pinning.isPinned, isFalse);
 
       await pinning.loadPinned();
 
       expect(pinning.isPinned, isTrue);
+      expect(pinning.keepsOpen, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
     });
 
-    test('pinning is saved, and unpinning too', () async {
+    test('pinning and unpinning reach the window and are saved', () async {
       await pinning.setPinned(pinned: true);
       expect(pinning.isPinned, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
       verify(() => settings.setSpotlightPinned(pinned: true)).called(1);
 
       await pinning.setPinned(pinned: false);
+      verify(() => window.setPinned(pinned: false)).called(1);
       verify(() => settings.setSpotlightPinned(pinned: false)).called(1);
     });
 
-    test('a pin that cannot be saved still pins for this run', () async {
+    test(
+      'a pin that cannot be saved still pins the window for this run',
+      () async {
+        when(
+          () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+        ).thenThrow(Exception('prefs unavailable'));
+
+        await pinning.setPinned(pinned: true);
+
+        expect(pinning.isPinned, isTrue);
+        verify(() => window.setPinned(pinned: true)).called(1);
+      },
+    );
+
+    test('a write that does not persist still pins for this run', () async {
       when(
         () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
-      ).thenThrow(Exception('prefs unavailable'));
+      ).thenAnswer((_) async => false);
 
       await pinning.setPinned(pinned: true);
 
       expect(pinning.isPinned, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+    });
+
+    test('an error saving still leaves the window pinned', () async {
+      when(
+        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenThrow(StateError('not initialized'));
+
+      await expectLater(
+        pinning.setPinned(pinned: true),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(pinning.isPinned, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
     });
 
     test('a saved pin that cannot be read leaves it unpinned', () async {
@@ -967,9 +1016,78 @@ void main() {
       await pinning.loadPinned();
 
       expect(pinning.isPinned, isFalse);
+      verifyNever(() => window.setPinned(pinned: any(named: 'pinned')));
     });
 
-    test('works without settings, for this run only', () async {
+    test(
+      'the pin is read once, so a remount cannot undo an unsaved pin',
+      () async {
+        when(
+          () => settings.getSpotlightPinned(),
+        ).thenAnswer((_) async => false);
+        await pinning.loadPinned();
+        when(
+          () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+        ).thenAnswer((_) async => false);
+        await pinning.setPinned(pinned: true);
+
+        // The screen binding again, behind the Windows tray menu.
+        await pinning.loadPinned();
+
+        expect(pinning.isPinned, isTrue);
+        verify(() => settings.getSpotlightPinned()).called(1);
+      },
+    );
+
+    test('a pin made while the saved one is read is not undone', () async {
+      final read = Completer<bool>();
+      when(() => settings.getSpotlightPinned()).thenAnswer((_) => read.future);
+      final loading = pinning.loadPinned();
+
+      await pinning.setPinned(pinned: true);
+      read.complete(false);
+      await loading;
+
+      expect(pinning.isPinned, isTrue);
+    });
+
+    test('Game Mode lifts the pin off the window, and puts it back', () async {
+      await pinning.setPinned(pinned: true);
+      clearInteractions(window);
+
+      gameMode = true;
+      gameModeChanges.add(true);
+      await pumpEventQueue();
+      expect(pinning.isPinned, isTrue);
+      expect(pinning.keepsOpen, isFalse);
+      verify(() => window.setPinned(pinned: false)).called(1);
+
+      gameMode = false;
+      gameModeChanges.add(false);
+      await pumpEventQueue();
+      expect(pinning.keepsOpen, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+    });
+
+    test('pinning during Game Mode leaves the window unpinned', () async {
+      gameMode = true;
+
+      await pinning.setPinned(pinned: true);
+
+      expect(pinning.isPinned, isTrue);
+      expect(pinning.keepsOpen, isFalse);
+      verify(() => window.setPinned(pinned: false)).called(1);
+    });
+
+    test('Game Mode changes nothing while unpinned', () async {
+      gameMode = true;
+      gameModeChanges.add(true);
+      await pumpEventQueue();
+
+      verifyNever(() => window.setPinned(pinned: any(named: 'pinned')));
+    });
+
+    test('works without settings or a window, for this run only', () async {
       await viewModel.setPinned(pinned: true);
       expect(viewModel.isPinned, isTrue);
       await viewModel.loadPinned();
@@ -1174,6 +1292,31 @@ void main() {
       expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
       verifyNever(() => clipboard.read());
     });
+
+    draftTest('clicking back into a pinned window keeps typed text', () async {
+      // Pinned, the window never hides: the user types, copies something in
+      // another app, and clicks back in.
+      composer.updateContent('half a message');
+      clipboardHolds('copied elsewhere');
+
+      await reopen();
+
+      expect(composer.content, 'half a message');
+      verifyNever(() => clipboard.read());
+    });
+
+    draftTest(
+      'clicking back into a pinned window refreshes auto-paste',
+      () async {
+        clipboardHolds('first');
+        await reopen();
+        clipboardHolds('copied elsewhere');
+
+        await reopen();
+
+        expect(composer.content, 'copied elsewhere');
+      },
+    );
 
     draftTest('Paste clipboard instead replaces the draft', () async {
       clipboardHolds('from clipboard');

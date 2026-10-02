@@ -115,14 +115,17 @@ abstract class ISettingsService {
   /// Set Obsidian file name setting
   Future<void> setObsidianFileName(String fileName);
 
-  // ========== FEATURE FLAGS ==========
+  // ========== SPOTLIGHT (DESKTOP) ==========
 
   /// Whether the Spotlight is pinned: kept open and above other windows
   /// rather than hiding when it loses focus. Desktop only. Defaults to off.
   Future<bool> getSpotlightPinned();
 
   /// Persist the pin, so a Spotlight pinned today is pinned tomorrow.
-  Future<void> setSpotlightPinned({required bool pinned});
+  /// Returns false when the write did not persist.
+  Future<bool> setSpotlightPinned({required bool pinned});
+
+  // ========== FEATURE FLAGS ==========
 
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   /// Returns false by default if error or not found

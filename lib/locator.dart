@@ -8,6 +8,7 @@ import 'services/game_mode_service.dart';
 import 'services/notification_service.dart';
 import 'services/settings_service.dart';
 import 'services/transformer_service.dart';
+import 'services/window_service.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 
 // Global Service Locator
@@ -31,8 +32,14 @@ void setupLocator() {
       isGameModeActive: locator.isRegistered<IGameModeService>()
           ? () => locator<IGameModeService>().isActive
           : null,
+      gameModeChanges: locator.isRegistered<IGameModeService>()
+          ? locator<IGameModeService>().isActiveStream
+          : null,
       settingsService: locator.isRegistered<ISettingsService>()
           ? locator<ISettingsService>()
+          : null,
+      windowService: locator.isRegistered<IWindowService>()
+          ? locator<IWindowService>()
           : null,
     ),
   );
