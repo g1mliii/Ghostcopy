@@ -46,7 +46,12 @@ bool IsSurrogateHost() {
                     L"dllhost.exe") == 0;
 }
 
-// Sends under way, so a close request lets them finish.
+// Sends under way, so a close request lets them finish, and whether a close
+// has begun. One word, so the two cannot disagree: a send counted before the
+// close set kClosing is waited for, and one that arrives after it sees the
+// bit and never starts - there is no moment between the last check and the
+// termination in which a new send could begin and be cut short.
+constexpr LONG kClosing = 0x40000000;
 LONG g_invokes = 0;
 
 // Ends the surrogate outright, once any send already under way is done or
@@ -58,7 +63,8 @@ LONG g_invokes = 0;
 // just before the process ends.
 void EndSurrogate() {
   const ULONGLONG deadline = ::GetTickCount64() + kDrainLimitMs;
-  while (::InterlockedCompareExchange(&g_invokes, 0, 0) > 0 &&
+  ::InterlockedOr(&g_invokes, kClosing);
+  while ((::InterlockedCompareExchange(&g_invokes, 0, 0) & ~kClosing) > 0 &&
          ::GetTickCount64() < deadline) {
     ::Sleep(50);
   }
@@ -164,7 +170,15 @@ void StartShutdownListener() {
   ::InitOnceExecuteOnce(&once, StartOnce, nullptr, nullptr);
 }
 
-InvokeInProgress::InvokeInProgress() { ::InterlockedIncrement(&g_invokes); }
+InvokeInProgress::InvokeInProgress() {
+  // Arrived after a close began: the process is about to end, and starting
+  // the send would only cut it short partway. Taken back out of the count,
+  // so the close is not left waiting for it, then wait for the end.
+  if (::InterlockedIncrement(&g_invokes) & kClosing) {
+    ::InterlockedDecrement(&g_invokes);
+    ::Sleep(INFINITE);
+  }
+}
 
 InvokeInProgress::~InvokeInProgress() { ::InterlockedDecrement(&g_invokes); }
 

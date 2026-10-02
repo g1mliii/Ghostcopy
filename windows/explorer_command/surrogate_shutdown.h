@@ -17,7 +17,9 @@ void StartShutdownListener();
 
 // Held for the length of an Invoke, so a close request lets a send already
 // under way finish - a multi-file send is one activation per file, and
-// ending the surrogate partway would drop the rest without a word.
+// ending the surrogate partway would drop the rest without a word. One that
+// begins after a close has started blocks until the process ends rather
+// than starting a send it could not finish.
 class InvokeInProgress {
  public:
   InvokeInProgress();
