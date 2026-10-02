@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/single_instance.dart';
+import 'package:ghostcopy_agent/agent_protocol.dart';
 
 /// Drives a real primary instance over its real socket, because the bug this
 /// covers lived in the wire handling: the payload arrived, was verified, and
@@ -13,22 +13,12 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   /// Speak the handshake a second launch speaks.
-  Future<void> forward(int port, String secret, List<String> args) async {
-    final socket = await Socket.connect(
-      InternetAddress.loopbackIPv4,
-      port,
-      timeout: const Duration(seconds: 5),
-    );
-    socket.write(
-      jsonEncode({
-        'magic': SingleInstance.handshakeMagic,
-        'secret': secret,
-        'args': args,
-      }),
-    );
-    await socket.flush();
-    await socket.close();
-  }
+  Future<void> forward(int port, String secret, List<String> args) => agentSend(
+    port: port,
+    secret: secret,
+    body: {'args': args},
+    awaitReply: false,
+  );
 
   test(
     'a second launch with no arguments still reaches the listener',

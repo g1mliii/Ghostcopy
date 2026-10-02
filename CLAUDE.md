@@ -261,7 +261,7 @@ drag-to-install DMG, and updates ship through Sparkle over a signed appcast.
 See [`docs/macos-releases.md`](docs/macos-releases.md) for the release runbook
 and `installer/macos/` for the scripts.
 
-Global hotkeys use Carbon's `RegisterEventHotKey` (via `hotkey_manager`), which does not require Accessibility permission — do not add an `AXIsProcessTrustedWithOptions` prompt. The app is sandboxed (`com.apple.security.app-sandbox`), so it could not hold Accessibility trust even if it asked. Configure App Sandbox entitlements for network access.
+Global hotkeys use Carbon's `RegisterEventHotKey` (via `hotkey_manager`), which does not require Accessibility permission — do not add an `AXIsProcessTrustedWithOptions` prompt; nothing needs it, and it would ask users for a permission the app has no use for. The app is **not** sandboxed: the sandbox was dropped for Developer ID distribution (`9ef4116`), and `Release.entitlements` carries no `com.apple.security.app-sandbox` key, so there are no sandbox network entitlements to maintain either.
 
 **Mobile (iOS/Android)**:
 - Cannot auto-detect clipboard changes (OS restriction)

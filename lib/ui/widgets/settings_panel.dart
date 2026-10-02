@@ -82,6 +82,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   bool _hasBackup = false;
   bool _autoShortenUrls = false;
   bool _webhookEnabled = false;
+  bool _agentAccessEnabled = false;
   String _webhookUrl = '';
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
@@ -129,6 +130,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _loadEncryptionStatus();
     _loadUrlShorteningStatus();
     _loadWebhookStatus();
+    _loadAgentAccess();
     _loadObsidianStatus();
 
     // Filtered to actual identity changes, for two reasons.
@@ -339,6 +341,13 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _webhookEnabled = enabled;
     _webhookUrl = url ?? '';
     _webhookUrlController.text = _webhookUrl;
+    scheduleRebuild();
+  }
+
+  Future<void> _loadAgentAccess() async {
+    final enabled = await widget.settingsService.getAgentAccessEnabled();
+    if (!mounted) return;
+    _agentAccessEnabled = enabled;
     scheduleRebuild();
   }
 
@@ -837,6 +846,24 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
             ),
             const SizedBox(height: 10),
           ],
+          // Off by default: anything running as this user could otherwise send
+          // from the account. See packages/ghostcopy_agent.
+          _buildSettingToggle(
+            title: 'Command line & AI tools',
+            subtitle:
+                'Let the ghostcopy command and AI assistants send through '
+                'this app',
+            value: _agentAccessEnabled,
+            onChanged: (value) async {
+              final saved = await widget.settingsService.setAgentAccessEnabled(
+                enabled: value,
+              );
+              // The handler reads the saved value on every request, so the
+              // switch shows that, not what was asked for.
+              if (mounted && saved) setState(() => _agentAccessEnabled = value);
+            },
+          ),
+          const SizedBox(height: 10),
           if (widget.hotkeyService != null) ...[
             HotkeyCapture(
               currentHotkey: _currentHotkey,

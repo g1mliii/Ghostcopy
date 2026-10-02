@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:ghostcopy_agent/agent_protocol.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -162,15 +163,10 @@ class ClipboardRepository implements IClipboardRepository {
   ValueListenable<int> get undecryptableItemCount => _undecryptableItemCount;
 
   // Security constants
-  static const int maxContentLength = 102400; // 100KB
+  // Shared with the `ghostcopy` command line, which checks before sending.
+  static const int maxContentLength = agentMaxTextLength; // 100KB
   static const int maxDeviceNameLength = 255;
-  static const List<String> validDeviceTypes = [
-    'windows',
-    'macos',
-    'android',
-    'ios',
-    'linux',
-  ];
+  static const List<String> validDeviceTypes = deviceTypes;
 
   /// Initialize encryption with user ID (call once per session)
   Future<void> _ensureEncryptionInitialized() async {

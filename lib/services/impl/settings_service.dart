@@ -36,6 +36,7 @@ class SettingsService implements ISettingsService {
   static const String _keyObsidianEnabled = 'obsidian_enabled';
   static const String _keyObsidianVaultPath = 'obsidian_vault_path';
   static const String _keyObsidianFileName = 'obsidian_file_name';
+  static const String _keyAgentAccessEnabled = 'agent_access_enabled';
   static const String _keySpotlightPin = 'spotlight_pin';
 
   /// 1.0.7's on/off pin, which was always on top. Read once, when there is
@@ -303,6 +304,18 @@ class SettingsService implements ISettingsService {
       await _prefs!.setString(_keyObsidianVaultPath, path);
       debugPrint('Obsidian vault path set');
     }
+  }
+
+  @override
+  Future<bool> getAgentAccessEnabled() async {
+    _ensureInitialized();
+    return _prefs!.getBool(_keyAgentAccessEnabled) ?? false;
+  }
+
+  @override
+  Future<bool> setAgentAccessEnabled({required bool enabled}) async {
+    _ensureInitialized();
+    return _prefs!.setBool(_keyAgentAccessEnabled, enabled);
   }
 
   @override
