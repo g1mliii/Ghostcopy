@@ -86,14 +86,18 @@ class WindowService implements IWindowService {
   /// the frame back.
   bool _framelessForTrayMenu = false;
 
-  /// Whether the Spotlight is to be topmost, as SpotlightViewModel last
-  /// said. Kept so [showSpotlight] can put it back after the tray menu.
+  /// Whether the Spotlight is pinned open, as SpotlightViewModel last said.
+  /// Pinned, it keeps its place and the hotkey only brings it forward.
   bool _pinned = false;
 
-  /// Topmost is wanted by the tray menu and by a pin; derived from both
-  /// rather than set by each, so neither has to undo the other.
+  /// Whether the pin also keeps it above other windows. Kept so
+  /// [showSpotlight] can put topmost back after the tray menu.
+  bool _onTop = false;
+
+  /// Topmost is wanted by the tray menu and by the on-top pin; derived from
+  /// both rather than set by each, so neither has to undo the other.
   Future<void> _applyTopmost() =>
-      windowManager.setAlwaysOnTop(_framelessForTrayMenu || _pinned);
+      windowManager.setAlwaysOnTop(_framelessForTrayMenu || _onTop);
 
   /// Where a pinned Spotlight was when it last left the screen or grew for a
   /// dialog, so it comes back there rather than recentred. Null while
@@ -188,8 +192,9 @@ class WindowService implements IWindowService {
   }
 
   @override
-  Future<void> setPinned({required bool pinned}) async {
+  Future<void> setPinned({required bool pinned, required bool onTop}) async {
     _pinned = pinned;
+    _onTop = pinned && onTop;
     if (!pinned) _pinnedPosition = null;
     if (!_isDesktop()) return;
     await _applyTopmost();

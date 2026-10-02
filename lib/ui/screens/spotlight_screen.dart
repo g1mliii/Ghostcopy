@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../locator.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
+import '../../models/spotlight_pin.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
@@ -1161,13 +1162,34 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Pinned, the Spotlight behaves like a window: it stays open and on top
   /// when focus moves elsewhere. The control lives here, at the moment the
   /// auto-hide gets in the way, rather than as a setting to go looking for.
+  /// One button, three states, cycled by clicking: off, pinned (stays open,
+  /// other windows can cover it), pinned on top. Each has its own icon and
+  /// a tooltip that says what the next click does.
   Widget _buildPinButton() {
-    final pinned = _viewModel.isPinned;
+    final (icon, badge, tooltip) = switch (_viewModel.pin) {
+      SpotlightPin.off => (
+        Icons.push_pin_outlined,
+        null,
+        'Keep open when clicking away',
+      ),
+      SpotlightPin.open => (
+        Icons.push_pin,
+        null,
+        'Pinned: stays open, other windows can cover it.\n'
+            'Click to keep it on top',
+      ),
+      SpotlightPin.onTop => (
+        Icons.push_pin,
+        Icons.arrow_upward_rounded,
+        'Pinned on top of other windows.\nClick to unpin',
+      ),
+    };
     return _HoverableIconButton(
-      icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
-      tooltip: pinned ? 'Unpin - hide when clicking away' : 'Keep open',
-      isActive: pinned,
-      onTap: () => unawaited(_viewModel.setPinned(pinned: !pinned)),
+      icon: icon,
+      badge: badge,
+      tooltip: tooltip,
+      isActive: _viewModel.isPinned,
+      onTap: () => unawaited(_viewModel.cyclePin()),
     );
   }
 
@@ -2911,9 +2933,14 @@ class _HoverableIconButton extends StatefulWidget {
     required this.isActive,
     required this.onTap,
     required this.tooltip,
+    this.badge,
   });
 
   final IconData icon;
+
+  /// A small second icon on the corner, for a state the main icon cannot
+  /// show by itself - the pin that also stays on top.
+  final IconData? badge;
   final bool isActive;
   final VoidCallback onTap;
 
@@ -2929,6 +2956,29 @@ class _HoverableIconButton extends StatefulWidget {
 }
 
 class _HoverableIconButtonState extends State<_HoverableIconButton> {
+  Widget _withBadge(Widget icon) {
+    final badge = widget.badge;
+    if (badge == null) return icon;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: -5,
+          top: -5,
+          child: Container(
+            padding: const EdgeInsets.all(1),
+            decoration: const BoxDecoration(
+              color: GhostColors.primary,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(badge, size: 10, color: GhostColors.surface),
+          ),
+        ),
+      ],
+    );
+  }
+
   static const _borderRadius = BorderRadius.all(Radius.circular(8));
   final ValueNotifier<bool> _isHovered = ValueNotifier(false);
 
@@ -2960,12 +3010,14 @@ class _HoverableIconButtonState extends State<_HoverableIconButton> {
                       : Colors.transparent,
                   borderRadius: _borderRadius,
                 ),
-                child: Icon(
-                  widget.icon,
-                  size: 22,
-                  color: isHighlighted
-                      ? GhostColors.primary
-                      : GhostColors.textSecondary,
+                child: _withBadge(
+                  Icon(
+                    widget.icon,
+                    size: 22,
+                    color: isHighlighted
+                        ? GhostColors.primary
+                        : GhostColors.textSecondary,
+                  ),
                 ),
               ),
             ),

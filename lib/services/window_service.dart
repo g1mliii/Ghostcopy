@@ -28,14 +28,15 @@ abstract class IWindowService {
   /// Focus the window
   Future<void> focusWindow();
 
-  /// Keep the Spotlight above other windows while [pinned]. A pinned window
-  /// that lost the z-order to whatever was clicked would be out of sight,
-  /// which is exactly what pinning it was meant to prevent.
+  /// Keep the Spotlight open while [pinned], rather than hidden on blur.
   ///
   /// Pinned, [showSpotlight] also leaves the window where it is: one already
   /// on screen is only focused, and one coming back from a hide returns to
   /// where it was rather than the centre.
-  Future<void> setPinned({required bool pinned});
+  ///
+  /// [onTop] also keeps it above every other window; without it a pinned
+  /// window is an ordinary one that other apps can cover.
+  Future<void> setPinned({required bool pinned, required bool onTop});
 
   /// Move the window with the pointer, from a press on a drag area. The
   /// Spotlight is borderless, so it has no title bar to do this.

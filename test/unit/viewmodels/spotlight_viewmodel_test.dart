@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/models/exceptions.dart';
+import 'package:ghostcopy/models/spotlight_pin.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/account_prompt_store.dart';
 import 'package:ghostcopy/services/auth_service.dart';
@@ -151,6 +152,7 @@ void main() {
     registerFallbackValue(Uint8List(0));
     registerFallbackValue(ContentType.text);
     registerFallbackValue(RichTextFormat.html);
+    registerFallbackValue(SpotlightPin.off);
     registerFallbackValue(
       ClipboardItem(
         id: 'fallback',
@@ -927,11 +929,12 @@ void main() {
       gameModeChanges = StreamController<bool>.broadcast();
       addTearDown(gameModeChanges.close);
       gameMode = false;
+      when(() => settings.setSpotlightPin(any())).thenAnswer((_) async => true);
       when(
-        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
-      ).thenAnswer((_) async => true);
-      when(
-        () => window.setPinned(pinned: any(named: 'pinned')),
+        () => window.setPinned(
+          pinned: any(named: 'pinned'),
+          onTop: any(named: 'onTop'),
+        ),
       ).thenAnswer((_) async {});
       pinning = SpotlightViewModel(
         authService: authService,
@@ -948,111 +951,118 @@ void main() {
     });
 
     test('starts unpinned, and a saved pin comes back on the window', () async {
-      when(() => settings.getSpotlightPinned()).thenAnswer((_) async => true);
+      when(
+        () => settings.getSpotlightPin(),
+      ).thenAnswer((_) async => SpotlightPin.open);
       expect(pinning.isPinned, isFalse);
 
       await pinning.loadPinned();
 
       expect(pinning.isPinned, isTrue);
       expect(pinning.keepsOpen, isTrue);
-      verify(() => window.setPinned(pinned: true)).called(1);
+      verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
     });
 
     test('pinning and unpinning reach the window and are saved', () async {
-      await pinning.setPinned(pinned: true);
+      await pinning.setPin(SpotlightPin.open);
       expect(pinning.isPinned, isTrue);
-      verify(() => window.setPinned(pinned: true)).called(1);
-      verify(() => settings.setSpotlightPinned(pinned: true)).called(1);
+      verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
+      verify(() => settings.setSpotlightPin(SpotlightPin.open)).called(1);
 
-      await pinning.setPinned(pinned: false);
-      verify(() => window.setPinned(pinned: false)).called(1);
-      verify(() => settings.setSpotlightPinned(pinned: false)).called(1);
+      await pinning.setPin(SpotlightPin.off);
+      verify(() => window.setPinned(pinned: false, onTop: false)).called(1);
+      verify(() => settings.setSpotlightPin(SpotlightPin.off)).called(1);
     });
 
     test(
       'a pin that cannot be saved still pins the window for this run',
       () async {
         when(
-          () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+          () => settings.setSpotlightPin(any()),
         ).thenThrow(Exception('prefs unavailable'));
 
-        await pinning.setPinned(pinned: true);
+        await pinning.setPin(SpotlightPin.open);
 
         expect(pinning.isPinned, isTrue);
-        verify(() => window.setPinned(pinned: true)).called(1);
+        verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
       },
     );
 
     test('a write that does not persist still pins for this run', () async {
       when(
-        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+        () => settings.setSpotlightPin(any()),
       ).thenAnswer((_) async => false);
 
-      await pinning.setPinned(pinned: true);
+      await pinning.setPin(SpotlightPin.open);
 
       expect(pinning.isPinned, isTrue);
-      verify(() => window.setPinned(pinned: true)).called(1);
+      verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
     });
 
     test('an error saving still leaves the window pinned', () async {
       when(
-        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+        () => settings.setSpotlightPin(any()),
       ).thenThrow(StateError('not initialized'));
 
       await expectLater(
-        pinning.setPinned(pinned: true),
+        pinning.setPin(SpotlightPin.open),
         throwsA(isA<StateError>()),
       );
 
       expect(pinning.isPinned, isTrue);
-      verify(() => window.setPinned(pinned: true)).called(1);
+      verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
     });
 
     test('a saved pin that cannot be read leaves it unpinned', () async {
       when(
-        () => settings.getSpotlightPinned(),
+        () => settings.getSpotlightPin(),
       ).thenThrow(Exception('prefs unavailable'));
 
       await pinning.loadPinned();
 
       expect(pinning.isPinned, isFalse);
-      verifyNever(() => window.setPinned(pinned: any(named: 'pinned')));
+      verifyNever(
+        () => window.setPinned(
+          pinned: any(named: 'pinned'),
+          onTop: any(named: 'onTop'),
+        ),
+      );
     });
 
     test(
       'the pin is read once, so a remount cannot undo an unsaved pin',
       () async {
         when(
-          () => settings.getSpotlightPinned(),
-        ).thenAnswer((_) async => false);
+          () => settings.getSpotlightPin(),
+        ).thenAnswer((_) async => SpotlightPin.off);
         await pinning.loadPinned();
         when(
-          () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+          () => settings.setSpotlightPin(any()),
         ).thenAnswer((_) async => false);
-        await pinning.setPinned(pinned: true);
+        await pinning.setPin(SpotlightPin.open);
 
         // The screen binding again, behind the Windows tray menu.
         await pinning.loadPinned();
 
         expect(pinning.isPinned, isTrue);
-        verify(() => settings.getSpotlightPinned()).called(1);
+        verify(() => settings.getSpotlightPin()).called(1);
       },
     );
 
     test('a pin made while the saved one is read is not undone', () async {
-      final read = Completer<bool>();
-      when(() => settings.getSpotlightPinned()).thenAnswer((_) => read.future);
+      final read = Completer<SpotlightPin>();
+      when(() => settings.getSpotlightPin()).thenAnswer((_) => read.future);
       final loading = pinning.loadPinned();
 
-      await pinning.setPinned(pinned: true);
-      read.complete(false);
+      await pinning.setPin(SpotlightPin.open);
+      read.complete(SpotlightPin.off);
       await loading;
 
       expect(pinning.isPinned, isTrue);
     });
 
     test('Game Mode lifts the pin off the window, and puts it back', () async {
-      await pinning.setPinned(pinned: true);
+      await pinning.setPin(SpotlightPin.open);
       clearInteractions(window);
 
       gameMode = true;
@@ -1060,23 +1070,23 @@ void main() {
       await pumpEventQueue();
       expect(pinning.isPinned, isTrue);
       expect(pinning.keepsOpen, isFalse);
-      verify(() => window.setPinned(pinned: false)).called(1);
+      verify(() => window.setPinned(pinned: false, onTop: false)).called(1);
 
       gameMode = false;
       gameModeChanges.add(false);
       await pumpEventQueue();
       expect(pinning.keepsOpen, isTrue);
-      verify(() => window.setPinned(pinned: true)).called(1);
+      verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
     });
 
     test('pinning during Game Mode leaves the window unpinned', () async {
       gameMode = true;
 
-      await pinning.setPinned(pinned: true);
+      await pinning.setPin(SpotlightPin.open);
 
       expect(pinning.isPinned, isTrue);
       expect(pinning.keepsOpen, isFalse);
-      verify(() => window.setPinned(pinned: false)).called(1);
+      verify(() => window.setPinned(pinned: false, onTop: false)).called(1);
     });
 
     test('Game Mode changes nothing while unpinned', () async {
@@ -1084,14 +1094,57 @@ void main() {
       gameModeChanges.add(true);
       await pumpEventQueue();
 
-      verifyNever(() => window.setPinned(pinned: any(named: 'pinned')));
+      verifyNever(
+        () => window.setPinned(
+          pinned: any(named: 'pinned'),
+          onTop: any(named: 'onTop'),
+        ),
+      );
     });
 
     test('works without settings or a window, for this run only', () async {
-      await viewModel.setPinned(pinned: true);
+      await viewModel.setPin(SpotlightPin.open);
       expect(viewModel.isPinned, isTrue);
       await viewModel.loadPinned();
       expect(viewModel.isPinned, isTrue);
+    });
+    test('one button cycles off, pinned, on top, and off again', () async {
+      await pinning.cyclePin();
+      expect(pinning.pin, SpotlightPin.open);
+      expect(pinning.staysOnTop, isFalse);
+      verify(() => window.setPinned(pinned: true, onTop: false)).called(1);
+
+      await pinning.cyclePin();
+      expect(pinning.pin, SpotlightPin.onTop);
+      expect(pinning.staysOnTop, isTrue);
+      verify(() => window.setPinned(pinned: true, onTop: true)).called(1);
+      verify(() => settings.setSpotlightPin(SpotlightPin.onTop)).called(1);
+
+      await pinning.cyclePin();
+      expect(pinning.pin, SpotlightPin.off);
+      verify(() => window.setPinned(pinned: false, onTop: false)).called(1);
+    });
+
+    test('a saved on-top pin comes back on top', () async {
+      when(
+        () => settings.getSpotlightPin(),
+      ).thenAnswer((_) async => SpotlightPin.onTop);
+
+      await pinning.loadPinned();
+
+      verify(() => window.setPinned(pinned: true, onTop: true)).called(1);
+    });
+
+    test('Game Mode lifts an on-top pin entirely', () async {
+      await pinning.setPin(SpotlightPin.onTop);
+      clearInteractions(window);
+
+      gameMode = true;
+      gameModeChanges.add(true);
+      await pumpEventQueue();
+
+      expect(pinning.staysOnTop, isFalse);
+      verify(() => window.setPinned(pinned: false, onTop: false)).called(1);
     });
   });
 

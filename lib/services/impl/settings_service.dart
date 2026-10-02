@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../models/spotlight_pin.dart';
 import '../../repositories/impl/clipboard_repository.dart';
 import '../hotkey_service.dart';
 import '../settings_service.dart';
@@ -35,7 +36,11 @@ class SettingsService implements ISettingsService {
   static const String _keyObsidianEnabled = 'obsidian_enabled';
   static const String _keyObsidianVaultPath = 'obsidian_vault_path';
   static const String _keyObsidianFileName = 'obsidian_file_name';
-  static const String _keySpotlightPinned = 'spotlight_pinned';
+  static const String _keySpotlightPin = 'spotlight_pin';
+
+  /// 1.0.7's on/off pin, which was always on top. Read once, when there is
+  /// no [_keySpotlightPin] yet, so a pinned window stays as it was.
+  static const String _keyLegacySpotlightPinned = 'spotlight_pinned';
 
   // Default values
   static const bool _defaultAutoSendEnabled = false;
@@ -316,15 +321,19 @@ class SettingsService implements ISettingsService {
   // ========== SPOTLIGHT (DESKTOP) ==========
 
   @override
-  Future<bool> getSpotlightPinned() async {
+  Future<SpotlightPin> getSpotlightPin() async {
     _ensureInitialized();
-    return _prefs!.getBool(_keySpotlightPinned) ?? false;
+    final saved = _prefs!.getString(_keySpotlightPin);
+    if (saved != null) return SpotlightPin.fromName(saved);
+    return (_prefs!.getBool(_keyLegacySpotlightPinned) ?? false)
+        ? SpotlightPin.onTop
+        : SpotlightPin.off;
   }
 
   @override
-  Future<bool> setSpotlightPinned({required bool pinned}) async {
+  Future<bool> setSpotlightPin(SpotlightPin pin) async {
     _ensureInitialized();
-    return _prefs!.setBool(_keySpotlightPinned, pinned);
+    return _prefs!.setString(_keySpotlightPin, pin.name);
   }
 
   // ========== FEATURE FLAGS ==========
