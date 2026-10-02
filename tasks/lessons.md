@@ -368,35 +368,3 @@ Each entry should include:
   forget, and the cost is not paid at build time but weeks later when a crash
   report turns out to be unreadable. If a quicker path is genuinely needed,
   add a flag to the script rather than reproducing half of it by hand.
-
-### 2026-10-01 - A slow Store update blamed on the app was its shell extension
-
-- **Date**: 2026-10-01
-- **Failure Mode**: Every Store update sat at 100% for about ninety seconds
-  before installing. The obvious suspect was ghostcopy.exe, an always-running
-  tray app with a hidden window, failing to close; it was not. Forced,
-  polite (Restart Manager) and startup-launched shutdowns of it all took
-  0.1-0.4s. The process that hung was dllhost.exe - the COM surrogate the
-  manifest's `<com:SurrogateServer>` starts for the Explorer verb, running
-  under the package's identity. An update closes a package's processes by
-  sending end-session messages to their top-level windows, and the surrogate
-  has none, so it never heard the request and was killed only when the
-  update timed out. Explorer keeps the verb loaded after any right-click, so
-  the surrogate was nearly always there to hang.
-- **Detection Signal**: The AppXDeploymentServer performance summary (event
-  613) put the whole delay in one "Gap" with registration itself at 109ms.
-  The Application log had a `MoAppHang` (event 1001) 18ms before the update
-  resumed, and the archived report under `C:\ProgramData\Microsoft\Windows\
-  WER\ReportArchive\AppHang_<package>_*\Report.wer` named the process:
-  `OriginalFilename=dllhost.exe`, hang type 0x200000 (quiesce). Every update
-  back to 1.0.10 had the same report.
-- **Prevention Rule**: When a packaged update is slow, read the deployment
-  log's event 613 for where the time went, then look for a `MoAppHang` and
-  read its Report.wer for `OriginalFilename` - the hung process is not always
-  the app's main executable, and the package's identity covers surrogates,
-  helpers and child processes too. Any process that runs under the package
-  must be able to answer a close request, which in practice means owning a
-  top-level window (a message-only one does not count); a windowless one
-  costs every update the full timeout. A fix like this only shortens the
-  update *after* the one that ships it: the hang is in the old version's
-  surrogate, which is what the next update has to close.

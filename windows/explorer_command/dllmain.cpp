@@ -11,7 +11,6 @@
 
 #include "module.h"
 #include "send_command.h"
-#include "surrogate_shutdown.h"
 
 namespace {
 
@@ -89,10 +88,6 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
   if (!ppv) return E_POINTER;
   *ppv = nullptr;
   if (rclsid != CLSID_GhostCopySendCommand) return CLASS_E_CLASSNOTAVAILABLE;
-
-  // Here, not in DllMain: it creates a thread and a window, neither of which
-  // belongs under the loader lock.
-  ghostcopy::StartShutdownListener();
 
   auto* factory = new (std::nothrow) SendCommandFactory();
   if (!factory) return E_OUTOFMEMORY;

@@ -18,7 +18,6 @@ add_library(${SHELL_TARGET} SHARED
   "dllmain.cpp"
   "module.cpp"
   "send_command.cpp"
-  "surrogate_shutdown.cpp"
   "ghostcopy_shell.def"
 )
 
