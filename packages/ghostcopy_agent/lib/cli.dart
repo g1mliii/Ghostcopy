@@ -20,9 +20,18 @@ abstract final class CliExit {
   /// or the request was invalid.
   static const int refused = 3;
 
-  /// GhostCopy tried and the send failed - offline, too large, rate limited.
+  /// GhostCopy tried and the send failed - offline, rate limited.
   static const int failed = 4;
+
+  /// The request reached GhostCopy but no answer came back - it timed out or
+  /// the connection dropped - so it may have been sent. Not one to retry
+  /// blindly: that is how a clip arrives twice.
+  static const int unconfirmed = 5;
 }
+
+/// Failures to reach GhostCopy after the request had gone, so the send may
+/// have happened.
+const Set<String> _unconfirmedCodes = {'timeout', 'connection_lost'};
 
 const String cliUsage = '''
 Send things to your other devices through GhostCopy.
@@ -42,7 +51,7 @@ Options:
 
 GhostCopy must be running, with "Command line & AI tools" turned on in its
 settings. Exit codes: 0 sent, 1 usage, 2 GhostCopy unreachable, 3 refused,
-4 send failed.''';
+4 send failed, 5 no answer after sending (check your history before retrying).''';
 
 /// Run the command line. [stdinText] supplies `send -`.
 Future<int> runCli(
@@ -175,7 +184,9 @@ Future<int> runCli(
       code: e.code,
       message: e.message,
     );
-    return CliExit.unreachable;
+    return _unconfirmedCodes.contains(e.code)
+        ? CliExit.unconfirmed
+        : CliExit.unreachable;
   }
 
   final ok = reply['ok'] == true;
@@ -191,7 +202,8 @@ Future<int> runCli(
   return switch (reply['error']) {
     'send_failed' => CliExit.failed,
     // Still starting up: try again shortly, not a refusal to give up on.
-    'not_ready' => CliExit.unreachable,
+    // And a secret the app no longer accepts, which a restart of it fixes.
+    'not_ready' || 'unauthorized' => CliExit.unreachable,
     _ => CliExit.refused,
   };
 }

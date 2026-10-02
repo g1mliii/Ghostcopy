@@ -95,18 +95,34 @@ class McpServer {
   final AgentClient _client;
   final String version;
 
-  /// Answer messages from [input] on [output] until [input] ends.
+  /// Answer messages from [input] on [output] until [input] ends, and every
+  /// answer is written.
+  ///
+  /// Each message is handled as it arrives, not after the one before it has
+  /// been answered: a send_file can take minutes, and a client whose `ping`
+  /// goes unanswered meanwhile takes the server for hung. Replies carry their
+  /// request's id, so their order does not matter, and each is one writeln -
+  /// a whole line - so they cannot interleave.
   Future<void> serve(
     Stream<List<int>> input,
     StringSink output, {
     StringSink? log,
   }) async {
     final lines = input.transform(utf8.decoder).transform(const LineSplitter());
+    // Only the unanswered ones: a long session would otherwise keep every
+    // message it ever handled.
+    final pending = <Future<void>>{};
     await for (final line in lines) {
       if (line.trim().isEmpty) continue;
-      final reply = await handleLine(line, log: log);
-      if (reply != null) output.writeln(jsonEncode(reply));
+      late final Future<void> answered;
+      answered = handleLine(line, log: log)
+          .then((reply) {
+            if (reply != null) output.writeln(jsonEncode(reply));
+          })
+          .whenComplete(() => pending.remove(answered));
+      pending.add(answered);
     }
+    await Future.wait(pending.toList());
   }
 
   /// One message in, at most one message out. Notifications get no reply.

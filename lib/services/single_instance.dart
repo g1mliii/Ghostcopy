@@ -221,6 +221,25 @@ class SingleInstance {
       final message = _authenticate(payload);
       if (message == null) {
         debugPrint('[SingleInstance] ✗ Rejected unauthenticated connection');
+        // A command line holding a secret this app no longer accepts - a
+        // stale GHOSTCOPY_SECRET_FILE, or a secret that could not be saved -
+        // is told so. Left with an empty reply it told the user to update an
+        // app that was already current. The fact only, nothing about the
+        // secret; a second launch's args get no reply, as before.
+        if (_isCommandAttempt(payload)) {
+          socket.add(
+            utf8.encode(
+              jsonEncode({
+                'ok': false,
+                'error': 'unauthorized',
+                'message':
+                    'GhostCopy did not accept this command. Quit and reopen '
+                    'GhostCopy, then try again.',
+              }),
+            ),
+          );
+          await socket.flush();
+        }
         return;
       }
 
@@ -294,6 +313,19 @@ class SingleInstance {
     if (!_constantTimeEquals(offered, expected)) return null;
 
     return decoded;
+  }
+
+  /// Whether [payload] is the command line speaking this protocol, whatever
+  /// its secret.
+  static bool _isCommandAttempt(String payload) {
+    try {
+      final decoded = jsonDecode(payload.trim());
+      return decoded is Map<String, Object?> &&
+          decoded['magic'] == _handshakeMagic &&
+          decoded['command'] is Map;
+    } on FormatException {
+      return false;
+    }
   }
 
   /// Compares without leaking where the first difference is.

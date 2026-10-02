@@ -138,6 +138,24 @@ void main() {
       expect(await run(['send', 'x']), CliExit.unreachable);
     });
 
+    // The request had gone, so the clip may have too: 2, "not running",
+    // invited the retry that sends it twice.
+    test('no answer after the request went is 5, not 2', () async {
+      for (final code in ['timeout', 'connection_lost']) {
+        client.error = AgentException(code, 'It may still have sent this.');
+        expect(await run(['send', 'x']), CliExit.unconfirmed, reason: code);
+      }
+    });
+
+    test('a secret the app no longer accepts is 2', () async {
+      client.reply = (_) => {
+        'ok': false,
+        'error': 'unauthorized',
+        'message': 'Quit and reopen GhostCopy.',
+      };
+      expect(await run(['send', 'x']), CliExit.unreachable);
+    });
+
     test('a failed send is 4', () async {
       client.reply = (_) => {
         'ok': false,
@@ -151,6 +169,9 @@ void main() {
       expect(await run(['send']), CliExit.usage);
       expect(await run(['send', '   ']), CliExit.usage);
       expect(await run(['send', 'x', '--to', 'toaster']), CliExit.usage);
+      // An empty shell variable must not widen the send to every device.
+      expect(await run(['send', 'x', '--to', '']), CliExit.usage);
+      expect(await run(['send', 'x', '--to=']), CliExit.usage);
       expect(await run(['launch-rockets']), CliExit.usage);
       expect(await run(['send', 'x', '--loud']), CliExit.usage);
       expect(client.requests, isEmpty);

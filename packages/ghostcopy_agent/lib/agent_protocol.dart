@@ -69,11 +69,20 @@ const Map<String, List<String>> deviceAliases = {
 /// Turn what the caller asked for into device types, or throw a
 /// [FormatException] naming what was not understood. Empty in, empty out -
 /// which means "the user's default", not "nowhere".
+///
+/// A blank name is an error, not skipped: `--to ""` from an empty shell
+/// variable, or `["  "]`, would otherwise come out empty and so mean the
+/// defaults, which can be every device - wider than anything asked for.
 List<String> resolveDeviceTargets(Iterable<String> requested) {
   final resolved = <String>{};
   for (final raw in requested) {
     final name = raw.trim().toLowerCase();
-    if (name.isEmpty) continue;
+    if (name.isEmpty) {
+      throw const FormatException(
+        'A device name is empty. Name one, such as phone, or leave out the '
+        'destination to use the default devices.',
+      );
+    }
     if (deviceTypes.contains(name)) {
       resolved.add(name);
     } else if (deviceAliases.containsKey(name)) {
@@ -125,11 +134,15 @@ class AgentClient {
     int? port,
     String? secretPath,
     this.timeout = const Duration(minutes: 6),
+    this.legacyPort = agentBasePort,
   }) : port = port ?? agentPortFor(),
        secretPath = secretPath ?? defaultSecretPath();
 
   final int port;
   final String secretPath;
+
+  /// Where GhostCopy listened before ports were per user. Settable for tests.
+  final int legacyPort;
 
   /// Longer than the app's own upload deadline (five minutes, in
   /// TimeoutHttpClient). Giving up first would report a failure while the
@@ -146,10 +159,7 @@ class AgentClient {
         timeout: const Duration(seconds: 2),
       );
     } on SocketException {
-      throw const AgentException(
-        'not_running',
-        'GhostCopy is not running. Open it, then try again.',
-      );
+      throw await _notRunning();
     }
     try {
       socket.add(
@@ -165,6 +175,8 @@ class AgentClient {
       // on the same connection.
       await socket.close();
       final reply = await utf8.decoder.bind(socket).join().timeout(timeout);
+      // A current app answers every command, a refusal included, so a peer
+      // that took the handshake and said nothing predates commands.
       if (reply.trim().isEmpty) {
         throw const AgentException(
           'no_answer',
@@ -182,16 +194,18 @@ class AgentClient {
       }
       return decoded;
     } on SocketException {
-      // Connected, then lost: the app quit or restarted mid-request.
+      // Connected, then lost: the app quit or restarted mid-request, perhaps
+      // after the send had gone. Not "not running", which invites a retry.
       throw const AgentException(
-        'not_running',
-        'GhostCopy closed the connection. Make sure it is running, then try '
-            'again.',
+        'connection_lost',
+        'GhostCopy closed the connection before answering. It may still have '
+            'sent this - check your history before trying again.',
       );
     } on TimeoutException {
       throw const AgentException(
         'timeout',
-        'GhostCopy took too long to answer.',
+        'GhostCopy took too long to answer. It may still have sent this - '
+            'check your history before trying again.',
       );
     } on FormatException {
       throw const AgentException(
@@ -202,6 +216,34 @@ class AgentClient {
     } finally {
       socket.destroy();
     }
+  }
+
+  /// Nothing on this user's port. GhostCopy before the command line listened
+  /// on [legacyPort] for everyone, so something there is most likely an
+  /// out-of-date copy. Only connected to, never sent anything: it may be
+  /// another user's, and the secret is not theirs to see.
+  Future<AgentException> _notRunning() async {
+    if (port != legacyPort) {
+      try {
+        final legacy = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          legacyPort,
+          timeout: const Duration(milliseconds: 500),
+        );
+        legacy.destroy();
+        return const AgentException(
+          'outdated',
+          'GhostCopy is running but is too old to use from the command line. '
+              'Update it to the latest version, then try again.',
+        );
+      } on SocketException {
+        // Nothing there either.
+      }
+    }
+    return const AgentException(
+      'not_running',
+      'GhostCopy is not running. Open it, then try again.',
+    );
   }
 
   Future<String> _readSecret() async {

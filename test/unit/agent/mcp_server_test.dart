@@ -19,6 +19,40 @@ void main() {
   Future<Map<String, Object?>?> call(Map<String, Object?> message) =>
       server.handleLine(jsonEncode(message));
 
+  // A send_file can take minutes. Handled one at a time, the client's ping
+  // waited behind it and the client took the server for hung.
+  test('a slow tool call does not hold up a ping', () async {
+    final slow = Completer<Map<String, Object?>>();
+    final slowClient = _GatedAgentClient(slow.future);
+    final input = StreamController<List<int>>();
+    final output = StringBuffer();
+    final served = McpServer(slowClient).serve(input.stream, output);
+
+    void send(Map<String, Object?> message) =>
+        input.add(utf8.encode('${jsonEncode(message)}\n'));
+    send({
+      'jsonrpc': '2.0',
+      'id': 1,
+      'method': 'tools/call',
+      'params': {
+        'name': 'send_text',
+        'arguments': {'text': 'hi'},
+      },
+    });
+    send({'jsonrpc': '2.0', 'id': 2, 'method': 'ping'});
+    await pumpEventQueue();
+
+    final early = const LineSplitter().convert(output.toString());
+    expect(early.map((l) => (jsonDecode(l) as Map)['id']), [2]);
+
+    // The slow one still gets its answer, before serve() returns.
+    slow.complete({'ok': true, 'message': 'Sent.'});
+    await input.close();
+    await served;
+    final all = const LineSplitter().convert(output.toString());
+    expect(all.map((l) => (jsonDecode(l) as Map)['id']), [2, 1]);
+  });
+
   test('initialize agrees a protocol version the client asked for', () async {
     final reply = await call({
       'jsonrpc': '2.0',
@@ -203,4 +237,14 @@ void main() {
       'result': <String, Object?>{},
     });
   });
+}
+
+/// Holds every request until [_answer] completes.
+class _GatedAgentClient extends AgentClient {
+  _GatedAgentClient(this._answer) : super(secretPath: '/unused');
+
+  final Future<Map<String, Object?>> _answer;
+
+  @override
+  Future<Map<String, Object?>> request(Map<String, Object?> command) => _answer;
 }

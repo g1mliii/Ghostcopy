@@ -74,7 +74,8 @@ ghostcopy devices
 
 `--to` takes `phone`, `desktop`, `ios`, `android`, `macos` or `windows`, and defaults to the
 **Send to devices** setting. `--json` prints machine-readable output, and the exit code says what
-happened (0 sent, 2 GhostCopy unreachable, 3 refused, 4 send failed).
+happened (0 sent, 1 usage, 2 GhostCopy unreachable, 3 refused, 4 send failed, 5 no answer
+after sending - check your history before retrying).
 
 For assistants without a shell, such as Claude Desktop, `ghostcopy mcp` is an MCP server with
 `send_text`, `send_file` and `list_devices` tools:

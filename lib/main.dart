@@ -580,26 +580,29 @@ Future<void> _appMain(
     // nothing ever consumed the callback, so signing in with Google appeared
     // to do nothing and left the browser tab open.
     unawaited(_handleDeepLinkArgs(args));
+
+    // The `ghostcopy` command line and its MCP server, on the same channel.
+    // Wired here, with everything a send needs in place; until now the
+    // channel tells a command GhostCopy is still starting.
+    locator.registerSingleton<IAgentCommandHandler>(
+      AgentCommandHandler(
+        authService: authService,
+        clipboardRepository: locator<IClipboardRepository>(),
+        deviceService: deviceService,
+        settingsService: locator<ISettingsService>(),
+        sendFile: (path, targets) =>
+            _sendSharedFile(path, authService, targets: targets),
+        accountPromptStore: locator.maybeGet<AccountPromptStore>(),
+      ),
+    );
+    SingleInstance.instance.commandHandler =
+        locator<IAgentCommandHandler>().handle;
+
     // SingleInstance.listen, not .incomingArguments.listen: the server starts
     // accepting connections inside acquire() near the top of main, but this
     // runs only after Supabase and the rest of desktop setup. A broadcast
     // stream has no replay, so a callback forwarded in that window would be
     // dropped. listen() flushes that backlog.
-    // The `ghostcopy` command line and its MCP server, on the same channel.
-    // Wired here, with everything a send needs in place; until now the
-    // channel tells a command GhostCopy is still starting.
-    SingleInstance.instance.commandHandler = AgentCommandHandler(
-      authService: authService,
-      clipboardRepository: locator<IClipboardRepository>(),
-      deviceService: deviceService,
-      settingsService: locator<ISettingsService>(),
-      sendFile: (path, targets) =>
-          _sendSharedFile(path, authService, targets: targets),
-      accountPromptStore: locator.isRegistered<AccountPromptStore>()
-          ? locator<AccountPromptStore>()
-          : null,
-    ).handle;
-
     SingleInstance.instance.listen((forwarded) {
       unawaited(_handleDeepLinkArgs(forwarded.split(' ')));
       // Whether to surface the window, by what the launch was for. The rule
@@ -1705,13 +1708,15 @@ Future<void> _handleDeepLinkArgs(List<String> args) async {
 /// Shared by the Windows Explorer context menu and the macOS Services entry,
 /// so both send exactly the same way. [initializeAuth] is for the Windows
 /// path, which runs before the app has initialised anything.
-Future<({bool ok, String message})> _sendSharedFile(
+///
+/// [targets] is an explicit choice, from the command line, and empty means
+/// every device; null reads the "Send to devices" setting.
+Future<SendFileResult> _sendSharedFile(
   String path,
   IAuthService authService, {
   bool initializeAuth = false,
   List<String>? targets,
 }) async {
-  final overrideTargets = targets;
   try {
     // Directories are rejected by name rather than falling through to the
     // existsSync check below, which is false for a directory and would report
@@ -1722,11 +1727,16 @@ Future<({bool ok, String message})> _sendSharedFile(
       return (
         ok: false,
         message: 'Folders cannot be sent. Select a file instead.',
+        refusal: 'bad_request',
       );
     }
     final file = File(path);
     if (!file.existsSync()) {
-      return (ok: false, message: 'The selected file no longer exists.');
+      return (
+        ok: false,
+        message: 'The selected file no longer exists.',
+        refusal: 'bad_request',
+      );
     }
     // Check the size before allocating a potentially multi-GB file in RAM.
     if (await file.length() > ClipboardLimits.maxFileBytes) {
@@ -1735,12 +1745,14 @@ Future<({bool ok, String message})> _sendSharedFile(
         message:
             'This file is too large. GhostCopy supports files up to '
             '${ClipboardLimits.maxFileLabel}.',
+        refusal: 'bad_request',
       );
     }
     if (authService.currentUserId == null) {
       return (
         ok: false,
         message: 'Open GhostCopy and sign in before sending a file.',
+        refusal: 'signed_out',
       );
     }
 
@@ -1757,9 +1769,8 @@ Future<({bool ok, String message})> _sendSharedFile(
       await settings.initialize();
     }
     // An explicit choice from the command line wins over the setting.
-    final targets = overrideTargets != null
-        ? overrideTargets.toSet()
-        : await settings.getAutoSendTargetDevices();
+    final sendTo =
+        targets?.toSet() ?? await settings.getAutoSendTargetDevices();
 
     final bytes = await file.readAsBytes();
     final filename = file.uri.pathSegments.last;
@@ -1773,7 +1784,7 @@ Future<({bool ok, String message})> _sendSharedFile(
       contentType: typeInfo.contentType,
       originalFilename: filename,
       // null, not an empty list: the repository reads null as "every device".
-      targetDeviceTypes: targets.isEmpty ? null : targets.toList(),
+      targetDeviceTypes: sendTo.isEmpty ? null : sendTo.toList(),
     );
 
     // Counts toward the account offer like any other send. The Explorer path
@@ -1788,10 +1799,10 @@ Future<({bool ok, String message})> _sendSharedFile(
       debugPrint('[SendFile] Could not record the send: $e');
     }
 
-    final where = targets.isEmpty
+    final where = sendTo.isEmpty
         ? 'your other devices'
-        : targets.map(platformLabel).join(', ');
-    return (ok: true, message: 'Sent $filename to $where.');
+        : sendTo.map(platformLabel).join(', ');
+    return (ok: true, message: 'Sent $filename to $where.', refusal: null);
   } on Exception catch (e) {
     debugPrint('[SendFile] Failed to send file: $e');
     return (
@@ -1799,6 +1810,7 @@ Future<({bool ok, String message})> _sendSharedFile(
       message:
           'The file could not be sent. Check your connection and try '
           'again.',
+      refusal: null,
     );
   }
 }

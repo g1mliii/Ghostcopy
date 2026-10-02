@@ -18,7 +18,22 @@ void main() {
 
     test('nothing asked for means the default, not nowhere', () {
       expect(resolveDeviceTargets(const []), isEmpty);
-      expect(resolveDeviceTargets([' ', '']), isEmpty);
+    });
+
+    // A blank name used to be skipped, so `--to ""` came out empty - the
+    // defaults, which can be every device.
+    test('a blank name is an error, not the defaults', () {
+      for (final blank in [
+        [''],
+        ['  '],
+        ['phone', ''],
+      ]) {
+        expect(
+          () => resolveDeviceTargets(blank),
+          throwsFormatException,
+          reason: '$blank',
+        );
+      }
     });
 
     test('names what it did not understand', () {
@@ -89,6 +104,59 @@ void main() {
       ).request({'name': 'list_devices'}),
       throwsA(isA<AgentException>()),
     );
+  });
+
+  group("nothing on this user's port", () {
+    late File secret;
+    late int closedPort;
+
+    setUp(() async {
+      secret = File('${Directory.systemTemp.createTempSync('p').path}/s')
+        ..writeAsStringSync('x' * 40);
+      final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      closedPort = probe.port;
+      await probe.close();
+    });
+
+    test('is "not running" when the old shared port is free too', () async {
+      final legacy = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final freePort = legacy.port;
+      await legacy.close();
+
+      await expectLater(
+        AgentClient(
+          port: closedPort,
+          secretPath: secret.path,
+          legacyPort: freePort,
+        ).request({'name': 'list_devices'}),
+        throwsA(
+          isA<AgentException>().having((e) => e.code, 'code', 'not_running'),
+        ),
+      );
+    });
+
+    // GhostCopy before per-user ports listens on the old one; telling its
+    // user it is not running sent them looking for the wrong problem.
+    test('is "outdated" when something holds the old shared port', () async {
+      final legacy = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(legacy.close);
+      final received = <int>[];
+      legacy.listen((socket) => socket.listen(received.addAll));
+
+      await expectLater(
+        AgentClient(
+          port: closedPort,
+          secretPath: secret.path,
+          legacyPort: legacy.port,
+        ).request({'name': 'list_devices'}),
+        throwsA(
+          isA<AgentException>().having((e) => e.code, 'code', 'outdated'),
+        ),
+      );
+      // It may be another user's: connected to, never told the secret.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(received, isEmpty);
+    });
   });
 
   test(

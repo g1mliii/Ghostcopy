@@ -66,7 +66,11 @@ void main() {
       settingsService: settings,
       sendFile: (path, targets) async {
         filesSent.add((path, targets));
-        return (ok: true, message: 'Sent notes.txt to your other devices.');
+        return (
+          ok: true,
+          message: 'Sent notes.txt to your other devices.',
+          refusal: null,
+        );
       },
     );
   });
@@ -113,7 +117,7 @@ void main() {
       clipboardRepository: clips,
       deviceService: devices,
       settingsService: settings,
-      sendFile: (path, targets) async => (ok: true, message: ''),
+      sendFile: (path, targets) async => (ok: true, message: '', refusal: null),
       accountPromptStore: store,
     );
 
@@ -134,7 +138,8 @@ void main() {
         clipboardRepository: clips,
         deviceService: devices,
         settingsService: settings,
-        sendFile: (path, targets) async => (ok: true, message: ''),
+        sendFile: (path, targets) async =>
+            (ok: true, message: '', refusal: null),
         accountPromptStore: failing,
       );
 
@@ -211,6 +216,44 @@ void main() {
     expect(filesSent.single.$2, ['macos']);
   });
 
+  // Resolved here, so the file path does not read the setting again.
+  test('a file with no devices named goes to the resolved default', () async {
+    await handler.handle({'name': 'send_file', 'path': '/tmp/notes.txt'});
+    expect(filesSent.single.$2, isEmpty);
+  });
+
+  // A folder or a 2 GB file came back as send_failed, exit 4 - which a
+  // script retries, forever, on a file that can never go.
+  test('a file that cannot be sent is a refusal, not a failure', () async {
+    final refusing = AgentCommandHandler(
+      authService: auth,
+      clipboardRepository: clips,
+      deviceService: devices,
+      settingsService: settings,
+      sendFile: (path, targets) async => (
+        ok: false,
+        message: 'This file is too large.',
+        refusal: 'bad_request',
+      ),
+    );
+    final reply = await refusing.handle({'name': 'send_file', 'path': '/x'});
+    expect(reply['error'], 'bad_request');
+    expect(reply['message'], 'This file is too large.');
+
+    final failing = AgentCommandHandler(
+      authService: auth,
+      clipboardRepository: clips,
+      deviceService: devices,
+      settingsService: settings,
+      sendFile: (path, targets) async =>
+          (ok: false, message: 'Offline.', refusal: null),
+    );
+    expect(
+      (await failing.handle({'name': 'send_file', 'path': '/x'}))['error'],
+      'send_failed',
+    );
+  });
+
   test('devices list marks this one', () async {
     when(() => devices.getCurrentDeviceId()).thenReturn('d2');
     when(() => devices.fetchUserDevices()).thenAnswer(
@@ -248,6 +291,11 @@ void main() {
         'name': 'send_text',
         'text': 'hi',
         'to': ['toaster'],
+      },
+      {
+        'name': 'send_text',
+        'text': 'hi',
+        'to': [' '],
       },
       {'name': 'send_file'},
       {'name': 'format_disk'},
@@ -294,12 +342,12 @@ void main() {
     expect(reply['ok'], isTrue);
     expect(inserted().content, 'hello');
 
-    // The wrong secret is not answered at all.
+    // The wrong secret is told so - not left with an empty reply, which the
+    // command line reads as an out-of-date app - and gets nothing else.
     secretFile.writeAsStringSync(base64Url.encode(List.filled(32, 7)));
-    await expectLater(
-      client.request({'name': 'list_devices'}),
-      throwsA(isA<AgentException>().having((e) => e.code, 'code', 'no_answer')),
-    );
+    final refused = await client.request({'name': 'list_devices'});
+    expect(refused['error'], 'unauthorized');
+    expect(refused.keys, unorderedEquals(['ok', 'error', 'message']));
   });
 }
 
