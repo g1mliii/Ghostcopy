@@ -400,3 +400,24 @@ Each entry should include:
   costs every update the full timeout. A fix like this only shortens the
   update *after* the one that ships it: the hang is in the old version's
   surrogate, which is what the next update has to close.
+
+### 2026-10-01 - A feature branch whose upstream was main pushed to main
+
+- **Date**: 2026-10-01
+- **Failure Mode**: The surrogate fix's branch was created with
+  `git switch -c <branch> origin/main`, which quietly sets the new branch's
+  upstream to `origin/main`. 26 seconds after the commit - before any
+  deliberate push - something pushed the branch to its upstream, most
+  likely the editor's sync, and the commit landed on `main` with no PR.
+  `main` is unprotected, so nothing refused it. Only CI ran; the deploy
+  workflow is path-filtered and did not fire. It was reverted (f05a5f35)
+  and re-opened as #87.
+- **Detection Signal**: `gh pr create` failed with "No commits between main
+  and <branch>". The `origin/main` reflog showed "update by push" at
+  23:18:46, five minutes before the only push that was run by hand.
+- **Prevention Rule**: Branch from a remote ref with `--no-track`
+  (`git switch --no-track -c <branch> origin/main`), and push a new branch
+  with an explicit refspec, `git push -u origin <branch>:refs/heads/<branch>`.
+  A branch tracking `main` turns every tool's "push" or "sync" into a push
+  to `main`. Branch protection on `main` (require a PR) would have stopped
+  this outright and is worth turning on.
