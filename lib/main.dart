@@ -45,7 +45,9 @@ import 'services/impl/windows_package_service.dart';
 import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
 import 'services/obsidian_service.dart';
+import 'services/packaged_app_data.dart';
 import 'services/push_notification_service.dart';
+import 'services/reinstall_keychain_reset.dart';
 import 'services/security_service.dart';
 import 'services/settings_service.dart';
 import 'services/single_instance.dart';
@@ -247,7 +249,12 @@ Future<void> _writePendingCopy(ClipboardItem item) async {
 
 /// Everything runs inside crash reporting, startup included, so an error that
 /// stops the app coming up is reported too.
-Future<void> main(List<String> args) {
+Future<void> main(List<String> args) async {
+  // First of all, before Sentry opens its crash database or anything opens
+  // a file: a Store install keeps its data in its own package folders, which
+  // Windows deletes with it. A no-op everywhere else. See PackagedAppData.
+  await PackagedAppData.prepare();
+
   // One instance, so the startup steps below can report a failure they
   // recovered from through the same Sentry client that wraps the app.
   final crashReporting = SentryCrashReportingService();
@@ -259,6 +266,10 @@ Future<void> _appMain(
   ICrashReportingService crashReporting,
 ) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Before anything reads the Keychain, or writes a preference: a fresh
+  // install is recognised by having none yet.
+  if (Platform.isIOS) await clearKeychainLeftByEarlierInstall();
 
   // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
   // an app that scrolls through photos. This one shows small history

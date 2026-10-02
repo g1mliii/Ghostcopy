@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:sentry_flutter/sentry_flutter.dart';
 
 import '../crash_reporting_service.dart';
+import '../packaged_app_data.dart';
 
 /// The GhostCopy Sentry project (spiderweb/flutter). A DSN only lets a client
 /// submit events - it grants no read access - so, like the Supabase
@@ -109,19 +110,21 @@ void configureCrashReporting(SentryFlutterOptions options) {
 /// repository root is what makes it look fine: the folder appears next to the
 /// source and everything works.
 ///
-/// `%LOCALAPPDATA%` is the right home on both, and needs no packaged special
-/// case. Measured by sideloading the package on 2026-09-25: a full-trust MSIX
-/// does NOT redirect writes under it into the package container - the app
-/// wrote its database straight to the real path, and the container's
-/// `LocalCache` stayed empty. The packaged and unpackaged builds therefore
-/// share this directory, which is harmless here (sentry-native namespaces its
-/// own runs) but is not something to rely on for anything else.
+/// `%LOCALAPPDATA%` is the right home for an unpackaged build. A Store
+/// install uses its package's LocalCache instead: measured by sideloading on
+/// 2026-09-25, a full-trust MSIX does NOT redirect writes under
+/// `%LOCALAPPDATA%` into the package, so the database landed in the real
+/// folder - where uninstalling left it. See PackagedAppData.
 ///
 /// Returns null on platforms that do not use sentry-native (iOS, Android,
 /// macOS have their own), and on a Windows session with no LOCALAPPDATA, where
 /// the default is no worse than a path built from nothing.
 String? _nativeDatabasePath() {
   if (!Platform.isWindows && !Platform.isLinux) return null;
+
+  // A Store install keeps it in the package, which Windows deletes with it.
+  final packaged = PackagedAppData.current;
+  if (packaged != null) return path.join(packaged.localCache, 'sentry-native');
 
   final home = Platform.environment['HOME'];
   final root = Platform.isWindows
