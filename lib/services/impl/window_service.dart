@@ -90,6 +90,11 @@ class WindowService implements IWindowService {
   /// said. Kept so [showSpotlight] can put it back after the tray menu.
   bool _pinned = false;
 
+  /// Topmost is wanted by the tray menu and by a pin; derived from both
+  /// rather than set by each, so neither has to undo the other.
+  Future<void> _applyTopmost() =>
+      windowManager.setAlwaysOnTop(_framelessForTrayMenu || _pinned);
+
   /// Where a pinned Spotlight was when it last left the screen, so it comes
   /// back there rather than recentred. Null while unpinned.
   Offset? _pinnedPosition;
@@ -101,7 +106,7 @@ class WindowService implements IWindowService {
   Future<void> setFramelessForTrayMenu() async {
     // The menu is about to move this window to the corner; remember where a
     // pinned Spotlight was first. Hidden and resized by now, not yet moved.
-    if (_pinned && _showingSpotlight) await _rememberPinnedPosition();
+    await _rememberPinnedPosition();
     _framelessForTrayMenu = true;
     await windowManager.setAsFrameless();
     // Topmost, or the menu loses the z-order fight it is guaranteed to have.
@@ -113,7 +118,7 @@ class WindowService implements IWindowService {
     // from and was invisible. Other tray apps look "detached" in the same way;
     // the difference is that theirs draw on top. Cleared in showSpotlight, so
     // the Spotlight itself is unaffected.
-    await windowManager.setAlwaysOnTop(true);
+    await _applyTopmost();
   }
 
   @override
@@ -122,17 +127,22 @@ class WindowService implements IWindowService {
       return;
     }
 
-    // Exit Tray Mode BEFORE showing window to resume UI animations
-    // Note: Only UI resources (AnimationControllers, etc.) are paused/resumed
-    // Core services (Realtime stream, hotkeys) run 24/7
     // A pinned window already on screen only needs bringing forward. The
     // rest of this hides, resizes and recentres it: a blink, and the place
-    // it was dragged to lost.
+    // it was dragged to lost. Asked of the platform too, because the tray
+    // menu hides the window without going through hideSpotlight.
     if (_pinned && _showingSpotlight && await windowManager.isVisible()) {
       await windowManager.focus();
       return;
     }
 
+    // Started now, needed after the resize: it depends on none of what
+    // comes between, and enumerating displays is not quick.
+    final pinnedPosition = _onScreen(_pinnedPosition);
+
+    // Exit Tray Mode BEFORE showing window to resume UI animations
+    // Note: Only UI resources (AnimationControllers, etc.) are paused/resumed
+    // Core services (Realtime stream, hotkeys) run 24/7
     _lifecycleController?.exitTrayMode();
 
     // Set background color FIRST before any visibility changes
@@ -157,19 +167,17 @@ class WindowService implements IWindowService {
         TitleBarStyle.hidden,
         windowButtonVisibility: false,
       );
-      // The menu needed to be topmost; the Spotlight does not, and leaving it
-      // set would pin the whole app over everything else for the rest of the
-      // session. Same gate, same reason: this is where the tray menu's window
-      // changes are undone.
-      await windowManager.setAlwaysOnTop(false);
+      // The menu needed to be topmost; an unpinned Spotlight does not, and
+      // leaving it set would pin the whole app over everything else for the
+      // rest of the session. Same gate, same reason: this is where the tray
+      // menu's window changes are undone.
+      await _applyTopmost();
     }
-    // Pinned means topmost; the tray menu's undo above just cleared it.
-    if (_pinned) await windowManager.setAlwaysOnTop(true);
 
     // Set to Spotlight size and position (do this while hidden). A pinned
     // window goes back where it was, if that is still on a display.
     await windowManager.setSize(const Size(_windowWidth, _windowHeight));
-    final position = _pinned ? await _onScreen(_pinnedPosition) : null;
+    final position = await pinnedPosition;
     if (position != null) {
       await windowManager.setPosition(position);
     } else {
@@ -188,10 +196,7 @@ class WindowService implements IWindowService {
     _pinned = pinned;
     if (!pinned) _pinnedPosition = null;
     if (!_isDesktop()) return;
-    // The tray menu has the window and needs it topmost; showSpotlight
-    // applies the pin when the Spotlight comes back.
-    if (_framelessForTrayMenu) return;
-    await windowManager.setAlwaysOnTop(pinned);
+    await _applyTopmost();
   }
 
   @override
@@ -199,8 +204,9 @@ class WindowService implements IWindowService {
     if (!_isDesktop()) return;
 
     _hideStartedAt = DateTime.now();
-    if (_pinned && _showingSpotlight) await _rememberPinnedPosition();
-    await windowManager.hide();
+    // Together: a hidden window keeps its position, and the hide should not
+    // wait on reading it.
+    await Future.wait([windowManager.hide(), _rememberPinnedPosition()]);
     debugPrint('[WindowService] Hiding spotlight window');
     _isVisible = false;
 
@@ -210,7 +216,11 @@ class WindowService implements IWindowService {
     _lifecycleController?.enterTrayMode();
   }
 
+  /// Note where a pinned Spotlight is, while it still has the Spotlight's
+  /// geometry. Checked before the first await, so callers can start it
+  /// alongside whatever takes the window off screen.
   Future<void> _rememberPinnedPosition() async {
+    if (!_pinned || !_showingSpotlight) return;
     try {
       _pinnedPosition = await windowManager.getPosition();
     } on Object catch (e) {

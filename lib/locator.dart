@@ -19,28 +19,19 @@ final GetIt locator = GetIt.instance;
 void setupLocator() {
   // SpotlightViewModel is a lazy singleton to preserve state across
   // desktop window hide/show cycles.
-  locator.registerLazySingleton(
-    () => SpotlightViewModel(
+  locator.registerLazySingleton(() {
+    final gameMode = locator.maybeGet<IGameModeService>();
+    return SpotlightViewModel(
       authService: locator<IAuthService>(),
       clipboardRepository: locator<IClipboardRepository>(),
       clipboardSyncService: locator<IClipboardSyncService>(),
       transformerService: locator<ITransformerService>(),
       notificationService: locator<INotificationService>(),
-      accountPromptStore: locator.isRegistered<AccountPromptStore>()
-          ? locator<AccountPromptStore>()
-          : null,
-      isGameModeActive: locator.isRegistered<IGameModeService>()
-          ? () => locator<IGameModeService>().isActive
-          : null,
-      gameModeChanges: locator.isRegistered<IGameModeService>()
-          ? locator<IGameModeService>().isActiveStream
-          : null,
-      settingsService: locator.isRegistered<ISettingsService>()
-          ? locator<ISettingsService>()
-          : null,
-      windowService: locator.isRegistered<IWindowService>()
-          ? locator<IWindowService>()
-          : null,
-    ),
-  );
+      accountPromptStore: locator.maybeGet<AccountPromptStore>(),
+      isGameModeActive: gameMode == null ? null : () => gameMode.isActive,
+      gameModeChanges: gameMode?.isActiveStream,
+      settingsService: locator.maybeGet<ISettingsService>(),
+      windowService: locator.maybeGet<IWindowService>(),
+    );
+  });
 }

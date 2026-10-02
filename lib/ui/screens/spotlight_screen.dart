@@ -602,7 +602,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
         // Close window after brief delay - unless it is pinned, and staying
         // up for the next one is the point.
-        if (_viewModel.keepsOpen) return;
         await Future<void>.delayed(const Duration(milliseconds: 500));
         if (mounted && !_viewModel.keepsOpen) {
           await _windowService.hideSpotlight();
@@ -2004,19 +2003,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   Future<void> _handleHistoryItemCopy(ClipboardItem item) async {
     // Pinned to keep history in view: the copy's toast is the feedback, and
     // the window and panel stay where they are.
-    if (_viewModel.keepsOpen) {
-      await _viewModel.handleHistoryItemCopy(item);
-      return;
-    }
+    final hide = !_viewModel.keepsOpen;
 
     // 1. Instant Feedback: Close panel and hide window immediately
     // We don't wait for the animation or the copy operation
-    if (mounted) {
-      setState(() => _activePanel = SpotlightPanel.none);
+    if (hide) {
+      if (mounted) setState(() => _activePanel = SpotlightPanel.none);
+      // Hide window immediately (Optimistic UI)
+      unawaited(_windowService.hideSpotlight());
     }
-
-    // Hide window immediately (Optimistic UI)
-    unawaited(_windowService.hideSpotlight());
 
     // 2. Perform copy in background
     // We act as if it succeeded immediately to the user
@@ -2028,7 +2023,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
 
     // Reset panel state for next time
-    if (mounted) {
+    if (hide && mounted) {
       unawaited(_historySlideController.reverse());
     }
   }

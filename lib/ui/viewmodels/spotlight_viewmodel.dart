@@ -150,9 +150,9 @@ class SpotlightViewModel extends ChangeNotifier {
 
   Future<void>? _pinLoad;
 
-  /// Bumped by every pin and unpin, so a saved value that arrives after one
-  /// does not undo it.
-  int _pinRevision = 0;
+  /// Set by a pin or unpin, so a saved value that arrives after one does not
+  /// undo it.
+  bool _pinChosenThisRun = false;
 
   /// Read the saved pin, once per run: on Windows the screen remounts behind
   /// every tray menu, and reading again there would undo a pin that could not
@@ -162,10 +162,9 @@ class SpotlightViewModel extends ChangeNotifier {
   Future<void> _loadPinned() async {
     final settings = _settingsService;
     if (settings == null) return;
-    final revision = _pinRevision;
     try {
       final pinned = await settings.getSpotlightPinned();
-      if (revision != _pinRevision || pinned == _isPinned) return;
+      if (_pinChosenThisRun || pinned == _isPinned) return;
       _isPinned = pinned;
       notifyListeners();
       await _applyPin();
@@ -180,7 +179,7 @@ class SpotlightViewModel extends ChangeNotifier {
   Future<void> setPinned({required bool pinned}) async {
     if (pinned == _isPinned) return;
     _isPinned = pinned;
-    _pinRevision++;
+    _pinChosenThisRun = true;
     notifyListeners();
     await _applyPin();
     try {
