@@ -1178,7 +1178,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       SpotlightPin.open => (
         Icons.push_pin,
         null,
-        'Pinned: stays open, other windows can cover it.\n'
+        'Pinned: stays open like a normal window - '
+            '${Platform.isMacOS ? 'Cmd-Tab' : 'Alt-Tab'} back to it.\n'
             'Click to keep it on top',
       ),
       SpotlightPin.onTop => (

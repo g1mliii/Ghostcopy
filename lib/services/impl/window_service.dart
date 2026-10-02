@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../ui/theme/colors.dart';
@@ -109,6 +110,46 @@ class WindowService implements IWindowService {
   Future<void> _applyTopmost() =>
       windowManager.setAlwaysOnTop(_framelessForTrayMenu || _onTop);
 
+  /// Whether the app is in the app switcher right now - Cmd-Tab and the Dock
+  /// on macOS, Alt-Tab and the taskbar on Windows - as far as the platform
+  /// has confirmed. It starts out of both (LSUIElement, and skipTaskbar in
+  /// [initialize]).
+  bool _inAppSwitcher = false;
+
+  /// Updates run one at a time, each reading the state when it runs: a show
+  /// followed at once by a hide must not commit the show's answer last.
+  Future<void> _presenceUpdates = Future<void>.value();
+
+  /// An ordinary pin makes the Spotlight a normal window, and a normal window
+  /// is one you can Cmd-Tab or Alt-Tab back to once another app covers it.
+  /// Hidden, lent to the tray menu, unpinned or pinned on top (which cannot
+  /// be covered), it is the tray utility again, with no Dock icon or taskbar
+  /// button standing for nothing.
+  ///
+  /// macOS goes through AppPresence (MainFlutterWindow.swift), which owns
+  /// the activation policy and its quirks; Windows uses window_manager's
+  /// setSkipTaskbar, the taskbar button. The state is cached only once the
+  /// platform has taken it, so a failure is retried on the next change.
+  Future<void> _applyAppPresence() =>
+      _presenceUpdates = _presenceUpdates.then((_) async {
+        final wanted = _pinned && !_onTop && _showingSpotlight;
+        if (wanted == _inAppSwitcher) return;
+        try {
+          if (Platform.isMacOS) {
+            await _appPresence.invokeMethod<void>('setInAppSwitcher', wanted);
+          } else {
+            await windowManager.setSkipTaskbar(!wanted);
+          }
+          _inAppSwitcher = wanted;
+        } on Exception catch (e) {
+          debugPrint('[WindowService] Could not change app switcher: $e');
+        }
+      });
+
+  static const MethodChannel _appPresence = MethodChannel(
+    'com.ghostcopy/app_presence',
+  );
+
   /// Where a pinned Spotlight was when it last left the screen or grew for a
   /// dialog, so it comes back there rather than recentred. Null while
   /// unpinned.
@@ -123,6 +164,7 @@ class WindowService implements IWindowService {
     // pinned Spotlight was first. Hidden and resized by now, not yet moved.
     await _rememberPinnedPosition();
     _framelessForTrayMenu = true;
+    await _applyAppPresence();
     await windowManager.setAsFrameless();
     // Topmost, or the menu loses the z-order fight it is guaranteed to have.
     //
@@ -147,7 +189,11 @@ class WindowService implements IWindowService {
     // it was dragged to lost. Asked of the platform too, because the tray
     // menu hides the window without going through hideSpotlight.
     if (_pinned && _showingSpotlight && await windowManager.isVisible()) {
+      // show() activates the app over others; focus() only asks, which
+      // macOS may refuse for a window another app is covering.
+      await windowManager.show();
       await windowManager.focus();
+      await _applyAppPresence();
       return;
     }
 
@@ -198,6 +244,7 @@ class WindowService implements IWindowService {
     await windowManager.show();
     await windowManager.focus();
     _isVisible = true;
+    await _applyAppPresence();
     debugPrint('[WindowService] Spotlight shown');
   }
 
@@ -207,7 +254,7 @@ class WindowService implements IWindowService {
     _onTop = pinned && onTop;
     if (!pinned) _pinnedPosition = null;
     if (!_isDesktop()) return;
-    await _applyTopmost();
+    await Future.wait([_applyTopmost(), _applyAppPresence()]);
   }
 
   @override
@@ -225,6 +272,7 @@ class WindowService implements IWindowService {
     // Note: Only pauses UI-related resources (AnimationControllers, etc.)
     // Core services continue running: Realtime stream, hotkeys, tray
     _lifecycleController?.enterTrayMode();
+    await _applyAppPresence();
   }
 
   /// Note where a pinned Spotlight is, while it still has the Spotlight's
