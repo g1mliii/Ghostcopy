@@ -522,18 +522,18 @@ class SpotlightViewModel extends ChangeNotifier {
       _resetComposer();
       _markEdited();
       notifyListeners();
-      // Expiry is the documented end of a draft; a file that vanished is
-      // not, and the clipboard taking its place unannounced reads as the
-      // app having lost it.
+      // Expiry is the documented end of a draft; a file that cannot be
+      // restored is not, and the clipboard taking its place unannounced
+      // reads as the app having lost it.
       if (lostFile != null) {
-        _setError('$lostFile is no longer there - it was moved or deleted');
+        _setError('$lostFile is no longer available to send');
       }
     }
     await populateFromClipboard();
   }
 
-  /// Read the kept file back from disk. Null when it is gone, now over the
-  /// limit, or unreadable - the draft is then dropped rather than
+  /// Read the kept file back from disk. Null when it is gone, empty, now over
+  /// the limit, or unreadable - the draft is then dropped rather than
   /// half-restored.
   Future<ClipboardContent?> _readDraftFile() async {
     final kept = _draftFile!;
@@ -548,6 +548,10 @@ class SpotlightViewModel extends ChangeNotifier {
       // Reads at most length bytes, so a file growing meanwhile cannot take
       // this past the limit.
       final bytes = await handle.read(length);
+      // An empty payload has no file identity when sending, so restoring it
+      // would send the retained preview as text. Check after the read too:
+      // another process can truncate the file after the size check.
+      if (bytes.isEmpty) return null;
       // The type staging detected, not detected again: the send detects
       // from the bytes anyway, and this only has to put back what was there.
       return ClipboardContent.file(bytes, kept.name, kept.mimeType);

@@ -1031,6 +1031,32 @@ void main() {
       },
     );
 
+    draftTest(
+      'a kept file that becomes empty cannot send its preview',
+      () async {
+        clipboardHolds('');
+        when(() => authService.currentUserId).thenReturn('user-123');
+        when(
+          () => clipboardRepository.insert(any()),
+        ).thenAnswer((_) async => _clipboardItem(id: '1', content: 'preview'));
+        final file = stage([1, 2, 3]);
+
+        composer.onSpotlightHidden();
+        await file.writeAsBytes([]);
+        await reopen();
+        await composer.handleSend();
+
+        verifyNever(() => clipboardRepository.insert(any()));
+        verifyNever(anyFileInsert);
+        expect(clipboardSyncService.lastManualSendContent, isNull);
+        expect(composer.hasDraft, isFalse);
+        expect(composer.draftRestored, isFalse);
+        expect(composer.clipboardContent, isNull);
+        expect(composer.content, isEmpty);
+        expect(composer.errorMessage, contains('notes.txt'));
+      },
+    );
+
     draftTest('a draft expires after ten minutes in the tray', () async {
       clipboardHolds('from clipboard');
       composer
