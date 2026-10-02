@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
+import '../../models/spotlight_pin.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/account_prompt_store.dart';
 import '../../services/auth_service.dart';
@@ -57,7 +58,7 @@ class SpotlightViewModel extends ChangeNotifier {
        _clipboardService = clipboardService ?? ClipboardService.instance {
     // Game Mode switching on lifts a pin off the window, and off back on.
     _gameModeSubscription = gameModeChanges?.listen((_) {
-      if (_isPinned) unawaited(_applyPin());
+      if (isPinned) unawaited(_applyPin());
     });
   }
 
@@ -132,21 +133,26 @@ class SpotlightViewModel extends ChangeNotifier {
 
   // ========== PIN ==========
   //
-  // Pinned, the Spotlight behaves like an ordinary window: it stays open and
-  // on top when focus goes elsewhere, for copying something in another app
-  // and coming back to send it, dragging a file in, or keeping history in
-  // view. Unpinned it hides on blur, as Spotlight-style launchers do.
+  // Pinned, the Spotlight stays open when focus goes elsewhere, for copying
+  // something in another app and coming back to send it, dragging a file in,
+  // or keeping history in view. Unpinned it hides on blur, as Spotlight-style
+  // launchers do. Two pins (see SpotlightPin): one that behaves like an
+  // ordinary window, and one that also stays above every other window.
   //
   // This is the one place the pin lives. The window service only holds what
   // it was last told, by [_applyPin].
 
-  bool _isPinned = false;
-  bool get isPinned => _isPinned;
+  SpotlightPin _pin = SpotlightPin.off;
+  SpotlightPin get pin => _pin;
+  bool get isPinned => _pin != SpotlightPin.off;
 
   /// Whether the window stays up when it loses focus. Game Mode overrides
   /// the pin: it exists so nothing sits over a fullscreen game, and a pin
   /// set days ago and forgotten would do exactly that.
-  bool get keepsOpen => _isPinned && !(_isGameModeActive?.call() ?? false);
+  bool get keepsOpen => isPinned && !(_isGameModeActive?.call() ?? false);
+
+  /// Whether it also stays above other windows - only the on-top pin.
+  bool get staysOnTop => keepsOpen && _pin == SpotlightPin.onTop;
 
   Future<void>? _pinLoad;
 
@@ -163,9 +169,9 @@ class SpotlightViewModel extends ChangeNotifier {
     final settings = _settingsService;
     if (settings == null) return;
     try {
-      final pinned = await settings.getSpotlightPinned();
-      if (_pinChosenThisRun || pinned == _isPinned) return;
-      _isPinned = pinned;
+      final pin = await settings.getSpotlightPin();
+      if (_pinChosenThisRun || pin == _pin) return;
+      _pin = pin;
       notifyListeners();
       await _applyPin();
     } on Exception catch (e) {
@@ -173,30 +179,33 @@ class SpotlightViewModel extends ChangeNotifier {
     }
   }
 
-  /// Pin or unpin, and remember it. The window changes first, so a save that
+  /// The pin button: off, then pinned, then pinned on top, then off.
+  Future<void> cyclePin() => setPin(_pin.next);
+
+  /// Set the pin, and remember it. The window changes first, so a save that
   /// fails or throws cannot leave it disagreeing with the button; the pin
   /// then just does not survive a restart.
-  Future<void> setPinned({required bool pinned}) async {
-    if (pinned == _isPinned) return;
-    _isPinned = pinned;
+  Future<void> setPin(SpotlightPin pin) async {
+    if (pin == _pin) return;
+    _pin = pin;
     _pinChosenThisRun = true;
     notifyListeners();
     await _applyPin();
     try {
-      final saved =
-          await _settingsService?.setSpotlightPinned(pinned: pinned) ?? true;
+      final saved = await _settingsService?.setSpotlightPin(pin) ?? true;
       if (!saved) debugPrint('[SpotlightVM] The pin was not saved');
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Could not save the pin: $e');
     }
   }
 
-  /// Topmost follows [keepsOpen], so it always agrees with the blur. Read
-  /// before the await: calls reach the window in order, so the last one
-  /// carries the latest state however fast the button is clicked.
+  /// The window follows [keepsOpen] and [staysOnTop], so it always agrees
+  /// with the blur. Read before the await: calls reach the window in order,
+  /// so the last one carries the latest state however fast the button is
+  /// clicked.
   Future<void> _applyPin() async {
     try {
-      await _windowService?.setPinned(pinned: keepsOpen);
+      await _windowService?.setPinned(pinned: keepsOpen, onTop: staysOnTop);
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Could not apply the pin to the window: $e');
     }

@@ -1,3 +1,4 @@
+import '../models/spotlight_pin.dart';
 import 'hotkey_service.dart';
 
 export 'impl/settings_service.dart';
@@ -117,13 +118,13 @@ abstract class ISettingsService {
 
   // ========== SPOTLIGHT (DESKTOP) ==========
 
-  /// Whether the Spotlight is pinned: kept open and above other windows
-  /// rather than hiding when it loses focus. Desktop only. Defaults to off.
-  Future<bool> getSpotlightPinned();
+  /// How the Spotlight is pinned - off, open, or open on top. Desktop only.
+  /// Defaults to off.
+  Future<SpotlightPin> getSpotlightPin();
 
   /// Persist the pin, so a Spotlight pinned today is pinned tomorrow.
   /// Returns false when the write did not persist.
-  Future<bool> setSpotlightPinned({required bool pinned});
+  Future<bool> setSpotlightPin(SpotlightPin pin);
 
   // ========== FEATURE FLAGS ==========
 
