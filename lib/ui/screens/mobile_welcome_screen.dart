@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -50,6 +49,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   final TextEditingController _passwordController = TextEditingController();
   bool _isLogin = true; // true = login, false = signup
   bool _authLoading = false;
+
+  /// A provider sign-in is out in the browser - Apple on Android - and may
+  /// never come back (closed tab, declined consent), so the form offers a
+  /// way out. The desktop auth panel does the same.
+  bool _awaitingBrowser = false;
   String? _authError;
 
   /// Shown after an email sign-up that is waiting on its confirmation link.
@@ -139,6 +143,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     _scannerController?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_authSub?.cancel());
+    // Leaving with the browser still out: nothing is left to finish it.
+    if (_awaitingBrowser) locator<IAuthService>().cancelBrowserSignIn();
     _emailController.dispose();
     _passwordController.dispose();
     // NOTE: ClipboardRepository is a singleton - do NOT dispose it here
@@ -458,18 +464,16 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           // Divider
           _buildDivider(),
           const SizedBox(height: 16),
-          // Apple is iOS-only on mobile for now. On Android it would be the
-          // browser flow, which AuthService now waits on until the callback
-          // lands, but that has not been tested on a device yet and this
-          // screen has no Cancel for it. See tasks/todo.md.
+          // Apple is native on iOS and the browser flow on Android, which
+          // AuthService waits on until the callback lands.
           RepaintBoundary(
             child: SocialSignInButtons(
               enabled: !_authLoading,
-              showApple: Platform.isIOS,
               onApple: _handleAppleAuth,
               onGoogle: _handleGoogleAuth,
             ),
           ),
+          if (_awaitingBrowser) _buildAwaitingBrowser(),
         ],
       ),
     );
@@ -1072,10 +1076,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
           return;
         }
 
-        success = await signIn();
+        success = await _awaitProvider(signIn());
       } else {
         // Sign Up mode: upgrade the anonymous user, keeping user_id and clips
-        success = await link();
+        success = await _awaitProvider(link());
       }
 
       if (mounted) {
@@ -1125,6 +1129,45 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         });
       }
     }
+  }
+
+  /// Wait for a provider sign-in, showing the Cancel row while it is out in
+  /// the browser. The flow has registered its wait by the time [pending] is
+  /// handed over, so checking straight away is enough.
+  Future<bool> _awaitProvider(Future<bool> pending) async {
+    if (locator<IAuthService>().isAwaitingBrowserSignIn && mounted) {
+      setState(() => _awaitingBrowser = true);
+    }
+    try {
+      return await pending;
+    } finally {
+      if (mounted && _awaitingBrowser) {
+        setState(() => _awaitingBrowser = false);
+      }
+    }
+  }
+
+  Widget _buildAwaitingBrowser() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              'Finish signing in in your browser.',
+              style: GhostTypography.caption.copyWith(
+                color: GhostColors.textSecondary,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: locator<IAuthService>().cancelBrowserSignIn,
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _handleForgotPassword() async {

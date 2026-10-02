@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
@@ -11,7 +13,9 @@ import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
+import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
+import 'package:ghostcopy/services/window_service.dart';
 import 'package:ghostcopy/ui/viewmodels/spotlight_viewmodel.dart';
 import 'package:ghostcopy/utils/network_errors.dart';
 import 'package:mocktail/mocktail.dart';
@@ -34,6 +38,10 @@ class _MockClipboardRepository extends Mock implements IClipboardRepository {}
 class _MockTransformerService extends Mock implements ITransformerService {}
 
 class _MockClipboardService extends Mock implements IClipboardService {}
+
+class _MockSettingsService extends Mock implements ISettingsService {}
+
+class _MockWindowService extends Mock implements IWindowService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
@@ -903,6 +911,766 @@ void main() {
       await viewModel.onWindowFocused();
       expect(viewModel.showAccountOffer, isFalse);
       expect(viewModel.showGuestBadge, isFalse);
+    });
+  });
+
+  group('pin', () {
+    late _MockSettingsService settings;
+    late _MockWindowService window;
+    late StreamController<bool> gameModeChanges;
+    late bool gameMode;
+    late SpotlightViewModel pinning;
+
+    setUp(() {
+      settings = _MockSettingsService();
+      window = _MockWindowService();
+      gameModeChanges = StreamController<bool>.broadcast();
+      addTearDown(gameModeChanges.close);
+      gameMode = false;
+      when(
+        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenAnswer((_) async => true);
+      when(
+        () => window.setPinned(pinned: any(named: 'pinned')),
+      ).thenAnswer((_) async {});
+      pinning = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        isGameModeActive: () => gameMode,
+        gameModeChanges: gameModeChanges.stream,
+        settingsService: settings,
+        windowService: window,
+      );
+      addTearDown(pinning.dispose);
+    });
+
+    test('starts unpinned, and a saved pin comes back on the window', () async {
+      when(() => settings.getSpotlightPinned()).thenAnswer((_) async => true);
+      expect(pinning.isPinned, isFalse);
+
+      await pinning.loadPinned();
+
+      expect(pinning.isPinned, isTrue);
+      expect(pinning.keepsOpen, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+    });
+
+    test('pinning and unpinning reach the window and are saved', () async {
+      await pinning.setPinned(pinned: true);
+      expect(pinning.isPinned, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+      verify(() => settings.setSpotlightPinned(pinned: true)).called(1);
+
+      await pinning.setPinned(pinned: false);
+      verify(() => window.setPinned(pinned: false)).called(1);
+      verify(() => settings.setSpotlightPinned(pinned: false)).called(1);
+    });
+
+    test(
+      'a pin that cannot be saved still pins the window for this run',
+      () async {
+        when(
+          () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+        ).thenThrow(Exception('prefs unavailable'));
+
+        await pinning.setPinned(pinned: true);
+
+        expect(pinning.isPinned, isTrue);
+        verify(() => window.setPinned(pinned: true)).called(1);
+      },
+    );
+
+    test('a write that does not persist still pins for this run', () async {
+      when(
+        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenAnswer((_) async => false);
+
+      await pinning.setPinned(pinned: true);
+
+      expect(pinning.isPinned, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+    });
+
+    test('an error saving still leaves the window pinned', () async {
+      when(
+        () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+      ).thenThrow(StateError('not initialized'));
+
+      await expectLater(
+        pinning.setPinned(pinned: true),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(pinning.isPinned, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+    });
+
+    test('a saved pin that cannot be read leaves it unpinned', () async {
+      when(
+        () => settings.getSpotlightPinned(),
+      ).thenThrow(Exception('prefs unavailable'));
+
+      await pinning.loadPinned();
+
+      expect(pinning.isPinned, isFalse);
+      verifyNever(() => window.setPinned(pinned: any(named: 'pinned')));
+    });
+
+    test(
+      'the pin is read once, so a remount cannot undo an unsaved pin',
+      () async {
+        when(
+          () => settings.getSpotlightPinned(),
+        ).thenAnswer((_) async => false);
+        await pinning.loadPinned();
+        when(
+          () => settings.setSpotlightPinned(pinned: any(named: 'pinned')),
+        ).thenAnswer((_) async => false);
+        await pinning.setPinned(pinned: true);
+
+        // The screen binding again, behind the Windows tray menu.
+        await pinning.loadPinned();
+
+        expect(pinning.isPinned, isTrue);
+        verify(() => settings.getSpotlightPinned()).called(1);
+      },
+    );
+
+    test('a pin made while the saved one is read is not undone', () async {
+      final read = Completer<bool>();
+      when(() => settings.getSpotlightPinned()).thenAnswer((_) => read.future);
+      final loading = pinning.loadPinned();
+
+      await pinning.setPinned(pinned: true);
+      read.complete(false);
+      await loading;
+
+      expect(pinning.isPinned, isTrue);
+    });
+
+    test('Game Mode lifts the pin off the window, and puts it back', () async {
+      await pinning.setPinned(pinned: true);
+      clearInteractions(window);
+
+      gameMode = true;
+      gameModeChanges.add(true);
+      await pumpEventQueue();
+      expect(pinning.isPinned, isTrue);
+      expect(pinning.keepsOpen, isFalse);
+      verify(() => window.setPinned(pinned: false)).called(1);
+
+      gameMode = false;
+      gameModeChanges.add(false);
+      await pumpEventQueue();
+      expect(pinning.keepsOpen, isTrue);
+      verify(() => window.setPinned(pinned: true)).called(1);
+    });
+
+    test('pinning during Game Mode leaves the window unpinned', () async {
+      gameMode = true;
+
+      await pinning.setPinned(pinned: true);
+
+      expect(pinning.isPinned, isTrue);
+      expect(pinning.keepsOpen, isFalse);
+      verify(() => window.setPinned(pinned: false)).called(1);
+    });
+
+    test('Game Mode changes nothing while unpinned', () async {
+      gameMode = true;
+      gameModeChanges.add(true);
+      await pumpEventQueue();
+
+      verifyNever(() => window.setPinned(pinned: any(named: 'pinned')));
+    });
+
+    test('works without settings or a window, for this run only', () async {
+      await viewModel.setPinned(pinned: true);
+      expect(viewModel.isPinned, isTrue);
+      await viewModel.loadPinned();
+      expect(viewModel.isPinned, isTrue);
+    });
+  });
+
+  group('drafts', () {
+    late _MockClipboardService clipboard;
+    late DateTime now;
+    late SpotlightViewModel composer;
+    late Directory tmp;
+
+    setUp(() {
+      clipboard = _MockClipboardService();
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      now = DateTime(2026, 10, 1, 9);
+      tmp = Directory.systemTemp.createTempSync('draft_test');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      composer = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        clipboardService: clipboard,
+      );
+      addTearDown(composer.dispose);
+    });
+
+    // Every draft test runs on a clock it can move.
+    void draftTest(String description, FutureOr<void> Function() body) =>
+        test(description, () => withClock(Clock(() => now), body));
+
+    Future<ClipboardItem> anyFileInsert() => clipboardRepository.insertFile(
+      userId: any(named: 'userId'),
+      deviceType: any(named: 'deviceType'),
+      deviceName: any(named: 'deviceName'),
+      fileBytes: any(named: 'fileBytes'),
+      mimeType: any(named: 'mimeType'),
+      contentType: any(named: 'contentType'),
+      originalFilename: any(named: 'originalFilename'),
+      targetDeviceTypes: any(named: 'targetDeviceTypes'),
+    );
+
+    void clipboardHolds(String text) => when(
+      () => clipboard.read(),
+    ).thenAnswer((_) async => ClipboardContent.text(text));
+
+    // An opening, in the order the screen runs it: the focus clears the
+    // hidden flag, then its post-frame callback fills the composer.
+    Future<void> reopen() {
+      unawaited(composer.onWindowFocused());
+      return composer.restoreOrPopulateComposer();
+    }
+
+    File stage(List<int> bytes) {
+      final file = File('${tmp.path}/notes.txt')..writeAsBytesSync(bytes);
+      composer.setFileContent(
+        ClipboardContent.file(Uint8List.fromList(bytes), 'notes.txt'),
+        'File ready to send: notes.txt',
+        sourcePath: file.path,
+      );
+      return file;
+    }
+
+    draftTest(
+      'auto-paste fills an empty composer, and a hide clears it',
+      () async {
+        clipboardHolds('from clipboard');
+        await reopen();
+        expect(composer.content, 'from clipboard');
+        expect(composer.hasDraft, isFalse);
+
+        composer.onSpotlightHidden();
+        expect(composer.content, isEmpty);
+      },
+    );
+
+    draftTest(
+      'typed text survives a hide and is not auto-pasted over',
+      () async {
+        clipboardHolds('from clipboard');
+        composer
+          ..updateContent('half a message')
+          ..onSpotlightHidden();
+        expect(composer.content, 'half a message');
+
+        await reopen();
+        expect(composer.content, 'half a message');
+        expect(composer.draftRestored, isTrue);
+        verifyNever(() => clipboard.read());
+      },
+    );
+
+    draftTest(
+      'a staged file keeps its path, not its bytes, while hidden',
+      () async {
+        clipboardHolds('from clipboard');
+        stage([1, 2, 3]);
+
+        composer.onSpotlightHidden();
+        expect(composer.clipboardContent, isNull);
+        expect(composer.content, 'File ready to send: notes.txt');
+
+        await reopen();
+        expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+        expect(composer.clipboardContent?.filename, 'notes.txt');
+      },
+    );
+
+    draftTest(
+      'a kept file that was deleted is dropped for auto-paste',
+      () async {
+        clipboardHolds('from clipboard');
+        stage([1, 2, 3]).deleteSync();
+
+        composer.onSpotlightHidden();
+        await reopen();
+
+        expect(composer.hasDraft, isFalse);
+        expect(composer.clipboardContent, isNull);
+        expect(composer.content, 'from clipboard');
+        // Not silently: the clipboard in its place reads as the app losing it.
+        expect(composer.errorMessage, contains('notes.txt'));
+      },
+    );
+
+    draftTest(
+      'a kept file that becomes empty cannot send its preview',
+      () async {
+        clipboardHolds('');
+        when(() => authService.currentUserId).thenReturn('user-123');
+        when(
+          () => clipboardRepository.insert(any()),
+        ).thenAnswer((_) async => _clipboardItem(id: '1', content: 'preview'));
+        final file = stage([1, 2, 3]);
+
+        composer.onSpotlightHidden();
+        await file.writeAsBytes([]);
+        await reopen();
+        await composer.handleSend();
+
+        verifyNever(() => clipboardRepository.insert(any()));
+        verifyNever(anyFileInsert);
+        expect(clipboardSyncService.lastManualSendContent, isNull);
+        expect(composer.hasDraft, isFalse);
+        expect(composer.draftRestored, isFalse);
+        expect(composer.clipboardContent, isNull);
+        expect(composer.content, isEmpty);
+        expect(composer.errorMessage, contains('notes.txt'));
+      },
+    );
+
+    draftTest('a draft expires after ten minutes in the tray', () async {
+      clipboardHolds('from clipboard');
+      composer
+        ..updateContent('half a message')
+        ..onSpotlightHidden();
+
+      now = now.add(SpotlightViewModel.draftLifetime);
+      await reopen();
+
+      expect(composer.hasDraft, isFalse);
+      expect(composer.content, 'from clipboard');
+      // Expiry is how a draft is meant to end; it is not an error.
+      expect(composer.errorMessage, isNull);
+    });
+
+    draftTest('an image with no file behind it is not kept', () {
+      composer
+        ..updateClipboardContent(
+          ClipboardContent.image(Uint8List.fromList([9, 9]), 'image/png'),
+        )
+        ..updateContent('caption')
+        ..onSpotlightHidden();
+
+      expect(composer.clipboardContent, isNull);
+      expect(composer.content, isEmpty);
+      expect(composer.hasDraft, isFalse);
+    });
+
+    draftTest('very long typed text is not kept', () {
+      composer
+        ..updateContent('x' * (SpotlightViewModel.maxKeptDraftChars + 1))
+        ..onSpotlightHidden();
+
+      expect(composer.content, isEmpty);
+      expect(composer.hasDraft, isFalse);
+    });
+
+    draftTest('focus without a hide leaves a draft alone', () async {
+      // Closing the file picker refocuses the window: it used to auto-paste
+      // over the file that had just been picked.
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+
+      await reopen();
+
+      expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+      verifyNever(() => clipboard.read());
+    });
+
+    draftTest('clicking back into a pinned window keeps typed text', () async {
+      // Pinned, the window never hides: the user types, copies something in
+      // another app, and clicks back in.
+      composer.updateContent('half a message');
+      clipboardHolds('copied elsewhere');
+
+      await reopen();
+
+      expect(composer.content, 'half a message');
+      verifyNever(() => clipboard.read());
+    });
+
+    draftTest(
+      'clicking back into a pinned window refreshes auto-paste',
+      () async {
+        clipboardHolds('first');
+        await reopen();
+        clipboardHolds('copied elsewhere');
+
+        await reopen();
+
+        expect(composer.content, 'copied elsewhere');
+      },
+    );
+
+    draftTest('Paste clipboard instead replaces the draft', () async {
+      clipboardHolds('from clipboard');
+      composer
+        ..updateContent('half a message')
+        ..onSpotlightHidden();
+      await reopen();
+
+      await composer.populateFromClipboard(force: true);
+
+      expect(composer.content, 'from clipboard');
+      expect(composer.hasDraft, isFalse);
+      expect(composer.draftRestored, isFalse);
+    });
+
+    draftTest('an empty clipboard does not replace the draft', () async {
+      clipboardHolds('');
+      composer.updateContent('half a message');
+
+      await composer.populateFromClipboard(force: true);
+
+      expect(composer.content, 'half a message');
+      expect(composer.hasDraft, isTrue);
+    });
+
+    draftTest('clearing the composer ends the draft', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+
+      composer.clearClipboardPayload();
+      expect(composer.hasDraft, isFalse);
+
+      await reopen();
+      expect(composer.content, 'from clipboard');
+    });
+
+    draftTest('nothing sends while a kept file is still being read', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+      composer.onSpotlightHidden();
+      expect(composer.isRestoringDraft, isTrue);
+
+      // Enter before the bytes are back would have sent the placeholder line.
+      await composer.handleSend();
+
+      verifyNever(() => clipboardRepository.insert(any()));
+      verifyNever(anyFileInsert);
+    });
+
+    draftTest(
+      'a file read that finishes after another hide is dropped',
+      () async {
+        clipboardHolds('from clipboard');
+        stage([1, 2, 3]);
+        composer.onSpotlightHidden();
+
+        final restoring = reopen();
+        composer.onSpotlightHidden();
+        await restoring;
+
+        expect(composer.clipboardContent, isNull);
+        expect(composer.hasDraft, isTrue);
+        // Still timed from the first hide, and still restorable later.
+        await reopen();
+        expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+      },
+    );
+
+    draftTest('a repeated hide does not renew the ten minutes', () async {
+      clipboardHolds('from clipboard');
+      composer
+        ..updateContent('half a message')
+        ..onSpotlightHidden();
+
+      now = now.add(SpotlightViewModel.draftLifetime);
+      // Windows remounting the screen behind the tray menu.
+      composer.onSpotlightHidden();
+      await reopen();
+
+      expect(composer.content, 'from clipboard');
+    });
+
+    draftTest('a forced paste gives way to what was typed during it', () async {
+      final read = Completer<ClipboardContent>();
+      when(() => clipboard.read()).thenAnswer((_) => read.future);
+      composer.updateContent('first');
+
+      final pasting = composer.populateFromClipboard(force: true);
+      composer.updateContent('typed meanwhile');
+      read.complete(ClipboardContent.text('from clipboard'));
+      await pasting;
+
+      expect(composer.content, 'typed meanwhile');
+      expect(composer.hasDraft, isTrue);
+    });
+
+    draftTest('an expired draft takes its previews with it', () async {
+      when(
+        () => clipboard.read(),
+      ).thenAnswer((_) async => ClipboardContent.text(''));
+      composer
+        ..updateContent('#ff0000')
+        ..onSpotlightHidden();
+
+      now = now.add(SpotlightViewModel.draftLifetime);
+      await reopen();
+      // Past the detection debounce: it was cancelled, not just pending.
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+
+      expect(composer.content, isEmpty);
+      expect(composer.detectedContentType, isNull);
+      expect(composer.transformationResult, isNull);
+    });
+
+    draftTest('typing during a file restore wins over the old file', () async {
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+      composer.onSpotlightHidden();
+
+      final restoring = reopen();
+      composer.updateContent('typed instead');
+      await restoring;
+
+      expect(composer.clipboardContent, isNull);
+      expect(composer.content, 'typed instead');
+      // A text draft now, so Send is not held waiting for a file.
+      expect(composer.isRestoringDraft, isFalse);
+      expect(composer.hasDraft, isTrue);
+    });
+
+    draftTest('a hide during a send records what was sent', () async {
+      final inserting = Completer<ClipboardItem>();
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) => inserting.future);
+      clipboardHolds('hello');
+      await reopen();
+
+      final sending = composer.handleSend();
+      composer.onSpotlightHidden();
+      inserting.complete(_clipboardItem(id: '1', content: 'hello'));
+      await sending;
+
+      // What stops auto-send from sending the unchanged clipboard again.
+      expect(clipboardSyncService.lastManualSendContent, 'hello');
+    });
+
+    draftTest('a send that finishes late leaves newer work alone', () async {
+      final inserting = Completer<ClipboardItem>();
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) => inserting.future);
+      composer.updateContent('first message');
+      var hidWindow = false;
+
+      final sending = composer.handleSend(
+        onSendSuccess: () => hidWindow = true,
+      );
+      composer.updateContent('second message');
+      inserting.complete(_clipboardItem(id: '1', content: 'first message'));
+      await sending;
+
+      expect(composer.content, 'second message');
+      expect(composer.hasDraft, isTrue);
+      expect(hidWindow, isFalse);
+    });
+
+    draftTest(
+      'a file staged after the hide is released like one before',
+      () async {
+        clipboardHolds('from clipboard');
+        composer.onSpotlightHidden();
+
+        stage([1, 2, 3]);
+
+        expect(composer.clipboardContent, isNull);
+        await reopen();
+        expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+      },
+    );
+
+    draftTest('a restored file keeps the name it was staged under', () async {
+      clipboardHolds('from clipboard');
+      // A picker cache copy: the path's name is not the file's.
+      final cached = File('${tmp.path}/cache-7f3a.tmp')
+        ..writeAsBytesSync([1, 2, 3]);
+      composer
+        ..setFileContent(
+          ClipboardContent.file(Uint8List.fromList([1, 2, 3]), 'Report.pdf'),
+          'File ready to send: Report.pdf',
+          sourcePath: cached.path,
+        )
+        ..onSpotlightHidden();
+
+      await reopen();
+
+      expect(composer.clipboardContent?.filename, 'Report.pdf');
+    });
+
+    draftTest('a restore queued before a hide does nothing after it', () async {
+      clipboardHolds('from clipboard');
+      composer.updateContent('half a message');
+      unawaited(composer.onWindowFocused());
+      // Escape before the focus's post-frame restore runs.
+      composer.onSpotlightHidden();
+
+      await composer.restoreOrPopulateComposer();
+      expect(composer.draftRestored, isFalse);
+      verifyNever(() => clipboard.read());
+
+      // The ten minutes were not reset by the restore that did not happen.
+      now = now.add(SpotlightViewModel.draftLifetime);
+      await reopen();
+      expect(composer.content, 'from clipboard');
+    });
+
+    draftTest('editing a restored draft takes the hint away', () async {
+      composer
+        ..updateContent('half a message')
+        ..onSpotlightHidden();
+      await reopen();
+      expect(composer.draftRestored, isTrue);
+
+      var notified = 0;
+      composer
+        ..addListener(() => notified++)
+        ..updateContent('half a message, finished');
+
+      expect(composer.draftRestored, isFalse);
+      expect(notified, 1);
+    });
+
+    draftTest('an edited HTML preview sends as the edited text', () async {
+      when(
+        () => clipboard.read(),
+      ).thenAnswer((_) async => ClipboardContent.html('<b>original</b>'));
+      await composer.populateFromClipboard();
+      expect(composer.clipboardContent?.hasHtml, isTrue);
+
+      composer.updateContent('edited');
+      expect(composer.clipboardContent, isNull);
+      expect(composer.hasDraft, isTrue);
+
+      composer.onSpotlightHidden();
+      await reopen();
+      expect(composer.content, 'edited');
+      expect(composer.clipboardContent, isNull);
+    });
+
+    draftTest('sending ends the draft', () async {
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(
+        () => clipboardRepository.insert(any()),
+      ).thenAnswer((_) async => _clipboardItem(id: '1', content: 'hi'));
+      composer.updateContent('hi');
+
+      await composer.handleSend();
+
+      expect(composer.hasDraft, isFalse);
+    });
+
+    draftTest('a send finishing during a file restore does not bring the file '
+        'back', () async {
+      final inserting = Completer<ClipboardItem>();
+      when(() => authService.currentUserId).thenReturn('user-123');
+      when(anyFileInsert).thenAnswer((_) => inserting.future);
+      clipboardHolds('from clipboard');
+      stage([1, 2, 3]);
+
+      // Send, click away during the upload, and come back: the reopening
+      // starts reading the kept file while the upload is still out.
+      final sending = composer.handleSend();
+      composer.onSpotlightHidden();
+      final restoring = reopen();
+      inserting.complete(_clipboardItem(id: '1', content: ''));
+      await sending;
+      await restoring;
+
+      expect(composer.clipboardContent, isNull);
+      expect(composer.content, isEmpty);
+      expect(composer.draftRestored, isFalse);
+    });
+
+    draftTest(
+      'a second focus for the same opening reads the file once',
+      () async {
+        clipboardHolds('from clipboard');
+        stage([1, 2, 3]);
+        composer.onSpotlightHidden();
+        var restored = 0;
+        composer.addListener(() {
+          if (composer.draftRestored) restored++;
+        });
+
+        // A remount's focus and showSpotlight's, both for one opening.
+        unawaited(composer.onWindowFocused());
+        final first = composer.restoreOrPopulateComposer();
+        final second = composer.restoreOrPopulateComposer();
+        await Future.wait([first, second]);
+
+        expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
+        expect(restored, 1);
+      },
+    );
+
+    draftTest(
+      'Paste clipboard instead takes the old preview with the draft',
+      () async {
+        when(() => transformerService.detectContentType('#ff0000')).thenAnswer(
+          (_) async => const ContentDetectionResult(
+            type: TransformerContentType.hexColor,
+          ),
+        );
+        when(() => clipboard.read()).thenAnswer(
+          (_) async =>
+              ClipboardContent.image(Uint8List.fromList([9, 9]), 'image/png'),
+        );
+        composer.updateContent('#ff0000');
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        expect(
+          composer.detectedContentType?.type,
+          TransformerContentType.hexColor,
+        );
+
+        await composer.populateFromClipboard(force: true);
+
+        expect(composer.clipboardContent?.hasImage, isTrue);
+        expect(composer.detectedContentType, isNull);
+      },
+    );
+
+    draftTest('a hide that releases nothing does not redraw', () async {
+      var notified = 0;
+      composer
+        ..addListener(() => notified++)
+        // Nothing in the composer, then a kept draft whose text stays put.
+        ..onSpotlightHidden()
+        ..updateContent('half a message');
+      notified = 0;
+      composer
+        ..onSpotlightHidden()
+        // Windows remounting the screen behind the tray menu.
+        ..onSpotlightHidden();
+      expect(notified, 0);
+
+      clipboardHolds('from clipboard');
+      composer.clearClipboardPayload();
+      await reopen();
+      notified = 0;
+      composer.onSpotlightHidden();
+      expect(notified, 1);
+      expect(composer.content, isEmpty);
     });
   });
 }

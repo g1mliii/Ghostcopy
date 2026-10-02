@@ -1360,19 +1360,24 @@ class _MyAppState extends State<MyApp> with WindowListener {
 
   Future<void> _openSettingsFromTray() async {
     _trayMenuLifecycle.close();
-    // Set flag to open settings
-    setState(() {
-      _openSettingsOnShow = true;
-      _showingTrayMenu = false;
-    });
+    setState(() => _showingTrayMenu = false);
 
     await _trayMenuOpening;
     if (!mounted) return;
     await renderTrayTransitionFrame();
     if (!mounted) return;
 
-    // Show spotlight
     await locator<IWindowService>().showSpotlight();
+    if (!mounted) return;
+
+    // Only now, with the Spotlight up. showSpotlight hides the window to
+    // resize it, and the Spotlight this just mounted reads that blur as a
+    // click away and hides into Tray Mode, which stops its slide controllers.
+    // A panel requested before that was stopped a few milliseconds into its
+    // slide: the settings button lit, the panel still off-screen, and nothing
+    // to restart it. The old 100ms wait here only hid that by letting most of
+    // the 120ms slide finish first.
+    setState(() => _openSettingsOnShow = true);
   }
 
   @override

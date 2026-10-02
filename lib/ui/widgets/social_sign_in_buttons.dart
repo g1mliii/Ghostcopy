@@ -19,7 +19,6 @@ class SocialSignInButtons extends StatelessWidget {
     required this.onGoogle,
     required this.onApple,
     required this.enabled,
-    this.showApple = true,
     this.size = 52,
     super.key,
   });
@@ -30,9 +29,6 @@ class SocialSignInButtons extends StatelessWidget {
   /// False while a sign-in is in flight, so a second tap cannot start another.
   final bool enabled;
 
-  /// Hidden where Apple sign-in is not offered yet (Android).
-  final bool showApple;
-
   /// Diameter. 52 keeps the touch target above the 48dp minimum.
   final double size;
 
@@ -41,15 +37,13 @@ class SocialSignInButtons extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if (showApple) ...[
-          _LogoButton(
-            label: 'Continue with Apple',
-            onTap: enabled ? onApple : null,
-            size: size,
-            child: Icon(Icons.apple, size: size * 0.5, color: Colors.black),
-          ),
-          const SizedBox(width: 16),
-        ],
+        _LogoButton(
+          label: 'Continue with Apple',
+          onTap: enabled ? onApple : null,
+          size: size,
+          child: Icon(Icons.apple, size: size * 0.5, color: Colors.black),
+        ),
+        const SizedBox(width: 16),
         _LogoButton(
           label: 'Continue with Google',
           onTap: enabled ? onGoogle : null,

@@ -6,7 +6,9 @@ import 'services/auth_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/game_mode_service.dart';
 import 'services/notification_service.dart';
+import 'services/settings_service.dart';
 import 'services/transformer_service.dart';
+import 'services/window_service.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 
 // Global Service Locator
@@ -17,19 +19,19 @@ final GetIt locator = GetIt.instance;
 void setupLocator() {
   // SpotlightViewModel is a lazy singleton to preserve state across
   // desktop window hide/show cycles.
-  locator.registerLazySingleton(
-    () => SpotlightViewModel(
+  locator.registerLazySingleton(() {
+    final gameMode = locator.maybeGet<IGameModeService>();
+    return SpotlightViewModel(
       authService: locator<IAuthService>(),
       clipboardRepository: locator<IClipboardRepository>(),
       clipboardSyncService: locator<IClipboardSyncService>(),
       transformerService: locator<ITransformerService>(),
       notificationService: locator<INotificationService>(),
-      accountPromptStore: locator.isRegistered<AccountPromptStore>()
-          ? locator<AccountPromptStore>()
-          : null,
-      isGameModeActive: locator.isRegistered<IGameModeService>()
-          ? () => locator<IGameModeService>().isActive
-          : null,
-    ),
-  );
+      accountPromptStore: locator.maybeGet<AccountPromptStore>(),
+      isGameModeActive: gameMode == null ? null : () => gameMode.isActive,
+      gameModeChanges: gameMode?.isActiveStream,
+      settingsService: locator.maybeGet<ISettingsService>(),
+      windowService: locator.maybeGet<IWindowService>(),
+    );
+  });
 }

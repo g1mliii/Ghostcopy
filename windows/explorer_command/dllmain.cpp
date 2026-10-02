@@ -11,6 +11,7 @@
 
 #include "module.h"
 #include "send_command.h"
+#include "surrogate_shutdown.h"
 
 namespace {
 
@@ -48,6 +49,12 @@ class SendCommandFactory : public IClassFactory {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
     if (outer) return CLASS_E_NOAGGREGATION;
+
+    // Every right-click comes through here, unlike DllGetClassObject: the
+    // surrogate asks for this factory once and keeps it for its whole life,
+    // so this is the only place a listener that failed to start gets its
+    // retry. Once one has started, this is a single atomic read.
+    ghostcopy::StartShutdownListener();
 
     auto* command = new (std::nothrow) SendCommand();
     if (!command) return E_OUTOFMEMORY;
@@ -88,6 +95,11 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
   if (!ppv) return E_POINTER;
   *ppv = nullptr;
   if (rclsid != CLSID_GhostCopySendCommand) return CLASS_E_CLASSNOTAVAILABLE;
+
+  // Here, not in DllMain: it creates a thread and a window, neither of which
+  // belongs under the loader lock. Started as the surrogate loads, so it can
+  // hear a close before the first command exists; CreateInstance retries it.
+  ghostcopy::StartShutdownListener();
 
   auto* factory = new (std::nothrow) SendCommandFactory();
   if (!factory) return E_OUTOFMEMORY;

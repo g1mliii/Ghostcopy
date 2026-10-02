@@ -117,9 +117,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late PausableAnimationController _pausableHistorySlideController;
   late PausableAnimationController _pausableSettingsSlideController;
   late PausableAnimationController _pausableAuthSlideController;
-  late final _HiddenListener _hiddenListener = _HiddenListener(
-    () => _viewModel.onSpotlightHidden(),
-  );
+  late final _HiddenListener _hiddenListener = _HiddenListener(() {
+    _hiddenSinceFocus = true;
+    _viewModel.onSpotlightHidden();
+  });
+
+  /// Whether the window went back to the tray since it last had focus. A
+  /// pinned window regains focus every time it is clicked into, and the
+  /// opening animation is for an opening, not for each of those.
+  bool _hiddenSinceFocus = true;
 
   // Text controllers
   final TextEditingController _textController = TextEditingController();
@@ -205,6 +211,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             TextPosition(offset: _textController.text.length),
           );
         }
+        // Now, not at the next build: a hide releases the payload, and a
+        // hidden window may not draw again to drop this reference to it.
+        if (_viewModel.clipboardContent == null) {
+          _cachedFilePreviewItem = null;
+          _cachedFilePreviewSourceContent = null;
+        }
         scheduleRebuild();
       }
     };
@@ -214,6 +226,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
     // Load settings for UI state
     _initializeSettings();
+    unawaited(_viewModel.loadPinned());
 
     // Set up animations (100ms, ease-out - snappy spotlight appear)
     _animationController = AnimationController(
@@ -309,15 +322,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // Check if window is already focused when widget mounts.
     // If so, trigger the entry animation manually because onWindowFocus listener
     // might have been registered after the focus event already fired.
+    // All of the focus, not just its animation and restore: the view model
+    // outlives this widget, and a restore without the focus that clears its
+    // hidden flag after a hide does nothing.
+    // Not in tray mode, though: a remount behind the tray menu finds the
+    // menu's window focused while the Spotlight is still hidden. Going to
+    // the Spotlight from there runs showSpotlight, whose own focus follows;
+    // answering this one too would open a composer in a hidden window.
     windowManager.isFocused().then((isFocused) {
-      if (isFocused && mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _animationController.forward(from: 0);
-            _viewModel.populateFromClipboard();
-            _textFieldFocusNode.requestFocus();
-          }
-        });
+      if (isFocused && mounted && !_lifecycleController.isInTrayMode) {
+        onWindowFocus();
       }
     });
   }
@@ -501,10 +515,20 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // Trigger animation after window is ready
-        _animationController.forward(from: 0);
+        final reopened = _hiddenSinceFocus;
+        if (!_viewModel.isPinned || reopened) {
+          _animationController.forward(from: 0);
+        }
+        _hiddenSinceFocus = false;
+
+        // Clicked back into a pinned window with a panel up: the panel still
+        // has its field focused, and the composer behind it is not what the
+        // user came back to. Auto-paste there would put whatever they just
+        // copied - a password from a manager, say - under it, ready to send.
+        if (!reopened && _activePanel != SpotlightPanel.none) return;
 
         // Populate from clipboard and focus
-        _viewModel.populateFromClipboard();
+        unawaited(_viewModel.restoreOrPopulateComposer());
         _textFieldFocusNode.requestFocus();
       }
     });
@@ -524,18 +548,18 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       return;
     }
 
+    // Pinned: the window stays, so none of the tray optimizations below
+    // apply either - they clear images and payloads from a window that is
+    // still on screen. Escape, the tray icon and unpinning still hide it.
+    if (_viewModel.keepsOpen) return;
+
     // Hide window when it loses focus (user clicks outside)
     _windowService.hideSpotlight();
 
     // Aggressive Tray Optimization:
-    // 1. Clear clipboard content to release large strings/buffers
-    final hasAttachment =
-        (_viewModel.clipboardContent?.hasFile ?? false) ||
-        (_viewModel.clipboardContent?.hasImage ?? false);
-    _viewModel.clearClipboardPayload(clearText: hasAttachment);
-    if (hasAttachment) {
-      _textController.clear();
-    }
+    // 1. The composer's payload is released by SpotlightViewModel.
+    //    onSpotlightHidden, which every way of hiding reaches: auto-paste's
+    //    content goes, and a draft keeps only its text and a file's path.
 
     // 2. Clear Image Cache to release texture memory immediately
     PaintingBinding.instance.imageCache.clear();
@@ -576,16 +600,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
         _textController.clear();
 
-        // Close window after brief delay
+        // Close window after brief delay - unless it is pinned, and staying
+        // up for the next one is the point.
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        if (mounted) {
+        if (mounted && !_viewModel.keepsOpen) {
           await _windowService.hideSpotlight();
         }
       },
     );
   }
 
-  void _clearPendingAttachmentPreview({bool requestFocus = true}) {
+  void _clearPendingAttachmentPreview() {
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
         (_viewModel.clipboardContent?.hasImage ?? false);
@@ -593,18 +618,44 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       return;
     }
 
-    _viewModel.clearClipboardPayload(clearText: true);
+    _viewModel.clearClipboardPayload();
     _textController.clear();
 
-    if (requestFocus) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _textFieldFocusNode.requestFocus();
-        }
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _textFieldFocusNode.requestFocus();
+      }
+    });
 
     debugPrint('[Spotlight] Cleared pending attachment preview');
+  }
+
+  /// Shown when an opening kept the user's draft rather than auto-pasting,
+  /// so the clipboard is still one click away.
+  Widget _buildDraftKeptHint() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      // Wrap, not Row: at large text scales the two do not fit on one line
+      // of a 500px window.
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            'Kept from before',
+            style: GhostTypography.caption.copyWith(
+              color: GhostColors.textMuted,
+            ),
+          ),
+          TextButton(
+            onPressed: () =>
+                unawaited(_viewModel.populateFromClipboard(force: true)),
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            child: const Text('Paste clipboard instead'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildAttachmentClearButton({required String tooltip}) {
@@ -682,6 +733,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     _viewModel.setFileContent(
       ClipboardContent.file(bytes, filename, fileTypeInfo.mimeType),
       displayText,
+      sourcePath: fileObj.path,
     );
     _textController.text = displayText;
 
@@ -816,14 +868,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 if (_activePanel != SpotlightPanel.none) {
                   _closeActivePanel();
                 } else {
-                  // Clear file content to free memory before closing
-                  if ((_viewModel.clipboardContent?.hasFile ?? false) ||
-                      (_viewModel.clipboardContent?.hasImage ?? false)) {
-                    _clearPendingAttachmentPreview(requestFocus: false);
-                    debugPrint(
-                      '[Spotlight] Cleared file/image content (freed memory)',
-                    );
-                  }
+                  // The hide releases the composer's memory, as on blur.
                   _windowService.hideSpotlight();
                 }
                 return null;
@@ -891,6 +936,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                             const SizedBox(height: 10),
                                           ],
                                           _buildTextField(),
+                                          if (_viewModel.draftRestored)
+                                            _buildDraftKeptHint(),
                                           const SizedBox(height: 10),
                                           // Empty for JSON and plain text, so
                                           // this spreads to nothing rather
@@ -916,6 +963,21 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                       ),
                     ),
                   ), // Close IgnorePointer
+                  // The strip above the content moves the window: it has no
+                  // title bar, and a pinned one is otherwise stuck in front
+                  // of whatever the user clicked into. Under the buttons, so
+                  // they still take their own clicks.
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 50,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onPanStart: (_) =>
+                          unawaited(_windowService.startDragging()),
+                    ),
+                  ),
                   // Settings button - Top Left
                   Positioned(top: 12, left: 12, child: _buildSettingsButton()),
                   // Beside it, centred on the 42px button
@@ -923,6 +985,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                     Positioned(top: 21, left: 60, child: _buildGuestBadge()),
                   // History button - Top Right
                   Positioned(top: 12, right: 12, child: _buildHistoryButton()),
+                  // Pin - beside History, where window controls sit
+                  Positioned(top: 12, right: 60, child: _buildPinButton()),
                   // Click-outside overlay to close any active panel
                   // Uses HitTestBehavior.opaque to catch taps without walking
                   // child tree (perf: stops hit-test traversal immediately)
@@ -1091,6 +1155,19 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           _settingsSlideController.forward();
         }
       },
+    );
+  }
+
+  /// Pinned, the Spotlight behaves like a window: it stays open and on top
+  /// when focus moves elsewhere. The control lives here, at the moment the
+  /// auto-hide gets in the way, rather than as a setting to go looking for.
+  Widget _buildPinButton() {
+    final pinned = _viewModel.isPinned;
+    return _HoverableIconButton(
+      icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
+      tooltip: pinned ? 'Unpin - hide when clicking away' : 'Keep open',
+      isActive: pinned,
+      onTap: () => unawaited(_viewModel.setPinned(pinned: !pinned)),
     );
   }
 
@@ -1642,6 +1719,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                         .toLowerCase(),
                   )
                   .join(', '));
+    // Also busy while a kept file is read back, which would otherwise
+    // swallow the press: its bytes are not there to send yet.
+    final busy = _viewModel.isSending || _viewModel.isRestoringDraft;
 
     return RepaintBoundary(
       // Isolate send button repaints
@@ -1678,7 +1758,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             ),
           // Send button
           ElevatedButton(
-            onPressed: _viewModel.isSending ? null : _handleSend,
+            onPressed: busy ? null : _handleSend,
             style: ElevatedButton.styleFrom(
               backgroundColor: GhostColors.primary,
               minimumSize: const Size(double.infinity, 48),
@@ -1687,7 +1767,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: _viewModel.isSending
+            child: busy
                 ? const SizedBox(
                     height: 20,
                     width: 20,
@@ -1921,14 +2001,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   /// Handle copying a history item to clipboard
   /// Wrapper for history item copy - closes panel then delegates to ViewModel
   Future<void> _handleHistoryItemCopy(ClipboardItem item) async {
+    // Pinned to keep history in view: the copy's toast is the feedback, and
+    // the window and panel stay where they are.
+    final hide = !_viewModel.keepsOpen;
+
     // 1. Instant Feedback: Close panel and hide window immediately
     // We don't wait for the animation or the copy operation
-    if (mounted) {
-      setState(() => _activePanel = SpotlightPanel.none);
+    if (hide) {
+      if (mounted) setState(() => _activePanel = SpotlightPanel.none);
+      // Hide window immediately (Optimistic UI)
+      unawaited(_windowService.hideSpotlight());
     }
-
-    // Hide window immediately (Optimistic UI)
-    unawaited(_windowService.hideSpotlight());
 
     // 2. Perform copy in background
     // We act as if it succeeded immediately to the user
@@ -1940,7 +2023,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
 
     // Reset panel state for next time
-    if (mounted) {
+    if (hide && mounted) {
       unawaited(_historySlideController.reverse());
     }
   }

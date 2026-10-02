@@ -6,7 +6,6 @@ void main() {
   Future<({List<String> taps})> pump(
     WidgetTester tester, {
     bool enabled = true,
-    bool showApple = true,
   }) async {
     final taps = <String>[];
     await tester.pumpWidget(
@@ -14,7 +13,6 @@ void main() {
         home: Scaffold(
           body: SocialSignInButtons(
             enabled: enabled,
-            showApple: showApple,
             onApple: () => taps.add('apple'),
             onGoogle: () => taps.add('google'),
           ),
@@ -57,12 +55,5 @@ void main() {
     );
 
     expect(result.taps, isEmpty);
-  });
-
-  testWidgets('Apple can be left out where it is not offered', (tester) async {
-    await pump(tester, showApple: false);
-
-    expect(find.bySemanticsLabel('Continue with Apple'), findsNothing);
-    expect(find.bySemanticsLabel('Continue with Google'), findsOneWidget);
   });
 }

@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://ghostcopy.app/download/macos"><img src="https://img.shields.io/badge/Download_for_Mac-6670FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac" /></a>
   <a href="https://testflight.apple.com/join/62aWHQzj"><img src="https://img.shields.io/badge/iPhone_on_TestFlight-6670FF?style=for-the-badge&logo=appstore&logoColor=white" alt="iPhone on TestFlight" /></a>
-  <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80"><img src="https://img.shields.io/badge/Get_it_from_Microsoft-6670FF?style=for-the-badge&logo=windows&logoColor=white" alt="Get it from Microsoft" /></a>
+  <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80"><img src="https://img.shields.io/badge/Get_for_Windows-6670FF?style=for-the-badge&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDBoMTF2MTFIMHpNMTMgMGgxMXYxMUgxM3pNMCAxM2gxMXYxMUgwek0xMyAxM2gxMXYxMUgxM3oiLz48L3N2Zz4%3D" alt="Get for Windows" /></a>
 </p>
 
 <p align="center">
