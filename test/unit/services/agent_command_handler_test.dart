@@ -23,6 +23,10 @@ class _Devices extends Mock implements IDeviceService {}
 
 class _Settings extends Mock implements ISettingsService {}
 
+// Absolute on whichever platform runs the tests: `/tmp/...` is not, on
+// Windows, and the handler refuses a relative path.
+final String notesPath = File('notes.txt').absolute.path;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -208,17 +212,17 @@ void main() {
   test('files go through the shared file path with the targets', () async {
     final reply = await handler.handle({
       'name': 'send_file',
-      'path': '/tmp/notes.txt',
+      'path': notesPath,
       'to': ['mac'],
     });
     expect(reply['ok'], isTrue);
-    expect(filesSent.single.$1, '/tmp/notes.txt');
+    expect(filesSent.single.$1, notesPath);
     expect(filesSent.single.$2, ['macos']);
   });
 
   // Resolved here, so the file path does not read the setting again.
   test('a file with no devices named goes to the resolved default', () async {
-    await handler.handle({'name': 'send_file', 'path': '/tmp/notes.txt'});
+    await handler.handle({'name': 'send_file', 'path': notesPath});
     expect(filesSent.single.$2, isEmpty);
   });
 
@@ -236,7 +240,10 @@ void main() {
         refusal: 'bad_request',
       ),
     );
-    final reply = await refusing.handle({'name': 'send_file', 'path': '/x'});
+    final reply = await refusing.handle({
+      'name': 'send_file',
+      'path': notesPath,
+    });
     expect(reply['error'], 'bad_request');
     expect(reply['message'], 'This file is too large.');
 
@@ -249,7 +256,7 @@ void main() {
           (ok: false, message: 'Offline.', refusal: null),
     );
     expect(
-      (await failing.handle({'name': 'send_file', 'path': '/x'}))['error'],
+      (await failing.handle({'name': 'send_file', 'path': notesPath}))['error'],
       'send_failed',
     );
   });
@@ -305,6 +312,8 @@ void main() {
         'to': [42],
       },
       {'name': 'send_file'},
+      // Relative: the app would resolve it from its own working directory.
+      {'name': 'send_file', 'path': 'notes.txt'},
       {'name': 'format_disk'},
     ]) {
       final reply = await handler.handle(command);

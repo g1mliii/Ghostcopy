@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:ghostcopy_agent/agent_protocol.dart';
 
@@ -131,6 +133,15 @@ class AgentCommandHandler implements IAgentCommandHandler {
   ) async {
     if (path is! String || path.trim().isEmpty) {
       return agentErrorReply(AgentError.badRequest, 'No file given.');
+    }
+    // The sender's working directory is not this process's, so a relative
+    // path would resolve somewhere else - to nothing, or to a different file
+    // of the same name. Checked here, whatever the client did.
+    if (!File(path).isAbsolute) {
+      return agentErrorReply(
+        AgentError.badRequest,
+        'The file path must be absolute: $path',
+      );
     }
     final targets = await _targets(requested);
     // Resolved already, so an empty list - every device - rather than null,

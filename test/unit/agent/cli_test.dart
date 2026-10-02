@@ -112,6 +112,36 @@ void main() {
     expect(client.requests.single['text'], '--json');
   });
 
+  // After `--` a dash is the text, not "read standard input".
+  test('send -- - sends a dash', () async {
+    var readStdin = false;
+    final code = await runCli(
+      ['send', '--', '-'],
+      client: client,
+      out: out,
+      err: err,
+      stdinText: () async {
+        readStdin = true;
+        return 'from stdin';
+      },
+    );
+    expect(code, CliExit.ok);
+    expect(readStdin, isFalse);
+    expect(client.requests.single['text'], '-');
+  });
+
+  test('stdin past the limit is refused, not sent', () async {
+    final code = await runCli(
+      ['send', '-'],
+      client: client,
+      out: out,
+      err: err,
+      stdinText: () async => null,
+    );
+    expect(code, CliExit.usage);
+    expect(client.requests, isEmpty);
+  });
+
   test('stdin that is not UTF-8 is a usage error, in --json too', () async {
     final code = await runCli(
       ['send', '-', '--json'],

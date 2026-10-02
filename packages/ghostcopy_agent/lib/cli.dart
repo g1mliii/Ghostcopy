@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'agent_protocol.dart';
 import 'mcp_server.dart';
@@ -63,7 +64,7 @@ Future<int> runCli(
   AgentClient? client,
   StringSink? out,
   StringSink? err,
-  Future<String> Function()? stdinText,
+  Future<String?> Function()? stdinText,
   Stream<List<int>>? mcpInput,
   StringSink? mcpOutput,
 }) async {
@@ -96,6 +97,9 @@ Future<int> runCli(
   final positional = <String>[];
   final to = <String>[];
   var endOfOptions = false;
+  // Where `--` fell among the positionals: from here on each is literal
+  // text, so `ghostcopy send -- -` sends a dash rather than reading stdin.
+  var literalFrom = arguments.length;
   for (var i = 0; i < arguments.length; i++) {
     final arg = arguments[i];
     // After `--`, everything is text: `ghostcopy send -- --help` sends the
@@ -104,6 +108,7 @@ Future<int> runCli(
       positional.add(arg);
     } else if (arg == '--') {
       endOfOptions = true;
+      literalFrom = positional.length;
     } else if (arg == '-h' || arg == '--help') {
       output.writeln(cliUsage);
       return CliExit.ok;
@@ -144,8 +149,9 @@ Future<int> runCli(
       if (rest.isEmpty) {
         return fail('Nothing to send. Usage: ghostcopy send <text>');
       }
-      final String text;
-      if (rest.length == 1 && rest.single == '-') {
+      final String? text;
+      // rest starts at positional 1.
+      if (rest.length == 1 && rest.single == '-' && literalFrom > 1) {
         // Not UTF-8 - a UTF-16 file from PowerShell's `>`, a legacy code page
         // - used to escape as an uncaught exception: no exit code a script
         // could read, and nothing at all under --json.
@@ -162,15 +168,15 @@ Future<int> runCli(
       } else {
         text = rest.join(' ');
       }
-      if (text.trim().isEmpty) {
-        return fail('Nothing to send: the text is empty.');
-      }
-      if (text.length > agentMaxTextLength) {
+      if (text == null || text.length > agentMaxTextLength) {
         return fail(
           'The text is too long to send: GhostCopy takes up to '
           '$agentMaxTextLength characters. Save it to a file and use '
           'send-file instead.',
         );
+      }
+      if (text.trim().isEmpty) {
+        return fail('Nothing to send: the text is empty.');
       }
       request = {'name': AgentCommand.sendText, 'text': text, 'to': targets};
     case 'send-file':
@@ -227,4 +233,17 @@ String formatDevices(Object? devices) {
       .join('\n');
 }
 
-Future<String> _readStdin() => utf8.decoder.bind(stdin).join();
+/// Standard input as text, or null once it is too long to send.
+///
+/// Stops reading there rather than buffering whatever was redirected in. A
+/// UTF-16 code unit is at most three UTF-8 bytes, so more bytes than that
+/// is more text than the limit, whatever it says.
+Future<String?> _readStdin() async {
+  const maxBytes = agentMaxTextLength * 3;
+  final bytes = BytesBuilder(copy: false);
+  await for (final chunk in stdin) {
+    bytes.add(chunk);
+    if (bytes.length > maxBytes) return null;
+  }
+  return utf8.decode(bytes.takeBytes());
+}
