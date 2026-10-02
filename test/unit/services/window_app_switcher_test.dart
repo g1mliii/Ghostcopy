@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -5,12 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/impl/window_service.dart';
 
 /// The ordinary pin puts the Spotlight in Cmd-Tab and Alt-Tab while it is up,
-/// and nothing else does. Driven through window_manager's real method
-/// channel, recording what reaches the platform.
+/// and nothing else does. Driven through the real method channels, recording
+/// what reaches the platform: AppPresence on macOS, setSkipTaskbar elsewhere.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('window_manager');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  const windowChannel = MethodChannel('window_manager');
   const screens = MethodChannel('dev.leanflutter.plugins/screen_retriever');
+  const presence = MethodChannel('com.ghostcopy/app_presence');
   const display = <String, Object?>{
     'id': '1',
     'size': {'width': 1440.0, 'height': 900.0},
@@ -18,62 +22,80 @@ void main() {
     'visibleSize': {'width': 1440.0, 'height': 860.0},
     'scaleFactor': 2.0,
   };
-  const presence = MethodChannel('com.ghostcopy/app_presence');
 
-  /// What reached the platform, either way it went: 'in' or 'out' of the
-  /// app switcher. macOS uses AppPresence, Windows setSkipTaskbar.
+  /// 'in' or 'out' of the app switcher, in the order the platform got them.
   late List<String> switcher;
+
+  /// Return true to make the next platform call fail.
+  late bool Function() failWhen;
+
+  /// Set to hold the next platform call until it completes.
+  Completer<void>? hold;
+
+  Future<void> record({required bool inSwitcher}) async {
+    final gate = hold;
+    hold = null;
+    if (gate != null) await gate.future;
+    if (failWhen()) throw PlatformException(code: 'failed');
+    switcher.add(inSwitcher ? 'in' : 'out');
+  }
 
   setUp(() {
     switcher = [];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(presence, (call) async {
-          switcher.add(call.method == 'enterAppSwitcher' ? 'in' : 'out');
-          return null;
-        });
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          screens,
-          (call) async => switch (call.method) {
-            'getPrimaryDisplay' => display,
-            'getCursorScreenPoint' => {'dx': 700.0, 'dy': 400.0},
-            'getAllDisplays' => {
-              'displays': [display],
-            },
-            _ => null,
+    failWhen = () => false;
+    hold = null;
+    messenger
+      ..setMockMethodCallHandler(presence, (call) async {
+        await record(inSwitcher: call.arguments as bool);
+        return null;
+      })
+      ..setMockMethodCallHandler(
+        screens,
+        (call) async => switch (call.method) {
+          'getPrimaryDisplay' => display,
+          'getCursorScreenPoint' => {'dx': 700.0, 'dy': 400.0},
+          'getAllDisplays' => {
+            'displays': [display],
           },
-        );
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async {
-          switch (call.method) {
-            case 'setSkipTaskbar':
-              final skip =
-                  (call.arguments as Map<Object?, Object?>)['isSkipTaskbar']!
-                      as bool;
-              switcher.add(skip ? 'out' : 'in');
-              return null;
-
-            case 'getPosition':
-            case 'getBounds':
-              return <String, Object?>{
-                'x': 0.0,
-                'y': 0.0,
-                'width': 500.0,
-                'height': 400.0,
-              };
-            default:
-              // isVisible, isFocused, isFullScreen... - all false here.
-              return call.method.startsWith('is') ? false : null;
-          }
-        });
+          _ => null,
+        },
+      )
+      ..setMockMethodCallHandler(windowChannel, (call) async {
+        switch (call.method) {
+          case 'setSkipTaskbar':
+            final skip =
+                (call.arguments as Map<Object?, Object?>)['isSkipTaskbar']!
+                    as bool;
+            await record(inSwitcher: !skip);
+            return null;
+          case 'getPosition':
+          case 'getBounds':
+            return <String, Object?>{
+              'x': 0.0,
+              'y': 0.0,
+              'width': 500.0,
+              'height': 400.0,
+            };
+          default:
+            // isVisible, isFocused, isFullScreen... - all false here.
+            return call.method.startsWith('is') ? false : null;
+        }
+      });
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      ..setMockMethodCallHandler(channel, null)
+    messenger
+      ..setMockMethodCallHandler(windowChannel, null)
       ..setMockMethodCallHandler(screens, null)
       ..setMockMethodCallHandler(presence, null);
   });
+
+  Future<WindowService> pinnedAndUp() async {
+    final window = WindowService();
+    await window.setPinned(pinned: true, onTop: false);
+    await window.showSpotlight();
+    return window;
+  }
 
   test('an ordinary pin joins the app switcher only while it is up', () async {
     final window = WindowService();
@@ -98,105 +120,71 @@ void main() {
     expect(switcher, isEmpty);
   });
 
-  test('pinning while up joins at once, and on-top leaves at once', () async {
-    final window = WindowService();
-    await window.showSpotlight();
+  test('choosing on-top while up leaves at once', () async {
+    // On top can stay up indefinitely, so it cannot wait for a hide.
+    final window = await pinnedAndUp();
 
-    await window.setPinned(pinned: true, onTop: false);
-    expect(switcher, ['in']);
-
-    // On top stays up indefinitely, so it cannot wait for a hide.
     await window.setPinned(pinned: true, onTop: true);
-    expect(switcher, ['in', 'out']);
-
     await window.hideSpotlight();
-    // macOS leaves again at the hide, the full way; Windows has nothing to
-    // redo.
-    expect(switcher, Platform.isMacOS ? ['in', 'out', 'out'] : ['in', 'out']);
+
+    expect(switcher, ['in', 'out']);
   });
 
-  test(
-    'macOS is told whether the Spotlight itself is up',
-    () async {
-      final leaves = <Object?>[];
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(presence, (call) async {
-            if (call.method == 'leaveAppSwitcher') leaves.add(call.arguments);
-            return null;
-          });
-      final window = WindowService();
-      await window.setPinned(pinned: true, onTop: false);
-      await window.showSpotlight();
-
-      await window.setPinned(pinned: true, onTop: true); // up: policy only
-      await window.hideSpotlight(); // gone: the full leave
-
-      expect(leaves, [
-        {'spotlightShowing': true},
-        {'spotlightShowing': false},
-      ]);
-    },
-    skip: !Platform.isMacOS ? 'drives the macOS channel' : false,
-  );
-
-  test(
-    'a failed leave at the hide is tried again',
-    () async {
-      var failLeaves = 0;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(presence, (call) async {
-            if (call.method == 'leaveAppSwitcher' &&
-                (call.arguments as Map)['spotlightShowing'] == false &&
-                failLeaves++ == 0) {
-              throw PlatformException(code: 'failed');
-            }
-            switcher.add(call.method == 'enterAppSwitcher' ? 'in' : 'out');
-            return null;
-          });
-      final window = WindowService();
-      await window.setPinned(pinned: true, onTop: false);
-      await window.showSpotlight();
-      await window.setPinned(pinned: true, onTop: true);
-      await window.hideSpotlight(); // the full leave fails
-
-      await window.setPinned(pinned: true, onTop: true); // tried again
-
-      expect(switcher, ['in', 'out', 'out']);
-    },
-    skip: !Platform.isMacOS ? 'drives the macOS channel' : false,
-  );
-
-  test(
-    'a failed change is tried again, not taken as done',
-    () async {
-      var failNext = true;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(presence, (call) async {
-            if (failNext) {
-              failNext = false;
-              throw PlatformException(code: 'failed');
-            }
-            switcher.add(call.method == 'enterAppSwitcher' ? 'in' : 'out');
-            return null;
-          });
-      final window = WindowService();
-      await window.setPinned(pinned: true, onTop: false);
-
-      await window.showSpotlight(); // the first attempt fails
-      await window.setPinned(pinned: true, onTop: false); // tried again
-
-      expect(switcher, ['in']);
-    },
-    skip: !Platform.isMacOS ? 'drives the macOS channel' : false,
-  );
-
   test('the tray menu borrowing the window takes it out', () async {
-    final window = WindowService();
-    await window.setPinned(pinned: true, onTop: false);
-    await window.showSpotlight();
+    final window = await pinnedAndUp();
 
     await window.setFramelessForTrayMenu();
 
     expect(switcher, ['in', 'out']);
+  });
+
+  test('a failed change is tried again, not taken as done', () async {
+    var failures = 1;
+    failWhen = () => failures-- > 0;
+    final window = await pinnedAndUp(); // the first attempt fails
+
+    await window.setPinned(pinned: true, onTop: false); // tried again
+
+    expect(switcher, ['in']);
+  });
+
+  test('a hide right after a show settles on the hide', () async {
+    final window = WindowService();
+    await window.setPinned(pinned: true, onTop: false);
+    final entering = Completer<void>();
+    hold = entering;
+
+    final showing = window.showSpotlight(); // its "in" is held
+    await pumpEventQueue();
+    final hiding = window.hideSpotlight();
+    entering.complete();
+    await Future.wait([showing, hiding]);
+
+    expect(switcher, ['in', 'out']);
+  });
+
+  test('macOS goes through AppPresence, elsewhere setSkipTaskbar', () async {
+    final calls = <String>[];
+    messenger
+      ..setMockMethodCallHandler(presence, (call) async {
+        calls.add('presence');
+        return null;
+      })
+      ..setMockMethodCallHandler(windowChannel, (call) async {
+        if (call.method == 'setSkipTaskbar') calls.add('skipTaskbar');
+        if (call.method == 'getBounds' || call.method == 'getPosition') {
+          return <String, Object?>{
+            'x': 0.0,
+            'y': 0.0,
+            'width': 500.0,
+            'height': 400.0,
+          };
+        }
+        return call.method.startsWith('is') ? false : null;
+      });
+
+    await pinnedAndUp();
+
+    expect(calls, [if (Platform.isMacOS) 'presence' else 'skipTaskbar']);
   });
 }

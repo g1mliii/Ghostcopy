@@ -39,7 +39,10 @@ class MainFlutterWindow: NSWindow {
     launchAtStartup = LaunchAtStartup(messenger: flutterViewController.engine.binaryMessenger)
 
     // Dock and Cmd-Tab while an ordinary pin holds the Spotlight up
-    appPresence = AppPresence(messenger: flutterViewController.engine.binaryMessenger)
+    appPresence = AppPresence(
+      messenger: flutterViewController.engine.binaryMessenger,
+      spotlight: self
+    )
 
     super.awakeFromNib()
     
@@ -50,61 +53,70 @@ class MainFlutterWindow: NSWindow {
 }
 
 /// Puts GhostCopy in the Dock and Cmd-Tab while an ordinary pin holds the
-/// Spotlight up as a normal window, and takes it out again after.
+/// Spotlight up as a normal window, and takes it out again after. Dart says
+/// which it wants (setInAppSwitcher); this owns making it so.
 ///
 /// In this file rather than its own so the Xcode project does not change.
 ///
-/// Leaving is the delicate half. The Spotlight hides with orderOut, which
-/// leaves GhostCopy the active app, and macOS does not apply the accessory
-/// policy to the active app (see LSUIElement in Info.plist) - a Dock icon
-/// and a Cmd-Tab entry for a window that is gone. So focus goes back to the
-/// previous app first, and the policy changes once it has.
+/// Leaving is the delicate half: macOS does not apply the accessory policy
+/// to the active app (see LSUIElement in Info.plist). When the Spotlight has
+/// gone, focus is handed back first; when it is still up (the pin went to
+/// on-top), it is left in front. Either way, a switch that did not take is
+/// applied again the moment GhostCopy stops being the active app.
 class AppPresence {
     private let channel: FlutterMethodChannel
+    private weak var spotlight: NSWindow?
+    private var wanted = false
+    private var resignObserver: NSObjectProtocol?
 
-    init(messenger: FlutterBinaryMessenger) {
+    init(messenger: FlutterBinaryMessenger, spotlight: NSWindow) {
+        self.spotlight = spotlight
         channel = FlutterMethodChannel(
             name: "com.ghostcopy/app_presence",
             binaryMessenger: messenger
         )
-        channel.setMethodCallHandler { (call, result) in
-            switch call.method {
-            case "enterAppSwitcher":
-                NSApp.setActivationPolicy(.regular)
-                result(nil)
-            case "leaveAppSwitcher":
-                let args = call.arguments as? [String: Any]
-                let showing = args?["spotlightShowing"] as? Bool ?? false
-                AppPresence.leave(spotlightShowing: showing) { result(nil) }
-            default:
+        channel.setMethodCallHandler { [weak self] (call, result) in
+            guard call.method == "setInAppSwitcher",
+                  let wanted = call.arguments as? Bool else {
                 result(FlutterMethodNotImplemented)
+                return
             }
+            self?.set(inSwitcher: wanted)
+            result(nil)
         }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in self?.settle() }
     }
 
-    private static func leave(
-        spotlightShowing: Bool,
-        then done: @escaping () -> Void
-    ) {
-        // The Spotlight still up (the pin went to on-top, or off): it stays
-        // in front, so only the policy changes. WindowService leaves again,
-        // the full way, at the next hide in case this one did not take.
-        // Told by Dart rather than read from NSApp.windows, which would count
-        // any other window of ours - Sparkle's - as the Spotlight.
-        if spotlightShowing {
-            NSApp.setActivationPolicy(.accessory)
-            done()
+    private func set(inSwitcher: Bool) {
+        wanted = inSwitcher
+        if inSwitcher {
+            NSApp.setActivationPolicy(.regular)
             return
         }
-        if NSApp.isActive { NSApp.deactivate() }
-        // A turn of the run loop for the deactivation to land. If it did not
-        // (nothing else to activate), hiding the app hands focus on for sure;
-        // the next show activates it, which unhides it.
-        DispatchQueue.main.async {
-            if NSApp.isActive { NSApp.hide(nil) }
-            NSApp.setActivationPolicy(.accessory)
-            done()
+        // Next turn of the main queue: window_manager's hide() orders the
+        // window out asynchronously, and that has to have happened before
+        // asking whether the Spotlight is still up.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.wanted else { return }
+            if NSApp.isActive && !(self.spotlight?.isVisible ?? false) {
+                NSApp.deactivate()
+            }
+            self.settle()
         }
     }
-}
 
+    /// Out of the switcher, if that is what Dart last asked for and it has
+    /// not happened yet.
+    private func settle() {
+        guard !wanted, NSApp.activationPolicy() != .accessory else { return }
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    deinit {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+    }
+}
