@@ -16,8 +16,10 @@ import '../../services/clipboard_sync_service.dart';
 import '../../services/crash_reporting_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/settings_service.dart';
 import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
+import '../../services/window_service.dart';
 import '../../utils/network_errors.dart';
 
 /// ViewModel for SpotlightScreen - handles business logic and state
@@ -47,9 +49,17 @@ class SpotlightViewModel extends ChangeNotifier {
     IClipboardService? clipboardService,
     this._accountPromptStore,
     this._isGameModeActive,
+    Stream<bool>? gameModeChanges,
+    this._settingsService,
+    this._windowService,
   }) : _clipboardRepo = clipboardRepository,
        _syncService = clipboardSyncService,
-       _clipboardService = clipboardService ?? ClipboardService.instance;
+       _clipboardService = clipboardService ?? ClipboardService.instance {
+    // Game Mode switching on lifts a pin off the window, and off back on.
+    _gameModeSubscription = gameModeChanges?.listen((_) {
+      if (_isPinned) unawaited(_applyPin());
+    });
+  }
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
@@ -57,6 +67,13 @@ class SpotlightViewModel extends ChangeNotifier {
   final ITransformerService _transformerService;
   final INotificationService _notificationService;
   final IClipboardService _clipboardService;
+
+  /// Where the pin is kept. Null keeps it for this run only.
+  final ISettingsService? _settingsService;
+
+  /// The window a pin keeps on top. Null on mobile and in tests.
+  final IWindowService? _windowService;
+  StreamSubscription<bool>? _gameModeSubscription;
 
   /// Null turns the account offer and the guest badge off entirely.
   final AccountPromptStore? _accountPromptStore;
@@ -112,6 +129,78 @@ class SpotlightViewModel extends ChangeNotifier {
 
   Future<TransformationResult>? _jwtTransformFuture;
   Future<TransformationResult>? get jwtTransformFuture => _jwtTransformFuture;
+
+  // ========== PIN ==========
+  //
+  // Pinned, the Spotlight behaves like an ordinary window: it stays open and
+  // on top when focus goes elsewhere, for copying something in another app
+  // and coming back to send it, dragging a file in, or keeping history in
+  // view. Unpinned it hides on blur, as Spotlight-style launchers do.
+  //
+  // This is the one place the pin lives. The window service only holds what
+  // it was last told, by [_applyPin].
+
+  bool _isPinned = false;
+  bool get isPinned => _isPinned;
+
+  /// Whether the window stays up when it loses focus. Game Mode overrides
+  /// the pin: it exists so nothing sits over a fullscreen game, and a pin
+  /// set days ago and forgotten would do exactly that.
+  bool get keepsOpen => _isPinned && !(_isGameModeActive?.call() ?? false);
+
+  Future<void>? _pinLoad;
+
+  /// Set by a pin or unpin, so a saved value that arrives after one does not
+  /// undo it.
+  bool _pinChosenThisRun = false;
+
+  /// Read the saved pin, once per run: on Windows the screen remounts behind
+  /// every tray menu, and reading again there would undo a pin that could not
+  /// be saved. A failure leaves it unpinned, the default behaviour.
+  Future<void> loadPinned() => _pinLoad ??= _loadPinned();
+
+  Future<void> _loadPinned() async {
+    final settings = _settingsService;
+    if (settings == null) return;
+    try {
+      final pinned = await settings.getSpotlightPinned();
+      if (_pinChosenThisRun || pinned == _isPinned) return;
+      _isPinned = pinned;
+      notifyListeners();
+      await _applyPin();
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Could not read the pin: $e');
+    }
+  }
+
+  /// Pin or unpin, and remember it. The window changes first, so a save that
+  /// fails or throws cannot leave it disagreeing with the button; the pin
+  /// then just does not survive a restart.
+  Future<void> setPinned({required bool pinned}) async {
+    if (pinned == _isPinned) return;
+    _isPinned = pinned;
+    _pinChosenThisRun = true;
+    notifyListeners();
+    await _applyPin();
+    try {
+      final saved =
+          await _settingsService?.setSpotlightPinned(pinned: pinned) ?? true;
+      if (!saved) debugPrint('[SpotlightVM] The pin was not saved');
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Could not save the pin: $e');
+    }
+  }
+
+  /// Topmost follows [keepsOpen], so it always agrees with the blur. Read
+  /// before the await: calls reach the window in order, so the last one
+  /// carries the latest state however fast the button is clicked.
+  Future<void> _applyPin() async {
+    try {
+      await _windowService?.setPinned(pinned: keepsOpen);
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Could not apply the pin to the window: $e');
+    }
+  }
 
   // ========== DRAFT ==========
   //
@@ -1095,6 +1184,8 @@ class SpotlightViewModel extends ChangeNotifier {
     _authStateSubscription = null;
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
+    _gameModeSubscription?.cancel();
+    _gameModeSubscription = null;
 
     // Hand the callbacks back as they were before initialize
     _syncService
