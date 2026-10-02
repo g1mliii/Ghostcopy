@@ -24,9 +24,11 @@ project_id = "xhbggxftvnlkotvehwmj"
 verify_jwt = false
 
 # Same reason: dispatch_storage_cleanup() calls this over pg_net with the
-# same `sb_secret_...` key from the vault. The function authenticates every
-# caller itself (isSecretKeyCaller, else auth.getUser()), so the platform gate
-# only adds a way for queued R2 deletions to be refused before it runs.
+# same `sb_secret_...` key from the vault, and that key is not a JWT for the
+# platform gate to verify. The function authenticates every caller itself
+# before reading the body - isSecretKeyCaller, else a bearer that must look
+# like a session token before auth.getUser() is asked - so an anonymous
+# request still costs nothing past the first check.
 [functions.storage-presign]
 verify_jwt = false
 

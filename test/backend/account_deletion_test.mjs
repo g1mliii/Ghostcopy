@@ -41,7 +41,7 @@ function fixture({ user = { id: 'user', identities: [{ provider: 'email' }] }, d
     return { ok: revokeStatus === 200, status: revokeStatus };
   };
   vm.runInContext(source, vm.createContext({
-    console: { error() {}, log() {} }, Date, Math, JSON, Uint8Array, String, TextEncoder, URLSearchParams,
+    console: { error() {}, log() {}, warn() {} }, Date, Math, JSON, Uint8Array, String, TextEncoder, URLSearchParams,
     atob, btoa, crypto, fetch,
     // The function's timeouts are recorded and shortened, so a hung Apple call
     // is tested without waiting it out.

@@ -13,8 +13,10 @@ function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KE
   let handler;
   const messages = [];
   const updates = [];
+  const errors = [];
+  let userChecks = 0;
   const client = {
-    auth: { getUser: async () => ({ data: { user: { id: 'user' } }, error: null }) },
+    auth: { getUser: async () => { userChecks++; return { data: { user: { id: 'user' } }, error: null }; } },
     from(table) {
       let updating = false;
       const result = () => ({
@@ -32,7 +34,8 @@ function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KE
     },
   };
   const context = vm.createContext({
-    console, Date, Math, TextEncoder,
+    console: { ...console, error: (...args) => errors.push(args.join(' ')) },
+    Date, Math, Set, TextEncoder,
     createClient: () => client,
     json: (body, status = 200) => ({ body, status }),
     corsPreflight: () => ({ status: 204 }),
@@ -54,6 +57,9 @@ function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KE
   return {
     messages,
     updates,
+    errors,
+    // A key accepted as the trigger never reaches the user check.
+    get userChecks() { return userChecks; },
     request: (token, id = 10, owner = 'user') => handler({
       method: 'POST', headers: new Headers({ Authorization: `Bearer ${token}` }),
       json: async () => ({ record: { id, user_id: owner, device_type: 'windows', content_type: 'text' } }),
@@ -80,12 +86,38 @@ test('the trigger is accepted on a current secret key alone', async () => {
 });
 
 test('a disabled legacy key is not the trigger once current keys exist', async () => {
-  // Supabase may keep injecting the legacy key after it is disabled.
+  // Supabase may keep injecting the legacy key after it is disabled. Under
+  // the rate limit, so the status alone cannot hide which way it went.
+  const f = fixture(1, null, {
+    SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),
+    SUPABASE_SERVICE_ROLE_KEY: 'legacy.service.jwt',
+  });
+  await f.request('legacy.service.jwt');
+  assert.equal(f.userChecks, 1);
+  // Said, not silent: this is the trigger's vault secret being out of date.
+  assert.ok(f.errors.some((e) => e.includes('fcm_service_role_key')));
+});
+
+test('the injected service-role key counts when it is a current secret key', async () => {
+  // How this project runs today: the platform injects an sb_secret key as
+  // SUPABASE_SERVICE_ROLE_KEY, and the vault secret matches it.
   const f = fixture(10, null, {
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),
-    SUPABASE_SERVICE_ROLE_KEY: 'legacy-service-jwt',
+    SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_injected',
   });
-  assert.equal((await f.request('legacy-service-jwt')).status, 429);
+  assert.equal((await f.request('sb_secret_injected')).status, 200);
+  assert.equal(f.userChecks, 0);
+});
+
+test('a malformed secret-keys variable does not let the legacy key back in', async () => {
+  const f = fixture(1, null, {
+    SUPABASE_SECRET_KEYS: '{not json',
+    SUPABASE_SERVICE_ROLE_KEY: 'legacy.service.jwt',
+  });
+  await f.request('legacy.service.jwt');
+  assert.equal(f.userChecks, 1);
+  // Reported once, when the variable is read, not on every check.
+  assert.equal(f.errors.filter((e) => e.includes('SUPABASE_SECRET_KEYS is set but')).length, 1);
 });
 
 test('a key that is not one of the project\'s is not the trigger', async () => {

@@ -29,6 +29,16 @@ async function authenticate(req: Request): Promise<
       error: null
     };
   }
+  // The platform's JWT gate is off for this function (the trigger's secret
+  // key is not a JWT), so this is the gate now: anything that is not even
+  // shaped like a session token is refused here, without costing an auth
+  // round trip.
+  if (!/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/.test(authHeader)) {
+    return {
+      userId: null,
+      error: json({ error: 'Unauthorized' }, 401)
+    };
+  }
   const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', publishableKey(), {
     global: {
       headers: {
@@ -142,11 +152,13 @@ Deno.serve(async (req)=>{
     return corsPreflight();
   }
   try {
+    // Before the body: an unauthenticated request should cost nothing past
+    // this point, and with the platform gate off nothing else stops it.
+    const { userId, error: authError } = await authenticate(req);
+    if (authError) return authError;
     const body = await req.json();
     const { action, path } = body;
     if (action === 'delete_queued') {
-      const { userId, error: authError } = await authenticate(req);
-      if (authError) return authError;
       if (userId !== 'service-role') return json({ error: 'Forbidden' }, 403);
       return await deleteQueuedObjects();
     }
@@ -159,8 +171,6 @@ Deno.serve(async (req)=>{
     if (path.startsWith('/') || path.includes('..') || path.includes('\\') || path.includes('\u0000') || path.split('/').some((segment)=>segment.length === 0)) {
       return json({ error: 'Invalid storage path' }, 400);
     }
-    const { userId, error: authError } = await authenticate(req);
-    if (authError) return authError;
     // A privileged trigger calls this function with the service key. It must
     // still prove the R2 object belongs to the row owner; otherwise the
     // service role becomes a confused deputy for arbitrary-object deletion.
