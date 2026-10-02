@@ -958,7 +958,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
           // Showing it again made the toggle unable to close anything.
           if (window.hiddenWithin(const Duration(milliseconds: 500))) return;
           if (window.isVisible) {
-            unawaited(window.hideSpotlight());
+            unawaited(_toggleVisibleSpotlight(window));
             return;
           }
           // Through the hotkey's path, not showSpotlight directly: with the
@@ -1036,6 +1036,23 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // Push is not worth failing startup over; sync still works without it.
       debugPrint('[Mobile] ⚠️ Could not register device for push: $e');
     }
+  }
+
+  /// A tray click on a Spotlight that is up. Usually that means close it -
+  /// but an ordinary pin (not on top) can be up and covered by another app,
+  /// and then the click is the user looking for it: bring it forward.
+  /// Covered means it lost focus earlier than this click; losing it just now
+  /// was the click itself taking it, from a window that was in front.
+  Future<void> _toggleVisibleSpotlight(IWindowService window) async {
+    final spotlight = locator<SpotlightViewModel>();
+    final ordinaryPin = spotlight.keepsOpen && !spotlight.staysOnTop;
+    if (ordinaryPin &&
+        !await windowManager.isFocused() &&
+        !window.blurredWithin(const Duration(milliseconds: 500))) {
+      await window.showSpotlight();
+      return;
+    }
+    await window.hideSpotlight();
   }
 
   /// Handle Ctrl+Shift+S hotkey - ensures correct state before showing

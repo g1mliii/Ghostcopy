@@ -537,6 +537,9 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   @override
   void onWindowBlur() {
+    // First, before anything returns: the tray click asks when this was.
+    _windowService.noteBlur();
+
     // Debounce: Ignore blur events immediately after focus (prevents flicker/auto-close)
     if (_lastFocusTime != null &&
         DateTime.now().difference(_lastFocusTime!) <

@@ -33,6 +33,7 @@ class WindowService implements IWindowService {
   final ILifecycleController? _lifecycleController;
   bool _isVisible = false;
   DateTime? _hideStartedAt;
+  DateTime? _blurredAt;
 
   // Spotlight window dimensions from CLAUDE.md
   static const double _windowWidth = 500;
@@ -48,6 +49,15 @@ class WindowService implements IWindowService {
   @override
   bool hiddenWithin(Duration window) {
     final at = _hideStartedAt;
+    return at != null && DateTime.now().difference(at) < window;
+  }
+
+  @override
+  void noteBlur() => _blurredAt = DateTime.now();
+
+  @override
+  bool blurredWithin(Duration window) {
+    final at = _blurredAt;
     return at != null && DateTime.now().difference(at) < window;
   }
 

@@ -53,6 +53,15 @@ abstract class IWindowService {
   /// user was closing it.
   bool hiddenWithin(Duration window);
 
+  /// Record that the Spotlight lost focus, for [blurredWithin].
+  void noteBlur();
+
+  /// Whether the Spotlight lost focus within the last [window]. A pinned
+  /// window that lost it a moment ago lost it to the very click being
+  /// handled, so it was in front; one that lost it earlier went behind
+  /// whatever the user switched to.
+  bool blurredWithin(Duration window);
+
   /// Dispose of the service and clean up resources
   Future<void> dispose();
 }
