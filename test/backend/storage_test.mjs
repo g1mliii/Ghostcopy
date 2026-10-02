@@ -3,17 +3,20 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
+import { sharedKeysSource } from './shared_keys.mjs';
 
-const source = stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
+const source = sharedKeysSource + stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, ''));
 class Command { constructor(input) { this.input = input; } }
-function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], missingKeys = [], failDelete = false } = {}) {
+function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], missingKeys = [], failDelete = false,
+  env = { SUPABASE_SERVICE_ROLE_KEY: 'service-key' } } = {}) {
+  let userChecks = 0;
   let handler;
   const acknowledged = [];
   const deleted = [];
   let signed = 0;
   const client = {
-    auth: { getUser: async () => ({ data: { user: { id: 'user' } }, error: null }) },
+    auth: { getUser: async () => { userChecks++; return { data: { user: { id: 'user' } }, error: null }; } },
     async rpc(name, args) {
       if (name === 'check_storage_rate_limit') {
         assert.equal(args.p_user_id, 'user');
@@ -28,7 +31,7 @@ function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKey
     },
   };
   vm.runInContext(source, vm.createContext({
-    console, Date, Math, Set, Map,
+    console, Date, Math, Set, Map, TextEncoder,
     createClient: () => client,
     DeleteObjectCommand: Command, DeleteObjectsCommand: Command,
     GetObjectCommand: Command, PutObjectCommand: Command,
@@ -49,14 +52,17 @@ function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKey
     json: (body, status = 200) => ({ body, status }),
     corsPreflight: () => ({ status: 204 }),
     Deno: {
-      env: { get: (key) => key === 'SUPABASE_SERVICE_ROLE_KEY' ? 'service-key' : '' },
+      env: { get: (key) => env[key] ?? '' },
       serve: (callback) => { handler = callback; },
     },
   }));
   return {
-    acknowledged, deleted, get signed() { return signed; },
-    request: (body, token = 'user-token') => handler({
-      method: 'POST', headers: new Headers({ Authorization: `Bearer ${token}` }), json: async () => body,
+    acknowledged, deleted, get signed() { return signed; }, get userChecks() { return userChecks; },
+    // A session token is a JWT; the function refuses anything not shaped like
+    // one before asking auth.
+    request: (body, token = 'user.session.token', { parsed } = {}) => handler({
+      method: 'POST', headers: new Headers({ Authorization: `Bearer ${token}` }),
+      json: async () => { if (parsed) parsed.read = true; return body; },
     }),
   };
 }
@@ -121,4 +127,40 @@ test('a 404 is left queued, since a missing key would answer 204', async () => {
   const f = fixture({ rows: [{ id: 1, owner_id: 'a', storage_path: 'a/file' }], missingKeys: ['a/file'] });
   assert.equal((await f.request({ action: 'delete_queued' }, 'service-key')).status, 502);
   assert.deepEqual(f.acknowledged, []);
+});
+
+test('an anonymous request is refused before its body or an auth check', async () => {
+  // The platform's JWT gate is off for this function, so this is the gate.
+  const f = fixture();
+  const parsed = { read: false };
+  assert.equal((await f.request({ action: 'download', path: 'user/file' }, 'not-a-jwt', { parsed })).status, 401);
+  assert.equal(parsed.read, false);
+  assert.equal(f.userChecks, 0);
+});
+
+test('the cleanup trigger is accepted on a current secret key', async () => {
+  // Production: the new variables, with the legacy one injected too.
+  const f = fixture({
+    rows: [{ id: 1, owner_id: 'user', storage_path: 'user/a' }],
+    env: {
+      SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),
+      SUPABASE_SERVICE_ROLE_KEY: 'legacy.service.jwt',
+    },
+  });
+  assert.equal((await f.request({ action: 'delete_queued' }, 'sb_secret_a')).status, 200);
+  assert.deepEqual(f.acknowledged, [1]);
+});
+
+test('a disabled legacy JWT cannot drain the cleanup queue', async () => {
+  const f = fixture({
+    rows: [{ id: 1, owner_id: 'user', storage_path: 'user/a' }],
+    env: {
+      SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'sb_secret_a' }),
+      SUPABASE_SERVICE_ROLE_KEY: 'legacy.service.jwt',
+    },
+  });
+  // Shaped like a session, so it reaches the user check - and a user is not
+  // the trigger.
+  assert.equal((await f.request({ action: 'delete_queued' }, 'legacy.service.jwt')).status, 403);
+  assert.equal(f.deleted.length, 0);
 });

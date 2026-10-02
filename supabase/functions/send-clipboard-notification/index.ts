@@ -3,6 +3,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Import Firebase Admin SDK via NPM compatibility
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
+import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -23,7 +24,7 @@ if (serviceAccountJson) {
 // CORS headers for client-side requests
 // Service role client for operations that bypass RLS:
 // rate limit reads and stale FCM token cleanup.
-const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL') ?? '', secretKey());
 // DB-based rate limit — reads the existing user_rate_limit table so the limit
 // is consistent across all Edge Function instances (no per-instance Map state).
 // Notifications are 1:1 with clipboard inserts, so the same 10/min window applies.
@@ -78,7 +79,7 @@ Deno.serve(async (req)=>{
   }
   try {
     // Create Supabase client
-    const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
+    const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', publishableKey(), {
       global: {
         headers: {
           Authorization: req.headers.get('Authorization')
@@ -92,8 +93,7 @@ Deno.serve(async (req)=>{
     // and mobile push silently never fired. Detect that caller explicitly and
     // take the identity from the row it is reporting instead.
     const authHeader = req.headers.get('Authorization');
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const isServiceRole = !!serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`;
+    const isServiceRole = isSecretKeyCaller(authHeader);
     // Which client every data query below uses.
     //
     // supabaseClient is built from the anon key with the caller's Authorization
