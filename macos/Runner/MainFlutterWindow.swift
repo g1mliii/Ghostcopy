@@ -50,6 +50,14 @@ class MainFlutterWindow: NSWindow {
     // Flutter code (window_manager) will show it when ready
     self.orderOut(nil)
   }
+
+  /// Every way the Spotlight leaves the screen comes through here, so this
+  /// is where AppPresence learns it has gone - rather than from Dart, which
+  /// only knows when it asked.
+  override func orderOut(_ sender: Any?) {
+    super.orderOut(sender)
+    appPresence?.spotlightDidHide()
+  }
 }
 
 /// Puts GhostCopy in the Dock and Cmd-Tab while an ordinary pin holds the
@@ -59,10 +67,11 @@ class MainFlutterWindow: NSWindow {
 /// In this file rather than its own so the Xcode project does not change.
 ///
 /// Leaving is the delicate half: macOS does not apply the accessory policy
-/// to the active app (see LSUIElement in Info.plist). When the Spotlight has
-/// gone, focus is handed back first; when it is still up (the pin went to
-/// on-top), it is left in front. Either way, a switch that did not take is
-/// applied again the moment GhostCopy stops being the active app.
+/// to the active app (see LSUIElement in Info.plist). While the Spotlight is
+/// still up (the pin went to on-top) it is left in front and only the policy
+/// changes; once it has gone - noticed in MainFlutterWindow.orderOut, however
+/// it was hidden - focus is handed back first. A switch that still did not
+/// take is applied again the moment GhostCopy stops being the active app.
 class AppPresence {
     private let channel: FlutterMethodChannel
     private weak var spotlight: NSWindow?
@@ -102,11 +111,21 @@ class AppPresence {
         // asking whether the Spotlight is still up.
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.wanted else { return }
-            if NSApp.isActive && !(self.spotlight?.isVisible ?? false) {
-                NSApp.deactivate()
+            if self.spotlight?.isVisible ?? false {
+                self.settle()
+            } else {
+                self.spotlightDidHide()
             }
-            self.settle()
         }
+    }
+
+    /// The Spotlight has left the screen. If GhostCopy is still meant to be
+    /// out of the switcher and is not yet, it is the active app with nothing
+    /// to show: hand focus back, then drop to an agent app.
+    func spotlightDidHide() {
+        guard !wanted, NSApp.activationPolicy() != .accessory else { return }
+        if NSApp.isActive { NSApp.deactivate() }
+        settle()
     }
 
     /// Out of the switcher, if that is what Dart last asked for and it has
