@@ -144,9 +144,24 @@ Future<int> runCli(
       if (rest.isEmpty) {
         return fail('Nothing to send. Usage: ghostcopy send <text>');
       }
-      final text = rest.length == 1 && rest.single == '-'
-          ? await (stdinText ?? _readStdin)()
-          : rest.join(' ');
+      final String text;
+      if (rest.length == 1 && rest.single == '-') {
+        // Not UTF-8 - a UTF-16 file from PowerShell's `>`, a legacy code page
+        // - used to escape as an uncaught exception: no exit code a script
+        // could read, and nothing at all under --json.
+        try {
+          text = await (stdinText ?? _readStdin)();
+        } on FormatException {
+          return fail(
+            'Standard input is not UTF-8 text. Save it as UTF-8, or use '
+            'send-file to send it as a file.',
+          );
+        } on IOException catch (e) {
+          return fail('Could not read standard input: $e');
+        }
+      } else {
+        text = rest.join(' ');
+      }
       if (text.trim().isEmpty) {
         return fail('Nothing to send: the text is empty.');
       }

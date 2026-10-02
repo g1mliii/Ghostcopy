@@ -112,6 +112,19 @@ void main() {
     expect(client.requests.single['text'], '--json');
   });
 
+  test('stdin that is not UTF-8 is a usage error, in --json too', () async {
+    final code = await runCli(
+      ['send', '-', '--json'],
+      client: client,
+      out: out,
+      err: err,
+      stdinText: () async => throw const FormatException('Bad UTF-8'),
+    );
+    expect(code, CliExit.usage);
+    expect(jsonDecode(out.toString()), containsPair('error', 'usage'));
+    expect(client.requests, isEmpty);
+  });
+
   group('exit codes', () {
     test('GhostCopy not running is 2, with the reason', () async {
       client.error = const AgentException('not_running', 'Open GhostCopy.');
