@@ -131,9 +131,12 @@ class WindowService implements IWindowService {
   Future<void> _applyAppPresence() async {
     final wanted = _pinned && !_onTop && _showingSpotlight;
     if (wanted == _inAppSwitcher) {
+      // Cleared only once the full leave has worked, so a failure is
+      // tried again at the next change rather than forgotten.
       if (!wanted && _leaveAgainWhenHidden && !_showingSpotlight) {
-        _leaveAgainWhenHidden = false;
-        await _setAppSwitcher(inSwitcher: false);
+        if (await _setAppSwitcher(inSwitcher: false)) {
+          _leaveAgainWhenHidden = false;
+        }
       }
       return;
     }
@@ -149,8 +152,11 @@ class WindowService implements IWindowService {
   Future<bool> _setAppSwitcher({required bool inSwitcher}) async {
     try {
       if (Platform.isMacOS) {
+        // Whether the Spotlight itself is up, said here: the native side
+        // cannot tell it from another of the app's windows - Sparkle's.
         await _appPresence.invokeMethod<void>(
           inSwitcher ? 'enterAppSwitcher' : 'leaveAppSwitcher',
+          {'spotlightShowing': _showingSpotlight},
         );
       } else {
         await windowManager.setSkipTaskbar(!inSwitcher);

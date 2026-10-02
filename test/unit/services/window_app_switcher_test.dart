@@ -116,6 +116,57 @@ void main() {
   });
 
   test(
+    'macOS is told whether the Spotlight itself is up',
+    () async {
+      final leaves = <Object?>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(presence, (call) async {
+            if (call.method == 'leaveAppSwitcher') leaves.add(call.arguments);
+            return null;
+          });
+      final window = WindowService();
+      await window.setPinned(pinned: true, onTop: false);
+      await window.showSpotlight();
+
+      await window.setPinned(pinned: true, onTop: true); // up: policy only
+      await window.hideSpotlight(); // gone: the full leave
+
+      expect(leaves, [
+        {'spotlightShowing': true},
+        {'spotlightShowing': false},
+      ]);
+    },
+    skip: !Platform.isMacOS ? 'drives the macOS channel' : false,
+  );
+
+  test(
+    'a failed leave at the hide is tried again',
+    () async {
+      var failLeaves = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(presence, (call) async {
+            if (call.method == 'leaveAppSwitcher' &&
+                (call.arguments as Map)['spotlightShowing'] == false &&
+                failLeaves++ == 0) {
+              throw PlatformException(code: 'failed');
+            }
+            switcher.add(call.method == 'enterAppSwitcher' ? 'in' : 'out');
+            return null;
+          });
+      final window = WindowService();
+      await window.setPinned(pinned: true, onTop: false);
+      await window.showSpotlight();
+      await window.setPinned(pinned: true, onTop: true);
+      await window.hideSpotlight(); // the full leave fails
+
+      await window.setPinned(pinned: true, onTop: true); // tried again
+
+      expect(switcher, ['in', 'out', 'out']);
+    },
+    skip: !Platform.isMacOS ? 'drives the macOS channel' : false,
+  );
+
+  test(
     'a failed change is tried again, not taken as done',
     () async {
       var failNext = true;

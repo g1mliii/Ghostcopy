@@ -73,18 +73,25 @@ class AppPresence {
                 NSApp.setActivationPolicy(.regular)
                 result(nil)
             case "leaveAppSwitcher":
-                AppPresence.leave { result(nil) }
+                let args = call.arguments as? [String: Any]
+                let showing = args?["spotlightShowing"] as? Bool ?? false
+                AppPresence.leave(spotlightShowing: showing) { result(nil) }
             default:
                 result(FlutterMethodNotImplemented)
             }
         }
     }
 
-    private static func leave(then done: @escaping () -> Void) {
+    private static func leave(
+        spotlightShowing: Bool,
+        then done: @escaping () -> Void
+    ) {
         // The Spotlight still up (the pin went to on-top, or off): it stays
         // in front, so only the policy changes. WindowService leaves again,
         // the full way, at the next hide in case this one did not take.
-        if NSApp.windows.contains(where: { $0.isVisible }) {
+        // Told by Dart rather than read from NSApp.windows, which would count
+        // any other window of ours - Sparkle's - as the Spotlight.
+        if spotlightShowing {
             NSApp.setActivationPolicy(.accessory)
             done()
             return
