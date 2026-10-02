@@ -61,6 +61,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     ::DispatchMessage(&msg);
   }
 
+  // Quit from the tray ends the loop with the window still up:
+  // windowManager.destroy() is a bare PostQuitMessage. Left to `window`'s
+  // destructor, the Flutter controller was torn down while its pointer was
+  // still set, and destroying Flutter's child window sent the top-level one
+  // messages that were forwarded into the half-destroyed controller - an
+  // access violation on every Quit (Sentry FLUTTER-2, -3 and -A). Destroy()
+  // takes the WM_DESTROY path a close takes, which clears the controller
+  // first. Before OleUninitialize, because plugins revoke drag and drop and
+  // release COM objects as the engine shuts down.
+  window.Destroy();
+
   ::OleUninitialize();
   return EXIT_SUCCESS;
 }
