@@ -17,22 +17,29 @@ void SetModuleHandle(void* module) {
   g_module = static_cast<HMODULE>(module);
 }
 
-std::wstring AppIconReference() {
-  if (!g_module) return {};
-
+std::wstring ModulePath(void* module) {
+  const auto handle = static_cast<HMODULE>(module);
   std::wstring path(MAX_PATH, L'\0');
-  DWORD length = ::GetModuleFileNameW(g_module, path.data(),
+  DWORD length = ::GetModuleFileNameW(handle, path.data(),
                                       static_cast<DWORD>(path.size()));
   if (length == 0) return {};
   // A package path can exceed MAX_PATH; grow until it fits rather than
-  // shipping a truncated one, which would silently resolve to nothing.
+  // returning a truncated one, which would silently resolve to nothing.
   while (length == path.size()) {
     path.resize(path.size() * 2);
-    length = ::GetModuleFileNameW(g_module, path.data(),
+    length = ::GetModuleFileNameW(handle, path.data(),
                                   static_cast<DWORD>(path.size()));
     if (length == 0) return {};
   }
   path.resize(length);
+  return path;
+}
+
+std::wstring AppIconReference() {
+  if (!g_module) return {};
+
+  std::wstring path = ModulePath(g_module);
+  if (path.empty()) return {};
 
   const size_t separator = path.find_last_of(L'\\');
   if (separator == std::wstring::npos) return {};

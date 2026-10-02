@@ -9,6 +9,10 @@ namespace ghostcopy {
 // root, so it is how the icon below is located.
 void SetModuleHandle(void* module);
 
+// The full path of a loaded module - of the process's executable when
+// `module` is null - or an empty string if it could not be read.
+std::wstring ModulePath(void* module);
+
 // "<package root>\ghostcopy.exe,0", the form IExplorerCommand::GetIcon wants,
 // or an empty string if the module path could not be read.
 std::wstring AppIconReference();

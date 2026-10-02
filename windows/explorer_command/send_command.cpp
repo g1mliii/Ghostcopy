@@ -7,6 +7,7 @@
 #include <string>
 
 #include "module.h"
+#include "surrogate_shutdown.h"
 
 // Must match the Clsid in the <desktop5:Verb> and <com:Class> the package
 // manifest declares; see the note in send_command.h.
@@ -151,6 +152,7 @@ IFACEMETHODIMP SendCommand::EnumSubCommands(IEnumExplorerCommand**) {
 
 IFACEMETHODIMP SendCommand::Invoke(IShellItemArray* items, IBindCtx*) {
   if (!items) return S_OK;
+  const ghostcopy::InvokeInProgress in_progress;
 
   DWORD count = 0;
   if (FAILED(items->GetCount(&count))) return E_FAIL;
