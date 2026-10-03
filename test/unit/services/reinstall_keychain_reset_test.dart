@@ -99,6 +99,42 @@ void main() {
       expect(keychain.items['encryption_passphrase_new']!.$1, 'new secret');
     });
 
+    // Owed again next launch, the sign-out would take whatever account was
+    // added since.
+    test(
+      'a sign-out whose completion cannot be written still counts',
+      () async {
+        // The pending record is written, then "done" cannot be.
+        var signOuts = 0;
+        Future<void> signOut() async {
+          signOuts++;
+          Directory(
+            p.join(container.path, 'google_sign_out_owed.partial'),
+          ).createSync();
+        }
+
+        await clearKeychainLeftByEarlierInstall(
+          storage: keychain,
+          supportDirectory: () async => container,
+          signOutGoogle: signOut,
+        );
+        Directory(
+          p.join(container.path, 'google_sign_out_owed.partial'),
+        ).deleteSync();
+        await clearKeychainLeftByEarlierInstall(
+          storage: keychain,
+          supportDirectory: () async => container,
+          signOutGoogle: signOut,
+        );
+
+        expect(signOuts, 1);
+        expect(
+          File(p.join(container.path, 'google_sign_out_owed')).existsSync(),
+          isFalse,
+        );
+      },
+    );
+
     test('Google cleanup is durably pending before sign-out runs', () async {
       var checked = false;
       await clearKeychainLeftByEarlierInstall(

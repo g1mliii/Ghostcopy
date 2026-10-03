@@ -144,9 +144,14 @@ Future<void> _signOutIfOwed(
   try {
     if ((await pending.readAsString()).trim() == 'done') return;
     await signOut();
-    // Keep completion durable too: losing the legacy preferences removal
-    // must not revive cleanup and sign out an account added afterwards.
-    await _writeFlushed(pending, 'done');
+    // Keep completion durable too: a sign-out still owed next launch would
+    // sign out whatever account was added since. If "done" cannot be
+    // written, removing the record says the same thing.
+    try {
+      await _writeFlushed(pending, 'done');
+    } on Exception {
+      await pending.delete();
+    }
   } on Exception catch (e) {
     debugPrint('[Keychain] Could not sign out the earlier account yet: $e');
   }

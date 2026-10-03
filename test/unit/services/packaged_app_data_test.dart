@@ -45,6 +45,10 @@ void main() {
       'APPDATA': p.join(home.path, 'Roaming'),
       'LOCALAPPDATA': p.join(home.path, 'Local'),
     };
+    // The known folders exist on any real profile.
+    for (final known in env.values) {
+      Directory(known).createSync(recursive: true);
+    }
     data = PackagedAppData.forFamilyName(
       'pkg',
       localAppData: env['LOCALAPPDATA'],
@@ -508,22 +512,14 @@ void main() {
       }
     });
 
-    // Temp files now go under the package, and only there is swept, so an
-    // earlier version's - decrypted downloads - would outlive an uninstall.
-    test("an earlier version's temp files are swept once it commits", () async {
-      final temp = Directory(p.join(env['LOCALAPPDATA']!, 'Temp'))
-        ..createSync(recursive: true);
-      env['TEMP'] = temp.path;
-      write(p.join(temp.path, 'ghostcopy_123_notes.txt'), 'plaintext');
-      write(p.join(temp.path, 'other_app.tmp'), 'not ours');
+    // APPDATA can be a network profile that is offline right now. Taken for
+    // empty, the move committed and stranded the session there for good.
+    test('a missing AppData root does not commit', () async {
+      Directory(env['APPDATA']!).deleteSync(recursive: true);
 
-      expect(await data.moveFromAppData(env), isTrue);
+      expect(await data.moveFromAppData(env), isFalse);
 
-      expect(
-        File(p.join(temp.path, 'ghostcopy_123_notes.txt')).existsSync(),
-        isFalse,
-      );
-      expect(File(p.join(temp.path, 'other_app.tmp')).existsSync(), isTrue);
+      expect(state('.moved_from_appdata').existsSync(), isFalse);
     });
 
     test('happens once', () async {

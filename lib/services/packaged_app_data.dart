@@ -11,8 +11,6 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_windows/shared_preferences_windows.dart';
 
-import 'impl/temp_file_service.dart';
-
 /// Where a Microsoft Store (MSIX) GhostCopy keeps its data, so that
 /// uninstalling it leaves nothing behind.
 ///
@@ -211,6 +209,18 @@ class PackagedAppData {
       // Another process may have finished while this one waited.
       if (marker.existsSync()) return true;
 
+      // A missing root is not an empty one: APPDATA can be a network profile
+      // that is offline right now. Committing then would strand the session
+      // there for good, so wait for a launch that can see it.
+      for (final key in ['APPDATA', 'LOCALAPPDATA']) {
+        final known = env[key];
+        if (known != null &&
+            known.isNotEmpty &&
+            !Directory(known).existsSync()) {
+          return false;
+        }
+      }
+
       final sources = _legacySources(env);
       final journal = File(p.join(localState, _moveJournal));
       await _restoreInterruptedMove(journal, sources);
@@ -283,7 +293,6 @@ class PackagedAppData {
           }
         }
         await partial.rename(marker.path);
-        await _sweepLegacyTemp(env);
         try {
           await journal.delete();
         } on FileSystemException catch (e) {
@@ -308,32 +317,6 @@ class PackagedAppData {
         debugPrint('[PackagedAppData] Could not close the lock: ${e.message}');
       }
     }
-  }
-}
-
-/// Delete what an earlier version left in the ordinary temp folder. From
-/// here on TempFileService writes under the package's LocalCache\Temp and
-/// sweeps only that, so these - decrypted downloads, the active clipboard
-/// file among them - would otherwise outlive an uninstall. Best effort: it
-/// is cleanup, and the move has already committed.
-Future<void> _sweepLegacyTemp(Map<String, String> env) async {
-  final temp = env['TEMP'] ?? env['TMP'];
-  if (temp == null || temp.isEmpty) return;
-  try {
-    final dir = Directory(temp);
-    if (!dir.existsSync()) return;
-    for (final entity in dir.listSync(followLinks: false)) {
-      if (!p.basename(entity.path).startsWith(TempFileService.filePrefix)) {
-        continue;
-      }
-      try {
-        await entity.delete(recursive: true);
-      } on FileSystemException catch (e) {
-        debugPrint('[PackagedAppData] Left ${entity.path}: ${e.message}');
-      }
-    }
-  } on FileSystemException catch (e) {
-    debugPrint('[PackagedAppData] Could not sweep $temp: ${e.message}');
   }
 }
 
