@@ -4,72 +4,130 @@ import 'package:ghostcopy/services/impl/keychain_accessibility.dart';
 import 'package:ghostcopy/services/reinstall_keychain_reset.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// The Keychain as far as this cares: the install id, and what was cleared.
+class _Keychain {
+  String? id;
+  final List<IOSOptions> cleared = [];
+  bool failWrite = false;
+  bool failDelete = false;
+
+  Future<String?> read() async => id;
+
+  Future<void> write(String value) async {
+    if (failWrite) throw Exception('Keychain write failed');
+    id = value;
+  }
+
+  Future<void> deleteAll(IOSOptions options) async {
+    if (failDelete) throw Exception('Keychain locked');
+    cleared.add(options);
+    id = null; // the id lives in the same service
+  }
+}
+
 void main() {
-  late List<IOSOptions> cleared;
+  late _Keychain keychain;
 
-  Future<void> deleteAll(IOSOptions options) async => cleared.add(options);
+  setUp(() => keychain = _Keychain());
 
-  setUp(() => cleared = []);
+  Future<SharedPreferences> prefsWith(Map<String, Object> values) async {
+    SharedPreferences.setMockInitialValues(values);
+    return SharedPreferences.getInstance();
+  }
 
-  test('a fresh install clears both places the passphrase lived', () async {
-    SharedPreferences.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> launch(SharedPreferences prefs) =>
+      clearKeychainLeftByEarlierInstall(
+        preferences: prefs,
+        readKeychainId: keychain.read,
+        writeKeychainId: keychain.write,
+        deleteAll: keychain.deleteAll,
+      );
 
-    await clearKeychainLeftByEarlierInstall(
-      preferences: prefs,
-      deleteAll: deleteAll,
-    );
+  test('a reinstall clears both places the passphrase lived', () async {
+    // The Keychain remembers an install whose preferences are gone.
+    keychain.id = 'earlier-install';
 
-    expect(cleared, [passphraseIosOptions, legacyPassphraseIosOptions]);
+    await launch(await prefsWith({}));
+
+    expect(keychain.cleared, [
+      passphraseIosOptions,
+      legacyPassphraseIosOptions,
+    ]);
   });
 
-  // An existing install updating to this version: everything it stored is
-  // still its own, passphrase included.
-  test('an install that already has preferences is left alone', () async {
-    SharedPreferences.setMockInitialValues({'auto_send_enabled': true});
-    final prefs = await SharedPreferences.getInstance();
+  // Empty preferences are not a reinstall: signed out, with every setting
+  // at its default, an install has none - and its passphrase is its own.
+  test(
+    'an install with no preferences but its own id keeps its Keychain',
+    () async {
+      final prefs = await prefsWith({});
+      await launch(prefs); // records the id; nothing else is stored
 
-    await clearKeychainLeftByEarlierInstall(
-      preferences: prefs,
-      deleteAll: deleteAll,
-    );
+      await launch(prefs);
 
-    expect(cleared, isEmpty);
+      expect(keychain.cleared, isEmpty);
+    },
+  );
+
+  // The first launch of this version on an existing install: no id anywhere
+  // yet, so nothing can be told apart, and nothing is deleted.
+  test(
+    'an install from before the id existed is left alone, then recorded',
+    () async {
+      final prefs = await prefsWith({});
+
+      await launch(prefs);
+
+      expect(keychain.cleared, isEmpty);
+      expect(keychain.id, isNotNull);
+      expect(prefs.getString('ghostcopy_install_id'), keychain.id);
+    },
+  );
+
+  test('an ordinary launch does nothing', () async {
+    final prefs = await prefsWith({});
+    await launch(prefs);
+    final id = keychain.id;
+
+    await launch(prefs);
+
+    expect(keychain.cleared, isEmpty);
+    expect(keychain.id, id);
   });
 
-  test('runs once', () async {
-    SharedPreferences.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
+  // Preferences are written first, so a failed Keychain write leaves the id
+  // in preferences only - "not recorded yet" - never in the Keychain only,
+  // which would read as a reinstall.
+  test(
+    'a failed Keychain write is retried, not taken for a reinstall',
+    () async {
+      final prefs = await prefsWith({});
+      keychain.failWrite = true;
+      await launch(prefs);
+      expect(keychain.id, isNull);
 
-    await clearKeychainLeftByEarlierInstall(
-      preferences: prefs,
-      deleteAll: deleteAll,
-    );
-    cleared.clear();
-    await clearKeychainLeftByEarlierInstall(
-      preferences: prefs,
-      deleteAll: deleteAll,
-    );
+      keychain.failWrite = false;
+      await launch(prefs);
 
-    expect(cleared, isEmpty);
-  });
+      expect(keychain.cleared, isEmpty);
+      expect(keychain.id, prefs.getString('ghostcopy_install_id'));
+    },
+  );
 
-  // The next launch has preferences of its own by then, so without a record
-  // that the clear is owed it would look like an upgrade and never retry.
   test('a clear that failed is tried again on the next launch', () async {
-    SharedPreferences.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
+    keychain
+      ..id = 'earlier-install'
+      ..failDelete = true;
+    final prefs = await prefsWith({});
+    await launch(prefs);
+    expect(prefs.getString('ghostcopy_install_id'), isNull);
 
-    await clearKeychainLeftByEarlierInstall(
-      preferences: prefs,
-      deleteAll: (_) async => throw Exception('Keychain locked'),
-    );
-    await prefs.setBool('auto_send_enabled', false);
-    await clearKeychainLeftByEarlierInstall(
-      preferences: prefs,
-      deleteAll: deleteAll,
-    );
+    keychain.failDelete = false;
+    await launch(prefs);
 
-    expect(cleared, [passphraseIosOptions, legacyPassphraseIosOptions]);
+    expect(keychain.cleared, [
+      passphraseIosOptions,
+      legacyPassphraseIosOptions,
+    ]);
   });
 }

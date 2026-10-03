@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,35 +9,37 @@ import 'impl/keychain_accessibility.dart';
 
 /// Clears what an earlier install of GhostCopy left in the iOS Keychain.
 ///
-/// Deleting an iOS app deletes its container - settings, the session, caches
-/// - but not its Keychain items, so the encryption passphrase outlived the
-/// app: still on the phone after the user removed GhostCopy, and handed back
-/// to whoever installed it next. This runs on the first launch of a fresh
-/// install, before anything reads the Keychain, and removes it.
+/// Deleting an iOS app deletes its container - preferences, the session,
+/// caches - but not its Keychain items, so the encryption passphrase
+/// outlived the app: still on the phone after the user removed GhostCopy, and
+/// handed back to whoever installed it next.
 ///
-/// "Fresh" is read from the app's own preferences, which iOS deletes with the
-/// app: none at all means a new install. An existing install updating to this
-/// version has some, so it is marked and left alone - nothing it has stored is
-/// touched. A phone restored from a backup gets its preferences back with its
-/// Keychain, and is left alone the same way.
+/// A reinstall is recognised by an install id kept in both places. Each
+/// install writes one to its preferences and to the Keychain; finding it in
+/// the Keychain but not in preferences means the preferences were deleted
+/// while the Keychain was not, and only deleting the app does that - nothing
+/// in GhostCopy clears preferences wholesale. Empty preferences alone are not
+/// evidence: an install signed out with every setting at its default has
+/// none, and still has a passphrase that is its own.
 ///
-/// The passphrase is the only Keychain item GhostCopy writes; the session is
-/// in preferences, already gone with the app.
+/// So the first launch of this version on an existing install finds neither,
+/// deletes nothing, and records the id. The cost is that a passphrase left by
+/// an install from before this version is not recognised as left over; every
+/// install from here on is.
 Future<void> clearKeychainLeftByEarlierInstall({
   SharedPreferences? preferences,
+  Future<String?> Function()? readKeychainId,
+  Future<void> Function(String id)? writeKeychainId,
   Future<void> Function(IOSOptions options)? deleteAll,
 }) async {
+  const keychain = FlutterSecureStorage(iOptions: passphraseIosOptions);
   try {
     final prefs = preferences ?? await SharedPreferences.getInstance();
-    if (prefs.getBool(_checkedKey) ?? false) return;
+    final kept = await (readKeychainId ?? () => keychain.read(key: _idKey))();
+    final local = prefs.getString(_idKey);
+    if (kept != null && kept == local) return;
 
-    // Decided once, and kept until the clear has succeeded: the next launch
-    // has preferences of its own and would otherwise take a failed clear for
-    // an upgrade, and never try again.
-    final fresh =
-        (prefs.getBool(_pendingKey) ?? false) || prefs.getKeys().isEmpty;
-    if (fresh) {
-      await prefs.setBool(_pendingKey, true);
+    if (kept != null && local == null) {
       final delete =
           deleteAll ??
           (options) =>
@@ -49,13 +54,25 @@ Future<void> clearKeychainLeftByEarlierInstall({
       }
       debugPrint('[Keychain] Cleared what an earlier install left behind');
     }
-    await prefs.setBool(_checkedKey, true);
-    await prefs.remove(_pendingKey);
+
+    // Preferences first. If the Keychain write then fails, the next launch
+    // finds the id in preferences only - "not recorded yet", tried again -
+    // where the other order would leave it in the Keychain only, which reads
+    // as a reinstall and would clear a passphrase that is this install's.
+    final id = local ?? _newId();
+    if (local == null) await prefs.setString(_idKey, id);
+    await (writeKeychainId ?? (id) => keychain.write(key: _idKey, value: id))(
+      id,
+    );
   } on Object catch (e) {
     // Never worth failing startup over; the next launch tries again.
-    debugPrint('[Keychain] Could not clear an earlier install: $e');
+    debugPrint('[Keychain] Could not check for an earlier install: $e');
   }
 }
 
-const String _checkedKey = 'keychain_reinstall_checked';
-const String _pendingKey = 'keychain_reinstall_clear_pending';
+const String _idKey = 'ghostcopy_install_id';
+
+String _newId() {
+  final random = Random.secure();
+  return base64Url.encode(List<int>.generate(16, (_) => random.nextInt(256)));
+}
