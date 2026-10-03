@@ -209,17 +209,7 @@ class PackagedAppData {
       // Another process may have finished while this one waited.
       if (marker.existsSync()) return true;
 
-      // A missing root is not an empty one: APPDATA can be a network profile
-      // that is offline right now. Committing then would strand the session
-      // there for good, so wait for a launch that can see it.
-      for (final key in ['APPDATA', 'LOCALAPPDATA']) {
-        final known = env[key];
-        if (known != null &&
-            known.isNotEmpty &&
-            !Directory(known).existsSync()) {
-          return false;
-        }
-      }
+      if (!_rootsAvailable(env)) return false;
 
       final sources = _legacySources(env);
       final journal = File(p.join(localState, _moveJournal));
@@ -283,6 +273,11 @@ class PackagedAppData {
         // not leave a marker that makes the next attempt skip migration.
         final partial = File('${marker.path}.partial');
         await partial.writeAsString('', flush: true);
+        // Again just before committing: a root that went offline meanwhile
+        // would make every source below look emptied.
+        if (!_rootsAvailable(env)) {
+          throw const FileSystemException('An AppData root went offline');
+        }
         for (final (source, _) in sources) {
           final directory = Directory(source);
           if (directory.existsSync() && directory.listSync().isNotEmpty) {
@@ -319,6 +314,16 @@ class PackagedAppData {
     }
   }
 }
+
+/// Whether the AppData known folders exist. A missing one is not an empty
+/// one: APPDATA can be a network profile that is offline right now, and a
+/// move committed then would strand the session there for good.
+bool _rootsAvailable(Map<String, String> env) => ['APPDATA', 'LOCALAPPDATA']
+    .map((key) => env[key])
+    .every(
+      (known) =>
+          known == null || known.isEmpty || Directory(known).existsSync(),
+    );
 
 /// Startup cannot safely use AppData until the pending migration is restored.
 class PackagedAppDataRecoveryException implements Exception {
@@ -444,7 +449,10 @@ class _Move {
   /// Move [entity] to [target], which [_fits] has cleared. Whether all of it
   /// is now there.
   Future<bool> entity(FileSystemEntity entity, String target) async {
-    if (!entity.existsSync()) return true;
+    // Planned, and gone before its turn: something else changed AppData
+    // meanwhile. Counted as moved, a stale package copy of it could be kept;
+    // so stop, and let the next attempt plan again.
+    if (!entity.existsSync()) return false;
     try {
       // The durable plan contains individual files and links. Moving only
       // that snapshot leaves late arrivals for the final source check.

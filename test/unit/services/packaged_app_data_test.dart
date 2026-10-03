@@ -522,6 +522,26 @@ void main() {
       expect(state('.moved_from_appdata').existsSync(), isFalse);
     });
 
+    // Checked once at the start, a root going offline mid-move made every
+    // source look emptied, and the move committed with the data stranded.
+    test(
+      'a root that goes offline before the commit does not commit',
+      () async {
+        write(roaming('shared_preferences.json'), '{"signed":"in"}');
+
+        expect(
+          await data.moveFromAppData(
+            env,
+            beforeCommit: () async =>
+                Directory(env['APPDATA']!).deleteSync(recursive: true),
+          ),
+          isFalse,
+        );
+
+        expect(state('.moved_from_appdata').existsSync(), isFalse);
+      },
+    );
+
     test('happens once', () async {
       write(roaming('a.json'), 'first');
       await data.moveFromAppData(env);
