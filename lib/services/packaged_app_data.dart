@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -91,6 +92,9 @@ class PackagedAppData {
   /// same files. This runs before SingleInstance has picked one of them.
   static const String _lockFile = '.moving.lock';
 
+  /// File destinations recorded before any source moves, for crash recovery.
+  static const String _moveJournal = '.moving_files.json';
+
   static PackagedAppData? _inUse;
 
   /// The package's folders, once the app runs from them. Null before
@@ -108,9 +112,24 @@ class PackagedAppData {
       localAppData: Platform.environment['LOCALAPPDATA'],
     );
     if (data == null) return;
+    await prepareForData(data, Platform.environment);
+  }
+
+  /// Run startup migration for [data] and [env]. [beforeCommit] lets tests
+  /// reproduce another process writing or locking a file after it moved.
+  @visibleForTesting
+  static Future<void> prepareForData(
+    PackagedAppData data,
+    Map<String, String> env, {
+    Future<void> Function()? beforeCommit,
+  }) async {
     var moved = false;
     try {
-      moved = await data.moveFromAppData(Platform.environment);
+      moved = await data.moveFromAppData(env, beforeCommit: beforeCommit);
+    } on PackagedAppDataRecoveryException {
+      // AppData is incomplete. Stop before authentication or settings can
+      // create replacement data; a later launch retries durable recovery.
+      rethrow;
     } on Object catch (e) {
       // Never worth failing startup over.
       debugPrint('[PackagedAppData] Could not move data from AppData: $e');
@@ -150,14 +169,21 @@ class PackagedAppData {
   /// passphrase - which the next attempt would then keep in place of the real
   /// one. Each file is tracked so it can be restored until the marker commits
   /// the move; a file where the package has a folder of the same name, or
-  /// the other way round, is found before anything moves; and if one item cannot move -
-  /// held open, say - what moved this time is put back. Anything already in
+  /// the other way round, is found before anything moves; and if one item
+  /// cannot move - held open, say - what moved this time is put back. Anything already in
   /// the package is what an earlier attempt left - the app has not run from
   /// the package yet - while the AppData copy is the one the app went on
-  /// using, so the AppData copy replaces it; a folder already there is merged
-  /// into, file by file.
+  /// using, so the AppData copy replaces it, and remnants deleted from the
+  /// live source are removed before merging, file by file. An absent source
+  /// root alone cannot prove deletion: an older migration may have renamed
+  /// that whole root before failing to commit, leaving its only copy here.
+  /// Reads legacy roots from [env]; [beforeCommit] reproduces concurrent
+  /// writes and locks in tests, after the planned files have moved.
   @visibleForTesting
-  Future<bool> moveFromAppData(Map<String, String> env) async {
+  Future<bool> moveFromAppData(
+    Map<String, String> env, {
+    Future<void> Function()? beforeCommit,
+  }) async {
     final marker = File(p.join(localState, _movedMarker));
     if (marker.existsSync()) return true;
     await Directory(localState).create(recursive: true);
@@ -171,6 +197,8 @@ class PackagedAppData {
       if (marker.existsSync()) return true;
 
       final sources = _legacySources(env);
+      final journal = File(p.join(localState, _moveJournal));
+      await _restoreInterruptedMove(journal, sources);
       // Read-only first: a conflict like that never resolves itself, and
       // finding it by moving would move and put back everything on every
       // launch.
@@ -180,15 +208,48 @@ class PackagedAppData {
 
       final move = _Move();
       try {
-        var complete = true;
+        // Reconcile before moving anything, while each live source tree is
+        // still whole. Otherwise a completed child would look deleted.
         for (final (source, target) in sources) {
-          complete &= await move.entity(Directory(source), target);
+          await _removeRemnants(
+            Directory(source),
+            Directory(target),
+            keep: p.equals(target, localState)
+                ? {
+                    _lockFile,
+                    _movedMarker,
+                    '$_movedMarker.partial',
+                    _moveJournal,
+                    '$_moveJournal.partial',
+                  }
+                : p.equals(target, localCache)
+                ? {'sentry-native'} // migrated from its own legacy source
+                : const {},
+          );
+        }
+        final planned = [
+          for (final (source, target) in sources)
+            ..._planFiles(Directory(source), target),
+        ];
+        // With the plan durable first, a terminated process cannot make a
+        // moved original look like a deletion during the next reconciliation.
+        final partialJournal = File('${journal.path}.partial');
+        await partialJournal.writeAsString(jsonEncode(planned), flush: true);
+        await partialJournal.rename(journal.path);
+        var complete = true;
+        for (final entry in planned) {
+          complete &= await move.entity(
+            entry[2] == 'link' ? Link(entry[0]) : File(entry[0]),
+            entry[1],
+          );
         }
         if (!complete) {
           await move.undo();
+          await _restoreInterruptedMove(journal, sources);
           return false;
         }
 
+        await beforeCommit?.call();
         for (final (source, _) in sources) {
           await _pruneEmpty(Directory(source));
           await _removeIfEmpty(Directory(source).parent); // the company folder
@@ -197,11 +258,30 @@ class PackagedAppData {
         // not leave a marker that makes the next attempt skip migration.
         final partial = File('${marker.path}.partial');
         await partial.writeAsString('', flush: true);
+        for (final (source, _) in sources) {
+          final directory = Directory(source);
+          if (directory.existsSync() && directory.listSync().isNotEmpty) {
+            throw FileSystemException(
+              'Legacy data changed during migration',
+              source,
+            );
+          }
+        }
         await partial.rename(marker.path);
+        try {
+          await journal.delete();
+        } on FileSystemException catch (e) {
+          // The marker has committed: recovery is no longer needed, and a
+          // cleanup failure must not send this launch back to AppData.
+          debugPrint('[PackagedAppData] Left the recovery plan: ${e.message}');
+        }
         return true;
       } on FileSystemException catch (e) {
         debugPrint('[PackagedAppData] Could not finish the move: ${e.message}');
         await move.undo();
+        // This throws a recovery exception if any original remains missing;
+        // prepare must not start the app against incomplete AppData.
+        await _restoreInterruptedMove(journal, sources);
         return false;
       }
     } finally {
@@ -215,50 +295,142 @@ class PackagedAppData {
   }
 }
 
+/// Startup cannot safely use AppData until the pending migration is restored.
+class PackagedAppDataRecoveryException implements Exception {
+  const PackagedAppDataRecoveryException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'PackagedAppDataRecoveryException: $message';
+}
+
+/// Plan every individual file in [source] before moving it to [target].
+Iterable<List<String>> _planFiles(
+  FileSystemEntity source,
+  String target,
+) sync* {
+  if (!source.existsSync()) return;
+  if (source is File || source is Link) {
+    yield [source.path, target, if (source is Link) 'link' else 'file'];
+  } else if (source is Directory) {
+    for (final child in source.listSync(followLinks: false)) {
+      yield* _planFiles(child, p.join(target, p.basename(child.path)));
+    }
+  }
+}
+
+/// Restore files moved before a process interruption, preserving any live
+/// source that still exists. Validate every path against [sources] first.
+Future<void> _restoreInterruptedMove(
+  File journal,
+  List<(String, String)> sources,
+) async {
+  if (!journal.existsSync()) return;
+  try {
+    final decoded = jsonDecode(await journal.readAsString()) as Object?;
+    if (decoded is! List<Object?>) {
+      throw const FormatException('Invalid migration recovery plan');
+    }
+    final entries = <List<String>>[];
+    for (final entry in decoded) {
+      if (entry is! List<Object?> || entry.any((value) => value is! String)) {
+        throw const FormatException('Invalid migration recovery entry');
+      }
+      entries.add(entry.cast<String>());
+    }
+    for (final entry in entries) {
+      if ((entry.length != 2 && entry.length != 3) ||
+          (entry.length == 3 && entry[2] != 'file' && entry[2] != 'link') ||
+          !sources.any(
+            (root) =>
+                p.isWithin(root.$1, entry[0]) &&
+                p.equals(
+                  p.join(root.$2, p.relative(entry[0], from: root.$1)),
+                  entry[1],
+                ),
+          )) {
+        throw FileSystemException(
+          'Invalid migration recovery path',
+          journal.path,
+        );
+      }
+    }
+    for (final entry in entries.reversed) {
+      if (!_exists(entry[0])) {
+        await _relocate(
+          entry.length == 3 && entry[2] == 'link'
+              ? Link(entry[1])
+              : File(entry[1]),
+          entry[0],
+        );
+      }
+    }
+    await journal.delete();
+  } on Exception catch (e) {
+    throw PackagedAppDataRecoveryException('Recovery remains pending: $e');
+  }
+}
+
+bool _exists(String path) =>
+    FileSystemEntity.typeSync(path, followLinks: false) !=
+    FileSystemEntityType.notFound;
+
+/// Remove destination-only children while [source] is still authoritative.
+/// [keep] protects migration metadata and independently migrated root folders.
+Future<void> _removeRemnants(
+  Directory source,
+  Directory target, {
+  Set<String> keep = const {},
+}) async {
+  if (!source.existsSync() || !target.existsSync()) return;
+  for (final child in target.listSync(followLinks: false)) {
+    final name = p.basename(child.path);
+    if (keep.contains(name)) continue;
+    final original = p.join(source.path, name);
+    final type = FileSystemEntity.typeSync(original, followLinks: false);
+    if (type == FileSystemEntityType.notFound) {
+      await child.delete(recursive: true);
+    } else if (child is Directory && type == FileSystemEntityType.directory) {
+      await _removeRemnants(Directory(original), child);
+    }
+  }
+}
+
 /// Whether [entity] can move to [target]: nothing there, the same kind of
 /// thing, or a folder whose contents fit in turn.
 bool _fits(FileSystemEntity entity, String target) {
   if (!entity.existsSync()) return true;
-  final existing = FileSystemEntity.typeSync(target);
+  final existing = FileSystemEntity.typeSync(target, followLinks: false);
   if (existing == FileSystemEntityType.notFound) return true;
+  if (entity is Link) return existing == FileSystemEntityType.link;
   if (entity is File) return existing == FileSystemEntityType.file;
   if (existing != FileSystemEntityType.directory) return false;
-  return (entity as Directory).listSync().every(
-    (child) => _fits(child, p.join(target, p.basename(child.path))),
-  );
+  return (entity as Directory)
+      .listSync(followLinks: false)
+      .every((child) => _fits(child, p.join(target, p.basename(child.path))));
 }
 
 /// One attempt at the move: what it has done, so it can be undone.
 class _Move {
   /// Moved this time, to put back if the whole move fails.
-  final List<(File from, String to)> _moved = [];
+  final List<(FileSystemEntity from, String to)> _moved = [];
 
   /// Move [entity] to [target], which [_fits] has cleared. Whether all of it
   /// is now there.
   Future<bool> entity(FileSystemEntity entity, String target) async {
     if (!entity.existsSync()) return true;
     try {
-      if (entity is Directory) {
-        // A recursive source deletion can fail after removing children.
-        // Move and track each file instead, leaving only empty directories
-        // for finalization to prune once everything has moved.
-        await Directory(target).create(recursive: true);
-        var complete = true;
-        for (final child in entity.listSync()) {
-          complete &= await this.entity(
-            child,
-            p.join(target, p.basename(child.path)),
-          );
-        }
-        return complete;
-      }
+      // The durable plan contains individual files and links. Moving only
+      // that snapshot leaves late arrivals for the final source check.
       // A file an earlier attempt left; the AppData one is newer, or the
       // same. If the remnant cannot go, nothing is committed and the next
       // attempt tries again.
-      if (File(target).existsSync()) await File(target).delete();
-      final file = entity as File;
-      await _relocate(file, target);
-      _moved.add((file, target));
+      if (_exists(target)) {
+        await (entity is Link ? Link(target) : File(target)).delete();
+      }
+      await _relocate(entity, target);
+      _moved.add((entity, target));
       return true;
     } on FileSystemException catch (e) {
       // Most likely held open - by an unpackaged build running alongside, or
@@ -272,7 +444,9 @@ class _Move {
   Future<void> undo() async {
     for (final (from, to) in _moved.reversed) {
       try {
-        await _relocate(File(to), from.path);
+        // A concurrent legacy process may have recreated a newer source.
+        if (_exists(from.path)) continue;
+        await _relocate(from is Link ? Link(to) : File(to), from.path);
       } on FileSystemException catch (e) {
         debugPrint('[PackagedAppData] Could not put back $to: ${e.message}');
       }
@@ -280,11 +454,34 @@ class _Move {
   }
 }
 
-/// Rename [file] to [target], or copy it there and delete it where a rename
+/// Rename [entity] to [target], or copy it there and delete it where a rename
 /// cannot cross volumes. Either operation leaves the original whole on
 /// failure: only individual files are deleted, never a directory tree.
-Future<void> _relocate(File file, String target) async {
+Future<void> _relocate(FileSystemEntity entity, String target) async {
   await Directory(p.dirname(target)).create(recursive: true);
+  if (entity is Link) {
+    final originalTarget = await entity.target();
+    if (!p.isAbsolute(originalTarget)) {
+      // Relative link targets need to retain their original meaning after
+      // moving to a different parent. Never follow or copy their contents.
+      await Link(
+        target,
+      ).create(p.normalize(p.join(p.dirname(entity.path), originalTarget)));
+      await entity.delete();
+      return;
+    }
+    try {
+      await entity.rename(target);
+    } on FileSystemException {
+      await Link(target).create(originalTarget);
+      await entity.delete();
+    }
+    return;
+  }
+  if (entity is! File) {
+    throw FileSystemException('Unsupported migration entity', entity.path);
+  }
+  final file = entity;
   try {
     await file.rename(target);
   } on FileSystemException {
@@ -300,7 +497,7 @@ Future<void> _relocate(File file, String target) async {
 /// Remove [dir] if nothing but empty folders is left in it.
 Future<void> _pruneEmpty(Directory dir) async {
   if (!dir.existsSync()) return;
-  for (final child in dir.listSync().whereType<Directory>()) {
+  for (final child in dir.listSync(followLinks: false).whereType<Directory>()) {
     await _pruneEmpty(child);
   }
   await _removeIfEmpty(dir);
@@ -314,9 +511,9 @@ Future<void> _removeIfEmpty(Directory dir) async {
   }
 }
 
-/// path_provider for a packaged GhostCopy: support and cache under the
-/// package's own folders, everything else - temporary files, Documents,
-/// Downloads - where Windows keeps it for every app.
+/// path_provider for a packaged GhostCopy: support, cache and temporary
+/// files under the package's own folders; Documents and Downloads where
+/// Windows keeps them for every app.
 @visibleForTesting
 class PackagedPathProvider extends PathProviderWindows {
   PackagedPathProvider(this._data);
@@ -328,6 +525,10 @@ class PackagedPathProvider extends PathProviderWindows {
 
   @override
   Future<String?> getApplicationCachePath() => _ensure(_data.localCache);
+
+  @override
+  Future<String?> getTemporaryPath() =>
+      _ensure(p.join(_data.localCache, 'Temp'));
 
   static Future<String?> _ensure(String path) async {
     await Directory(path).create(recursive: true);

@@ -83,6 +83,70 @@ void main() {
       expect(googleSignOuts, 1);
     });
 
+    test('pending Google cleanup survives losing preferences', () async {
+      failGoogleSignOut = true;
+      await launch();
+      expect(keychainId(), fileId());
+
+      // Simulate termination before UserDefaults flushed its pending flag.
+      SharedPreferences.setMockInitialValues({});
+      keychain.items['encryption_passphrase_new'] = ('new secret', current);
+      failGoogleSignOut = false;
+      await launch();
+      await launch();
+
+      expect(googleSignOuts, 1);
+      expect(keychain.items['encryption_passphrase_new']!.$1, 'new secret');
+    });
+
+    test('Google cleanup is durably pending before sign-out runs', () async {
+      var checked = false;
+      await clearKeychainLeftByEarlierInstall(
+        storage: keychain,
+        supportDirectory: () async => container,
+        signOutGoogle: () async {
+          expect(
+            File(p.join(container.path, 'google_sign_out_owed')).existsSync(),
+            isTrue,
+          );
+          checked = true;
+        },
+      );
+      expect(checked, isTrue);
+      expect(
+        File(p.join(container.path, 'google_sign_out_owed')).readAsStringSync(),
+        'done',
+      );
+    });
+
+    test(
+      'failed pending cleanup write leaves the reinstall uncommitted',
+      () async {
+        final blocker = Directory(
+          p.join(container.path, 'google_sign_out_owed.partial'),
+        )..createSync();
+
+        await launch();
+
+        expect(googleSignOuts, 0);
+        expect(
+          File(p.join(container.path, 'install_id')).existsSync(),
+          isFalse,
+        );
+        expect(
+          keychain.items['encryption_passphrase_u1']!.$1,
+          'old passphrase',
+        );
+
+        blocker.deleteSync();
+        await launch();
+
+        expect(googleSignOuts, 1);
+        expect(keychain.items.keys, ['ghostcopy_install_id']);
+        expect(keychainId(), fileId());
+      },
+    );
+
     // Recorded anyway, the fast path would skip the clear for good and leave
     // the earlier install's secrets behind.
     test('a clear that failed is not recorded, and is tried again', () async {
@@ -98,6 +162,40 @@ void main() {
       expect(keychain.items.keys, ['ghostcopy_install_id']);
       expect(keychainId(), fileId());
     });
+  });
+
+  test('legacy pending preferences migrate to durable retry state', () async {
+    await launch();
+    SharedPreferences.setMockInitialValues({
+      'ghostcopy_google_sign_out_owed': true,
+    });
+    failGoogleSignOut = true;
+    await launch();
+
+    SharedPreferences.setMockInitialValues({});
+    failGoogleSignOut = false;
+    await launch();
+    await launch();
+
+    expect(googleSignOuts, 1);
+    expect(keychainId(), fileId());
+  });
+
+  test('a lost legacy flag removal cannot sign out a new account', () async {
+    await launch();
+    SharedPreferences.setMockInitialValues({
+      'ghostcopy_google_sign_out_owed': true,
+    });
+    await launch();
+    expect(googleSignOuts, 1);
+
+    // Simulate UserDefaults restoring the old flag after successful cleanup.
+    SharedPreferences.setMockInitialValues({
+      'ghostcopy_google_sign_out_owed': true,
+    });
+    await launch();
+
+    expect(googleSignOuts, 1);
   });
 
   // Empty preferences are not a reinstall: signed out, with every setting at

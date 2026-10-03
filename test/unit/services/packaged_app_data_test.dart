@@ -1,10 +1,14 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/packaged_app_data.dart';
+import 'package:ghostcopy/services/temp_file_service.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -132,6 +136,258 @@ void main() {
       expect(Directory(roaming('secure')).existsSync(), isFalse);
     });
 
+    test(
+      'deletions in live AppData remove destination-only remnants',
+      () async {
+        write(roaming('shared_preferences.json'), 'live session');
+        write(roaming('media_cache/kept.bin'), 'live media');
+        write(local('history/kept.json'), 'live history');
+        write(crashDb('kept'), 'live crash');
+        write(state('shared_preferences.json').path, 'stale session');
+        write(state('media_cache/kept.bin').path, 'stale media');
+        write(state('media_cache/deleted.bin').path, 'deleted media');
+        write(state('removed_folder/secret.bin').path, 'deleted folder');
+        write(cache('history/deleted.json').path, 'deleted history');
+        write(cache('sentry-native/kept').path, 'stale crash');
+        write(cache('sentry-native/deleted').path, 'deleted crash');
+
+        expect(await data.moveFromAppData(env), isTrue);
+
+        expect(
+          state('shared_preferences.json').readAsStringSync(),
+          'live session',
+        );
+        expect(state('media_cache/kept.bin').readAsStringSync(), 'live media');
+        expect(cache('history/kept.json').readAsStringSync(), 'live history');
+        expect(cache('sentry-native/kept').readAsStringSync(), 'live crash');
+        expect(state('media_cache/deleted.bin').existsSync(), isFalse);
+        expect(Directory(state('removed_folder').path).existsSync(), isFalse);
+        expect(cache('history/deleted.json').existsSync(), isFalse);
+        expect(cache('sentry-native/deleted').existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'an absent legacy root does not erase its only package copy',
+      () async {
+        // An earlier version could rename a whole root before failing to
+        // commit. Its absence alone is not evidence that its data was deleted.
+        write(state('shared_preferences.json').path, 'only session');
+        write(cache('sentry-native/run').path, 'only crash');
+        write(local('history/page.json'), 'live history');
+
+        expect(await data.moveFromAppData(env), isTrue);
+
+        expect(
+          state('shared_preferences.json').readAsStringSync(),
+          'only session',
+        );
+        expect(cache('sentry-native/run').readAsStringSync(), 'only crash');
+        expect(cache('history/page.json').readAsStringSync(), 'live history');
+      },
+    );
+
+    test('interrupted moves are restored before pruning remnants', () async {
+      write(roaming('shared_preferences.json'), 'updated session');
+      write(state('shared_preferences.json').path, 'stale session');
+      write(state('secure/passphrase.dat').path, 'only passphrase');
+      write(state('deleted.bin').path, 'deleted while using AppData');
+      write(
+        state('.moving_files.json').path,
+        jsonEncode([
+          [
+            roaming('shared_preferences.json'),
+            state('shared_preferences.json').path,
+          ],
+          [
+            roaming('secure/passphrase.dat'),
+            state('secure/passphrase.dat').path,
+          ],
+        ]),
+      );
+
+      expect(await data.moveFromAppData(env), isTrue);
+
+      expect(
+        state('shared_preferences.json').readAsStringSync(),
+        'updated session',
+      );
+      expect(
+        state('secure/passphrase.dat').readAsStringSync(),
+        'only passphrase',
+      );
+      expect(state('deleted.bin').existsSync(), isFalse);
+    });
+
+    test('recovery paths cannot leave the legacy and package roots', () async {
+      final unrelated = p.join(env['APPDATA']!, 'unrelated.txt');
+      write(unrelated, 'unrelated');
+      write(roaming('shared_preferences.json'), 'session');
+      write(
+        state('.moving_files.json').path,
+        jsonEncode([
+          [unrelated, state('shared_preferences.json').path],
+        ]),
+      );
+
+      await expectLater(
+        data.moveFromAppData(env),
+        throwsA(isA<PackagedAppDataRecoveryException>()),
+      );
+
+      expect(File(unrelated).readAsStringSync(), 'unrelated');
+      expect(
+        File(roaming('shared_preferences.json')).readAsStringSync(),
+        'session',
+      );
+      expect(state('.moved_from_appdata').existsSync(), isFalse);
+    });
+
+    test(
+      'a locked stale remnant aborts before moving any live files',
+      () async {
+        write(roaming('shared_preferences.json'), 'session');
+        write(state('deleted.bin').path, 'stale');
+        final release = _holdWithoutDeleteSharing(state('deleted.bin').path);
+        try {
+          expect(await data.moveFromAppData(env), isFalse);
+          expect(
+            File(roaming('shared_preferences.json')).readAsStringSync(),
+            'session',
+          );
+          expect(state('.moved_from_appdata').existsSync(), isFalse);
+        } finally {
+          release();
+        }
+
+        expect(await data.moveFromAppData(env), isTrue);
+        expect(state('deleted.bin').existsSync(), isFalse);
+        expect(state('shared_preferences.json').readAsStringSync(), 'session');
+      },
+      skip: !Platform.isWindows,
+    );
+
+    for (final lateFile in ['late.json', 'shared_preferences.json']) {
+      test(
+        'a late write to $lateFile aborts commit without losing data',
+        () async {
+          write(roaming('shared_preferences.json'), 'original session');
+          write(local('cache.bin'), 'cache');
+
+          expect(
+            await data.moveFromAppData(
+              env,
+              beforeCommit: () async => write(roaming(lateFile), 'late update'),
+            ),
+            isFalse,
+          );
+
+          expect(File(roaming(lateFile)).readAsStringSync(), 'late update');
+          expect(
+            File(roaming('shared_preferences.json')).readAsStringSync(),
+            lateFile == 'shared_preferences.json'
+                ? 'late update'
+                : 'original session',
+          );
+          expect(File(local('cache.bin')).readAsStringSync(), 'cache');
+          expect(state('.moved_from_appdata').existsSync(), isFalse);
+
+          expect(await data.moveFromAppData(env), isTrue);
+          expect(state(lateFile).readAsStringSync(), 'late update');
+        },
+      );
+    }
+
+    test(
+      'an incomplete rollback stops startup until recovery succeeds',
+      () async {
+        write(roaming('shared_preferences.json'), 'original session');
+        write(local('cache.bin'), 'cache');
+        final originalProvider = PathProviderPlatform.instance;
+        final originalInUse = PackagedAppData.inUse;
+        final blocker = Directory(state('.moved_from_appdata.partial').path);
+        void Function()? release;
+        try {
+          await expectLater(
+            PackagedAppData.prepareForData(
+              data,
+              env,
+              beforeCommit: () async {
+                release = _holdWithoutDeleteSharing(
+                  state('shared_preferences.json').path,
+                  blockReads: true,
+                );
+                blocker.createSync();
+              },
+            ),
+            throwsA(isA<PackagedAppDataRecoveryException>()),
+          );
+
+          expect(PathProviderPlatform.instance, same(originalProvider));
+          expect(PackagedAppData.inUse, same(originalInUse));
+          expect(
+            File(roaming('shared_preferences.json')).existsSync(),
+            isFalse,
+          );
+          expect(state('.moving_files.json').existsSync(), isTrue);
+          expect(state('.moved_from_appdata').existsSync(), isFalse);
+        } finally {
+          release?.call();
+        }
+
+        blocker.deleteSync();
+        await PackagedAppData.prepareForData(data, env);
+
+        expect(PackagedAppData.inUse, same(data));
+        expect(
+          state('shared_preferences.json').readAsStringSync(),
+          'original session',
+        );
+        expect(cache('cache.bin').readAsStringSync(), 'cache');
+        expect(state('.moved_from_appdata').existsSync(), isTrue);
+        expect(state('.moving_files.json').existsSync(), isFalse);
+      },
+      skip: !Platform.isWindows,
+    );
+
+    test(
+      'a link moves without following or deleting its external target',
+      () async {
+        write(roaming('shared_preferences.json'), 'session');
+        final external = Directory(p.join(env['APPDATA']!, 'user_owned'))
+          ..createSync();
+        write(p.join(external.path, 'payload.bin'), 'user data');
+        final link = Link(roaming('linked_cache'));
+        if (Platform.isWindows) {
+          // Junctions require no symbolic-link privilege on Windows.
+          final result = await Process.run('cmd.exe', [
+            '/c',
+            'mklink',
+            '/J',
+            link.path,
+            external.path,
+          ]);
+          expect(
+            result.exitCode,
+            0,
+            reason: '${result.stdout} ${result.stderr}',
+          );
+        } else {
+          await link.create(external.path);
+        }
+
+        expect(await data.moveFromAppData(env), isTrue);
+
+        expect(link.existsSync(), isFalse);
+        expect(Link(state('linked_cache').path).existsSync(), isTrue);
+        expect(
+          File(p.join(external.path, 'payload.bin')).readAsStringSync(),
+          'user data',
+        );
+        expect(state('shared_preferences.json').readAsStringSync(), 'session');
+      },
+    );
+
     // All or nothing: the app runs from AppData until everything is across,
     // so a move that cannot finish must leave AppData whole.
     test('a conflict leaves AppData whole and the package unused', () async {
@@ -247,7 +503,7 @@ void main() {
     test('with nothing in AppData, does nothing but mark it done', () async {
       expect(await data.moveFromAppData(env), isTrue);
 
-      // The marker, and the lock that kept other processes out meanwhile.
+      // Only the marker and lock remain after a committed migration.
       expect(
         Directory(data.localState).listSync().map((e) => p.basename(e.path)),
         unorderedEquals(['.moved_from_appdata', '.moving.lock']),
@@ -280,10 +536,31 @@ void main() {
     expect(await provider.getApplicationCachePath(), data.localCache);
     expect(Directory(data.localState).existsSync(), isTrue);
   });
+
+  test('downloaded temporary plaintext stays inside the package', () async {
+    PackagedAppData.install(data);
+    final service = TempFileService(clipboardFile: () async => null);
+
+    final file = await service.saveTempFile(
+      Uint8List.fromList([1, 2, 3]),
+      'decrypted.txt',
+    );
+    addTearDown(() async {
+      if (file.existsSync()) await file.delete();
+    });
+
+    expect(p.isWithin(data.localCache, file.path), isTrue);
+    expect(p.dirname(file.path), p.join(data.localCache, 'Temp'));
+    expect(await file.readAsBytes(), [1, 2, 3]);
+  });
 }
 
 /// Keep [path] readable and writable, but prevent renaming or deleting it.
-void Function() _holdWithoutDeleteSharing(String path) {
+/// With [blockReads], deny other access as well to reproduce a failed restore.
+void Function() _holdWithoutDeleteSharing(
+  String path, {
+  bool blockReads = false,
+}) {
   final kernel = DynamicLibrary.open('kernel32.dll');
   final createFile = kernel
       .lookupFunction<
@@ -321,7 +598,7 @@ void Function() _holdWithoutDeleteSharing(String path) {
     handle = createFile(
       name,
       genericRead,
-      shareReadAndWrite,
+      blockReads ? 0 : shareReadAndWrite,
       nullptr,
       openExisting,
       normalAttributes,

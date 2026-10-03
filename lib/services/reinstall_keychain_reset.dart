@@ -44,7 +44,8 @@ import 'impl/keychain_accessibility.dart';
 /// clear failed goes with the retry. That takes a Keychain that was readable
 /// a moment earlier refusing a delete twice, and the alternative - recording
 /// the install anyway - leaves the earlier install's secrets on the phone for
-/// good. Signing out is retried until it succeeds, and deletes nothing.
+/// good. Pending Google sign-out is flushed to a file before any attempt,
+/// so it is retried even if preferences are lost when the app is terminated.
 Future<void> clearKeychainLeftByEarlierInstall({
   FlutterSecureStorage? storage,
   Future<void> Function()? signOutGoogle,
@@ -56,14 +57,20 @@ Future<void> clearKeychainLeftByEarlierInstall({
       () => GoogleSignIn(clientId: googleIosClientId).signOut();
   try {
     final prefs = await SharedPreferences.getInstance();
-    await _signOutIfOwed(prefs, signOut);
+    final support =
+        await (supportDirectory ?? getApplicationSupportDirectory)();
+    final pendingSignOut = File(p.join(support.path, _signOutOwedFile));
+    // Preserve pending work recorded by the previous preferences-based
+    // implementation, before removing its non-durable flag.
+    if (prefs.getBool(_signOutOwedKey) ?? false) {
+      if (!pendingSignOut.existsSync()) {
+        await _writeFlushed(pendingSignOut, 'pending');
+      }
+      await prefs.remove(_signOutOwedKey);
+    }
+    await _signOutIfOwed(pendingSignOut, signOut);
 
-    final marker = File(
-      p.join(
-        (await (supportDirectory ?? getApplicationSupportDirectory)()).path,
-        _markerFile,
-      ),
-    );
+    final marker = File(p.join(support.path, _markerFile));
     final local = marker.existsSync()
         ? (await marker.readAsString()).trim()
         : '';
@@ -76,8 +83,10 @@ Future<void> clearKeychainLeftByEarlierInstall({
     );
     if (local.isNotEmpty && kept == local) return;
     if (kept != null && local.isEmpty) {
-      await prefs.setBool(_signOutOwedKey, true);
-      await _signOutIfOwed(prefs, signOut);
+      // Must persist before clearing or recording the new install: those
+      // operations can remove the only other evidence of a reinstall.
+      await _writeFlushed(pendingSignOut, 'pending');
+      await _signOutIfOwed(pendingSignOut, signOut);
       if (!await _clear(keychain)) {
         // Not recorded: the next launch meets the same reinstall and clears
         // again, rather than leaving the earlier install's secrets for good.
@@ -89,10 +98,7 @@ Future<void> clearKeychainLeftByEarlierInstall({
     final id = local.isNotEmpty ? local : _newId();
     if (local.isEmpty) {
       // Whole or not at all, and on disk before the Keychain hears of it.
-      final partial = File('${marker.path}.partial');
-      await partial.parent.create(recursive: true);
-      await partial.writeAsString(id, flush: true);
-      await partial.rename(marker.path);
+      await _writeFlushed(marker, id);
     }
     if (kept != id) {
       // Deleted first: the Keychain rejects an add over an item that exists.
@@ -131,16 +137,27 @@ Future<bool> _clear(FlutterSecureStorage keychain) async {
 }
 
 Future<void> _signOutIfOwed(
-  SharedPreferences prefs,
+  File pending,
   Future<void> Function() signOut,
 ) async {
-  if (!(prefs.getBool(_signOutOwedKey) ?? false)) return;
+  if (!pending.existsSync()) return;
   try {
+    if ((await pending.readAsString()).trim() == 'done') return;
     await signOut();
-    await prefs.remove(_signOutOwedKey);
-  } on Object catch (e) {
+    // Keep completion durable too: losing the legacy preferences removal
+    // must not revive cleanup and sign out an account added afterwards.
+    await _writeFlushed(pending, 'done');
+  } on Exception catch (e) {
     debugPrint('[Keychain] Could not sign out the earlier account yet: $e');
   }
+}
+
+/// Persist [value] in [file] atomically before committing any related state.
+Future<void> _writeFlushed(File file, String value) async {
+  final partial = File('${file.path}.partial');
+  await partial.parent.create(recursive: true);
+  await partial.writeAsString(value, flush: true);
+  await partial.rename(file.path);
 }
 
 String _newId() {
@@ -154,5 +171,8 @@ const String _markerFile = 'install_id';
 /// The install id's copy in the Keychain.
 const String _keychainIdKey = 'ghostcopy_install_id';
 
-/// Set while the earlier install's Google account still has to be signed out.
+/// Durable Google sign-out state (`pending` or `done`) in the app's container.
+const String _signOutOwedFile = 'google_sign_out_owed';
+
+/// Legacy preferences flag, migrated into [_signOutOwedFile] before retrying.
 const String _signOutOwedKey = 'ghostcopy_google_sign_out_owed';
