@@ -49,6 +49,8 @@ dependencies:
   # platform overwrites the first's row and takes its FCM token with it.
   device_info_plus: ^11.5.0
   encrypt: ^5.0.3
+  # Direct, for PackagedAppData's package-name lookup.
+  ffi: ^2.2.0
   file_picker: ^11.0.3
   firebase_core: ^4.3.0
   firebase_messaging: ^16.1.0
@@ -72,6 +74,10 @@ dependencies:
   package_info_plus: ^9.0.0
   path: ^1.9.0
   path_provider: ^2.1.1
+  # Direct, for PackagedAppData, which replaces path_provider's Windows
+  # implementation inside an MSIX package.
+  path_provider_platform_interface: ^2.1.3
+  path_provider_windows: ^2.3.0
   qr_flutter: ^4.1.0
   receive_sharing_intent: ^1.8.0
   # Already in the tree via window_manager; declared directly so
@@ -80,6 +86,10 @@ dependencies:
   sentry_flutter: ^9.0.0
   share_plus: ^12.0.1
   shared_preferences: ^2.2.2
+  # Direct, for PackagedAppData: their Windows backends take their own
+  # path provider, which a packaged install has to replace.
+  shared_preferences_platform_interface: ^2.4.2
+  shared_preferences_windows: ^2.4.1
   sign_in_with_apple: ^8.2.0
   supabase_flutter: ^2.8.0
   super_clipboard: ^0.9.0

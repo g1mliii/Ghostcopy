@@ -39,13 +39,18 @@
       moves the iOS, macOS and Android icons too, including ones already
       through review, so it is a deliberate call rather than a bug fix
 
-Worth knowing rather than doing: **AppData is NOT redirected for a full-trust
-MSIX.** Measured during the sideload: the packaged app wrote straight to the
-real `%LOCALAPPDATA%` and the container's `LocalCache` stayed empty, so a
-packaged and an unpackaged build on the same machine share
-`%APPDATA%\com.ghostcopy` - the same session, settings and passphrase.
-Anything that assumes per-package state is wrong, and a Store install is not
-isolated from a dev build.
+Worth knowing rather than doing: **a full-trust MSIX redirects AppData writes
+only for files that did not already exist.** Measured during the sideload, on
+a machine that already had `%APPDATA%\com.ghostcopy`: the packaged app wrote
+straight to the real folders and the container's `LocalCache` stayed empty -
+so uninstalling left the session, settings, passphrase and caches behind. Not
+yet re-measured on a clean profile. Either way a packaged build now keeps its
+data in the package's own `LocalState` and
+`LocalCache` explicitly (`PackagedAppData`, which moves an earlier version's
+AppData over on first launch), and Windows deletes those with the package.
+An unpackaged dev build still uses `%APPDATA%\com.ghostcopy`, so the two no
+longer share a session. Left behind on uninstall: one Credential Manager entry,
+flutter_secure_storage's key for a data file that is deleted with the package.
 
 ## iOS: open
 

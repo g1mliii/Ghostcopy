@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
+import '../packaged_app_data.dart';
 import '../temp_file_service.dart';
 
 /// Implementation of temporary file management
@@ -14,11 +15,23 @@ class TempFileService implements ITempFileService {
   TempFileService({
     Future<Directory> Function()? temporaryDirectory,
     Future<Uri?> Function()? clipboardFile,
+    Directory? Function()? earlierTemporaryDirectory,
   }) : _temporaryDirectory = temporaryDirectory ?? getTemporaryDirectory,
-       _clipboardFile = clipboardFile ?? _readClipboardFile;
+       _clipboardFile = clipboardFile ?? _readClipboardFile,
+       _earlierTemporaryDirectory =
+           earlierTemporaryDirectory ?? _ordinaryTempIfPackaged;
 
   final Future<Directory> Function() _temporaryDirectory;
   final Future<Uri?> Function() _clipboardFile;
+
+  /// Where an earlier version wrote, if no longer [_temporaryDirectory]: a
+  /// Store install now writes under its package, but files from before that
+  /// - decrypted downloads - would otherwise outlive an uninstall. Cleaned
+  /// with the same rules, the active clipboard file kept.
+  final Directory? Function() _earlierTemporaryDirectory;
+
+  static Directory? _ordinaryTempIfPackaged() =>
+      PackagedAppData.inUse == null ? null : Directory.systemTemp;
   int _nextFileId = 0;
 
   /// Singleton instance
@@ -26,7 +39,8 @@ class TempFileService implements ITempFileService {
 
   static final _unsafePathChars = RegExp(r'[/\\:]');
 
-  static const String _filePrefix = 'ghostcopy_';
+  /// What every file this service writes is named with.
+  static const String filePrefix = 'ghostcopy_';
   Timer? _periodicCleanupTimer;
 
   @override
@@ -40,7 +54,7 @@ class TempFileService implements ITempFileService {
       final uniqueId =
           '${DateTime.now().microsecondsSinceEpoch}_${_nextFileId++}';
       final file = File(
-        path.join(tempDir.path, '$_filePrefix${uniqueId}_$safeFilename'),
+        path.join(tempDir.path, '$filePrefix${uniqueId}_$safeFilename'),
       );
 
       await file.writeAsBytes(bytes);
@@ -69,15 +83,18 @@ class TempFileService implements ITempFileService {
       final cutoffTimestamp = DateTime.now()
           .subtract(const Duration(hours: 1))
           .millisecondsSinceEpoch;
-      final deletedCount = await compute(
-        _cleanupTempFilesInIsolate,
-        _TempCleanupParams(
-          tempDir.path,
-          _filePrefix,
-          cutoffTimestamp,
-          activePath,
-        ),
-      );
+      final earlier = _earlierTemporaryDirectory();
+      var deletedCount = 0;
+      for (final dir in [
+        tempDir.path,
+        if (earlier != null && !path.equals(earlier.path, tempDir.path))
+          earlier.path,
+      ]) {
+        deletedCount += await compute(
+          _cleanupTempFilesInIsolate,
+          _TempCleanupParams(dir, filePrefix, cutoffTimestamp, activePath),
+        );
+      }
 
       if (deletedCount > 0) {
         debugPrint(
@@ -106,7 +123,7 @@ class TempFileService implements ITempFileService {
       final file = File(filePath);
 
       // Only delete if it's one of our temp files (safety check)
-      if (!path.basename(filePath).startsWith(_filePrefix)) {
+      if (!path.basename(filePath).startsWith(filePrefix)) {
         debugPrint(
           '[TempFileService] ⚠ Refusing to delete non-temp file: $filePath',
         );

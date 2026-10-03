@@ -16,6 +16,7 @@ import '../../services/clipboard_cache_manager.dart';
 import '../../services/encryption_service.dart';
 import '../../services/history_disk_cache.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/install_id.dart';
 import '../../services/media_disk_cache.dart';
 import '../../services/media_memory_cache.dart';
 import '../../services/storage_service.dart';
@@ -1608,7 +1609,7 @@ class ClipboardRepository implements IClipboardRepository {
         // across manufacturers.
         final model = android.model.trim();
         final brand = android.brand.trim();
-        final installId = await _getOrCreateInstallId();
+        final installId = await getOrCreateInstallId();
         if (model.isNotEmpty) {
           final label = model.toLowerCase().startsWith(brand.toLowerCase())
               ? model
@@ -1624,7 +1625,7 @@ class ClipboardRepository implements IClipboardRepository {
         final model = ios.utsname.machine.trim();
         final readable = ios.name.trim();
         final stableId =
-            ios.identifierForVendor ?? await _getOrCreateInstallId();
+            ios.identifierForVendor ?? await getOrCreateInstallId();
         final shortId = stableId.replaceAll('-', '');
         final label = readable.isNotEmpty ? readable : model;
         name = label.isNotEmpty
@@ -1650,22 +1651,6 @@ class ClipboardRepository implements IClipboardRepository {
 
   static String _capitalize(String value) =>
       value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
-
-  static const _installIdKey = 'ghostcopy_device_install_id';
-
-  static Future<String> _getOrCreateInstallId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getString(_installIdKey);
-    if (existing != null && existing.length >= 8) return existing;
-
-    final random = Random.secure();
-    final generated = List<int>.generate(
-      16,
-      (_) => random.nextInt(256),
-    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
-    await prefs.setString(_installIdKey, generated);
-    return generated;
-  }
 
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;

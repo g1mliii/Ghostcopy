@@ -952,6 +952,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                       ),
                                     ),
                                   ),
+                                  // Outside the scroll view, so nothing that
+                                  // grows the footer - an error, a larger
+                                  // text size - can scroll it out of sight.
+                                  if (_buildComposerActions()
+                                      case final actions?) ...[
+                                    actions,
+                                    const SizedBox(height: 8),
+                                  ],
                                   _buildPlatformSelector(),
                                   const SizedBox(height: 12),
                                   _buildSendButton(),
@@ -1410,39 +1418,48 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               onSubmitted: (_) => _handleSend(),
             ),
-          // FIXED: Hide upload button when file/image already loaded
-          if (!(_viewModel.clipboardContent?.hasFile ?? false) &&
-              !(_viewModel.clipboardContent?.hasImage ?? false))
-            Padding(
-              padding: const EdgeInsets.only(left: 4, top: 6),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: _handleFileUpload,
-                    icon: const Icon(Icons.upload_file),
-                    color: GhostColors.primary,
-                    iconSize: 20,
-                    tooltip: 'Upload file',
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(),
-                    splashRadius: 18,
-                  ),
-                  // Prettifying JSON rewrites the field in place - it shows
-                  // nothing of its own, so it does not need a panel. It had a
-                  // full-width button in the transformer block below, which
-                  // cost about 66px of a 400px window on top of a text field
-                  // that pasted JSON already fills to its six-line maximum.
-                  // That tipped the column into scrolling, and this window is
-                  // not built to scroll. Here it costs nothing: the row exists
-                  // either way.
-                  if (_viewModel.detectedContentType?.type ==
-                      TransformerContentType.json) ...[
-                    const SizedBox(width: 6),
-                    _buildPrettifyJsonButton(),
-                  ],
-                ],
-              ),
-            ),
+        ],
+      ),
+    );
+  }
+
+  /// Upload, and Prettify JSON when it applies, in the fixed footer above
+  /// the chips. Null while a file or image is loaded, which replaces both.
+  ///
+  /// It used to sit under the text field, inside the scroll view - the last
+  /// thing in it, so anything that made the footer taller scrolled it out of
+  /// a 400px window first. A "Sending to ... only" line above Send did that
+  /// whenever a chip was picked.
+  Widget? _buildComposerActions() {
+    final content = _viewModel.clipboardContent;
+    if ((content?.hasFile ?? false) || (content?.hasImage ?? false)) {
+      return null;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _handleFileUpload,
+            icon: const Icon(Icons.upload_file),
+            color: GhostColors.primary,
+            iconSize: 20,
+            tooltip: 'Upload file',
+            padding: const EdgeInsets.all(8),
+            constraints: const BoxConstraints(),
+            splashRadius: 18,
+          ),
+          // Prettifying JSON rewrites the field in place - it shows nothing
+          // of its own, so it does not need a panel. It had a full-width
+          // button in the transformer block, which cost about 66px of a 400px
+          // window on top of a text field that pasted JSON already fills to
+          // its six-line maximum. Here it costs nothing: the row exists
+          // either way.
+          if (_viewModel.detectedContentType?.type ==
+              TransformerContentType.json) ...[
+            const SizedBox(width: 6),
+            _buildPrettifyJsonButton(),
+          ],
         ],
       ),
     );
@@ -1724,109 +1741,56 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   /// Build send button
+  ///
+  /// No "Sending to ... only" line above it: the chips already say where a
+  /// clip is going.
   Widget _buildSendButton() {
-    // Get the target description (ViewModel manages cache)
-    final targetText =
-        _viewModel.cachedSendButtonTargetText ??
-        (_viewModel.selectedPlatforms.isEmpty
-            ? 'all devices'
-            : _viewModel.selectedPlatforms.length == 1
-            ? PlatformType.values
-                  .firstWhere(
-                    (p) => p.name == _viewModel.selectedPlatforms.first,
-                  )
-                  .label
-                  .toLowerCase()
-            : _viewModel.selectedPlatforms
-                  .map(
-                    (name) => PlatformType.values
-                        .firstWhere((p) => p.name == name)
-                        .label
-                        .toLowerCase(),
-                  )
-                  .join(', '));
     // Also busy while a kept file is read back, which would otherwise
     // swallow the press: its bytes are not there to send yet.
     final busy = _viewModel.isSending || _viewModel.isRestoringDraft;
 
     return RepaintBoundary(
       // Isolate send button repaints
-      child: Column(
-        children: [
-          // Target indicator
-          if (_viewModel.selectedPlatforms.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: GhostColors.surfaceLight,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: GhostColors.primaryAlpha30),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+      child: ElevatedButton(
+        onPressed: busy ? null : _handleSend,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: GhostColors.primary,
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        ),
+        child: busy
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 14,
-                    color: GhostColors.primary,
+                  const Icon(Icons.send, size: 18, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Send',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 16),
                   Text(
-                    'Sending to $targetText only',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textSecondary,
+                    '⏎',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: GhostColors.whiteAlpha70,
                     ),
                   ),
                 ],
               ),
-            ),
-          // Send button
-          ElevatedButton(
-            onPressed: busy ? null : _handleSend,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: GhostColors.primary,
-              minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            child: busy
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.send, size: 18, color: Colors.white),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Send',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        '⏎',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: GhostColors.whiteAlpha70,
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ],
       ),
     );
   }

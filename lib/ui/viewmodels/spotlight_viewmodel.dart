@@ -104,10 +104,6 @@ class SpotlightViewModel extends ChangeNotifier {
   DateTime? _lastSendTime;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
 
-  // String caching for expensive computations
-  String? _cachedSendButtonTargetText;
-  String? get cachedSendButtonTargetText => _cachedSendButtonTargetText;
-
   // File picker state
   bool _isFilePickerOpen = false;
   bool get isFilePickerOpen => _isFilePickerOpen;
@@ -478,14 +474,12 @@ class SpotlightViewModel extends ChangeNotifier {
     } else {
       _selectedPlatforms.add(platform);
     }
-    _cachedSendButtonTargetText = null; // Invalidate cache
     notifyListeners();
   }
 
   /// Clear platform selection (send to all devices)
   void clearPlatformSelection() {
     _selectedPlatforms.clear();
-    _cachedSendButtonTargetText = null;
     notifyListeners();
   }
 

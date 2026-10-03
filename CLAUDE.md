@@ -253,7 +253,12 @@ land in a private per-package hive, and are invisible to Windows:
 | `HKCU\Software\Classes\*\shell` | `<desktop5:Verb>` + the COM DLL in `windows/explorer_command/` |
 
 `IWindowsPackageService.isPackaged()` (`GetCurrentPackageFullName`) is what
-picks between them. The runner target compiles as C++20, not the Flutter
+picks between them. The one other check is `PackagedAppData`
+(`lib/services/packaged_app_data.dart`), which asks Windows directly over FFI
+because it has to run first thing in `main()`, before the engine and Sentry
+are up: a packaged build keeps its data in the package's `LocalState` and
+`LocalCache`, which Windows deletes with it, and moves an earlier version's
+AppData over on first launch. The runner target compiles as C++20, not the Flutter
 default of C++17, because C++/WinRT needs real coroutine support.
 
 **macOS**: Distribution is a Developer ID archive/export plus a notarized

@@ -13,6 +13,7 @@ import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
 import '../device_service.dart';
 import '../encryption_service.dart';
+import '../google_sign_in_config.dart';
 import 'encryption_service.dart';
 import 'pkce_verifier_store.dart';
 
@@ -635,9 +636,6 @@ class AuthService implements IAuthService {
     // Web Client ID (registered in Supabase Dashboard)
     const webClientId =
         '415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com';
-    // iOS Client ID (for iOS only)
-    const iosClientId =
-        '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
 
     final scopes = ['email', 'profile'];
 
@@ -646,7 +644,7 @@ class AuthService implements IAuthService {
       serverClientId: webClientId,
       // For iOS: specify clientId explicitly
       // For Android: omit clientId - automatically uses google-services.json
-      clientId: Platform.isIOS ? iosClientId : null,
+      clientId: Platform.isIOS ? googleIosClientId : null,
       scopes: scopes,
     );
     final googleSignIn = _googleSignIn!;
@@ -891,9 +889,6 @@ class AuthService implements IAuthService {
     // Web Client ID (registered in Supabase Dashboard)
     const webClientId =
         '415247311354-a52tbjsq9gvs3vcmt41ig20ugbhfcijg.apps.googleusercontent.com';
-    // iOS Client ID (for iOS only)
-    const iosClientId =
-        '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
 
     final scopes = ['email', 'profile'];
 
@@ -902,7 +897,7 @@ class AuthService implements IAuthService {
       serverClientId: webClientId,
       // For iOS: specify clientId explicitly
       // For Android: omit clientId - automatically uses google-services.json
-      clientId: Platform.isIOS ? iosClientId : null,
+      clientId: Platform.isIOS ? googleIosClientId : null,
       scopes: scopes,
     );
     final googleSignIn = _googleSignIn!;
