@@ -1,5 +1,7 @@
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/packaged_app_data.dart';
 import 'package:path/path.dart' as p;
@@ -151,6 +153,85 @@ void main() {
       expect(state('.moved_from_appdata').existsSync(), isFalse);
     });
 
+    for (final blocked in [
+      '.moved_from_appdata',
+      '.moved_from_appdata.partial',
+    ]) {
+      test('a blocked $blocked rolls back all data and can retry', () async {
+        write(roaming('shared_preferences.json'), 'session');
+        write(roaming('secure/passphrase.dat'), 'passphrase');
+        write(local('history/page.json'), 'history');
+        write(crashDb('run'), 'crash');
+        final blocker = Directory(state(blocked).path)
+          ..createSync(recursive: true);
+
+        expect(await data.moveFromAppData(env), isFalse);
+
+        expect(
+          File(roaming('shared_preferences.json')).readAsStringSync(),
+          'session',
+        );
+        expect(
+          File(roaming('secure/passphrase.dat')).readAsStringSync(),
+          'passphrase',
+        );
+        expect(File(local('history/page.json')).readAsStringSync(), 'history');
+        expect(File(crashDb('run')).readAsStringSync(), 'crash');
+        expect(state('.moved_from_appdata').existsSync(), isFalse);
+
+        // The fallback app can update AppData before the next attempt.
+        write(roaming('shared_preferences.json'), 'updated session');
+        blocker.deleteSync();
+        expect(await data.moveFromAppData(env), isTrue);
+        expect(
+          state('shared_preferences.json').readAsStringSync(),
+          'updated session',
+        );
+        expect(state('secure/passphrase.dat').readAsStringSync(), 'passphrase');
+        expect(cache('history/page.json').readAsStringSync(), 'history');
+        expect(cache('sentry-native/run').readAsStringSync(), 'crash');
+      });
+    }
+
+    test(
+      'a locked cache file leaves every original intact and can retry',
+      () async {
+        write(roaming('shared_preferences.json'), 'session');
+        write(local('media_cache/a.bin'), 'first');
+        write(local('media_cache/b.bin'), 'second');
+        write(local('media_cache/z.bin'), 'locked');
+        final release = _holdWithoutDeleteSharing(local('media_cache/z.bin'));
+        try {
+          expect(await data.moveFromAppData(env), isFalse);
+
+          expect(
+            File(roaming('shared_preferences.json')).readAsStringSync(),
+            'session',
+          );
+          for (final (name, content) in [
+            ('a.bin', 'first'),
+            ('b.bin', 'second'),
+            ('z.bin', 'locked'),
+          ]) {
+            expect(
+              File(local('media_cache/$name')).readAsStringSync(),
+              content,
+            );
+          }
+          expect(state('.moved_from_appdata').existsSync(), isFalse);
+        } finally {
+          release();
+        }
+
+        expect(await data.moveFromAppData(env), isTrue);
+        expect(cache('media_cache/a.bin').readAsStringSync(), 'first');
+        expect(cache('media_cache/b.bin').readAsStringSync(), 'second');
+        expect(cache('media_cache/z.bin').readAsStringSync(), 'locked');
+        expect(Directory(local('media_cache')).existsSync(), isFalse);
+      },
+      skip: !Platform.isWindows,
+    );
+
     test('happens once', () async {
       write(roaming('a.json'), 'first');
       await data.moveFromAppData(env);
@@ -199,4 +280,56 @@ void main() {
     expect(await provider.getApplicationCachePath(), data.localCache);
     expect(Directory(data.localState).existsSync(), isTrue);
   });
+}
+
+/// Keep [path] readable and writable, but prevent renaming or deleting it.
+void Function() _holdWithoutDeleteSharing(String path) {
+  final kernel = DynamicLibrary.open('kernel32.dll');
+  final createFile = kernel
+      .lookupFunction<
+        Pointer<Void> Function(
+          Pointer<Utf16>,
+          Uint32,
+          Uint32,
+          Pointer<Void>,
+          Uint32,
+          Uint32,
+          Pointer<Void>,
+        ),
+        Pointer<Void> Function(
+          Pointer<Utf16>,
+          int,
+          int,
+          Pointer<Void>,
+          int,
+          int,
+          Pointer<Void>,
+        )
+      >('CreateFileW');
+  final closeHandle = kernel
+      .lookupFunction<
+        Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('CloseHandle');
+  final name = path.toNativeUtf16();
+  const genericRead = 0x80000000;
+  const shareReadAndWrite = 3; // FILE_SHARE_READ | FILE_SHARE_WRITE
+  const openExisting = 3;
+  const normalAttributes = 0x80;
+  late final Pointer<Void> handle;
+  try {
+    handle = createFile(
+      name,
+      genericRead,
+      shareReadAndWrite,
+      nullptr,
+      openExisting,
+      normalAttributes,
+      nullptr,
+    );
+  } finally {
+    calloc.free(name);
+  }
+  expect(handle, isNot(Pointer<Void>.fromAddress(-1)));
+  return () => expect(closeHandle(handle), isNot(0));
 }

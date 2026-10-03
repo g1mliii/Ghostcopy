@@ -148,9 +148,9 @@ class PackagedAppData {
   /// next launch. Running from the package with part of the data still in
   /// AppData would have it start afresh there - a new session, a new
   /// passphrase - which the next attempt would then keep in place of the real
-  /// one. So nothing in AppData is deleted until every item is across; a file
-  /// where the package has a folder of the same name, or the other way
-  /// round, is found before anything moves; and if one item cannot move -
+  /// one. Each file is tracked so it can be restored until the marker commits
+  /// the move; a file where the package has a folder of the same name, or
+  /// the other way round, is found before anything moves; and if one item cannot move -
   /// held open, say - what moved this time is put back. Anything already in
   /// the package is what an earlier attempt left - the app has not run from
   /// the package yet - while the AppData copy is the one the app went on
@@ -179,23 +179,38 @@ class PackagedAppData {
       }
 
       final move = _Move();
-      var complete = true;
-      for (final (source, target) in sources) {
-        complete &= await move.entity(Directory(source), target);
-      }
-      if (!complete) {
+      try {
+        var complete = true;
+        for (final (source, target) in sources) {
+          complete &= await move.entity(Directory(source), target);
+        }
+        if (!complete) {
+          await move.undo();
+          return false;
+        }
+
+        for (final (source, _) in sources) {
+          await _pruneEmpty(Directory(source));
+          await _removeIfEmpty(Directory(source).parent); // the company folder
+        }
+        // Commit only after a complete, flushed write. A failed write must
+        // not leave a marker that makes the next attempt skip migration.
+        final partial = File('${marker.path}.partial');
+        await partial.writeAsString('', flush: true);
+        await partial.rename(marker.path);
+        return true;
+      } on FileSystemException catch (e) {
+        debugPrint('[PackagedAppData] Could not finish the move: ${e.message}');
         await move.undo();
         return false;
       }
-
-      for (final (source, _) in sources) {
-        await _pruneEmpty(Directory(source));
-        await _removeIfEmpty(Directory(source).parent); // the company folder
-      }
-      await marker.writeAsString('');
-      return true;
     } finally {
-      await lock.close();
+      try {
+        await lock.close();
+      } on FileSystemException catch (e) {
+        // A committed move must still select the package's providers.
+        debugPrint('[PackagedAppData] Could not close the lock: ${e.message}');
+      }
     }
   }
 }
@@ -216,20 +231,18 @@ bool _fits(FileSystemEntity entity, String target) {
 /// One attempt at the move: what it has done, so it can be undone.
 class _Move {
   /// Moved this time, to put back if the whole move fails.
-  final List<(FileSystemEntity from, String to)> _moved = [];
+  final List<(File from, String to)> _moved = [];
 
   /// Move [entity] to [target], which [_fits] has cleared. Whether all of it
   /// is now there.
   Future<bool> entity(FileSystemEntity entity, String target) async {
     if (!entity.existsSync()) return true;
     try {
-      final existing = FileSystemEntity.typeSync(target);
-      if (existing == FileSystemEntityType.notFound) {
-        await _relocate(entity, target);
-        _moved.add((entity, target));
-        return true;
-      }
       if (entity is Directory) {
+        // A recursive source deletion can fail after removing children.
+        // Move and track each file instead, leaving only empty directories
+        // for finalization to prune once everything has moved.
+        await Directory(target).create(recursive: true);
         var complete = true;
         for (final child in entity.listSync()) {
           complete &= await this.entity(
@@ -242,9 +255,10 @@ class _Move {
       // A file an earlier attempt left; the AppData one is newer, or the
       // same. If the remnant cannot go, nothing is committed and the next
       // attempt tries again.
-      await File(target).delete();
-      await _relocate(entity, target);
-      _moved.add((entity, target));
+      if (File(target).existsSync()) await File(target).delete();
+      final file = entity as File;
+      await _relocate(file, target);
+      _moved.add((file, target));
       return true;
     } on FileSystemException catch (e) {
       // Most likely held open - by an unpackaged build running alongside, or
@@ -258,10 +272,7 @@ class _Move {
   Future<void> undo() async {
     for (final (from, to) in _moved.reversed) {
       try {
-        await _relocate(
-          from is Directory ? Directory(to) : File(to),
-          from.path,
-        );
+        await _relocate(File(to), from.path);
       } on FileSystemException catch (e) {
         debugPrint('[PackagedAppData] Could not put back $to: ${e.message}');
       }
@@ -269,31 +280,20 @@ class _Move {
   }
 }
 
-/// Rename [entity] to [target], or copy it there and delete it where a
-/// rename cannot cross volumes. A copy interrupted part way leaves the
-/// original whole.
-Future<void> _relocate(FileSystemEntity entity, String target) async {
+/// Rename [file] to [target], or copy it there and delete it where a rename
+/// cannot cross volumes. Either operation leaves the original whole on
+/// failure: only individual files are deleted, never a directory tree.
+Future<void> _relocate(File file, String target) async {
   await Directory(p.dirname(target)).create(recursive: true);
   try {
-    await entity.rename(target);
+    await file.rename(target);
   } on FileSystemException {
-    await _copy(entity, target);
-    await entity.delete(recursive: true);
-  }
-}
-
-Future<void> _copy(FileSystemEntity entity, String target) async {
-  if (entity is File) {
     // Whole or not at all: a half-written file under its real name would be
     // taken for the complete one on the next attempt.
     final partial = '$target.partial';
-    await entity.copy(partial);
+    await file.copy(partial);
     await File(partial).rename(target);
-  } else if (entity is Directory) {
-    await Directory(target).create(recursive: true);
-    for (final child in entity.listSync()) {
-      await _copy(child, p.join(target, p.basename(child.path)));
-    }
+    await file.delete();
   }
 }
 

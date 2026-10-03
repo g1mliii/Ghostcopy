@@ -67,14 +67,14 @@ Future<void> clearKeychainLeftByEarlierInstall({
     final local = marker.existsSync()
         ? (await marker.readAsString()).trim()
         : '';
-    // Recorded in both places already: a normal launch, which need not touch
-    // the Keychain at all. (A lost flag only costs a Keychain read.)
-    if (local.isNotEmpty && (prefs.getBool(_recordedKey) ?? false)) return;
-
+    // A device restore can bring back the file and preferences without the
+    // Keychain copy. Check it on every launch instead of trusting a flag
+    // that may have been restored from a backup.
     final kept = await keychain.read(
       key: _keychainIdKey,
       iOptions: passphraseIosOptions,
     );
+    if (local.isNotEmpty && kept == local) return;
     if (kept != null && local.isEmpty) {
       await prefs.setBool(_signOutOwedKey, true);
       await _signOutIfOwed(prefs, signOut);
@@ -106,14 +106,8 @@ Future<void> clearKeychainLeftByEarlierInstall({
         iOptions: passphraseIosOptions,
       );
     }
-    // Only what is really there counts: a write can return and not persist,
-    // and an id missing from the Keychain would let the next install inherit
-    // this one's passphrase.
-    final stored = await keychain.read(
-      key: _keychainIdKey,
-      iOptions: passphraseIosOptions,
-    );
-    if (stored == id) await prefs.setBool(_recordedKey, true);
+    // The next launch verifies the actual Keychain value again, including
+    // when a write returns successfully without persisting the id.
   } on Object catch (e) {
     // Never worth failing startup over; the next launch tries again.
     debugPrint('[Keychain] Could not check for an earlier install: $e');
@@ -159,9 +153,6 @@ const String _markerFile = 'install_id';
 
 /// The install id's copy in the Keychain.
 const String _keychainIdKey = 'ghostcopy_install_id';
-
-/// Set once the id is in both places.
-const String _recordedKey = 'ghostcopy_install_id_in_keychain';
 
 /// Set while the earlier install's Google account still has to be signed out.
 const String _signOutOwedKey = 'ghostcopy_google_sign_out_owed';

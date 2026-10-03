@@ -103,7 +103,7 @@ void main() {
   // Empty preferences are not a reinstall: signed out, with every setting at
   // its default, an install has nothing else stored - and its passphrase is
   // its own.
-  test('a normal launch leaves the Keychain alone, and reads none', () async {
+  test('a normal launch preserves secrets and checks the install id', () async {
     await launch();
     keychain.items['encryption_passphrase_u1'] = ('mine', current);
     SharedPreferences.setMockInitialValues({
@@ -114,8 +114,65 @@ void main() {
     await launch();
 
     expect(keychain.items, contains('encryption_passphrase_u1'));
-    expect(keychain.reads, reads);
+    expect(keychain.reads, reads + 1);
   });
+
+  // Unencrypted device backups restore the container and preferences, but
+  // not a usable Keychain id on another phone. The old preferences flag is
+  // therefore not evidence that the Keychain copy still exists.
+  for (final restoredId in [null, 'another-device-id']) {
+    test('a restored container repairs Keychain id $restoredId', () async {
+      await launch();
+      final restoredFileId = fileId();
+      keychain.items.clear();
+      if (restoredId != null) {
+        keychain.items['ghostcopy_install_id'] = (restoredId, current);
+      }
+      keychain.items['encryption_passphrase_u1'] = ('mine', current);
+      SharedPreferences.setMockInitialValues({
+        'ghostcopy_install_id_in_keychain': true,
+      });
+
+      await launch();
+
+      expect(fileId(), restoredFileId);
+      expect(keychainId(), restoredFileId);
+      expect(keychain.items['encryption_passphrase_u1']!.$1, 'mine');
+      expect(googleSignOuts, 0);
+
+      deleteApp();
+      await launch();
+
+      expect(keychain.items.keys, ['ghostcopy_install_id']);
+      expect(keychainId(), fileId());
+      expect(googleSignOuts, 1);
+    });
+  }
+
+  for (final dropsWrite in [false, true]) {
+    test(
+      'a restored id repair retries an unsuccessful write ($dropsWrite)',
+      () async {
+        await launch();
+        keychain.items.clear();
+        keychain.items['encryption_passphrase_u1'] = ('mine', current);
+        SharedPreferences.setMockInitialValues({
+          'ghostcopy_install_id_in_keychain': true,
+        });
+        (dropsWrite ? keychain.dropWritesFor : keychain.failWritesFor).add(
+          'ghostcopy_install_id',
+        );
+
+        await launch();
+        expect(keychainId(), isNull);
+
+        await launch();
+        expect(keychainId(), fileId());
+        expect(keychain.items['encryption_passphrase_u1']!.$1, 'mine');
+        expect(googleSignOuts, 0);
+      },
+    );
+  }
 
   // Preferences can lose a write the app was told had finished, if iOS ends
   // the app first. The id lives in a flushed file, so losing preferences is
@@ -157,10 +214,9 @@ void main() {
     },
   );
 
-  // A write can return and not persist. Recorded anyway, every later launch
-  // would skip the Keychain, and an uninstall would leave no id behind for
-  // the next install to find.
-  test('a Keychain write that did not stick is not recorded', () async {
+  // A write can return and not persist. Rechecking the Keychain on the next
+  // launch repairs the id so a subsequent reinstall can find it.
+  test('a Keychain write that did not stick is retried', () async {
     keychain.dropWritesFor.add('ghostcopy_install_id');
     await launch();
     expect(keychainId(), isNull);
