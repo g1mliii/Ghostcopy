@@ -59,6 +59,38 @@ Right-click a file and choose **Send with GhostCopy**. It goes to your other dev
 opening the window, and a notification confirms it. Files can be up to 10 MB, and GhostCopy must
 already be signed in.
 
+### From the command line and AI assistants
+
+`ghostcopy` sends through the GhostCopy app running on your computer, so it uses your account
+without signing in itself. Turn on **Settings &rarr; Command line &amp; AI tools** in the app
+first. It is off by default.
+
+```bash
+ghostcopy send "https://example.com" --to phone
+ghostcopy send - < notes.txt          # text from standard input
+ghostcopy send-file report.pdf        # up to 10 MB
+ghostcopy devices
+```
+
+`--to` takes `phone`, `desktop`, `ios`, `android`, `macos` or `windows`, and defaults to the
+**Send to devices** setting. `--json` prints machine-readable output, and the exit code says what
+happened (0 sent, 1 usage, 2 GhostCopy unreachable, 3 refused, 4 send failed, 5 no answer
+after sending - check your history before retrying).
+
+For assistants without a shell, such as Claude Desktop, `ghostcopy mcp` is an MCP server with
+`send_text`, `send_file` and `list_devices` tools:
+
+```json
+{
+  "mcpServers": {
+    "ghostcopy": { "command": "/path/to/ghostcopy", "args": ["mcp"] }
+  }
+}
+```
+
+It is not bundled with the installers yet. Build it with
+`cd packages/ghostcopy_agent && dart pub get && dart compile exe bin/ghostcopy.dart -o ghostcopy`.
+
 ---
 
 ## Building from source

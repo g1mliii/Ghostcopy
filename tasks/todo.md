@@ -174,21 +174,6 @@ it better, and also covers backups and leaving without losing anything.
 - [ ] Does not need to be instant. A queued job that emails or exposes a
       signed download is cheaper and sidesteps timeouts on large histories
 
-## Later: AI assistant integration via MCP
-
-Let users ask an assistant to "send this to my phone" or send a generated file
-to another device through GhostCopy on macOS and Windows. Local MCP first, for
-Claude Desktop and ChatGPT/Codex, reusing GhostCopy's sending services, account
-and encryption. A CLI can follow on the same implementation.
-
-- [ ] Tools to list devices, send text or links, and send files
-- [ ] Target a device by ID, resolving names such as "my phone"
-- [ ] Opt-in connection; clipboard-history access a separate permission
-- [ ] Report queued/sent accurately; only report received with a delivery
-      acknowledgement
-- [ ] Straightforward setup, verified on both desktop platforms
-- [ ] Trial "send this to my phone" before expanding scope
-
 ## Later: widget extraction
 
 Left over from the February ViewModel refactor (Phases 1.1 and 1.2 done).

@@ -1,0 +1,18 @@
+name: ghostcopy_agent
+description: >-
+  The ghostcopy command line and MCP server, and the protocol they share with
+  the GhostCopy desktop app. Pure Dart, depending only on the pure-Dart
+  `crypto` for the handshake's HMAC, so the command compiles on its own with
+  `dart compile exe` - the app's plugins carry native build hooks that dart
+  compile refuses.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ^3.12.0
+
+executables:
+  ghostcopy: ghostcopy
+
+dependencies:
+  crypto: ^3.0.3

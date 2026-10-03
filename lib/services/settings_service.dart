@@ -128,6 +128,16 @@ abstract class ISettingsService {
 
   // ========== FEATURE FLAGS ==========
 
+  /// Whether the `ghostcopy` command line and AI assistants (through its MCP
+  /// server) may send through this app. Desktop only. Off until the user
+  /// turns it on: anything running as this user could otherwise send from
+  /// their account without them having asked for that.
+  Future<bool> getAgentAccessEnabled();
+
+  /// Returns false when the write did not persist - which, turning access
+  /// off, would leave it on after a restart while the switch said off.
+  Future<bool> setAgentAccessEnabled({required bool enabled});
+
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   /// Returns false by default if error or not found
   Future<bool> isHybridModeEnabled();
