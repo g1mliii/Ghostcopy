@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _Keychain {
   String? id;
   final List<IOSOptions> cleared = [];
+  int googleSignOuts = 0;
   bool failWrite = false;
   bool failDelete = false;
 
@@ -41,6 +42,7 @@ void main() {
         readKeychainId: keychain.read,
         writeKeychainId: keychain.write,
         deleteAll: keychain.deleteAll,
+        signOutGoogle: () async => keychain.googleSignOuts++,
       );
 
   test('a reinstall clears both places the passphrase lived', () async {
@@ -53,6 +55,16 @@ void main() {
       passphraseIosOptions,
       legacyPassphraseIosOptions,
     ]);
+  });
+
+  // Google Sign-In keeps its account in the Keychain too, and would sign
+  // the next person in as the last one.
+  test('a reinstall signs out the Google account it left', () async {
+    keychain.id = 'earlier-install';
+
+    await launch(await prefsWith({}));
+
+    expect(keychain.googleSignOuts, 1);
   });
 
   // Empty preferences are not a reinstall: signed out, with every setting
@@ -114,20 +126,21 @@ void main() {
     },
   );
 
-  test('a clear that failed is tried again on the next launch', () async {
+  // Retrying could not tell the leftover from a passphrase the user set
+  // after the failure, on this same launch - so the install is recorded,
+  // and nothing of this install's is ever at risk.
+  test('a clear that failed is not retried over newer data', () async {
     keychain
       ..id = 'earlier-install'
       ..failDelete = true;
     final prefs = await prefsWith({});
     await launch(prefs);
-    expect(prefs.getString('ghostcopy_install_id'), isNull);
+    expect(prefs.getString('ghostcopy_install_id'), isNotNull);
+    expect(keychain.id, prefs.getString('ghostcopy_install_id'));
 
     keychain.failDelete = false;
     await launch(prefs);
 
-    expect(keychain.cleared, [
-      passphraseIosOptions,
-      legacyPassphraseIosOptions,
-    ]);
+    expect(keychain.cleared, isEmpty);
   });
 }

@@ -3,8 +3,10 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'impl/auth_service.dart' show googleIosClientId;
 import 'impl/keychain_accessibility.dart';
 
 /// Clears what an earlier install of GhostCopy left in the iOS Keychain.
@@ -26,11 +28,22 @@ import 'impl/keychain_accessibility.dart';
 /// deletes nothing, and records the id. The cost is that a passphrase left by
 /// an install from before this version is not recognised as left over; every
 /// install from here on is.
+///
+/// What a reinstall clears: the passphrase, under both accessibility values
+/// it may have been written with, and the Google account Google Sign-In
+/// keeps in the Keychain, which would otherwise sign the next person in as
+/// the last one.
+///
+/// A clear that fails is not retried. The id is recorded regardless, because
+/// the app goes on starting, the user may set a passphrase this very launch,
+/// and a retry next time could not tell that one from the leftover. Something
+/// left behind is the lesser loss.
 Future<void> clearKeychainLeftByEarlierInstall({
   SharedPreferences? preferences,
   Future<String?> Function()? readKeychainId,
   Future<void> Function(String id)? writeKeychainId,
   Future<void> Function(IOSOptions options)? deleteAll,
+  Future<void> Function()? signOutGoogle,
 }) async {
   const keychain = FlutterSecureStorage(iOptions: passphraseIosOptions);
   try {
@@ -40,19 +53,13 @@ Future<void> clearKeychainLeftByEarlierInstall({
     if (kept != null && kept == local) return;
 
     if (kept != null && local == null) {
-      final delete =
-          deleteAll ??
-          (options) =>
-              const FlutterSecureStorage().deleteAll(iOptions: options);
-      // Both: accessibility is part of how an item is addressed, and an
-      // earlier install may have written under either.
-      for (final options in [
-        passphraseIosOptions,
-        legacyPassphraseIosOptions,
-      ]) {
-        await delete(options);
-      }
-      debugPrint('[Keychain] Cleared what an earlier install left behind');
+      await _clearEarlierInstall(
+        deleteAll ??
+            (options) =>
+                const FlutterSecureStorage().deleteAll(iOptions: options),
+        signOutGoogle ??
+            () => GoogleSignIn(clientId: googleIosClientId).signOut(),
+      );
     }
 
     // Preferences first. If the Keychain write then fails, the next launch
@@ -68,6 +75,27 @@ Future<void> clearKeychainLeftByEarlierInstall({
     // Never worth failing startup over; the next launch tries again.
     debugPrint('[Keychain] Could not check for an earlier install: $e');
   }
+}
+
+Future<void> _clearEarlierInstall(
+  Future<void> Function(IOSOptions options) deleteAll,
+  Future<void> Function() signOutGoogle,
+) async {
+  // Each on its own: one failing must not leave the others behind.
+  // Accessibility is part of how an item is addressed, so both.
+  for (final options in [passphraseIosOptions, legacyPassphraseIosOptions]) {
+    try {
+      await deleteAll(options);
+    } on Object catch (e) {
+      debugPrint('[Keychain] Could not clear $options: $e');
+    }
+  }
+  try {
+    await signOutGoogle();
+  } on Object catch (e) {
+    debugPrint('[Keychain] Could not sign out the earlier Google account: $e');
+  }
+  debugPrint('[Keychain] Cleared what an earlier install left behind');
 }
 
 const String _idKey = 'ghostcopy_install_id';

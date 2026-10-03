@@ -140,6 +140,33 @@ void main() {
       expect(Directory(roaming('secure')).existsSync(), isFalse);
     });
 
+    // All or nothing: the app runs from AppData until everything is across,
+    // so a half-done move must leave AppData whole, not split between the two.
+    test('a move that cannot finish puts back what it moved', () async {
+      write(roaming('shared_preferences.json'), '{"signed":"in"}');
+      write(roaming('flutter_secure_storage.dat'), 'secret');
+      // A file where the package has a folder of the same name cannot move.
+      write(roaming('media'), 'a file');
+      Directory(p.join(data.localState, 'media')).createSync(recursive: true);
+
+      expect(await data.moveFromAppData(env), isFalse);
+
+      expect(
+        File(roaming('shared_preferences.json')).readAsStringSync(),
+        '{"signed":"in"}',
+      );
+      expect(File(roaming('flutter_secure_storage.dat')).existsSync(), isTrue);
+      expect(File(roaming('media')).existsSync(), isTrue);
+      expect(
+        File(p.join(data.localState, 'shared_preferences.json')).existsSync(),
+        isFalse,
+      );
+      expect(
+        File(p.join(data.localState, '.moved_from_appdata')).existsSync(),
+        isFalse,
+      );
+    });
+
     test('happens once', () async {
       write(roaming('a.json'), 'first');
       await data.moveFromAppData(env);
@@ -153,11 +180,12 @@ void main() {
     });
 
     test('with nothing in AppData, does nothing but mark it done', () async {
-      await data.moveFromAppData(env);
+      expect(await data.moveFromAppData(env), isTrue);
 
+      // The marker, and the lock that kept other processes out meanwhile.
       expect(
         Directory(data.localState).listSync().map((e) => p.basename(e.path)),
-        ['.moved_from_appdata'],
+        unorderedEquals(['.moved_from_appdata', '.moving.lock']),
       );
       expect(
         Directory(p.join(env['APPDATA']!, 'com.ghostcopy')).existsSync(),
@@ -169,27 +197,20 @@ void main() {
   // shared_preferences' Windows backends build their own path provider, so
   // replacing path_provider's alone left the session and settings in
   // AppData - the file the move had just emptied.
-  test(
-    'preferences inside a package live in LocalState',
-    () async {
-      final home = Directory.systemTemp.createTempSync('prefs');
-      addTearDown(() => home.deleteSync(recursive: true));
-      final data = PackagedAppData.forFamilyName(
-        'pkg',
-        localAppData: home.path,
-      )!;
+  test('preferences inside a package live in LocalState', () async {
+    final home = Directory.systemTemp.createTempSync('prefs');
+    addTearDown(() => home.deleteSync(recursive: true));
+    final data = PackagedAppData.forFamilyName('pkg', localAppData: home.path)!;
 
-      PackagedAppData.install(data);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('session', 'signed-in');
-      await SharedPreferencesAsync().setString('async', 'kept');
+    PackagedAppData.install(data);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('session', 'signed-in');
+    await SharedPreferencesAsync().setString('async', 'kept');
 
-      final stored = File(p.join(data.localState, 'shared_preferences.json'));
-      expect(stored.readAsStringSync(), contains('signed-in'));
-      expect(stored.readAsStringSync(), contains('kept'));
-    },
-    skip: Platform.isWindows ? false : 'Windows backends',
-  );
+    final stored = File(p.join(data.localState, 'shared_preferences.json'));
+    expect(stored.readAsStringSync(), contains('signed-in'));
+    expect(stored.readAsStringSync(), contains('kept'));
+  });
 
   test('path_provider inside a package uses its folders', () async {
     final home = Directory.systemTemp.createTempSync('provider');

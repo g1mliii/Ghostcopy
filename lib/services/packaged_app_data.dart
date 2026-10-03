@@ -90,23 +90,43 @@ class PackagedAppData {
     return p.join(local, 'GhostCopy', 'sentry-native');
   }
 
-  /// Written once everything from AppData has moved, so the move is tried
-  /// again on the next launch until it has.
+  /// Written once everything from AppData is in the package. Until then the
+  /// app runs from AppData, as it always did, and the move is tried again.
   static const String _movedMarker = '.moved_from_appdata';
 
-  /// Point path_provider at the package's folders, and move over what an
-  /// earlier version left in AppData. Call before anything opens a file;
-  /// does nothing outside a package.
+  /// Held while moving, so two GhostCopy processes starting together - the
+  /// startup task and a click, or a sign-in callback - cannot both move the
+  /// same files. This runs before SingleInstance has picked one of them.
+  static const String _lockFile = '.moving.lock';
+
+  static PackagedAppData? _inUse;
+
+  /// The package's folders once the app runs from them, which is once
+  /// [prepare] has everything across. Null before that, and outside a
+  /// package.
+  static PackagedAppData? get inUse => _inUse;
+
+  /// Move over what an earlier version left in AppData, and then point
+  /// path_provider at the package's folders. Call before anything opens a
+  /// file; does nothing outside a package.
   static Future<void> prepare() async {
     final data = current;
     if (data == null) return;
-    install(data);
+    var moved = false;
     try {
-      await data.moveFromAppData(Platform.environment);
+      moved = await data.moveFromAppData(Platform.environment);
     } on Object catch (e) {
-      // Never worth failing startup over: the app works from the package
-      // either way, and the next launch tries again.
+      // Never worth failing startup over: the app runs from AppData this
+      // time, as it always did, and the next launch tries again.
       debugPrint('[PackagedAppData] Could not move data from AppData: $e');
+    }
+    // Only once everything is across. Running from the package with part of
+    // the data still in AppData would have the app start afresh there - a new
+    // session, a new passphrase - and the next attempt would then find that
+    // in the way of the real one.
+    if (moved) {
+      install(data);
+      _inUse = data;
     }
   }
 
@@ -129,114 +149,173 @@ class PackagedAppData {
       ..pathProvider = provider;
   }
 
-  /// Move everything an earlier version kept under AppData into the
-  /// package - support data into [localState], caches and the crash database
-  /// into [localCache] - then remove the emptied folders. Whatever the
-  /// package already has wins over an AppData copy: it is what the app has
-  /// been using.
+  /// Move everything an earlier version kept under AppData into the package
+  /// - support data into [localState], caches and the crash database into
+  /// [localCache] - and remove the emptied folders. Whether the package now
+  /// holds all of it.
+  ///
+  /// All or nothing. Nothing in AppData is deleted until every item is in
+  /// the package; if any one cannot be moved - held open, say, or a file
+  /// where a folder of the same name already is - what was moved this time
+  /// is moved back, and AppData is as it was. A file already in the package
+  /// from an earlier attempt is whole, because copies land under a temporary
+  /// name first, so its AppData copy goes; a folder already there is merged
+  /// into, never taken as whole.
   @visibleForTesting
-  Future<void> moveFromAppData(Map<String, String> env) async {
+  Future<bool> moveFromAppData(Map<String, String> env) async {
     final marker = File(p.join(localState, _movedMarker));
-    if (marker.existsSync()) return;
+    if (marker.existsSync()) return true;
     await Directory(localState).create(recursive: true);
 
-    var complete = true;
-    for (final (root, target) in _legacyRoots(env)) {
-      complete &= await _moveChildren(Directory(root), Directory(target));
-    }
-    final crashes = _legacyCrashDatabase(env);
-    if (crashes != null) {
-      final from = Directory(crashes);
-      if (from.existsSync()) {
-        complete &= await _moveEntity(
-          from,
-          p.join(localCache, 'sentry-native'),
-        );
-        await _removeIfEmpty(from.parent);
+    final lock = await File(
+      p.join(localState, _lockFile),
+    ).open(mode: FileMode.write);
+    try {
+      await lock.lock(FileLock.blockingExclusive);
+      // Another process may have finished while this one waited.
+      if (marker.existsSync()) return true;
+
+      final sources = [
+        for (final (root, target) in _legacyRoots(env)) (root, target),
+        if (_legacyCrashDatabase(env) case final crashes?)
+          (crashes, p.join(localCache, 'sentry-native')),
+      ];
+      final move = _Move();
+      var complete = true;
+      for (final (source, target) in sources) {
+        complete &= await move.entity(Directory(source), target);
       }
+      if (!complete) {
+        await move.undo();
+        return false;
+      }
+
+      await move.removeDuplicates();
+      for (final (source, _) in sources) {
+        await _pruneEmpty(Directory(source));
+        await _removeIfEmpty(Directory(source).parent); // com.ghostcopy
+      }
+      await marker.writeAsString('');
+      return true;
+    } finally {
+      await lock.close();
     }
-    if (complete) await marker.writeAsString('');
   }
+}
 
-  /// Whether everything in [from] ended up in [to].
-  static Future<bool> _moveChildren(Directory from, Directory to) async {
-    if (!from.existsSync()) return true;
-    final complete = await _mergeInto(from, to.path);
-    if (complete) await _removeIfEmpty(from.parent); // com.ghostcopy
-    return complete;
-  }
+/// One attempt at the move: what it has done, so it can be undone.
+class _Move {
+  /// Moved this time, as (from, to), to put back if the whole move fails.
+  final List<(String, String)> _moved = [];
 
-  /// Move everything in [from] into the folder [to], and remove [from] if
-  /// that emptied it. Whether all of it moved.
-  static Future<bool> _mergeInto(Directory from, String to) async {
-    var complete = true;
-    for (final child in from.listSync()) {
-      complete &= await _moveEntity(child, p.join(to, p.basename(child.path)));
-    }
-    await _removeIfEmpty(from);
-    return complete;
-  }
+  /// Already in the package from an earlier attempt. Their AppData copies
+  /// are removed only once everything else is across.
+  final List<FileSystemEntity> _duplicates = [];
 
-  /// Move [entity] to [target]; false if any of it could not be moved, in
-  /// which case that part is left where it was.
-  ///
-  /// A folder already in the package is merged into, never taken as whole:
-  /// it may be one a copy across volumes was interrupted part way through,
-  /// and deleting the original then would lose whatever had not been copied
-  /// - the session or the encryption storage among it. A file already there
-  /// is whole, because copies land under a temporary name first, and it
-  /// wins: it is the one the app has been using.
-  static Future<bool> _moveEntity(
-    FileSystemEntity entity,
-    String target,
-  ) async {
+  /// Move [entity] to [target]. Whether all of it is now there.
+  Future<bool> entity(FileSystemEntity entity, String target) async {
+    if (!entity.existsSync()) return true;
     try {
       final existing = FileSystemEntity.typeSync(target);
-      if (entity is Directory && existing == FileSystemEntityType.directory) {
-        return await _mergeInto(entity, target);
-      }
-      if (existing != FileSystemEntityType.notFound) {
-        await entity.delete(recursive: true);
+      if (existing == FileSystemEntityType.notFound) {
+        await _relocate(entity, target);
+        _moved.add((entity.path, target));
         return true;
       }
-      await Directory(p.dirname(target)).create(recursive: true);
-      try {
-        await entity.rename(target);
-      } on FileSystemException {
-        // Rename cannot cross volumes. Copy, then remove the original: a
-        // copy interrupted part way leaves the original whole for next time.
-        await _copy(entity, target);
-        await entity.delete(recursive: true);
+      if (entity is Directory && existing == FileSystemEntityType.directory) {
+        var complete = true;
+        for (final child in entity.listSync()) {
+          complete &= await this.entity(
+            child,
+            p.join(target, p.basename(child.path)),
+          );
+        }
+        return complete;
       }
-      return true;
+      if (entity is File && existing == FileSystemEntityType.file) {
+        _duplicates.add(entity);
+        return true;
+      }
+      // A file where a folder is, or the other way round: neither can stand
+      // in for the other, so both are left as they are.
+      debugPrint('[PackagedAppData] ${entity.path} does not fit $target');
+      return false;
     } on FileSystemException catch (e) {
-      // Most likely held open by an unpackaged build running alongside.
+      // Most likely held open - by an unpackaged build running alongside, or
+      // by antivirus or backup software.
       debugPrint('[PackagedAppData] Left ${entity.path}: ${e.message}');
       return false;
     }
   }
 
-  static Future<void> _copy(FileSystemEntity entity, String target) async {
-    if (entity is File) {
-      // Whole or not at all: a half-written file under its real name would
-      // be taken for the complete one on the next attempt.
-      final partial = '$target.partial';
-      await entity.copy(partial);
-      await File(partial).rename(target);
-    } else if (entity is Directory) {
-      await Directory(target).create(recursive: true);
-      for (final child in entity.listSync()) {
-        await _copy(child, p.join(target, p.basename(child.path)));
+  /// Put back everything moved this time, newest first.
+  Future<void> undo() async {
+    for (final (from, to) in _moved.reversed) {
+      try {
+        await _relocate(
+          FileSystemEntity.isDirectorySync(to) ? Directory(to) : File(to),
+          from,
+        );
+      } on FileSystemException catch (e) {
+        debugPrint('[PackagedAppData] Could not put back $to: ${e.message}');
+      }
+    }
+    _moved.clear();
+  }
+
+  Future<void> removeDuplicates() async {
+    for (final duplicate in _duplicates) {
+      try {
+        await duplicate.delete();
+      } on FileSystemException catch (e) {
+        debugPrint('[PackagedAppData] Left ${duplicate.path}: ${e.message}');
       }
     }
   }
+}
 
-  static Future<void> _removeIfEmpty(Directory dir) async {
-    try {
-      if (dir.existsSync() && dir.listSync().isEmpty) await dir.delete();
-    } on FileSystemException {
-      // Something else put a file there; leave it.
+/// Rename [entity] to [target], or copy it there and delete it where a
+/// rename cannot cross volumes. A copy interrupted part way leaves the
+/// original whole.
+Future<void> _relocate(FileSystemEntity entity, String target) async {
+  await Directory(p.dirname(target)).create(recursive: true);
+  try {
+    await entity.rename(target);
+  } on FileSystemException {
+    await _copy(entity, target);
+    await entity.delete(recursive: true);
+  }
+}
+
+Future<void> _copy(FileSystemEntity entity, String target) async {
+  if (entity is File) {
+    // Whole or not at all: a half-written file under its real name would be
+    // taken for the complete one on the next attempt.
+    final partial = '$target.partial';
+    await entity.copy(partial);
+    await File(partial).rename(target);
+  } else if (entity is Directory) {
+    await Directory(target).create(recursive: true);
+    for (final child in entity.listSync()) {
+      await _copy(child, p.join(target, p.basename(child.path)));
     }
+  }
+}
+
+/// Remove [dir] if nothing but empty folders is left in it.
+Future<void> _pruneEmpty(Directory dir) async {
+  if (!dir.existsSync()) return;
+  for (final child in dir.listSync().whereType<Directory>()) {
+    await _pruneEmpty(child);
+  }
+  await _removeIfEmpty(dir);
+}
+
+Future<void> _removeIfEmpty(Directory dir) async {
+  try {
+    if (dir.existsSync() && dir.listSync().isEmpty) await dir.delete();
+  } on FileSystemException {
+    // Something else put a file there; leave it.
   }
 }
 

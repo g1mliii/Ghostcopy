@@ -122,8 +122,9 @@ void configureCrashReporting(SentryFlutterOptions options) {
 String? _nativeDatabasePath() {
   if (!Platform.isWindows && !Platform.isLinux) return null;
 
-  // A Store install keeps it in the package, which Windows deletes with it.
-  final packaged = PackagedAppData.current;
+  // A Store install keeps it in the package, which Windows deletes with it -
+  // once the app runs from there, which prepare() has settled by now.
+  final packaged = PackagedAppData.inUse;
   if (packaged != null) return path.join(packaged.localCache, 'sentry-native');
 
   final home = Platform.environment['HOME'];
