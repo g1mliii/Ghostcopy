@@ -315,15 +315,15 @@ class PackagedAppData {
   }
 }
 
-/// Whether the AppData known folders exist. A missing one is not an empty
-/// one: APPDATA can be a network profile that is offline right now, and a
-/// move committed then would strand the session there for good.
-bool _rootsAvailable(Map<String, String> env) => ['APPDATA', 'LOCALAPPDATA']
-    .map((key) => env[key])
-    .every(
-      (known) =>
-          known == null || known.isEmpty || Directory(known).existsSync(),
-    );
+/// Whether both AppData known folders are there. A missing one is not an
+/// empty one: APPDATA can be a network profile that is offline right now,
+/// or absent from this process's environment, and a move committed then
+/// would strand the session there for good.
+bool _rootsAvailable(Map<String, String> env) =>
+    ['APPDATA', 'LOCALAPPDATA'].every((key) {
+      final known = env[key];
+      return known != null && known.isNotEmpty && Directory(known).existsSync();
+    });
 
 /// Startup cannot safely use AppData until the pending migration is restored.
 class PackagedAppDataRecoveryException implements Exception {

@@ -514,6 +514,17 @@ void main() {
 
     // APPDATA can be a network profile that is offline right now. Taken for
     // empty, the move committed and stranded the session there for good.
+    test(
+      'an AppData root missing from the environment does not commit',
+      () async {
+        env.remove('APPDATA');
+
+        expect(await data.moveFromAppData(env), isFalse);
+
+        expect(state('.moved_from_appdata').existsSync(), isFalse);
+      },
+    );
+
     test('a missing AppData root does not commit', () async {
       Directory(env['APPDATA']!).deleteSync(recursive: true);
 
