@@ -151,10 +151,11 @@ class PackagedAppData {
   /// one. So nothing in AppData is deleted until every item is across; a file
   /// where the package has a folder of the same name, or the other way
   /// round, is found before anything moves; and if one item cannot move -
-  /// held open, say - what moved this time is put back. A file already in the
-  /// package from an earlier attempt is whole, because copies land under a
-  /// temporary name first, so its AppData copy goes; a folder already there is
-  /// merged into, never taken as whole.
+  /// held open, say - what moved this time is put back. Anything already in
+  /// the package is what an earlier attempt left - the app has not run from
+  /// the package yet - while the AppData copy is the one the app went on
+  /// using, so the AppData copy replaces it; a folder already there is merged
+  /// into, file by file.
   @visibleForTesting
   Future<bool> moveFromAppData(Map<String, String> env) async {
     final marker = File(p.join(localState, _movedMarker));
@@ -187,7 +188,6 @@ class PackagedAppData {
         return false;
       }
 
-      await move.removeDuplicates();
       for (final (source, _) in sources) {
         await _pruneEmpty(Directory(source));
         await _removeIfEmpty(Directory(source).parent); // the company folder
@@ -218,10 +218,6 @@ class _Move {
   /// Moved this time, to put back if the whole move fails.
   final List<(FileSystemEntity from, String to)> _moved = [];
 
-  /// Already in the package from an earlier attempt. Their AppData copies
-  /// are removed only once everything else is across.
-  final List<FileSystemEntity> _duplicates = [];
-
   /// Move [entity] to [target], which [_fits] has cleared. Whether all of it
   /// is now there.
   Future<bool> entity(FileSystemEntity entity, String target) async {
@@ -243,7 +239,12 @@ class _Move {
         }
         return complete;
       }
-      _duplicates.add(entity);
+      // A file an earlier attempt left; the AppData one is newer, or the
+      // same. If the remnant cannot go, nothing is committed and the next
+      // attempt tries again.
+      await File(target).delete();
+      await _relocate(entity, target);
+      _moved.add((entity, target));
       return true;
     } on FileSystemException catch (e) {
       // Most likely held open - by an unpackaged build running alongside, or
@@ -263,16 +264,6 @@ class _Move {
         );
       } on FileSystemException catch (e) {
         debugPrint('[PackagedAppData] Could not put back $to: ${e.message}');
-      }
-    }
-  }
-
-  Future<void> removeDuplicates() async {
-    for (final duplicate in _duplicates) {
-      try {
-        await duplicate.delete();
-      } on FileSystemException catch (e) {
-        debugPrint('[PackagedAppData] Left ${duplicate.path}: ${e.message}');
       }
     }
   }

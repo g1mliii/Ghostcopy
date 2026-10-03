@@ -84,8 +84,8 @@ class FakeKeychain extends Mock implements FlutterSecureStorage {
   /// Makes the next deleteAll throw.
   bool failDeleteAll = false;
 
-  /// Like a read, by accessibility: only what was written under the same
-  /// value goes.
+  /// Everything, whatever its accessibility: flutter_secure_storage_darwin
+  /// deletes without an accessibility constraint (performDelete clears it).
   @override
   Future<void> deleteAll({
     AppleOptions? iOptions,
@@ -96,10 +96,6 @@ class FakeKeychain extends Mock implements FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     if (failDeleteAll) throw Exception('simulated secure-storage failure');
-    items.removeWhere(
-      (_, item) =>
-          item.$2 ==
-          (iOptions?.accessibility ?? KeychainAccessibility.unlocked),
-    );
+    items.clear();
   }
 }

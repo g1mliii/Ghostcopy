@@ -2,12 +2,11 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Where this install's id is kept. iOS deletes it with the app, which is what
-/// lets the reinstall check tell a reinstall from an install updating.
+/// Where this install's id is kept.
 const String installIdKey = 'ghostcopy_device_install_id';
 
-/// This install's random id, created the first time it is asked for. Used for
-/// a device id where the platform gives none, and by the iOS reinstall check.
+/// This install's random id, created the first time it is asked for: a
+/// device id where the platform gives none.
 Future<String> getOrCreateInstallId([SharedPreferences? preferences]) async {
   final prefs = preferences ?? await SharedPreferences.getInstance();
   final existing = prefs.getString(installIdKey);

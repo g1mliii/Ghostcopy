@@ -99,15 +99,20 @@ void main() {
       }
     });
 
-    // The package's copy is the one an earlier attempt finished; an AppData
-    // copy of the same file is the original it was made from.
-    test('what the package already has wins', () async {
-      write(roaming('shared_preferences.json'), 'old');
-      write(state('shared_preferences.json').path, 'current');
+    // Until the move commits the app runs from AppData, so anything already
+    // in the package is what a failed attempt left, and the AppData copy is
+    // the one the app went on changing. Keeping the remnant rolled back the
+    // session or settings to how they were at the failed attempt.
+    test('the live AppData copy replaces a remnant in the package', () async {
+      write(roaming('shared_preferences.json'), 'changed since');
+      write(state('shared_preferences.json').path, 'stale remnant');
 
-      await data.moveFromAppData(env);
+      expect(await data.moveFromAppData(env), isTrue);
 
-      expect(state('shared_preferences.json').readAsStringSync(), 'current');
+      expect(
+        state('shared_preferences.json').readAsStringSync(),
+        'changed since',
+      );
       expect(File(roaming('shared_preferences.json')).existsSync(), isFalse);
     });
 
