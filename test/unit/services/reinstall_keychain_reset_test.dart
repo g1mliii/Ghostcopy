@@ -83,16 +83,20 @@ void main() {
       expect(googleSignOuts, 1);
     });
 
-    // A second deleteAll would take whatever the user has stored since.
-    test('a clear that failed is not retried', () async {
+    // Recorded anyway, the fast path would skip the clear for good and leave
+    // the earlier install's secrets behind.
+    test('a clear that failed is not recorded, and is tried again', () async {
       keychain.failDeleteAll = true;
       await launch();
-      keychain.failDeleteAll = false;
-      keychain.items['encryption_passphrase_u3'] = ('set since', current);
 
+      expect(File(p.join(container.path, 'install_id')).existsSync(), isFalse);
+      expect(keychain.items, contains('encryption_passphrase_u1'));
+
+      keychain.failDeleteAll = false;
       await launch();
 
-      expect(keychain.items, contains('encryption_passphrase_u3'));
+      expect(keychain.items.keys, ['ghostcopy_install_id']);
+      expect(keychainId(), fileId());
     });
   });
 

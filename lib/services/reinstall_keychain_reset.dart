@@ -36,9 +36,15 @@ import 'impl/keychain_accessibility.dart';
 /// A reinstall clears GhostCopy's Keychain items - one deleteAll, which the
 /// plugin runs without an accessibility constraint, so the passphrase goes
 /// whichever value it was written under - and signs out the Google account
-/// Google Sign-In keeps there. The clear is never retried: the user may set
-/// a passphrase this very launch, and a second deleteAll would take it too.
-/// Signing out can be, and is, until it succeeds.
+/// Google Sign-In keeps there.
+///
+/// A clear that fails is tried once more at once, and if that fails too the
+/// new install is not recorded, so the next launch finds the same reinstall
+/// and clears again. The cost: a passphrase the user sets in a launch whose
+/// clear failed goes with the retry. That takes a Keychain that was readable
+/// a moment earlier refusing a delete twice, and the alternative - recording
+/// the install anyway - leaves the earlier install's secrets on the phone for
+/// good. Signing out is retried until it succeeds, and deletes nothing.
 Future<void> clearKeychainLeftByEarlierInstall({
   FlutterSecureStorage? storage,
   Future<void> Function()? signOutGoogle,
@@ -70,13 +76,13 @@ Future<void> clearKeychainLeftByEarlierInstall({
       iOptions: passphraseIosOptions,
     );
     if (kept != null && local.isEmpty) {
-      try {
-        await keychain.deleteAll(iOptions: passphraseIosOptions);
-      } on Object catch (e) {
-        debugPrint('[Keychain] Could not clear an earlier install: $e');
-      }
       await prefs.setBool(_signOutOwedKey, true);
       await _signOutIfOwed(prefs, signOut);
+      if (!await _clear(keychain)) {
+        // Not recorded: the next launch meets the same reinstall and clears
+        // again, rather than leaving the earlier install's secrets for good.
+        return;
+      }
       debugPrint('[Keychain] Cleared what an earlier install left behind');
     }
 
@@ -112,6 +118,22 @@ Future<void> clearKeychainLeftByEarlierInstall({
     // Never worth failing startup over; the next launch tries again.
     debugPrint('[Keychain] Could not check for an earlier install: $e');
   }
+}
+
+/// Everything GhostCopy keeps in the Keychain - one deleteAll, run by the
+/// plugin with no accessibility constraint - tried twice. Whether it went.
+Future<bool> _clear(FlutterSecureStorage keychain) async {
+  for (var attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await keychain.deleteAll(iOptions: passphraseIosOptions);
+      return true;
+    } on Object catch (e) {
+      debugPrint(
+        '[Keychain] Could not clear an earlier install ($attempt): $e',
+      );
+    }
+  }
+  return false;
 }
 
 Future<void> _signOutIfOwed(
