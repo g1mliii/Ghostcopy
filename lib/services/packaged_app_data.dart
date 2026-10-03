@@ -119,14 +119,20 @@ class PackagedAppData {
   /// that worked; see [moveFromAppData]. Call before anything opens a file;
   /// does nothing outside a package.
   static Future<void> prepare() async {
-    if (!Platform.isWindows) return;
-    final data = forFamilyName(
-      _currentPackageFamilyName(),
-      localAppData: Platform.environment['LOCALAPPDATA'],
-    );
+    final data = thisPackage;
     if (data == null) return;
     await prepareForData(data, Platform.environment);
   }
+
+  /// This process's package folders, whether or not the app runs from them
+  /// yet - [inUse] says that. Null outside a package, which includes every
+  /// platform but Windows. Looked up once.
+  static final PackagedAppData? thisPackage = Platform.isWindows
+      ? forFamilyName(
+          _currentPackageFamilyName(),
+          localAppData: Platform.environment['LOCALAPPDATA'],
+        )
+      : null;
 
   /// Run startup migration for [data] and [env]. [beforeCommit] lets tests
   /// reproduce another process writing or locking a file after it moved.

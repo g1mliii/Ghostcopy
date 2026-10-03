@@ -123,8 +123,10 @@ String? _nativeDatabasePath() {
   if (!Platform.isWindows && !Platform.isLinux) return null;
 
   // A Store install keeps it in the package, which Windows deletes with it -
-  // once the app runs from there, which prepare() has settled by now.
-  final packaged = PackagedAppData.inUse;
+  // by package identity, not by whether the move finished: a launch whose
+  // move had to stop startup still reports through here, and its database
+  // must not land in AppData either.
+  final packaged = PackagedAppData.thisPackage;
   if (packaged != null) return path.join(packaged.localCache, 'sentry-native');
 
   final home = Platform.environment['HOME'];
