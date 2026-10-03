@@ -1724,109 +1724,58 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   }
 
   /// Build send button
+  ///
+  /// No "Sending to ... only" line above it: the chips already say where a
+  /// clip is going, and that line, appearing as soon as one was picked,
+  /// pushed the content up in a 400px window until the file button was
+  /// covered.
   Widget _buildSendButton() {
-    // Get the target description (ViewModel manages cache)
-    final targetText =
-        _viewModel.cachedSendButtonTargetText ??
-        (_viewModel.selectedPlatforms.isEmpty
-            ? 'all devices'
-            : _viewModel.selectedPlatforms.length == 1
-            ? PlatformType.values
-                  .firstWhere(
-                    (p) => p.name == _viewModel.selectedPlatforms.first,
-                  )
-                  .label
-                  .toLowerCase()
-            : _viewModel.selectedPlatforms
-                  .map(
-                    (name) => PlatformType.values
-                        .firstWhere((p) => p.name == name)
-                        .label
-                        .toLowerCase(),
-                  )
-                  .join(', '));
     // Also busy while a kept file is read back, which would otherwise
     // swallow the press: its bytes are not there to send yet.
     final busy = _viewModel.isSending || _viewModel.isRestoringDraft;
 
     return RepaintBoundary(
       // Isolate send button repaints
-      child: Column(
-        children: [
-          // Target indicator
-          if (_viewModel.selectedPlatforms.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: GhostColors.surfaceLight,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: GhostColors.primaryAlpha30),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+      child: ElevatedButton(
+        onPressed: busy ? null : _handleSend,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: GhostColors.primary,
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        ),
+        child: busy
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 14,
-                    color: GhostColors.primary,
+                  const Icon(Icons.send, size: 18, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Send',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 16),
                   Text(
-                    'Sending to $targetText only',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: GhostColors.textSecondary,
+                    '⏎',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: GhostColors.whiteAlpha70,
                     ),
                   ),
                 ],
               ),
-            ),
-          // Send button
-          ElevatedButton(
-            onPressed: busy ? null : _handleSend,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: GhostColors.primary,
-              minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            child: busy
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.send, size: 18, color: Colors.white),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Send',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        '⏎',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: GhostColors.whiteAlpha70,
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ],
       ),
     );
   }
