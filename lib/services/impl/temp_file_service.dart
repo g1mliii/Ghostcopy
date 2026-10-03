@@ -26,7 +26,10 @@ class TempFileService implements ITempFileService {
 
   static final _unsafePathChars = RegExp(r'[/\\:]');
 
-  static const String _filePrefix = 'ghostcopy_';
+  /// What every file this service writes is named with. Shared with
+  /// PackagedAppData, which sweeps an earlier version's from the ordinary
+  /// temp folder once a Store install moves its own into the package.
+  static const String filePrefix = 'ghostcopy_';
   Timer? _periodicCleanupTimer;
 
   @override
@@ -40,7 +43,7 @@ class TempFileService implements ITempFileService {
       final uniqueId =
           '${DateTime.now().microsecondsSinceEpoch}_${_nextFileId++}';
       final file = File(
-        path.join(tempDir.path, '$_filePrefix${uniqueId}_$safeFilename'),
+        path.join(tempDir.path, '$filePrefix${uniqueId}_$safeFilename'),
       );
 
       await file.writeAsBytes(bytes);
@@ -73,7 +76,7 @@ class TempFileService implements ITempFileService {
         _cleanupTempFilesInIsolate,
         _TempCleanupParams(
           tempDir.path,
-          _filePrefix,
+          filePrefix,
           cutoffTimestamp,
           activePath,
         ),
@@ -106,7 +109,7 @@ class TempFileService implements ITempFileService {
       final file = File(filePath);
 
       // Only delete if it's one of our temp files (safety check)
-      if (!path.basename(filePath).startsWith(_filePrefix)) {
+      if (!path.basename(filePath).startsWith(filePrefix)) {
         debugPrint(
           '[TempFileService] ⚠ Refusing to delete non-temp file: $filePath',
         );

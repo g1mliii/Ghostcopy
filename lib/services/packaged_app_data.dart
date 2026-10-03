@@ -11,6 +11,8 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_windows/shared_preferences_windows.dart';
 
+import 'impl/temp_file_service.dart';
+
 /// Where a Microsoft Store (MSIX) GhostCopy keeps its data, so that
 /// uninstalling it leaves nothing behind.
 ///
@@ -94,6 +96,19 @@ class PackagedAppData {
 
   /// File destinations recorded before any source moves, for crash recovery.
   static const String _moveJournal = '.moving_files.json';
+
+  /// What LocalCache holds that is not a copy of the local AppData root, and
+  /// so is never a remnant to reconcile away: `Local` and `Roaming` are where
+  /// Windows virtualizes a package's AppData writes - on a clean profile, the
+  /// very files being migrated, seen from the AppData side - `Temp` is the
+  /// package's temporary folder, and `sentry-native` is migrated from its own
+  /// source.
+  static const Set<String> _localCacheOwnFolders = {
+    'Local',
+    'Roaming',
+    'Temp',
+    'sentry-native',
+  };
 
   static PackagedAppData? _inUse;
 
@@ -223,7 +238,7 @@ class PackagedAppData {
                     '$_moveJournal.partial',
                   }
                 : p.equals(target, localCache)
-                ? {'sentry-native'} // migrated from its own legacy source
+                ? _localCacheOwnFolders
                 : const {},
           );
         }
@@ -268,6 +283,7 @@ class PackagedAppData {
           }
         }
         await partial.rename(marker.path);
+        await _sweepLegacyTemp(env);
         try {
           await journal.delete();
         } on FileSystemException catch (e) {
@@ -292,6 +308,32 @@ class PackagedAppData {
         debugPrint('[PackagedAppData] Could not close the lock: ${e.message}');
       }
     }
+  }
+}
+
+/// Delete what an earlier version left in the ordinary temp folder. From
+/// here on TempFileService writes under the package's LocalCache\Temp and
+/// sweeps only that, so these - decrypted downloads, the active clipboard
+/// file among them - would otherwise outlive an uninstall. Best effort: it
+/// is cleanup, and the move has already committed.
+Future<void> _sweepLegacyTemp(Map<String, String> env) async {
+  final temp = env['TEMP'] ?? env['TMP'];
+  if (temp == null || temp.isEmpty) return;
+  try {
+    final dir = Directory(temp);
+    if (!dir.existsSync()) return;
+    for (final entity in dir.listSync(followLinks: false)) {
+      if (!p.basename(entity.path).startsWith(TempFileService.filePrefix)) {
+        continue;
+      }
+      try {
+        await entity.delete(recursive: true);
+      } on FileSystemException catch (e) {
+        debugPrint('[PackagedAppData] Left ${entity.path}: ${e.message}');
+      }
+    }
+  } on FileSystemException catch (e) {
+    debugPrint('[PackagedAppData] Could not sweep $temp: ${e.message}');
   }
 }
 

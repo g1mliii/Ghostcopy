@@ -488,6 +488,44 @@ void main() {
       skip: !Platform.isWindows,
     );
 
+    // On a clean profile an earlier package's AppData writes were virtualized
+    // into these very folders - the data being migrated, seen from the other
+    // side. Reconciled as remnants, they were deleted before the move began.
+    test("Windows' own LocalCache folders are not remnants", () async {
+      write(local('cache.bin'), 'x');
+      for (final own in ['Local', 'Roaming', 'Temp']) {
+        write(cache(p.join(own, 'kept.txt')).path, own);
+      }
+
+      expect(await data.moveFromAppData(env), isTrue);
+
+      for (final own in ['Local', 'Roaming', 'Temp']) {
+        expect(
+          cache(p.join(own, 'kept.txt')).readAsStringSync(),
+          own,
+          reason: own,
+        );
+      }
+    });
+
+    // Temp files now go under the package, and only there is swept, so an
+    // earlier version's - decrypted downloads - would outlive an uninstall.
+    test("an earlier version's temp files are swept once it commits", () async {
+      final temp = Directory(p.join(env['LOCALAPPDATA']!, 'Temp'))
+        ..createSync(recursive: true);
+      env['TEMP'] = temp.path;
+      write(p.join(temp.path, 'ghostcopy_123_notes.txt'), 'plaintext');
+      write(p.join(temp.path, 'other_app.tmp'), 'not ours');
+
+      expect(await data.moveFromAppData(env), isTrue);
+
+      expect(
+        File(p.join(temp.path, 'ghostcopy_123_notes.txt')).existsSync(),
+        isFalse,
+      );
+      expect(File(p.join(temp.path, 'other_app.tmp')).existsSync(), isTrue);
+    });
+
     test('happens once', () async {
       write(roaming('a.json'), 'first');
       await data.moveFromAppData(env);

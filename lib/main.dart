@@ -255,12 +255,27 @@ Future<void> main(List<String> args) async {
   // First of all, before Sentry opens its crash database or anything opens
   // a file: a Store install keeps its data in its own package folders, which
   // Windows deletes with it. A no-op everywhere else. See PackagedAppData.
-  await PackagedAppData.prepare();
+  //
+  // It has to run before Sentry is up, so a failure that must stop startup -
+  // a move that could not be put back - is kept and rethrown inside crash
+  // reporting below. Otherwise the app would not open and nothing would say
+  // why.
+  (Object, StackTrace)? stopped;
+  try {
+    await PackagedAppData.prepare();
+  } on PackagedAppDataRecoveryException catch (e, stack) {
+    stopped = (e, stack);
+  }
 
   // One instance, so the startup steps below can report a failure they
   // recovered from through the same Sentry client that wraps the app.
   final crashReporting = SentryCrashReportingService();
-  return crashReporting.run(() => _appMain(args, crashReporting));
+  return crashReporting.run(() {
+    if (stopped case (final error, final stack)) {
+      Error.throwWithStackTrace(error, stack);
+    }
+    return _appMain(args, crashReporting);
+  });
 }
 
 Future<void> _appMain(
