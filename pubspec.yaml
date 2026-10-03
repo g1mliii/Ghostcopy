@@ -86,6 +86,10 @@ dependencies:
   sentry_flutter: ^9.0.0
   share_plus: ^12.0.1
   shared_preferences: ^2.2.2
+  # Direct, for PackagedAppData: their Windows backends take their own
+  # path provider, which a packaged install has to replace.
+  shared_preferences_platform_interface: ^2.4.2
+  shared_preferences_windows: ^2.4.1
   sign_in_with_apple: ^8.2.0
   supabase_flutter: ^2.8.0
   super_clipboard: ^0.9.0

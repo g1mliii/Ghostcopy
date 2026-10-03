@@ -6,6 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:path_provider_windows/path_provider_windows.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_windows/shared_preferences_windows.dart';
 
 /// Where a Microsoft Store (MSIX) GhostCopy keeps its data, so that
 /// uninstalling it leaves nothing behind.
@@ -97,7 +100,7 @@ class PackagedAppData {
   static Future<void> prepare() async {
     final data = current;
     if (data == null) return;
-    PathProviderPlatform.instance = PackagedPathProvider(data);
+    install(data);
     try {
       await data.moveFromAppData(Platform.environment);
     } on Object catch (e) {
@@ -105,6 +108,25 @@ class PackagedAppData {
       // either way, and the next launch tries again.
       debugPrint('[PackagedAppData] Could not move data from AppData: $e');
     }
+  }
+
+  /// Point everything that finds the app's folders at [data]'s.
+  @visibleForTesting
+  static void install(PackagedAppData data) {
+    final provider = PackagedPathProvider(data);
+    PathProviderPlatform.instance = provider;
+    // shared_preferences' Windows backends do not go through
+    // PathProviderPlatform: each builds a PathProviderWindows of its own, so
+    // the line above alone leaves them reading AppData - an empty file once
+    // the move has run, and the session and settings with it. Both take the
+    // packaged provider through the field the package exposes for its own
+    // tests, which is why the lint is silenced; it is a plain public field.
+    SharedPreferencesStorePlatform.instance = SharedPreferencesWindows()
+      // ignore: invalid_use_of_visible_for_testing_member
+      ..pathProvider = provider;
+    SharedPreferencesAsyncPlatform.instance = SharedPreferencesAsyncWindows()
+      // ignore: invalid_use_of_visible_for_testing_member
+      ..pathProvider = provider;
   }
 
   /// Move everything an earlier version kept under AppData into the
@@ -139,29 +161,41 @@ class PackagedAppData {
   /// Whether everything in [from] ended up in [to].
   static Future<bool> _moveChildren(Directory from, Directory to) async {
     if (!from.existsSync()) return true;
-    var complete = true;
-    for (final entity in from.listSync()) {
-      complete &= await _moveEntity(
-        entity,
-        p.join(to.path, p.basename(entity.path)),
-      );
-    }
-    if (complete) {
-      await _removeIfEmpty(from);
-      await _removeIfEmpty(from.parent); // com.ghostcopy
-    }
+    final complete = await _mergeInto(from, to.path);
+    if (complete) await _removeIfEmpty(from.parent); // com.ghostcopy
     return complete;
   }
 
-  /// Move [entity] to [target]; false if it could not be moved, in which
-  /// case it is left where it was.
+  /// Move everything in [from] into the folder [to], and remove [from] if
+  /// that emptied it. Whether all of it moved.
+  static Future<bool> _mergeInto(Directory from, String to) async {
+    var complete = true;
+    for (final child in from.listSync()) {
+      complete &= await _moveEntity(child, p.join(to, p.basename(child.path)));
+    }
+    await _removeIfEmpty(from);
+    return complete;
+  }
+
+  /// Move [entity] to [target]; false if any of it could not be moved, in
+  /// which case that part is left where it was.
+  ///
+  /// A folder already in the package is merged into, never taken as whole:
+  /// it may be one a copy across volumes was interrupted part way through,
+  /// and deleting the original then would lose whatever had not been copied
+  /// - the session or the encryption storage among it. A file already there
+  /// is whole, because copies land under a temporary name first, and it
+  /// wins: it is the one the app has been using.
   static Future<bool> _moveEntity(
     FileSystemEntity entity,
     String target,
   ) async {
     try {
-      if (FileSystemEntity.typeSync(target) != FileSystemEntityType.notFound) {
-        // Already in the package, and that copy is the one in use.
+      final existing = FileSystemEntity.typeSync(target);
+      if (entity is Directory && existing == FileSystemEntityType.directory) {
+        return await _mergeInto(entity, target);
+      }
+      if (existing != FileSystemEntityType.notFound) {
         await entity.delete(recursive: true);
         return true;
       }
@@ -169,7 +203,8 @@ class PackagedAppData {
       try {
         await entity.rename(target);
       } on FileSystemException {
-        // Rename cannot cross volumes; copy, then remove the original.
+        // Rename cannot cross volumes. Copy, then remove the original: a
+        // copy interrupted part way leaves the original whole for next time.
         await _copy(entity, target);
         await entity.delete(recursive: true);
       }
@@ -183,7 +218,11 @@ class PackagedAppData {
 
   static Future<void> _copy(FileSystemEntity entity, String target) async {
     if (entity is File) {
-      await entity.copy(target);
+      // Whole or not at all: a half-written file under its real name would
+      // be taken for the complete one on the next attempt.
+      final partial = '$target.partial';
+      await entity.copy(partial);
+      await File(partial).rename(target);
     } else if (entity is Directory) {
       await Directory(target).create(recursive: true);
       for (final child in entity.listSync()) {

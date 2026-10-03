@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/packaged_app_data.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   group('forFamilyName', () {
@@ -122,6 +123,23 @@ void main() {
       expect(File(roaming('shared_preferences.json')).existsSync(), isFalse);
     });
 
+    // A copy across volumes interrupted part way leaves a folder in the
+    // package missing some of its files. Taking it as whole, and deleting
+    // the original, lost those files for good.
+    test('a folder already in the package is completed, not trusted', () async {
+      write(roaming(p.join('secure', 'a.dat')), 'a');
+      write(roaming(p.join('secure', 'b.dat')), 'b');
+      write(p.join(data.localState, 'secure', 'a.dat'), 'a');
+
+      await data.moveFromAppData(env);
+
+      expect(
+        File(p.join(data.localState, 'secure', 'b.dat')).readAsStringSync(),
+        'b',
+      );
+      expect(Directory(roaming('secure')).existsSync(), isFalse);
+    });
+
     test('happens once', () async {
       write(roaming('a.json'), 'first');
       await data.moveFromAppData(env);
@@ -147,6 +165,31 @@ void main() {
       );
     });
   });
+
+  // shared_preferences' Windows backends build their own path provider, so
+  // replacing path_provider's alone left the session and settings in
+  // AppData - the file the move had just emptied.
+  test(
+    'preferences inside a package live in LocalState',
+    () async {
+      final home = Directory.systemTemp.createTempSync('prefs');
+      addTearDown(() => home.deleteSync(recursive: true));
+      final data = PackagedAppData.forFamilyName(
+        'pkg',
+        localAppData: home.path,
+      )!;
+
+      PackagedAppData.install(data);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('session', 'signed-in');
+      await SharedPreferencesAsync().setString('async', 'kept');
+
+      final stored = File(p.join(data.localState, 'shared_preferences.json'));
+      expect(stored.readAsStringSync(), contains('signed-in'));
+      expect(stored.readAsStringSync(), contains('kept'));
+    },
+    skip: Platform.isWindows ? false : 'Windows backends',
+  );
 
   test('path_provider inside a package uses its folders', () async {
     final home = Directory.systemTemp.createTempSync('provider');
