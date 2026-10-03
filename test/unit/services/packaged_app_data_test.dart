@@ -8,19 +8,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   group('forFamilyName', () {
     test("is the package's LocalState and LocalCache", () {
+      final localAppData = p.join('C:', 'Users', 'sam', 'AppData', 'Local');
+      const family = 'g1mli.GhostCopy_41asz506sbn22';
+
       final data = PackagedAppData.forFamilyName(
-        'g1mli.GhostCopy_41asz506sbn22',
-        localAppData: p.join('C:', 'Users', 'sam', 'AppData', 'Local'),
+        family,
+        localAppData: localAppData,
       )!;
-      final root = p.join(
-        'C:',
-        'Users',
-        'sam',
-        'AppData',
-        'Local',
-        'Packages',
-        'g1mli.GhostCopy_41asz506sbn22',
-      );
+
+      final root = p.join(localAppData, 'Packages', family);
       expect(data.localState, p.join(root, 'LocalState'));
       expect(data.localCache, p.join(root, 'LocalCache'));
     });
@@ -32,94 +28,86 @@ void main() {
     });
   });
 
+  // A fake user profile: AppData, and a package under it.
+  late Map<String, String> env;
+  late PackagedAppData data;
+
+  setUp(() {
+    final home = Directory.systemTemp.createTempSync('packaged');
+    addTearDown(() => home.deleteSync(recursive: true));
+    env = {
+      'APPDATA': p.join(home.path, 'Roaming'),
+      'LOCALAPPDATA': p.join(home.path, 'Local'),
+    };
+    data = PackagedAppData.forFamilyName(
+      'pkg',
+      localAppData: env['LOCALAPPDATA'],
+    )!;
+  });
+
+  String roaming(String rel) =>
+      p.join(env['APPDATA']!, 'com.ghostcopy', 'ghostcopy', rel);
+  String local(String rel) =>
+      p.join(env['LOCALAPPDATA']!, 'com.ghostcopy', 'ghostcopy', rel);
+  String crashDb(String rel) => p.join(
+    PackagedAppData.unpackagedCrashDatabase(env['LOCALAPPDATA']!),
+    rel,
+  );
+  File state(String rel) => File(p.join(data.localState, rel));
+  File cache(String rel) => File(p.join(data.localCache, rel));
+
+  void write(String path, String content) => File(path)
+    ..parent.createSync(recursive: true)
+    ..writeAsStringSync(content);
+
   group('moveFromAppData', () {
-    late Directory home;
-    late Map<String, String> env;
-    late PackagedAppData data;
-
-    String roaming(String rel) =>
-        p.join(env['APPDATA']!, 'com.ghostcopy', 'ghostcopy', rel);
-    String local(String rel) =>
-        p.join(env['LOCALAPPDATA']!, 'com.ghostcopy', 'ghostcopy', rel);
-
-    void write(String path, String content) => File(path)
-      ..parent.createSync(recursive: true)
-      ..writeAsStringSync(content);
-
-    setUp(() {
-      home = Directory.systemTemp.createTempSync('packaged');
-      addTearDown(() => home.deleteSync(recursive: true));
-      env = {
-        'APPDATA': p.join(home.path, 'Roaming'),
-        'LOCALAPPDATA': p.join(home.path, 'Local'),
-      };
-      data = PackagedAppData.forFamilyName(
-        'pkg',
-        localAppData: env['LOCALAPPDATA'],
-      )!;
-    });
-
     test('support data goes to LocalState, caches to LocalCache', () async {
       write(roaming('shared_preferences.json'), '{"signed":"in"}');
       write(roaming('single_instance.secret'), 'secret');
       write(roaming(p.join('media', 'a.bin')), 'media');
       write(local(p.join('history', 'page.json')), 'history');
-      write(
-        p.join(env['LOCALAPPDATA']!, 'GhostCopy', 'sentry-native', 'run'),
-        'crash',
-      );
+      write(crashDb('run'), 'crash');
 
       await data.moveFromAppData(env);
 
-      String state(String rel) =>
-          File(p.join(data.localState, rel)).readAsStringSync();
-      String cache(String rel) =>
-          File(p.join(data.localCache, rel)).readAsStringSync();
-      expect(state('shared_preferences.json'), '{"signed":"in"}');
-      expect(state('single_instance.secret'), 'secret');
-      expect(state(p.join('media', 'a.bin')), 'media');
-      expect(cache(p.join('history', 'page.json')), 'history');
-      expect(cache(p.join('sentry-native', 'run')), 'crash');
+      expect(
+        state('shared_preferences.json').readAsStringSync(),
+        '{"signed":"in"}',
+      );
+      expect(state('single_instance.secret').readAsStringSync(), 'secret');
+      expect(state(p.join('media', 'a.bin')).readAsStringSync(), 'media');
+      expect(
+        cache(p.join('history', 'page.json')).readAsStringSync(),
+        'history',
+      );
+      expect(cache(p.join('sentry-native', 'run')).readAsStringSync(), 'crash');
     });
 
     test('leaves nothing of GhostCopy in AppData', () async {
       write(roaming('shared_preferences.json'), '{}');
       write(local('cache.bin'), 'x');
-      write(
-        p.join(env['LOCALAPPDATA']!, 'GhostCopy', 'sentry-native', 'run'),
-        'crash',
-      );
+      write(crashDb('run'), 'crash');
 
       await data.moveFromAppData(env);
 
-      expect(
-        Directory(p.join(env['APPDATA']!, 'com.ghostcopy')).existsSync(),
-        isFalse,
-      );
-      expect(
-        Directory(p.join(env['LOCALAPPDATA']!, 'com.ghostcopy')).existsSync(),
-        isFalse,
-      );
-      expect(
-        Directory(p.join(env['LOCALAPPDATA']!, 'GhostCopy')).existsSync(),
-        isFalse,
-      );
+      for (final folder in [
+        p.join(env['APPDATA']!, 'com.ghostcopy'),
+        p.join(env['LOCALAPPDATA']!, 'com.ghostcopy'),
+        p.join(env['LOCALAPPDATA']!, 'GhostCopy'),
+      ]) {
+        expect(Directory(folder).existsSync(), isFalse, reason: folder);
+      }
     });
 
-    // The package's copy is the one the app has been using; an AppData copy
-    // of the same file is older, or another build's.
+    // The package's copy is the one an earlier attempt finished; an AppData
+    // copy of the same file is the original it was made from.
     test('what the package already has wins', () async {
       write(roaming('shared_preferences.json'), 'old');
-      write(p.join(data.localState, 'shared_preferences.json'), 'current');
+      write(state('shared_preferences.json').path, 'current');
 
       await data.moveFromAppData(env);
 
-      expect(
-        File(
-          p.join(data.localState, 'shared_preferences.json'),
-        ).readAsStringSync(),
-        'current',
-      );
+      expect(state('shared_preferences.json').readAsStringSync(), 'current');
       expect(File(roaming('shared_preferences.json')).existsSync(), isFalse);
     });
 
@@ -129,20 +117,17 @@ void main() {
     test('a folder already in the package is completed, not trusted', () async {
       write(roaming(p.join('secure', 'a.dat')), 'a');
       write(roaming(p.join('secure', 'b.dat')), 'b');
-      write(p.join(data.localState, 'secure', 'a.dat'), 'a');
+      write(state(p.join('secure', 'a.dat')).path, 'a');
 
       await data.moveFromAppData(env);
 
-      expect(
-        File(p.join(data.localState, 'secure', 'b.dat')).readAsStringSync(),
-        'b',
-      );
+      expect(state(p.join('secure', 'b.dat')).readAsStringSync(), 'b');
       expect(Directory(roaming('secure')).existsSync(), isFalse);
     });
 
     // All or nothing: the app runs from AppData until everything is across,
-    // so a half-done move must leave AppData whole, not split between the two.
-    test('a move that cannot finish puts back what it moved', () async {
+    // so a move that cannot finish must leave AppData whole.
+    test('a conflict leaves AppData whole and the package unused', () async {
       write(roaming('shared_preferences.json'), '{"signed":"in"}');
       write(roaming('flutter_secure_storage.dat'), 'secret');
       // A file where the package has a folder of the same name cannot move.
@@ -157,14 +142,8 @@ void main() {
       );
       expect(File(roaming('flutter_secure_storage.dat')).existsSync(), isTrue);
       expect(File(roaming('media')).existsSync(), isTrue);
-      expect(
-        File(p.join(data.localState, 'shared_preferences.json')).existsSync(),
-        isFalse,
-      );
-      expect(
-        File(p.join(data.localState, '.moved_from_appdata')).existsSync(),
-        isFalse,
-      );
+      expect(state('shared_preferences.json').existsSync(), isFalse);
+      expect(state('.moved_from_appdata').existsSync(), isFalse);
     });
 
     test('happens once', () async {
@@ -176,7 +155,7 @@ void main() {
       await data.moveFromAppData(env);
 
       expect(File(roaming('b.json')).existsSync(), isTrue);
-      expect(File(p.join(data.localState, 'b.json')).existsSync(), isFalse);
+      expect(state('b.json').existsSync(), isFalse);
     });
 
     test('with nothing in AppData, does nothing but mark it done', () async {
@@ -198,24 +177,17 @@ void main() {
   // replacing path_provider's alone left the session and settings in
   // AppData - the file the move had just emptied.
   test('preferences inside a package live in LocalState', () async {
-    final home = Directory.systemTemp.createTempSync('prefs');
-    addTearDown(() => home.deleteSync(recursive: true));
-    final data = PackagedAppData.forFamilyName('pkg', localAppData: home.path)!;
-
     PackagedAppData.install(data);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('session', 'signed-in');
     await SharedPreferencesAsync().setString('async', 'kept');
 
-    final stored = File(p.join(data.localState, 'shared_preferences.json'));
-    expect(stored.readAsStringSync(), contains('signed-in'));
-    expect(stored.readAsStringSync(), contains('kept'));
+    final stored = state('shared_preferences.json').readAsStringSync();
+    expect(stored, contains('signed-in'));
+    expect(stored, contains('kept'));
   });
 
   test('path_provider inside a package uses its folders', () async {
-    final home = Directory.systemTemp.createTempSync('provider');
-    addTearDown(() => home.deleteSync(recursive: true));
-    final data = PackagedAppData.forFamilyName('pkg', localAppData: home.path)!;
     final provider = PackagedPathProvider(data);
 
     expect(await provider.getApplicationSupportPath(), data.localState);

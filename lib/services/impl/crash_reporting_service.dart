@@ -134,7 +134,7 @@ String? _nativeDatabasePath() {
             (home == null ? null : path.join(home, '.cache'));
   if (root == null || root.isEmpty) return null;
 
-  return path.join(root, 'GhostCopy', 'sentry-native');
+  return PackagedAppData.unpackagedCrashDatabase(root);
 }
 
 // Anything quoted is treated as content: exception messages quote the value

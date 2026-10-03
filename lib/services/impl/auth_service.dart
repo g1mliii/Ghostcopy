@@ -13,14 +13,9 @@ import '../../repositories/clipboard_repository.dart';
 import '../auth_service.dart';
 import '../device_service.dart';
 import '../encryption_service.dart';
+import '../google_sign_in_config.dart';
 import 'encryption_service.dart';
 import 'pkce_verifier_store.dart';
-
-/// Google Sign-In's iOS client id. Shared with the reinstall reset, which
-/// signs out the account an earlier install left in the Keychain and has to
-/// configure GoogleSignIn the same way to do it.
-const String googleIosClientId =
-    '415247311354-g70ehvo2askqsrp85qlhjg9ffmagroti.apps.googleusercontent.com';
 
 /// Concrete implementation of IAuthService using Supabase Auth
 class AuthService implements IAuthService {

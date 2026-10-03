@@ -16,15 +16,17 @@ import 'package:shared_preferences_windows/shared_preferences_windows.dart';
 /// Windows deletes a package's own folders - `%LOCALAPPDATA%\Packages\<family
 /// name>\LocalState` and `LocalCache` - with the package. It does not delete
 /// `%APPDATA%\com.ghostcopy`, which is where path_provider points every
-/// Windows build, and a full-trust package's writes there were measured going
-/// to the real folder rather than into the package (see tasks/todo.md). So an
-/// uninstalled GhostCopy left its session, settings, encryption passphrase,
-/// command-line secret and media cache on the machine.
+/// Windows build. A full-trust package's writes there are redirected into the
+/// package only for files that did not already exist (measured 2026-09-25 on
+/// a machine that already had them: every write went to the real folder; see
+/// tasks/todo.md), so how much an uninstall left behind depended on what
+/// came first. Using the package's folders explicitly makes it the same on
+/// every machine.
 ///
-/// [prepare] points path_provider at the package's folders instead, and moves
-/// over what an earlier version left in AppData so nobody is signed out. An
-/// unpackaged build is untouched: it has no package to be removed with, and
-/// keeps using AppData as before.
+/// [prepare] moves over what an earlier version left in AppData, so nobody
+/// is signed out, then points path_provider and shared_preferences at the
+/// package's folders. An unpackaged build is untouched: it has no package to
+/// be removed with, and keeps using AppData as before.
 class PackagedAppData {
   @visibleForTesting
   const PackagedAppData({required this.localState, required this.localCache});
@@ -34,24 +36,6 @@ class PackagedAppData {
 
   /// `ApplicationData.LocalCacheFolder`: caches and the crash database.
   final String localCache;
-
-  static PackagedAppData? _current;
-  static bool _detected = false;
-
-  /// This process's package folders, or null when it is not running from a
-  /// package - which includes every platform but Windows.
-  static PackagedAppData? get current {
-    if (!_detected) {
-      _detected = true;
-      if (Platform.isWindows) {
-        _current = forFamilyName(
-          _currentPackageFamilyName(),
-          localAppData: Platform.environment['LOCALAPPDATA'],
-        );
-      }
-    }
-    return _current;
-  }
 
   /// The folders Windows keeps for the package [familyName] under
   /// [localAppData]. Null when either is missing.
@@ -69,29 +53,37 @@ class PackagedAppData {
     );
   }
 
-  /// Where an unpackaged GhostCopy - or this one, before it moved - keeps
-  /// its data, each with where it goes now: path_provider's `<known
-  /// folder>\<CompanyName>\<ProductName>`, from Runner.rc. Support data was
-  /// under Roaming AppData, caches under Local. Spelled out rather than asked
-  /// of path_provider, which creates the folder it is asked for.
-  List<(String, String)> _legacyRoots(Map<String, String> env) => [
-    for (final (known, target) in [
-      (env['APPDATA'], localState),
-      (env['LOCALAPPDATA'], localCache),
-    ])
-      if (known != null && known.isNotEmpty)
-        (p.join(known, 'com.ghostcopy', 'ghostcopy'), target),
-  ];
+  /// Where an unpackaged build keeps sentry-native's crash database, under
+  /// [root] - LOCALAPPDATA on Windows, the XDG cache on Linux. Shared with
+  /// crash reporting, so the move below looks where the database really is.
+  static String unpackagedCrashDatabase(String root) =>
+      p.join(root, 'GhostCopy', 'sentry-native');
 
-  /// The crash database's old home; see crash_reporting_service.dart.
-  static String? _legacyCrashDatabase(Map<String, String> env) {
-    final local = env['LOCALAPPDATA'];
-    if (local == null || local.isEmpty) return null;
-    return p.join(local, 'GhostCopy', 'sentry-native');
+  /// What an unpackaged GhostCopy - or this one, before it moved - keeps
+  /// under AppData, each with where it goes in the package: path_provider's
+  /// `<known folder>\<CompanyName>\<ProductName>` from Runner.rc (support
+  /// data under Roaming, caches under Local), and the crash database. Spelled
+  /// out rather than asked of path_provider, which creates the folder it is
+  /// asked for.
+  List<(String, String)> _legacySources(Map<String, String> env) {
+    String? known(String key) {
+      final value = env[key];
+      return value == null || value.isEmpty ? null : value;
+    }
+
+    final roaming = known('APPDATA');
+    final local = known('LOCALAPPDATA');
+    return [
+      if (roaming != null)
+        (p.join(roaming, 'com.ghostcopy', 'ghostcopy'), localState),
+      if (local != null) ...[
+        (p.join(local, 'com.ghostcopy', 'ghostcopy'), localCache),
+        (unpackagedCrashDatabase(local), p.join(localCache, 'sentry-native')),
+      ],
+    ];
   }
 
-  /// Written once everything from AppData is in the package. Until then the
-  /// app runs from AppData, as it always did, and the move is tried again.
+  /// Written once everything from AppData is in the package.
   static const String _movedMarker = '.moved_from_appdata';
 
   /// Held while moving, so two GhostCopy processes starting together - the
@@ -101,29 +93,28 @@ class PackagedAppData {
 
   static PackagedAppData? _inUse;
 
-  /// The package's folders once the app runs from them, which is once
-  /// [prepare] has everything across. Null before that, and outside a
-  /// package.
+  /// The package's folders, once the app runs from them. Null before
+  /// [prepare] has moved everything across, and outside a package.
   static PackagedAppData? get inUse => _inUse;
 
-  /// Move over what an earlier version left in AppData, and then point
-  /// path_provider at the package's folders. Call before anything opens a
-  /// file; does nothing outside a package.
+  /// Move over what an earlier version left in AppData, then point
+  /// path_provider and shared_preferences at the package's folders - only if
+  /// that worked; see [moveFromAppData]. Call before anything opens a file;
+  /// does nothing outside a package.
   static Future<void> prepare() async {
-    final data = current;
+    if (!Platform.isWindows) return;
+    final data = forFamilyName(
+      _currentPackageFamilyName(),
+      localAppData: Platform.environment['LOCALAPPDATA'],
+    );
     if (data == null) return;
     var moved = false;
     try {
       moved = await data.moveFromAppData(Platform.environment);
     } on Object catch (e) {
-      // Never worth failing startup over: the app runs from AppData this
-      // time, as it always did, and the next launch tries again.
+      // Never worth failing startup over.
       debugPrint('[PackagedAppData] Could not move data from AppData: $e');
     }
-    // Only once everything is across. Running from the package with part of
-    // the data still in AppData would have the app start afresh there - a new
-    // session, a new passphrase - and the next attempt would then find that
-    // in the way of the real one.
     if (moved) {
       install(data);
       _inUse = data;
@@ -150,17 +141,20 @@ class PackagedAppData {
   }
 
   /// Move everything an earlier version kept under AppData into the package
-  /// - support data into [localState], caches and the crash database into
-  /// [localCache] - and remove the emptied folders. Whether the package now
-  /// holds all of it.
+  /// and remove the emptied folders. Whether the package now holds all of it.
   ///
-  /// All or nothing. Nothing in AppData is deleted until every item is in
-  /// the package; if any one cannot be moved - held open, say, or a file
-  /// where a folder of the same name already is - what was moved this time
-  /// is moved back, and AppData is as it was. A file already in the package
-  /// from an earlier attempt is whole, because copies land under a temporary
-  /// name first, so its AppData copy goes; a folder already there is merged
-  /// into, never taken as whole.
+  /// All or nothing, because the app runs from the package only once this
+  /// says so - until then from AppData, as it always did, trying again on the
+  /// next launch. Running from the package with part of the data still in
+  /// AppData would have it start afresh there - a new session, a new
+  /// passphrase - which the next attempt would then keep in place of the real
+  /// one. So nothing in AppData is deleted until every item is across; a file
+  /// where the package has a folder of the same name, or the other way
+  /// round, is found before anything moves; and if one item cannot move -
+  /// held open, say - what moved this time is put back. A file already in the
+  /// package from an earlier attempt is whole, because copies land under a
+  /// temporary name first, so its AppData copy goes; a folder already there is
+  /// merged into, never taken as whole.
   @visibleForTesting
   Future<bool> moveFromAppData(Map<String, String> env) async {
     final marker = File(p.join(localState, _movedMarker));
@@ -175,11 +169,14 @@ class PackagedAppData {
       // Another process may have finished while this one waited.
       if (marker.existsSync()) return true;
 
-      final sources = [
-        for (final (root, target) in _legacyRoots(env)) (root, target),
-        if (_legacyCrashDatabase(env) case final crashes?)
-          (crashes, p.join(localCache, 'sentry-native')),
-      ];
+      final sources = _legacySources(env);
+      // Read-only first: a conflict like that never resolves itself, and
+      // finding it by moving would move and put back everything on every
+      // launch.
+      for (final (source, target) in sources) {
+        if (!_fits(Directory(source), target)) return false;
+      }
+
       final move = _Move();
       var complete = true;
       for (final (source, target) in sources) {
@@ -193,7 +190,7 @@ class PackagedAppData {
       await move.removeDuplicates();
       for (final (source, _) in sources) {
         await _pruneEmpty(Directory(source));
-        await _removeIfEmpty(Directory(source).parent); // com.ghostcopy
+        await _removeIfEmpty(Directory(source).parent); // the company folder
       }
       await marker.writeAsString('');
       return true;
@@ -203,26 +200,40 @@ class PackagedAppData {
   }
 }
 
+/// Whether [entity] can move to [target]: nothing there, the same kind of
+/// thing, or a folder whose contents fit in turn.
+bool _fits(FileSystemEntity entity, String target) {
+  if (!entity.existsSync()) return true;
+  final existing = FileSystemEntity.typeSync(target);
+  if (existing == FileSystemEntityType.notFound) return true;
+  if (entity is File) return existing == FileSystemEntityType.file;
+  if (existing != FileSystemEntityType.directory) return false;
+  return (entity as Directory).listSync().every(
+    (child) => _fits(child, p.join(target, p.basename(child.path))),
+  );
+}
+
 /// One attempt at the move: what it has done, so it can be undone.
 class _Move {
-  /// Moved this time, as (from, to), to put back if the whole move fails.
-  final List<(String, String)> _moved = [];
+  /// Moved this time, to put back if the whole move fails.
+  final List<(FileSystemEntity from, String to)> _moved = [];
 
   /// Already in the package from an earlier attempt. Their AppData copies
   /// are removed only once everything else is across.
   final List<FileSystemEntity> _duplicates = [];
 
-  /// Move [entity] to [target]. Whether all of it is now there.
+  /// Move [entity] to [target], which [_fits] has cleared. Whether all of it
+  /// is now there.
   Future<bool> entity(FileSystemEntity entity, String target) async {
     if (!entity.existsSync()) return true;
     try {
       final existing = FileSystemEntity.typeSync(target);
       if (existing == FileSystemEntityType.notFound) {
         await _relocate(entity, target);
-        _moved.add((entity.path, target));
+        _moved.add((entity, target));
         return true;
       }
-      if (entity is Directory && existing == FileSystemEntityType.directory) {
+      if (entity is Directory) {
         var complete = true;
         for (final child in entity.listSync()) {
           complete &= await this.entity(
@@ -232,14 +243,8 @@ class _Move {
         }
         return complete;
       }
-      if (entity is File && existing == FileSystemEntityType.file) {
-        _duplicates.add(entity);
-        return true;
-      }
-      // A file where a folder is, or the other way round: neither can stand
-      // in for the other, so both are left as they are.
-      debugPrint('[PackagedAppData] ${entity.path} does not fit $target');
-      return false;
+      _duplicates.add(entity);
+      return true;
     } on FileSystemException catch (e) {
       // Most likely held open - by an unpackaged build running alongside, or
       // by antivirus or backup software.
@@ -253,14 +258,13 @@ class _Move {
     for (final (from, to) in _moved.reversed) {
       try {
         await _relocate(
-          FileSystemEntity.isDirectorySync(to) ? Directory(to) : File(to),
-          from,
+          from is Directory ? Directory(to) : File(to),
+          from.path,
         );
       } on FileSystemException catch (e) {
         debugPrint('[PackagedAppData] Could not put back $to: ${e.message}');
       }
     }
-    _moved.clear();
   }
 
   Future<void> removeDuplicates() async {
