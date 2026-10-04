@@ -49,14 +49,10 @@ void showGhostToast(
       duration: duration,
       type: type,
       onDismiss: () {
-        // Remove overlay entry safely
-        if (overlayEntry.mounted) {
-          overlayEntry.remove();
-        }
-        // Only clear the reference if this is still the toast on screen - a
-        // late dismissal from a replaced toast must not unhook its successor.
+        // A removed entry can stay mounted until the next frame. Only the
+        // active toast still owns its entry; ignore a replaced toast's callback.
         if (identical(_activeToast, overlayEntry)) {
-          _activeToast = null;
+          _dismissActiveToast();
         }
       },
     ),
@@ -69,8 +65,12 @@ void showGhostToast(
 void _dismissActiveToast() {
   final current = _activeToast;
   _activeToast = null;
-  if (current != null && current.mounted) {
-    current.remove();
+  if (current != null) {
+    // Insertion happens before the widget mounts, so mounted cannot tell us
+    // whether removal is needed. Clearing ownership first makes this one-shot.
+    current
+      ..remove()
+      ..dispose();
   }
 }
 
