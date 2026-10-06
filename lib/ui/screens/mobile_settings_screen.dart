@@ -812,55 +812,61 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       // Same content cap as the main screen, for the same reason: settings is
       // one column of cards, and on a tablet each row would otherwise run the
       // full width with its control stranded far from its label.
-      body: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: GhostSpacing.contentWidthFor(
-              MediaQuery.sizeOf(context).width,
+      // Sides only, as on the main screen: the list pads the bottom itself,
+      // and the app bar has the top.
+      body: SafeArea(
+        top: false,
+        bottom: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: GhostSpacing.contentWidthFor(
+                MediaQuery.sizeOf(context).width,
+              ),
             ),
-          ),
-          child: ListView(
-            physics: Adaptive.scrollPhysics,
-            // Edge-to-edge: keep the last row clear of the gesture bar.
-            // The first header lost its top inset along with the others, so the
-            // list supplies it here - otherwise "Features" would sit flush against
-            // the app bar while every later section had a gap above it.
-            padding: EdgeInsets.only(
-              top: GhostSpacing.gutter,
-              bottom: MediaQuery.viewPaddingOf(context).bottom,
+            child: ListView(
+              physics: Adaptive.scrollPhysics,
+              // Edge-to-edge: keep the last row clear of the gesture bar.
+              // The first header lost its top inset along with the others, so the
+              // list supplies it here - otherwise "Features" would sit flush against
+              // the app bar while every later section had a gap above it.
+              padding: EdgeInsets.only(
+                top: GhostSpacing.gutter,
+                bottom: MediaQuery.viewPaddingOf(context).bottom,
+              ),
+              scrollCacheExtent: const ScrollCacheExtent.pixels(300),
+              children: [
+                // Features section (moved to top)
+                _buildSectionHeader('Features'),
+                _buildFeaturesSection(),
+
+                const SizedBox(height: GhostSpacing.sectionLoose),
+
+                // Devices section
+                _buildSectionHeader('Devices'),
+                _buildDevicesSection(),
+
+                const SizedBox(height: GhostSpacing.sectionLoose),
+
+                // Security section
+                _buildSectionHeader('Security'),
+                _buildSecuritySection(),
+
+                const SizedBox(height: GhostSpacing.sectionLoose),
+
+                // Account section (moved to bottom)
+                _buildSectionHeader('Account'),
+                _buildAccountSection(),
+
+                const SizedBox(height: GhostSpacing.sectionLoose),
+
+                // About section
+                _buildSectionHeader('About'),
+                _buildAboutSection(),
+
+                const SizedBox(height: GhostSpacing.sectionLoose),
+              ],
             ),
-            scrollCacheExtent: const ScrollCacheExtent.pixels(300),
-            children: [
-              // Features section (moved to top)
-              _buildSectionHeader('Features'),
-              _buildFeaturesSection(),
-
-              const SizedBox(height: GhostSpacing.sectionLoose),
-
-              // Devices section
-              _buildSectionHeader('Devices'),
-              _buildDevicesSection(),
-
-              const SizedBox(height: GhostSpacing.sectionLoose),
-
-              // Security section
-              _buildSectionHeader('Security'),
-              _buildSecuritySection(),
-
-              const SizedBox(height: GhostSpacing.sectionLoose),
-
-              // Account section (moved to bottom)
-              _buildSectionHeader('Account'),
-              _buildAccountSection(),
-
-              const SizedBox(height: GhostSpacing.sectionLoose),
-
-              // About section
-              _buildSectionHeader('About'),
-              _buildAboutSection(),
-
-              const SizedBox(height: GhostSpacing.sectionLoose),
-            ],
           ),
         ),
       ),
