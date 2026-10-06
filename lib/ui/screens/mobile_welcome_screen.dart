@@ -184,8 +184,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         // iPad, with each label stranded far from its field.
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: GhostSpacing.maxContentWidth,
+            constraints: BoxConstraints(
+              maxWidth: GhostSpacing.contentWidthFor(
+                MediaQuery.sizeOf(context).width,
+              ),
             ),
             child: Column(
               children: [

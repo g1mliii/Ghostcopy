@@ -806,8 +806,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       // full width with its control stranded far from its label.
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: GhostSpacing.maxContentWidth,
+          constraints: BoxConstraints(
+            maxWidth: GhostSpacing.contentWidthFor(
+              MediaQuery.sizeOf(context).width,
+            ),
           ),
           child: ListView(
             physics: Adaptive.scrollPhysics,

@@ -30,25 +30,22 @@ import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
-/// Minimum width before the main screen will consider splitting into panes.
+/// Width at which the main screen splits into compose and history panes.
+///
+/// Width alone, in either orientation. This used to also require a squarish
+/// shape (width/height >= 0.85), on the theory that a second column would
+/// cramp a tall portrait tablet - so an iPad in portrait got one centred
+/// column with wide empty margins. The numbers say otherwise: with the
+/// compose pane fixed at 400, history still gets a phone's width or more,
+/// and portrait two-column is how iPad apps such as Mail and Notes work.
+///
+///   13" iPad portrait   1032 -> 400 compose + 632 history
+///   11" iPad portrait    834 -> 400 + 434, about an iPhone's width
+///   tablet portrait      800 -> 400 + 400
+///   fold unfolded        851 -> split
+///   phone landscape     ~956 -> split
+///   phone portrait, fold closed, narrow iPad Split View -> single column
 const double _twoPaneMinWidth = 800;
-
-/// Minimum width/height ratio before it actually splits.
-///
-/// Width alone cannot make this decision. An unfolded Pixel Fold is 851dp wide
-/// and an iPad in portrait is 834dp - 17dp apart, so any width threshold
-/// separating them would be meaningless - yet they want opposite layouts. Their
-/// SHAPES are nothing alike: the Fold is 851x882, essentially square, with
-/// height to spare for two columns; the iPad is 834x1194, tall and narrow, where
-/// a second column would cramp both. So the split keys on proportion.
-///
-///   fold unfolded   851x882  -> 0.97  split
-///   iPad landscape 1194x834  -> 1.43  split
-///   tablet landscape 1280x800 -> 1.60 split
-///   iPad portrait   834x1194 -> 0.70  single
-///   tablet portrait 800x1280 -> 0.63  single
-///   fold closed     443x994  -> below the width floor, single
-const double _twoPaneMinAspect = 0.85;
 
 /// Width of the compose pane in the two-pane layout.
 ///
@@ -927,18 +924,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       //
       // Sending and browsing history are separate tasks, so where there is room
       // they belong next to each other rather than stacked with hundreds of dp
-      // of dead margin down each side. See _twoPaneMinAspect for why width
-      // alone cannot make this call.
+      // of dead margin down each side. See _twoPaneMinWidth.
       body: Stack(
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final w = constraints.maxWidth;
-              final h = constraints.maxHeight;
-              final splits =
-                  w >= _twoPaneMinWidth &&
-                  h > 0 &&
-                  (w / h) >= _twoPaneMinAspect;
+              final splits = constraints.maxWidth >= _twoPaneMinWidth;
               return splits
                   ? _buildTwoPaneBody(context)
                   : _buildSingleColumnBody(context);
@@ -1000,8 +991,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   Widget _buildSingleColumnBody(BuildContext context) {
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: GhostSpacing.maxContentWidth,
+        constraints: BoxConstraints(
+          maxWidth: GhostSpacing.contentWidthFor(
+            MediaQuery.sizeOf(context).width,
+          ),
         ),
         child: RefreshIndicator(
           onRefresh: _viewModel.handleRefresh,
