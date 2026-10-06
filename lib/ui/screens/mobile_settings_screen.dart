@@ -86,6 +86,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   List<Device> _devices = [];
   bool _devicesLoading = false;
 
+  /// Whether [_devices] came from a successful fetch. The default-device
+  /// chips follow ownership, which is unknown until then: while loading, or
+  /// after a failed fetch, every platform is listed, and turning off the one
+  /// platform the user owns would leave shares going nowhere once the real
+  /// list hid the rest. So the chips only take taps once this is true.
+  bool _devicesKnown = false;
+
   // Encryption state
   IEncryptionService? _encryptionService;
   bool _encryptionEnabled = false;
@@ -155,6 +162,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   static const _allDeviceTypes = ClipboardRepository.validDeviceTypes;
 
   Future<void> _toggleDefaultDevice(String deviceType) async {
+    if (!_devicesKnown) return;
     final normalized = nextDeviceSelection(
       current: _defaultDevices,
       allDeviceTypes: _allDeviceTypes,
@@ -239,6 +247,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         setState(() {
           _devices = devices;
           _devicesLoading = false;
+          _devicesKnown = true;
         });
       }
     } on Exception catch (e) {
@@ -1322,7 +1331,9 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                     isSelected:
                         _defaultDevices.isEmpty ||
                         _defaultDevices.contains(type),
-                    onTap: () => _toggleDefaultDevice(type),
+                    onTap: _devicesKnown
+                        ? () => _toggleDefaultDevice(type)
+                        : null,
                   ),
               ],
             ),
@@ -1539,47 +1550,54 @@ class _DefaultDeviceChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool isSelected;
-  final VoidCallback onTap;
+
+  /// Null while the account's devices are unknown; the chip is then dimmed.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      // Explicit on both branches: a null hover colour falls back to the
-      // theme's white overlay, which flashes on these dark surfaces.
-      hoverColor: isSelected
-          ? GhostColors.primaryHover
-          : GhostColors.surfaceLight,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: isSelected ? GhostColors.primary : GhostColors.surfaceLight,
+    return Opacity(
+      opacity: onTap == null ? 0.5 : 1,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        // Explicit on both branches: a null hover colour falls back to the
+        // theme's white overlay, which flashes on these dark surfaces.
+        hoverColor: isSelected
+            ? GhostColors.primaryHover
+            : GhostColors.surfaceLight,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isSelected
+                  ? GhostColors.primary
+                  : GhostColors.surfaceLight,
+            ),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 14,
-              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected
-                    ? GhostColors.textPrimary
-                    : GhostColors.textSecondary,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: isSelected ? GhostColors.primary : GhostColors.textMuted,
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected
+                      ? GhostColors.textPrimary
+                      : GhostColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
