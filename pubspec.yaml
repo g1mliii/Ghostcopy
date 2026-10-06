@@ -21,7 +21,7 @@ publish_to: 'none'
 # build so far therefore reported itself to Sentry as 1.0.0+5 no matter what
 # was in it. Bumped to match the other platforms; raise it for each build that
 # leaves this machine.
-version: 1.0.8+23
+version: 1.0.8+24
 
 environment:
   sdk: ^3.12.0
