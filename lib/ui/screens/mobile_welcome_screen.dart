@@ -11,6 +11,7 @@ import '../../services/account_prompt_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../utils/auth_errors.dart';
 import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -183,8 +184,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         // iPad, with each label stranded far from its field.
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: GhostSpacing.maxContentWidth,
+            constraints: BoxConstraints(
+              maxWidth: GhostSpacing.contentWidthFor(
+                MediaQuery.sizeOf(context).width,
+              ),
             ),
             child: Column(
               children: [
@@ -1029,7 +1032,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     } on Exception catch (e) {
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
           _authLoading = false;
         });
       }
@@ -1124,7 +1127,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     } on Exception catch (e) {
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
           _authLoading = false;
         });
       }
@@ -1246,7 +1249,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     } on Exception catch (e) {
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
           _authLoading = false;
         });
       }

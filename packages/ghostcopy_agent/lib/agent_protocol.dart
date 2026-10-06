@@ -474,6 +474,11 @@ Future<Map<String, Object?>?> agentSend({
       'GhostCopy is not running. Open it, then try again.',
     );
   }
+  // A peer that resets the connection (macOS reports a drop that way; Linux
+  // as a clean close) also fails the sink's done future. The read below
+  // already turns that into an AgentException, so done must not escape as an
+  // uncaught error on top of it.
+  socket.done.ignore();
   final frames = AgentFrames(socket);
   var sent = false;
   try {

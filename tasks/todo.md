@@ -16,17 +16,6 @@
   - [ ] Two clips sent back to back are both copied
   - [ ] Copying from GhostCopy's own history counts
   - [ ] A large image or 10 MB file still copies without a visible stall
-- [ ] **Verify the thumbnail cache by hand.**
-  - [ ] Cold launch on Windows, and on both mobile platforms
-  - [ ] Save, share and drag-out still produce the FULL image, not the
-        thumbnail - the regression this project has had before
-  - [ ] A full-size preview is not a blurry upscale
-  - [ ] Encrypted clips still render; deleting a clip drops its thumbnail;
-        signing out wipes the cache
-- [ ] **Verify the second-launch fix.** Clicking the app while it is already
-      running opens the window - it never did before. Check sign-in still
-      completes (same delivery path), and that "Send with GhostCopy" sends
-      WITHOUT popping the Spotlight open.
 - [ ] If a clip is ever slow again but the *next* one is instant, the death
       was silent (no status to react to) and the evidence-based rejoin
       caught it. The next lever then is opting the process out of Windows
@@ -73,33 +62,20 @@ flutter_secure_storage's key for a data file that is deleted with the package.
 - [ ] **Export compliance.** The app runs its own AES-256-GCM and
       PBKDF2-HMAC-SHA256 in Dart, on top of the OS's, so it is not the
       "Apple's encryption only" exempt case - do not set
-      `ITSAppUsesNonExemptEncryption` to NO. Answer the questionnaire on the
-      first upload ("standard algorithms in addition to the OS"), then set
-      the Info.plist key(s) it points to so later uploads skip it
-- [ ] **Screenshots** (6.9" iPhone, 13" iPad) - taken with the demo account
-      once it exists; needs it signed in on the simulator
-- [ ] **Review screen recording** - Mac and iPhone round trip, shot list in
-      the listing doc
-- [ ] **Foldable iPhone check - later, not blocking TestFlight.** A foldable
-      iPhone is expected around late October 2026; its simulator is in the
-      Xcode beta, not in the installed Xcode 27.0. The layout is likely covered
-      already: the one/two-pane split in `mobile_main_screen.dart` keys on
-      aspect ratio in shared Flutter code (built for the Pixel Fold in
-      `554ed43`), and the app already targets iPad. Install the beta alongside,
-      never over, the release Xcode - uploads should stay on the release one -
-      and check folded, unfolded, and a live fold/unfold mid-compose
+      `ITSAppUsesNonExemptEncryption` to NO. App Store Connect's App
+      Encryption Documentation may ask for an upload (e.g. a French ANSSI
+      declaration if France is enabled, or a US classification); make sure
+      whatever it asks for is filed, then add the Info.plist key(s) it points
+      to so later uploads skip it
 - [ ] **Keychain migration on device.** The `first_unlock` migration
       (`lib/services/impl/keychain_accessibility.dart`) still needs confirming
       on a phone holding a passphrase written by an older build - a fresh
       install cannot show it. Simulator Keychain items survive uninstalls,
       which disguised this last time
-- [ ] **Device-name entitlement.** Request
-      `com.apple.developer.device-information.user-assigned-device-name` from
-      Apple (developer.apple.com, Contact -> Request). Cosmetic only: device
-      rows already stay unique via the `identifierForVendor` suffix, so a phone
-      reads "iPhone 15 Pro - a1b2c3d4" instead of "Subai's iPhone". The case
-      for it: clips are labelled by sending device and settings lists them, so
-      the owner's name for a device is the point. If granted, add the key to
+- [ ] **Device-name entitlement - requested, awaiting Apple's approval.**
+      `com.apple.developer.device-information.user-assigned-device-name`.
+      Cosmetic: device rows already stay unique via the `identifierForVendor`
+      suffix ("iPhone 15 Pro - a1b2c3d4"). Once granted, add the key to
       `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
       prefers `ios.name`
 - [ ] `flutter logs` returns nothing from a profile build on device. The
@@ -111,11 +87,6 @@ flutter_secure_storage's key for a data file that is deleted with the package.
 - [ ] **Tapping the same email sign-in link twice** gives the "already used"
       message, not a raw error. The crash it used to cause is fixed
       (`d37141f`); the message itself has not been checked
-- [ ] **Disable the legacy API keys** (Supabase dashboard, Settings -> API
-      Keys) once the edge functions reading `_shared/keys.ts` have deployed.
-      Nothing else uses them: every released build and the website carry the
-      publishable key. Watch one push arrive and one QR link afterwards; the
-      dashboard can re-enable them if anything was missed
 
 ## Monitoring, error tracking and cost guards
 
