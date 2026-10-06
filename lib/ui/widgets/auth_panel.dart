@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
@@ -585,14 +584,10 @@ class _AuthPanelState extends State<AuthPanel> {
         _emailController.clear();
         _passwordController.clear();
       }
-    } on AuthException catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.message;
-          _authLoading = false;
-        });
-      }
     } on Exception catch (e) {
+      // AuthException included: authErrorMessage words its common cases. A
+      // separate AuthException clause here took them first and showed the
+      // raw "Invalid login credentials".
       if (mounted) {
         setState(() {
           _authError = authErrorMessage(e);
