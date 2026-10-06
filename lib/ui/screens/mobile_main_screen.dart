@@ -18,6 +18,7 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -29,22 +30,6 @@ import '../widgets/native_toast.dart';
 import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
-
-/// Width at which the main screen splits into compose and history panes.
-///
-/// Width alone, in either orientation, so an unfolded foldable gets the same
-/// layout as an iPad whatever its shape. With the compose pane at its 320
-/// minimum, 660 still leaves history a small phone's width. Below it the
-/// history column would be narrower than any phone, so one column it is.
-///
-///   13" iPad portrait          1032 -> 400 compose + 632 history
-///   11" iPad portrait           834 -> 375 + 459
-///   iPad mini portrait          744 -> 335 + 409
-///   Galaxy Z Fold, unfolded  ~673-750 -> 320-338 + ~350-410
-///   Pixel Fold, unfolded     ~700-840 -> split in either orientation
-///   phone landscape          ~667-956 -> split
-///   phone portrait, fold closed, narrow iPad Split View -> single column
-const double _twoPaneMinWidth = 660;
 
 /// Width of the compose pane in the two-pane layout, for a screen [width]
 /// wide.
@@ -928,12 +913,15 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       //
       // Sending and browsing history are separate tasks, so where there is room
       // they belong next to each other rather than stacked with hundreds of dp
-      // of dead margin down each side. See _twoPaneMinWidth.
+      // of dead margin down each side. See usesTwoPanes.
       body: Stack(
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final splits = constraints.maxWidth >= _twoPaneMinWidth;
+              final splits = usesTwoPanes(
+                width: constraints.maxWidth,
+                shortestSide: MediaQuery.sizeOf(context).shortestSide,
+              );
               return splits
                   ? _buildTwoPaneBody(context, constraints.maxWidth)
                   : _buildSingleColumnBody(context);
