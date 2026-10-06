@@ -80,4 +80,23 @@ void main() {
     expect(second, isNot(contains('windows')));
     expect(second, isNot(contains('ios')));
   });
+
+  group('offeredDeviceTypes', () {
+    test('offers only platforms the account has a device on, in order', () {
+      expect(
+        offeredDeviceTypes(
+          allDeviceTypes: all,
+          ownedDeviceTypes: ['ios', 'windows', 'macos', 'ios'],
+        ),
+        all.where({'windows', 'macos', 'ios'}.contains).toList(),
+      );
+    });
+
+    test('offers everything while no devices are known', () {
+      expect(
+        offeredDeviceTypes(allDeviceTypes: all, ownedDeviceTypes: const []),
+        all,
+      );
+    });
+  });
 }

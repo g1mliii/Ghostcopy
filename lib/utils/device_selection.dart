@@ -33,3 +33,26 @@ Set<String>? nextDeviceSelection({
 
   return updated.length == allDeviceTypes.length ? <String>{} : updated;
 }
+
+/// The destinations to offer as chips: the platforms the account has a device
+/// on, in canonical order.
+///
+/// Listing every supported platform showed someone with a Mac and an iPhone
+/// chips for Android and Linux, which they could toggle to no effect. Only
+/// ownership decides, not the stored selection: turning one chip off expands
+/// the all-devices sentinel into every type, so going by the selection would
+/// bring the unowned chips straight back. A stored type with no device is
+/// harmless - nothing is there to receive - and is offered again once a device
+/// of that type is linked. With no devices known yet (still loading, or the
+/// fetch failed) everything is offered, as before.
+List<String> offeredDeviceTypes({
+  required List<String> allDeviceTypes,
+  required Iterable<String> ownedDeviceTypes,
+}) {
+  final owned = ownedDeviceTypes.toSet();
+  if (owned.isEmpty) return allDeviceTypes;
+  return [
+    for (final type in allDeviceTypes)
+      if (owned.contains(type)) type,
+  ];
+}

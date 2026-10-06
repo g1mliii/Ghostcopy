@@ -162,6 +162,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
     // Null means the toggle would have emptied the set, which reads as "all".
     if (normalized == null) return;
+    // The same refusal for the chips actually shown: with unowned types
+    // hidden, the set can still hold Linux after the last visible chip goes
+    // off, which would leave shares going to no device the user has.
+    final offered = offeredDeviceTypes(
+      allDeviceTypes: _allDeviceTypes,
+      ownedDeviceTypes: _devices.map((d) => d.deviceType),
+    );
+    if (normalized.isNotEmpty && !offered.any(normalized.contains)) return;
 
     // Local state first, then persist. Two chips tapped in quick succession
     // both computed from the same _defaultDevices while the first write was
@@ -1232,7 +1240,19 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// be visible and editable on mobile - otherwise the target is set on the
   /// desktop and invisible on the phone doing the sending.
   Widget _buildDefaultDevicesTile() {
-    const deviceTypes = _allDeviceTypes;
+    final deviceTypes = offeredDeviceTypes(
+      allDeviceTypes: _allDeviceTypes,
+      ownedDeviceTypes: _devices.map((d) => d.deviceType),
+    );
+    // In terms of the chips shown: a selection expanded from "all" still
+    // holds types with no chip, which would read as devices that are not
+    // there - and every shown chip on is "All devices" to the person looking.
+    final shownSelected = _defaultDevices.isEmpty
+        ? deviceTypes
+        : deviceTypes.where(_defaultDevices.contains).toList();
+    final summary = shownSelected.length == deviceTypes.length
+        ? 'All devices'
+        : shownSelected.map(platformLabel).join(', ');
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -1268,9 +1288,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               // ellipsising keeps the count legible at any width.
               Expanded(
                 child: Text(
-                  _defaultDevices.isEmpty
-                      ? 'All devices'
-                      : _defaultDevices.map(platformLabel).join(', '),
+                  summary,
                   textAlign: TextAlign.end,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
