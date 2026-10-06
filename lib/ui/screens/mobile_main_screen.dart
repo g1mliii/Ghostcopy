@@ -931,22 +931,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // of dead margin down each side. See _twoPaneMinWidth.
       body: Stack(
         children: [
-          // Sides only: the bodies pad the bottom themselves to scroll under
-          // the home indicator, and the app bar has the top. Without this
-          // the cards ran under the Dynamic Island in landscape and under
-          // the iPhone Duo's status strip down the right edge, and the
-          // split was decided on width that cannot hold content.
-          SafeArea(
-            top: false,
-            bottom: false,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final splits = constraints.maxWidth >= _twoPaneMinWidth;
-                return splits
-                    ? _buildTwoPaneBody(context, constraints.maxWidth)
-                    : _buildSingleColumnBody(context);
-              },
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final splits = constraints.maxWidth >= _twoPaneMinWidth;
+              return splits
+                  ? _buildTwoPaneBody(context, constraints.maxWidth)
+                  : _buildSingleColumnBody(context);
+            },
           ),
           if (_viewModel.isPreparingShare) _buildPreparingShareOverlay(),
         ],
