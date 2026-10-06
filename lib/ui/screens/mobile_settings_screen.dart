@@ -247,7 +247,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         setState(() {
           _devices = devices;
           _devicesLoading = false;
-          _devicesKnown = true;
+          // getUserDevices reports a failed fetch as [], not an error, and
+          // a signed-in account always has at least this device - so empty
+          // means unknown, not "owns nothing".
+          _devicesKnown = devices.isNotEmpty;
         });
       }
     } on Exception catch (e) {
