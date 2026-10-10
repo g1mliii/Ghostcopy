@@ -20,7 +20,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options: [all, windows, android, macos, ios]
+        options: [all, windows, linux, android, macos, ios]
   schedule:
     # Mondays 06:00 UTC.
     - cron: '0 6 * * 1'
@@ -36,6 +36,44 @@ env:
   FLUTTER_VERSION: '3.44.8'
 
 jobs:
+  linux:
+    name: Linux
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(fromJSON('["all","linux"]'), github.event.inputs.platform)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install native dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev
+          libayatana-appindicator3-dev libkeybinder-3.0-dev liblzma-dev
+          libcurl4-openssl-dev libssl-dev libwayland-dev libwayland-bin
+          desktop-file-utils
+      - name: Test native clipboard events
+        run: bash test/linux/run_native_tests.sh
+      - name: Test installation and updates
+        run: python3 -m unittest discover -s tool -p 'test_*linux*.py'
+      - name: Test Linux services and clipboard sync
+        run: >-
+          flutter test test/services/linux_clipboard_reader_test.dart
+          test/services/linux_auto_start_service_test.dart
+          test/services/linux_hotkey_service_test.dart
+          test/services/linux_dbus_integration_test.dart
+          test/services/linux_app_update_service_test.dart
+          test/unit/services/clipboard_sync_service_test.dart
+      - run: bash tool/build_linux.sh
+      - run: python3 test/linux/cli_smoke_test.py build/linux/x64/release/bundle/ghostcopy-agent
+      - run: python3 tool/package_linux.py
+
   windows:
     name: Windows
     if: >-
@@ -66,6 +104,8 @@ jobs:
           cache: true
       - name: Check Windows update diagnostics parser
         run: ./test/windows/update_diagnostics_test.ps1
+      - name: Check CLI manifest integration
+        run: ./test/windows/cli_alias_test.ps1
       - run: flutter pub get
       - run: flutter build windows --release
 
@@ -74,7 +114,7 @@ jobs:
       # msix_config. It does NOT prove the package installs or that the verb
       # works - the identity is a placeholder until Store registration, and
       # nothing here is signed.
-      - run: dart run msix:create --store
+      - run: ./installer/windows/package-store.ps1
 
   android:
     name: Android

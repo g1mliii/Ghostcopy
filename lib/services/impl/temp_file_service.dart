@@ -8,6 +8,7 @@ import 'package:super_clipboard/super_clipboard.dart';
 
 import '../packaged_app_data.dart';
 import '../temp_file_service.dart';
+import 'linux_clipboard_reader.dart';
 
 /// Implementation of temporary file management
 class TempFileService implements ITempFileService {
@@ -110,6 +111,9 @@ class TempFileService implements ITempFileService {
   }
 
   static Future<Uri?> _readClipboardFile() async {
+    if (LinuxClipboardReader.isWayland) {
+      return LinuxClipboardReader().readFileUri();
+    }
     final clipboard = SystemClipboard.instance;
     if (clipboard == null) throw Exception('Clipboard unavailable');
     final reader = await clipboard.read();

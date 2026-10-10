@@ -940,8 +940,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// NSPasteboard's changeCount on macOS, GetClipboardSequenceNumber on
   /// Windows - both answered natively on this channel. Reading the clipboard
   /// pulls the whole payload - a copied file or image is re-read from disk in
-  /// full - so this cheap integer gates that read. Linux has no counter and
-  /// reads as before.
+  /// full - so this cheap integer gates that read. Linux observes native
+  /// Wayland selection events (GTK owner changes on X11) without reading data.
+  /// An unavailable counter always falls back to the full read.
   static const _clipboardChangeChannel = MethodChannel(
     'com.ghostcopy.app/clipboard_change',
   );
@@ -968,15 +969,16 @@ class ClipboardSyncService implements IClipboardSyncService {
   static bool? debugHasChangeCounter;
 
   static bool get _hasChangeCounter =>
-      debugHasChangeCounter ?? (Platform.isMacOS || Platform.isWindows);
+      debugHasChangeCounter ??
+      (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   /// Whether the platform pushes "changed" when the counter moves, so the
-  /// activity watch needs no timer. Windows does; macOS cannot.
+  /// activity watch needs no timer. Windows and Linux do; macOS cannot.
   @visibleForTesting
   static bool? debugCounterPushesChanges;
 
   static bool get _counterPushesChanges =>
-      debugCounterPushesChanges ?? Platform.isWindows;
+      debugCounterPushesChanges ?? (Platform.isWindows || Platform.isLinux);
 
   Future<int?> _readClipboardChangeCount() async {
     if (!_hasChangeCounter) return null;

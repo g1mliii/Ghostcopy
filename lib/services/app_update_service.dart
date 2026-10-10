@@ -2,9 +2,9 @@ import 'package:flutter/foundation.dart';
 
 export 'impl/app_update_service.dart';
 
-/// macOS update preferences and availability supplied by Sparkle.
+/// Desktop update preferences and availability.
 abstract class IAppUpdateService extends ChangeNotifier {
-  /// Whether Sparkle started successfully for this build.
+  /// Whether updating is supported by this installation.
   bool get isAvailable;
 
   /// Whether scheduled update checks are enabled.
@@ -16,9 +16,9 @@ abstract class IAppUpdateService extends ChangeNotifier {
   /// Start the updater without blocking app startup on failure.
   Future<void> initialize();
 
-  /// Present Sparkle's update dialog, or the startup error if unavailable.
+  /// Present the platform's update flow, or its availability error.
   Future<void> checkForUpdates();
 
-  /// Persist [enabled] using Sparkle's own preferences.
+  /// Persist automatic update checks using [enabled].
   Future<void> setAutomaticChecks({required bool enabled});
 }

@@ -3,8 +3,8 @@
     Build the Microsoft Store package, and upload its debug symbols to Sentry.
 
 .DESCRIPTION
-    The Windows counterpart to installer/macos/build-release.sh. Three steps,
-    in an order that matters: build, upload symbols, package.
+    The Windows counterpart to installer/macos/build-release.sh: build the GUI,
+    upload symbols, compile the console companion, then package and verify.
 
     Symbols go up BEFORE the package is made, for the same reason the macOS
     script does it during the build - the PDBs exist only as long as the build
@@ -135,9 +135,9 @@ try {
     Write-Host '==> Packaging MSIX for the Store' -ForegroundColor Cyan
     # --build-windows false: the build above is the one the symbols were taken
     # from, and letting msix rebuild would risk packaging a binary whose PDBs
-    # were never uploaded.
-    dart run msix:create --store --build-windows false
-    if ($LASTEXITCODE -ne 0) { throw "msix:create failed ($LASTEXITCODE)" }
+    # were never uploaded. package-store.ps1 uses build/patch/pack so the console
+    # alias targets the companion instead of the GUI.
+    & (Join-Path $PSScriptRoot 'package-store.ps1')
 
     $msix = Join-Path $repoRoot 'build\windows\x64\runner\Release\ghostcopy.msix'
     Write-Host ''

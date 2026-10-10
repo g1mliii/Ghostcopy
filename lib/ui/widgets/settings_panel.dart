@@ -11,6 +11,7 @@ import '../../services/auto_start_service.dart';
 import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/hotkey_service.dart';
+import '../../services/impl/linux_hotkey_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
@@ -865,10 +866,21 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           ),
           const SizedBox(height: 10),
           if (widget.hotkeyService != null) ...[
-            HotkeyCapture(
-              currentHotkey: _currentHotkey,
-              onHotkeyChanged: _handleHotkeyChanged,
-            ),
+            if (widget.hotkeyService is LinuxHotkeyService)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Global shortcut'),
+                subtitle: const Text('Managed by KDE Plasma'),
+                trailing: TextButton(
+                  onPressed: _configureLinuxShortcut,
+                  child: const Text('Configure'),
+                ),
+              )
+            else
+              HotkeyCapture(
+                currentHotkey: _currentHotkey,
+                onHotkeyChanged: _handleHotkeyChanged,
+              ),
             const SizedBox(height: 20),
           ],
         ],
@@ -1506,6 +1518,22 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         ],
       ),
     );
+  }
+
+  Future<void> _configureLinuxShortcut() async {
+    try {
+      await (widget.hotkeyService! as LinuxHotkeyService).configure();
+    } on Exception catch (error) {
+      debugPrint('[Settings] Could not configure Linux shortcut: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Open System Settings → Keyboard → Shortcuts to configure GhostCopy.',
+          ),
+        ),
+      );
+    }
   }
 
   /// Apply a newly captured hotkey: register it, persist it, and only then

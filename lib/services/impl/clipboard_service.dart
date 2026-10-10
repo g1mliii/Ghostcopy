@@ -9,6 +9,7 @@ import 'package:super_clipboard/super_clipboard.dart';
 import '../../models/clipboard_limits.dart';
 import '../../utils/html_text.dart';
 import '../clipboard_service.dart';
+import 'linux_clipboard_reader.dart';
 
 /// Implementation of clipboard operations using super_clipboard
 class ClipboardService implements IClipboardService {
@@ -16,6 +17,7 @@ class ClipboardService implements IClipboardService {
 
   /// Singleton instance
   static final ClipboardService instance = ClipboardService._();
+  final LinuxClipboardReader _linuxReader = LinuxClipboardReader();
 
   // Compiled once: these run on every clipboard read, which polls every 5s.
   static final _pathSeparator = RegExp(r'[/\\]');
@@ -26,6 +28,7 @@ class ClipboardService implements IClipboardService {
 
   @override
   Future<ClipboardContent> read() async {
+    if (LinuxClipboardReader.isWayland) return _linuxReader.read();
     // Set when a format the clipboard offers could not be read, so a read that
     // finds nothing else reports that rather than an empty clipboard.
     var failed = false;

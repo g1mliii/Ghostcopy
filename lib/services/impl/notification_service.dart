@@ -113,8 +113,9 @@ class NotificationService implements INotificationService {
     const darwinSettings = DarwinInitializationSettings();
 
     // Linux initialization
-    const linuxSettings = LinuxInitializationSettings(
+    final linuxSettings = LinuxInitializationSettings(
       defaultActionName: 'Open notification',
+      defaultIcon: AssetsLinuxIcon('assets/icons/app_icon.png'),
     );
 
     // Windows initialization
@@ -219,8 +220,10 @@ class NotificationService implements INotificationService {
         _pendingActions.remove(matchingEntry.key);
         _actionPayloads.remove(matchingEntry.key);
         _actionTimestamps.remove(matchingEntry.key);
+        return;
       }
     }
+    if (Platform.isLinux) unawaited(_windowService?.showSpotlight());
   }
 
   // ...
@@ -352,8 +355,13 @@ class NotificationService implements INotificationService {
       presentSound: true,
     );
 
-    const linuxDetails = LinuxNotificationDetails(
+    final linuxDetails = LinuxNotificationDetails(
       urgency: LinuxNotificationUrgency.normal,
+      defaultActionName: actionLabel ?? 'Open GhostCopy',
+      actions: [
+        if (actionLabel != null)
+          LinuxNotificationAction(key: 'perform', label: actionLabel),
+      ],
     );
 
     final details = NotificationDetails(

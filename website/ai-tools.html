@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-bg">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CLI &amp; AI setup — GhostCopy</title>
+    <meta name="description" content="Send text, links and files to your devices from a terminal or AI assistant. Set up the GhostCopy CLI and local MCP server." />
+    <meta name="theme-color" content="#0F0F13" />
+    <link rel="canonical" href="https://ghostcopy.app/ai-tools" />
+    <link rel="stylesheet" href="./output.css" />
+    <link rel="icon" href="/icons/ghost.svg?v=2" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet" />
+</head>
+<body>
+    <header class="shell flex items-center justify-between h-20 sm:h-24">
+        <a href="/" class="font-mono text-sm tracking-widest" aria-label="GhostCopy home">GHOSTCOPY</a>
+        <nav class="flex items-center gap-5 sm:gap-8">
+            <a href="/ai-tools" class="label !text-ink-4" aria-current="page">CLI &amp; AI</a>
+            <a href="/download" class="label hover:text-ink-4">Download</a>
+        </nav>
+    </header>
+    <main class="shell pb-16">
+        <section class="pt-12 sm:pt-24 max-w-3xl">
+            <p class="label !text-accent-text mb-6">Command line &amp; MCP</p>
+            <h1 class="font-bold tracking-display text-4xl sm:text-6xl leading-tight">Your assistant.<br />Your other devices.</h1>
+            <p class="mt-8 text-lg leading-relaxed text-ink-2">Send a result, link or file to your phone without leaving your terminal or AI conversation. GhostCopy uses the account and encryption settings in your running desktop app.</p>
+            <p class="mt-5 text-ink-2 leading-relaxed">The CLI and MCP server are implemented. Windows packages starting with 1.0.22.0 and the Linux test installer include the companion executable. macOS currently requires building it from source. If your Store version is older, update when the new version becomes available.</p>
+            <nav aria-label="On this page" class="flex flex-wrap gap-5 mt-8 text-accent-text">
+                <a href="#install" class="underline">Install</a><a href="#terminal" class="underline">Terminal</a><a href="#mcp" class="underline">Connect your AI</a><a href="#troubleshooting" class="underline">Troubleshooting</a>
+            </nav>
+        </section>
+        <div class="max-w-3xl space-y-16 mt-16 leading-relaxed text-ink-2">
+            <section id="install">
+                <h2 class="text-2xl sm:text-3xl font-semibold text-ink-4 mb-6">1. Get the companion</h2>
+                <p>On Windows, install or update GhostCopy from the Microsoft Store to package version <strong class="text-ink-4">1.0.22.0 or later</strong>, then open a new terminal. Windows registers <code>ghostcopy</code> automatically. You do not need Dart or Flutter. If the command is missing, enable GhostCopy under Windows Settings → Apps → Advanced app settings → App execution aliases.</p>
+                <p class="mt-4">On the Linux test build, the installer places <code>ghostcopy</code> in <code>~/.local/bin</code>. Add that directory to your PATH, or use the full path. <code>ghostcopy-desktop</code> is the separate GUI launcher.</p>
+                <p class="mt-4">For macOS (or an older Windows build), install a Dart SDK satisfying the repository requirements (Flutter includes Dart), clone <a class="text-accent-text underline" href="https://github.com/g1mliii/Ghostcopy">the GhostCopy repository</a>, and run:</p>
+                <pre class="bg-surface rounded-xl p-5 overflow-x-auto text-sm text-ink-4 mt-5"><code>cd packages/ghostcopy_agent
+dart pub get
+dart compile exe bin/ghostcopy.dart -o ghostcopy</code></pre>
+                <p class="mt-4">On Windows, use <code>-o ghostcopy.exe</code> instead. Move the executable to a permanent folder. Use its full path, or add that folder to PATH. It is a separate companion; do not replace the desktop app executable with it.</p>
+                <p class="mt-4">Open GhostCopy, sign in, and turn on <strong class="text-ink-4">Settings → Command line &amp; AI tools</strong>. This is off by default. Keep GhostCopy running (the tray or menu bar is fine). No API key or separate CLI login is needed.</p>
+                <p class="mt-4">This setting allows local programs running as your user to send through your account. Turn it off to revoke access. Your AI client controls its own tool approvals.</p>
+            </section>
+            <section id="terminal">
+                <h2 class="text-2xl sm:text-3xl font-semibold text-ink-4 mb-6">2. Try it in a terminal</h2>
+                <pre class="bg-surface rounded-xl p-5 overflow-x-auto text-sm text-ink-4"><code>ghostcopy --help
+ghostcopy devices
+ghostcopy send "https://example.com" --to phone
+ghostcopy send-file "/absolute/path/report.pdf" --to phone
+ghostcopy devices --json</code></pre>
+                <p class="mt-4">In PowerShell, use <code>&amp; "C:\Tools\ghostcopy.exe" devices</code> when using a full path. <code>send-file</code> accepts files up to 10 MB. In a POSIX shell, <code>ghostcopy send - &lt; notes.txt</code> sends a file's contents as text; in PowerShell use <code>Get-Content -Raw notes.txt | ghostcopy send -</code>.</p>
+                <p class="mt-4"><code>--to</code> accepts comma-separated groups: <code>phone</code>, <code>desktop</code>, <code>ios</code>, <code>android</code>, <code>macos</code>, <code>windows</code>, <code>linux</code>. These are platform groups, not individual device names. Omit it to use the app's <strong>Send to devices</strong> setting.</p>
+                <p class="mt-4">An assistant with local shell access can run these same commands. Ask it: <em>“Use GhostCopy to send this summary to my phone.”</em> A successful send means GhostCopy accepted the transfer; it does not confirm someone opened it.</p>
+            </section>
+            <section id="mcp">
+                <h2 class="text-2xl sm:text-3xl font-semibold text-ink-4 mb-6">3. Connect your AI with MCP</h2>
+                <p>Use an AI client that supports <strong class="text-ink-4">local stdio MCP servers</strong>. Set the command to the companion's absolute path, and the argument to <code>mcp</code>. This runs on the same computer as GhostCopy. A client that only accepts a remote server URL cannot connect directly.</p>
+                <p class="mt-4">For Claude Desktop on Windows or macOS, open <strong>Settings → Developer → Edit Config</strong>. Merge this entry into the existing <code>mcpServers</code> object, preserving your other servers:</p>
+                <pre class="bg-surface rounded-xl p-5 overflow-x-auto text-sm text-ink-4 mt-5"><code>{
+  "mcpServers": {
+    "ghostcopy": {
+      "command": "/Users/yourname/bin/ghostcopy",
+      "args": ["mcp"]
+    }
+  }
+}</code></pre>
+                <p class="mt-4">Replace the example command with your real path. Windows Store JSON example: <code>"command": "C:\\Users\\yourname\\AppData\\Local\\Microsoft\\WindowsApps\\ghostcopy.exe"</code>. Expand <code>%LOCALAPPDATA%</code> in your terminal to find your actual path. Linux clients can use <code>"command": "/home/yourname/.local/bin/ghostcopy"</code>. Do not use <code>~</code> or an unexpanded environment variable in the command path.</p>
+                <p class="mt-4">Save and completely restart your AI client. In clients with an MCP settings form, use transport <strong>stdio</strong>, that same command, and one argument: <code>mcp</code>. JSON configuration formats differ by client; the example above is for clients using <code>mcpServers</code>.</p>
+                <p class="mt-4">First ask <em>“List my GhostCopy devices.”</em> Then try <em>“Send this link to my phone with GhostCopy.”</em> Review and approve the tool call in your client if prompted.</p>
+                <div class="overflow-x-auto mt-6">
+                    <table class="w-full text-left text-sm">
+                        <caption class="text-left text-ink-4 font-semibold mb-3">Available tools</caption>
+                        <thead><tr class="border-b border-line-strong"><th class="py-3 pr-4">Tool</th><th class="py-3">What it does</th></tr></thead>
+                        <tbody>
+                            <tr class="border-b border-line-strong"><td class="py-3 pr-4"><code>list_devices</code></td><td>Lists devices on your account. No arguments.</td></tr>
+                            <tr class="border-b border-line-strong"><td class="py-3 pr-4"><code>send_text</code></td><td>Requires <code>text</code>; optional <code>to</code> array, e.g. <code>["phone"]</code>.</td></tr>
+                            <tr><td class="py-3 pr-4"><code>send_file</code></td><td>Requires an absolute local <code>path</code>; optional <code>to</code> array. Up to 10 MB.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-4">These tools send content and list devices. They do not expose a tool to read your clipboard history. File paths refer to the computer running the MCP server, not a remote assistant's filesystem.</p>
+                <p class="mt-4 text-sm">Client setup reference: <a class="text-accent-text underline" href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">MCP's local server guide</a>.</p>
+            </section>
+            <section id="troubleshooting">
+                <h2 class="text-2xl sm:text-3xl font-semibold text-ink-4 mb-6">When it does not connect</h2>
+                <ul class="list-disc pl-6 space-y-4">
+                    <li><strong class="text-ink-4">Command not found:</strong> use the executable's full path. Windows requires package 1.0.22.0 or later with its execution alias enabled. macOS still needs the separately built companion.</li>
+                    <li><strong class="text-ink-4">Unreachable:</strong> start GhostCopy under the same OS user as your terminal or AI client. Run the server on the host desktop, not in a container or separate WSL environment.</li>
+                    <li><strong class="text-ink-4">Refused:</strong> check your sign-in and enable Command line &amp; AI tools. If encryption is enabled, unlock it in the app.</li>
+                    <li><strong class="text-ink-4">MCP has no tools:</strong> check the absolute path and JSON escaping, then fully restart the client. <code>ghostcopy mcp</code> waiting silently in a terminal is normal: it expects protocol messages on standard input.</li>
+                    <li><strong class="text-ink-4">No answer after sending:</strong> check GhostCopy history before retrying; the send may already have succeeded.</li>
+                </ul>
+                <p class="mt-6">For scripts, exit codes are <code>0</code> success, <code>1</code> usage error, <code>2</code> unreachable, <code>3</code> refused, <code>4</code> send failed, and <code>5</code> unconfirmed. Add <code>--json</code> for machine-readable replies.</p>
+            </section>
+        </div>
+    </main>
+    <footer class="shell py-12"><div class="rule mb-8"></div><nav class="flex flex-wrap gap-6 label"><a href="/">Home</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="/privacy">Privacy</a></nav></footer>
+</body>
+</html>

@@ -72,7 +72,7 @@ ghostcopy send-file report.pdf        # up to 10 MB
 ghostcopy devices
 ```
 
-`--to` takes `phone`, `desktop`, `ios`, `android`, `macos` or `windows`, and defaults to the
+`--to` takes `phone`, `desktop`, `ios`, `android`, `macos`, `windows` or `linux`, and defaults to the
 **Send to devices** setting. `--json` prints machine-readable output, and the exit code says what
 happened (0 sent, 1 usage, 2 GhostCopy unreachable, 3 refused, 4 send failed, 5 no answer
 after sending - check your history before retrying).
@@ -88,7 +88,10 @@ For assistants without a shell, such as Claude Desktop, `ghostcopy mcp` is an MC
 }
 ```
 
-It is not bundled with the installers yet. Build it with
+Windows MSIX packages from 1.0.22.0 register `ghostcopy` automatically; the Linux test installer
+also bundles the companion. macOS does not yet.
+Full setup instructions: [CLI and AI tools](website/ai-tools.html) (website route `/ai-tools`).
+For macOS or older Windows packages, build it with
 `cd packages/ghostcopy_agent && dart pub get && dart compile exe bin/ghostcopy.dart -o ghostcopy`.
 
 ---
