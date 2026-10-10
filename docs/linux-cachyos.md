@@ -113,14 +113,14 @@ unavailable. The build script builds the GUI and CLI and targets Linux x86-64.
 Use a new stable version/build for every release. Build and package on Linux:
 
 ```sh
-bash tool/build_linux.sh --build-name=1.0.9 --build-number=22
+bash tool/build_linux.sh --build-name=1.0.9 --build-number=25
 python3 tool/package_linux.py
 ```
 
 The packager reads the compiled Flutter version, includes the updater and CLI,
 and writes the tarball, checksum, and `latest.json` to `build/linux-package`.
 It never publishes. Publish the archive under the exact versioned tag
-`linux-v1.0.9+22`, then upload `latest.json` to the separate `linux-updates`
+`linux-v1.0.9+25`, then upload `latest.json` to the separate `linux-updates`
 release. Upload the archive first so clients never see an unavailable payload.
 The feed URL is:
 `https://github.com/g1mliii/Ghostcopy/releases/download/linux-updates/latest.json`.
