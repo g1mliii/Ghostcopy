@@ -18,6 +18,7 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -30,32 +31,17 @@ import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
-/// Minimum width before the main screen will consider splitting into panes.
-const double _twoPaneMinWidth = 800;
+/// Width of the compose pane in the two-pane layout, for a screen [width]
+/// wide.
+///
+/// Mostly fixed: the composer, chips and send button have a natural size that
+/// does not benefit from growing with the screen, whereas the history list
+/// does. It gives some back on narrower screens - a tall foldable or an iPad
+/// mini - so history is never squeezed below a phone's width.
+double _composePaneWidthFor(double width) => (width * 0.45).clamp(320, 400);
 
-/// Minimum width/height ratio before it actually splits.
-///
-/// Width alone cannot make this decision. An unfolded Pixel Fold is 851dp wide
-/// and an iPad in portrait is 834dp - 17dp apart, so any width threshold
-/// separating them would be meaningless - yet they want opposite layouts. Their
-/// SHAPES are nothing alike: the Fold is 851x882, essentially square, with
-/// height to spare for two columns; the iPad is 834x1194, tall and narrow, where
-/// a second column would cramp both. So the split keys on proportion.
-///
-///   fold unfolded   851x882  -> 0.97  split
-///   iPad landscape 1194x834  -> 1.43  split
-///   tablet landscape 1280x800 -> 1.60 split
-///   iPad portrait   834x1194 -> 0.70  single
-///   tablet portrait 800x1280 -> 0.63  single
-///   fold closed     443x994  -> below the width floor, single
-const double _twoPaneMinAspect = 0.85;
-
-/// Width of the compose pane in the two-pane layout.
-///
-/// Fixed rather than a fraction: the composer, chips and send button have a
-/// natural size that does not benefit from growing with the screen, whereas the
-/// history list does. So the compose side is pinned and history takes the rest.
-const double _composePaneWidth = 400;
+/// Space between a section heading and the box under it.
+const double _headingGap = 6;
 
 const _notificationChannel = MethodChannel(
   'com.ghostcopy.ghostcopy/notifications',
@@ -927,20 +913,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       //
       // Sending and browsing history are separate tasks, so where there is room
       // they belong next to each other rather than stacked with hundreds of dp
-      // of dead margin down each side. See _twoPaneMinAspect for why width
-      // alone cannot make this call.
+      // of dead margin down each side. See usesTwoPanes.
       body: Stack(
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final w = constraints.maxWidth;
-              final h = constraints.maxHeight;
-              final splits =
-                  w >= _twoPaneMinWidth &&
-                  h > 0 &&
-                  (w / h) >= _twoPaneMinAspect;
+              final splits = usesTwoPanes(
+                width: constraints.maxWidth,
+                shortestSide: MediaQuery.sizeOf(context).shortestSide,
+              );
               return splits
-                  ? _buildTwoPaneBody(context)
+                  ? _buildTwoPaneBody(context, constraints.maxWidth)
                   : _buildSingleColumnBody(context);
             },
           ),
@@ -996,12 +979,14 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  /// Phones and portrait tablets: one column, capped so it stays readable.
+  /// Phones and narrow windows: one column, capped so it stays readable.
   Widget _buildSingleColumnBody(BuildContext context) {
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: GhostSpacing.maxContentWidth,
+        constraints: BoxConstraints(
+          maxWidth: GhostSpacing.contentWidthFor(
+            MediaQuery.sizeOf(context).width,
+          ),
         ),
         child: RefreshIndicator(
           onRefresh: _viewModel.handleRefresh,
@@ -1049,13 +1034,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
-  /// Landscape tablets: compose on the left, history on the right.
+  /// Tablets and unfolded foldables: compose on the left, history on the right.
   ///
   /// The panes scroll independently - a long history should not push the
   /// composer off screen when the whole point of the split is keeping both in
   /// view. Pull-to-refresh lives on the history pane, since that is the side it
   /// refreshes.
-  Widget _buildTwoPaneBody(BuildContext context) {
+  Widget _buildTwoPaneBody(BuildContext context, double width) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     const half = GhostSpacing.gutter / 2;
 
@@ -1063,7 +1048,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
-          width: _composePaneWidth,
+          width: _composePaneWidthFor(width),
           child: SingleChildScrollView(
             physics: Adaptive.scrollPhysics,
             // Scrolling the page puts the keyboard away.
@@ -1077,6 +1062,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Matches the history pane's heading, so the composer and
+                // the search field start on the same line.
+                _buildSectionHeading('New clip'),
+                const SizedBox(height: _headingGap),
                 _buildPasteArea(),
                 const SizedBox(height: 15),
                 _buildDeviceSelector(),
@@ -1684,35 +1673,48 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// each and made fifteen clips read as fifteen separate objects. One
   /// container with hairline dividers reads as a single list and fits far more
   /// on screen.
+  /// A section title, with an optional muted [detail] after it.
+  ///
+  /// Shared by both panes of the two-pane layout so their titles sit on one
+  /// line and the composer and search field below them start level.
+  Widget _buildSectionHeading(String title, {String? detail}) {
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GhostTypography.headline.copyWith(fontSize: 15),
+          ),
+        ),
+        if (detail != null) ...[
+          const SizedBox(width: 7),
+          Text(
+            detail,
+            style: GhostTypography.caption.copyWith(
+              color: GhostColors.textMuted,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildHistorySection() {
     final items = _viewModel.filteredHistoryItems;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Flexible(
-              child: Text(
-                'Clipboard history',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: GhostTypography.headline.copyWith(fontSize: 15),
-              ),
-            ),
-            const SizedBox(width: 7),
-            Text(
-              // Saved on this phone and not refreshed - it may be behind.
-              _viewModel.showingSavedHistory
-                  ? '${items.length} saved · offline'
-                  : '${items.length} recent',
-              style: GhostTypography.caption.copyWith(
-                color: GhostColors.textMuted,
-              ),
-            ),
-          ],
+        _buildSectionHeading(
+          'Clipboard history',
+          // Saved on this phone and not refreshed - it may be behind.
+          detail: _viewModel.showingSavedHistory
+              ? '${items.length} saved · offline'
+              : '${items.length} recent',
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: _headingGap),
         _buildHistorySearch(),
         const SizedBox(height: GhostSpacing.sectionTight),
         // Suppressed during pull-to-refresh: the indicator the user dragged

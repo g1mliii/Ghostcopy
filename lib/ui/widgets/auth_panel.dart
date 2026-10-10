@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/notification_service.dart';
+import '../../utils/auth_errors.dart';
 import '../account_deletion_text.dart';
 import '../guest_clips_guard.dart';
 import '../platform_adaptive.dart';
@@ -584,17 +584,13 @@ class _AuthPanelState extends State<AuthPanel> {
         _emailController.clear();
         _passwordController.clear();
       }
-    } on AuthException catch (e) {
-      if (mounted) {
-        setState(() {
-          _authError = e.message;
-          _authLoading = false;
-        });
-      }
     } on Exception catch (e) {
+      // AuthException included: authErrorMessage words its common cases. A
+      // separate AuthException clause here took them first and showed the
+      // raw "Invalid login credentials".
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
           _authLoading = false;
         });
       }
@@ -683,7 +679,7 @@ class _AuthPanelState extends State<AuthPanel> {
     } on Exception catch (e) {
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
           _authLoading = false;
         });
       }
@@ -783,7 +779,7 @@ class _AuthPanelState extends State<AuthPanel> {
     } on Exception catch (e) {
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
           _authLoading = false;
         });
       }
@@ -892,7 +888,7 @@ class _AuthPanelState extends State<AuthPanel> {
     } on Exception catch (e) {
       if (mounted) {
         setState(() {
-          _authError = e.toString().replaceAll('Exception: ', '');
+          _authError = authErrorMessage(e);
         });
       }
     }

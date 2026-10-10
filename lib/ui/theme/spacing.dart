@@ -62,13 +62,27 @@ class GhostSpacing {
   /// Gap between the composer, the destination row and the send button.
   static const double sectionLoose = 25;
 
-  /// Widest the mobile content column is allowed to get.
+  /// How wide the mobile content column gets on a screen [available] wide.
   ///
-  /// Phones are narrower than this, so nothing changes there. Tablets are not:
-  /// the layout is one column of full-bleed cards, so on a landscape tablet
-  /// (~1280dp) a single line of clip text stretched the whole way across, and
-  /// the composer became a very wide, very short box. Capping and centring
-  /// keeps line lengths readable instead of letting the column grow without
-  /// limit - the usual comfortable maximum for a text column.
-  static const double maxContentWidth = 640;
+  /// Phones are narrower than the floor, so they stay full width. Tablets are
+  /// not: the layout is one column of full-bleed cards, and uncapped, a line
+  /// of clip text ran the whole way across and the composer became a very
+  /// wide, very short box. A flat 640 fixed that but went too far the other
+  /// way - on a 13" iPad in portrait it left nearly 200 of empty margin each
+  /// side, close to 40% of the screen. So the column takes most of the width,
+  /// within bounds that keep it readable:
+  ///
+  ///   Android tablet  800 wide -> 640 (the floor)
+  ///   11" iPad        834 wide -> 667
+  ///   13" iPad       1032 wide -> 826
+  ///   wider                     -> 880 (the ceiling)
+  static double contentWidthFor(double available) =>
+      (available * _contentWidthShare).clamp(
+        _contentWidthMin,
+        _contentWidthMax,
+      );
+
+  static const double _contentWidthShare = 0.8;
+  static const double _contentWidthMin = 640;
+  static const double _contentWidthMax = 880;
 }

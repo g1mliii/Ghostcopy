@@ -86,6 +86,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   List<Device> _devices = [];
   bool _devicesLoading = false;
 
+  /// Whether [_devices] came from a successful fetch. The default-device
+  /// chips follow ownership, which is unknown until then: while loading, or
+  /// after a failed fetch, every platform is listed, and turning off the one
+  /// platform the user owns would leave shares going nowhere once the real
+  /// list hid the rest. So the chips only take taps once this is true.
+  bool _devicesKnown = false;
+
   // Encryption state
   IEncryptionService? _encryptionService;
   bool _encryptionEnabled = false;
@@ -155,6 +162,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   static const _allDeviceTypes = ClipboardRepository.validDeviceTypes;
 
   Future<void> _toggleDefaultDevice(String deviceType) async {
+    if (!_devicesKnown) return;
     final normalized = nextDeviceSelection(
       current: _defaultDevices,
       allDeviceTypes: _allDeviceTypes,
@@ -162,6 +170,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
     // Null means the toggle would have emptied the set, which reads as "all".
     if (normalized == null) return;
+    // The same refusal for the chips actually shown: with unowned types
+    // hidden, the set can still hold Linux after the last visible chip goes
+    // off, which would leave shares going to no device the user has.
+    final offered = offeredDeviceTypes(
+      allDeviceTypes: _allDeviceTypes,
+      ownedDeviceTypes: _devices.map((d) => d.deviceType),
+    );
+    if (normalized.isNotEmpty && !offered.any(normalized.contains)) return;
 
     // Local state first, then persist. Two chips tapped in quick succession
     // both computed from the same _defaultDevices while the first write was
@@ -231,6 +247,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         setState(() {
           _devices = devices;
           _devicesLoading = false;
+          // getUserDevices reports a failed fetch as [], not an error, and
+          // a signed-in account always has at least this device - so empty
+          // means unknown, not "owns nothing".
+          _devicesKnown = devices.isNotEmpty;
         });
       }
     } on Exception catch (e) {
@@ -806,8 +826,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       // full width with its control stranded far from its label.
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: GhostSpacing.maxContentWidth,
+          constraints: BoxConstraints(
+            maxWidth: GhostSpacing.contentWidthFor(
+              MediaQuery.sizeOf(context).width,
+            ),
           ),
           child: ListView(
             physics: Adaptive.scrollPhysics,
@@ -1230,7 +1252,19 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   /// be visible and editable on mobile - otherwise the target is set on the
   /// desktop and invisible on the phone doing the sending.
   Widget _buildDefaultDevicesTile() {
-    const deviceTypes = _allDeviceTypes;
+    final deviceTypes = offeredDeviceTypes(
+      allDeviceTypes: _allDeviceTypes,
+      ownedDeviceTypes: _devices.map((d) => d.deviceType),
+    );
+    // In terms of the chips shown: a selection expanded from "all" still
+    // holds types with no chip, which would read as devices that are not
+    // there - and every shown chip on is "All devices" to the person looking.
+    final shownSelected = _defaultDevices.isEmpty
+        ? deviceTypes
+        : deviceTypes.where(_defaultDevices.contains).toList();
+    final summary = shownSelected.length == deviceTypes.length
+        ? 'All devices'
+        : shownSelected.map(platformLabel).join(', ');
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -1266,9 +1300,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               // ellipsising keeps the count legible at any width.
               Expanded(
                 child: Text(
-                  _defaultDevices.isEmpty
-                      ? 'All devices'
-                      : _defaultDevices.map(platformLabel).join(', '),
+                  summary,
                   textAlign: TextAlign.end,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1302,7 +1334,9 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                     isSelected:
                         _defaultDevices.isEmpty ||
                         _defaultDevices.contains(type),
-                    onTap: () => _toggleDefaultDevice(type),
+                    onTap: _devicesKnown
+                        ? () => _toggleDefaultDevice(type)
+                        : null,
                   ),
               ],
             ),
@@ -1519,47 +1553,54 @@ class _DefaultDeviceChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool isSelected;
-  final VoidCallback onTap;
+
+  /// Null while the account's devices are unknown; the chip is then dimmed.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      // Explicit on both branches: a null hover colour falls back to the
-      // theme's white overlay, which flashes on these dark surfaces.
-      hoverColor: isSelected
-          ? GhostColors.primaryHover
-          : GhostColors.surfaceLight,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: isSelected ? GhostColors.primary : GhostColors.surfaceLight,
+    return Opacity(
+      opacity: onTap == null ? 0.5 : 1,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        // Explicit on both branches: a null hover colour falls back to the
+        // theme's white overlay, which flashes on these dark surfaces.
+        hoverColor: isSelected
+            ? GhostColors.primaryHover
+            : GhostColors.surfaceLight,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isSelected
+                  ? GhostColors.primary
+                  : GhostColors.surfaceLight,
+            ),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 14,
-              color: isSelected ? GhostColors.primary : GhostColors.textMuted,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected
-                    ? GhostColors.textPrimary
-                    : GhostColors.textSecondary,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: isSelected ? GhostColors.primary : GhostColors.textMuted,
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected
+                      ? GhostColors.textPrimary
+                      : GhostColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
