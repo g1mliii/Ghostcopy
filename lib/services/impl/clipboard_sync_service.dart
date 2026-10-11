@@ -897,7 +897,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       await write();
       final count = await _readClipboardChangeCount();
       if (count != null) {
-        _activityChangeCount = count;
+        // Wayland's activity counter excludes our marked selections. Never
+        // absorb it here: a user change during this write must remain visible.
+        if (!_usesExternalActivityCounter) _activityChangeCount = count;
         // Auto-send's gate too: the write's content is already recorded, so
         // re-reading it - a whole image or file - on the next tick is waste.
         _lastClipboardChangeCount = count;
@@ -980,10 +982,23 @@ class ClipboardSyncService implements IClipboardSyncService {
   static bool get _counterPushesChanges =>
       debugCounterPushesChanges ?? (Platform.isWindows || Platform.isLinux);
 
-  Future<int?> _readClipboardChangeCount() async {
+  /// Tests can exercise Wayland's counter, which excludes our MIME-marked writes.
+  @visibleForTesting
+  static bool? debugUsesExternalActivityCounter;
+
+  static bool get _usesExternalActivityCounter =>
+      debugUsesExternalActivityCounter ??
+      (Platform.isLinux &&
+          (Platform.environment['WAYLAND_DISPLAY']?.isNotEmpty ?? false));
+
+  Future<int?> _readClipboardChangeCount({bool activity = false}) async {
     if (!_hasChangeCounter) return null;
     try {
-      return await _clipboardChangeChannel.invokeMethod<int>('changeCount');
+      return await _clipboardChangeChannel.invokeMethod<int>(
+        activity && _usesExternalActivityCounter
+            ? 'activityChangeCount'
+            : 'changeCount',
+      );
     } on PlatformException catch (e) {
       debugPrint('[ClipboardSyncService] changeCount unavailable: $e');
       return null;
@@ -1474,7 +1489,7 @@ class ClipboardSyncService implements IClipboardSyncService {
         continue;
       }
       final epoch = _writeEpoch;
-      final count = await _readClipboardChangeCount();
+      final count = await _readClipboardChangeCount(activity: true);
       if (count == null || _isDisposed) return;
       // A write started while the counter was read: that reading may predate
       // it, and storing it would undo the write's absorb. Read again.

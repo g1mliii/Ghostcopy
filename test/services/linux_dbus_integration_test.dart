@@ -28,13 +28,40 @@ class _Portal extends DBusObject {
   bool denyNext = false;
   bool configureCalled = false;
   String? preferred;
+  final Map<String, String> registeredApps = {};
+  bool registryAvailable = true;
+  bool denyRegistration = false;
+  int registrationCalls = 0;
+  bool portalCalled = false;
 
   @override
-  Future<DBusMethodResponse> getProperty(String interface, String name) async =>
-      DBusGetPropertyResponse(const DBusUint32(2));
+  Future<DBusMethodResponse> getProperty(String interface, String name) async {
+    portalCalled = true;
+    return DBusGetPropertyResponse(const DBusUint32(2));
+  }
 
   @override
   Future<DBusMethodResponse> handleMethodCall(DBusMethodCall methodCall) async {
+    if (methodCall.interface == 'org.freedesktop.host.portal.Registry') {
+      registrationCalls++;
+      if (!registryAvailable) return DBusMethodErrorResponse.unknownMethod();
+      if (denyRegistration ||
+          portalCalled ||
+          registeredApps.containsKey(methodCall.sender)) {
+        return DBusMethodErrorResponse(
+          'org.freedesktop.portal.Error.NotAllowed',
+          [],
+        );
+      }
+      registeredApps[methodCall.sender!] = methodCall.values.first.asString();
+      return DBusMethodSuccessResponse();
+    }
+    if (registryAvailable && !registeredApps.containsKey(methodCall.sender)) {
+      return DBusMethodErrorResponse(
+        'org.freedesktop.portal.Error.NotAllowed',
+        [],
+      );
+    }
     if (methodCall.name == 'ConfigureShortcuts') {
       configureCalled = true;
       return DBusMethodSuccessResponse();
@@ -124,6 +151,10 @@ void main() {
             if (!activated.isCompleted) activated.complete();
           });
           expect(portal.preferred, 'CTRL+SHIFT+s');
+          expect(
+            portal.registeredApps.values.single,
+            'com.ghostcopy.ghostcopy',
+          );
           await portal.activate(portal.sessions.first.path);
           await activated.future.timeout(const Duration(seconds: 2));
           await service.configure();
@@ -135,10 +166,43 @@ void main() {
           );
           expect(portal.sessions.first.closed, isFalse);
           expect(portal.sessions.last.closed, isTrue);
+          expect(portal.registrationCalls, 1);
           await service.unregisterHotkey(hotkey);
           expect(portal.sessions.first.closed, isTrue);
         },
         timeout: const Timeout(Duration(seconds: 15)),
+      );
+
+      test('older portals without Registry still accept shortcuts', () async {
+        final portal = _Portal()..registryAvailable = false;
+        await daemon.requestName('org.freedesktop.portal.Desktop');
+        await daemon.registerObject(portal);
+        final service = LinuxHotkeyService(client: DBusClient(address));
+        addTearDown(service.dispose);
+        await service.registerHotkey(const HotKey(key: 's', ctrl: true), () {});
+        expect(portal.sessions, hasLength(1));
+      });
+
+      test(
+        'registration denial stops portal calls and can be retried',
+        () async {
+          final portal = _Portal()..denyRegistration = true;
+          await daemon.requestName('org.freedesktop.portal.Desktop');
+          await daemon.registerObject(portal);
+          final service = LinuxHotkeyService(client: DBusClient(address));
+          addTearDown(service.dispose);
+          const hotkey = HotKey(key: 's', ctrl: true);
+          await expectLater(
+            service.registerHotkey(hotkey, () {}),
+            throwsA(isA<DBusMethodResponseException>()),
+          );
+          expect(portal.portalCalled, isFalse);
+          expect(portal.sessions, isEmpty);
+          portal.denyRegistration = false;
+          await service.registerHotkey(hotkey, () {});
+          expect(portal.registrationCalls, 2);
+          expect(portal.sessions, hasLength(1));
+        },
       );
 
       test('maps logind and Plasma signals to lifecycle events', () async {

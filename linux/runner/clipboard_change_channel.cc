@@ -26,12 +26,14 @@ struct ClipboardChannel {
 
 void Handle(FlMethodChannel*, FlMethodCall* call, gpointer data) {
   auto* self = static_cast<ClipboardChannel*>(data);
-  if (g_strcmp0(fl_method_call_get_name(call), "changeCount") != 0) {
+  const char* method = fl_method_call_get_name(call);
+  const bool external_only = g_strcmp0(method, "activityChangeCount") == 0;
+  if (!external_only && g_strcmp0(method, "changeCount") != 0) {
     fl_method_call_respond_not_implemented(call, nullptr);
     return;
   }
   int64_t count = self->count;
-  const bool available = self->wayland ? self->wayland->Read(&count) : true;
+  const bool available = self->wayland ? self->wayland->Read(&count, external_only) : true;
   g_autoptr(FlValue) value = available ? fl_value_new_int(count) : fl_value_new_null();
   fl_method_call_respond_success(call, value, nullptr);
 }

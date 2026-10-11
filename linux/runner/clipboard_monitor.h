@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <set>
 
 #include "wlr-data-control-client.h"
@@ -22,7 +23,7 @@ class ClipboardMonitor {
 
   // Returns false while connecting or if data-control is unavailable. Callers
   // must fall back to reading, never treat an unavailable counter as unchanged.
-  bool Read(int64_t* count);
+  bool Read(int64_t* count, bool external_only = false);
 
  private:
   void Connect();
@@ -49,10 +50,14 @@ class ClipboardMonitor {
   zwlr_data_control_offer_v1* selection_ = nullptr;
   zwlr_data_control_offer_v1* primary_ = nullptr;
   std::set<zwlr_data_control_offer_v1*> offers_;
+  std::map<zwlr_data_control_offer_v1*, uint64_t> own_offers_;
+  std::set<uint64_t> consumed_own_writes_;
+  uint64_t last_own_write_ = 0;
   uint32_t seat_name_ = 0;
   uint32_t manager_name_ = 0;
   guint source_ = 0;
   int64_t count_ = 0;
+  int64_t external_count_ = 0;
   gint64 retry_at_ = 0;
   bool ready_ = false;
   bool failed_ = false;

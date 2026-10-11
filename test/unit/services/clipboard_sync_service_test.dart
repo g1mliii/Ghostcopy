@@ -114,6 +114,7 @@ void main() {
     ClipboardSyncService.debugHasChangeCounter = true;
     // Sampled, as on macOS, unless a test opts into Windows' pushed changes.
     ClipboardSyncService.debugCounterPushesChanges = false;
+    ClipboardSyncService.debugUsesExternalActivityCounter = false;
     pasteboard = 1;
     counterReads = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -191,6 +192,7 @@ void main() {
     service.dispose();
     ClipboardSyncService.debugHasChangeCounter = null;
     ClipboardSyncService.debugCounterPushesChanges = null;
+    ClipboardSyncService.debugUsesExternalActivityCounter = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(clipboardChangeChannel, null);
   });
@@ -1086,6 +1088,40 @@ void main() {
       await settle(tester);
     }
 
+    testWidgets('delayed Wayland own selections do not block Smart Receive', (
+      tester,
+    ) async {
+      ClipboardSyncService.debugUsesExternalActivityCounter = true;
+      var externalCopies = 1;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        clipboardChangeChannel,
+        (call) async =>
+            call.method == 'activityChangeCount' ? externalCopies : pasteboard,
+      );
+      // The native monitor has not seen the selection when write returns.
+      when(() => clipboard.writeText(any())).thenAnswer((_) async {});
+      await watch(tester);
+      await receive(tester);
+      verify(() => clipboard.writeText('clip 1')).called(1);
+      pasteboard++; // the own selection finally arrives
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verify(() => clipboard.writeText('clip 2')).called(1);
+
+      externalCopies++; // a real user copy immediately afterwards
+      pasteboard++;
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verifyNever(() => clipboard.writeText('clip 3'));
+      service
+        ..stopPolling()
+        ..stopClipboardActivityWatch();
+    });
+
     testWidgets('a copy made just before a clip arrives is not overwritten', (
       tester,
     ) async {
@@ -1105,6 +1141,33 @@ void main() {
           duration: any(named: 'duration'),
         ),
       ).called(1);
+      service
+        ..stopPolling()
+        ..stopClipboardActivityWatch();
+    });
+
+    testWidgets('a Wayland user copy during a write is not absorbed', (
+      tester,
+    ) async {
+      ClipboardSyncService.debugUsesExternalActivityCounter = true;
+      var externalCopies = 1;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        clipboardChangeChannel,
+        (call) async =>
+            call.method == 'activityChangeCount' ? externalCopies : pasteboard,
+      );
+      when(() => clipboard.writeText(any())).thenAnswer((_) async {
+        externalCopies++;
+        pasteboard += 2; // our selection and a real user copy
+      });
+      await watch(tester);
+      await receive(tester);
+      verify(() => clipboard.writeText('clip 1')).called(1);
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      verifyNever(() => clipboard.writeText('clip 2'));
       service
         ..stopPolling()
         ..stopClipboardActivityWatch();

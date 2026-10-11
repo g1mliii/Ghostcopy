@@ -2,10 +2,12 @@
 
 #include <glib-unix.h>
 #include <poll.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <string>
 #include <utility>
 
 ClipboardMonitor::ClipboardMonitor(std::function<void()> changed)
@@ -13,12 +15,12 @@ ClipboardMonitor::ClipboardMonitor(std::function<void()> changed)
 
 ClipboardMonitor::~ClipboardMonitor() { Disconnect(); }
 
-bool ClipboardMonitor::Read(int64_t* count) {
+bool ClipboardMonitor::Read(int64_t* count, bool external_only) {
   if (!display_ && g_get_monotonic_time() >= retry_at_) Connect();
   if (display_ && !Drain()) Disconnect();
   if (display_) Flush();
   if (!ready_ || failed_) return false;
-  *count = count_;
+  *count = external_only ? external_count_ : count_;
   return true;
 }
 
@@ -61,6 +63,7 @@ void ClipboardMonitor::Disconnect() {
   source_ = 0;
   for (auto* offer : offers_) zwlr_data_control_offer_v1_destroy(offer);
   offers_.clear();
+  own_offers_.clear();
   selection_ = primary_ = nullptr;
   if (device_) zwlr_data_control_device_v1_destroy(device_);
   if (manager_) zwlr_data_control_manager_v1_destroy(manager_);
@@ -146,7 +149,20 @@ void ClipboardMonitor::BindDevice() {
   zwlr_data_control_device_v1_add_listener(device_, &listener, this);
 }
 
-void ClipboardMonitor::Mime(void*, zwlr_data_control_offer_v1*, const char*) {}
+void ClipboardMonitor::Mime(void* data, zwlr_data_control_offer_v1* offer, const char* mime) {
+  // MIME offers precede selection events. No payload request or timing grace
+  // period is needed, and a real user copy immediately after ours still counts.
+  const auto prefix = "application/x-ghostcopy-owner-" + std::to_string(getpid()) + "-";
+  if (strncmp(mime, prefix.c_str(), prefix.size()) != 0) return;
+  const char* serial = mime + prefix.size();
+  if (*serial < '0' || *serial > '9') return;
+  char* end = nullptr;
+  errno = 0;
+  const uint64_t value = g_ascii_strtoull(serial, &end, 10);
+  if (errno == 0 && *end == '\0' && value > 0) {
+    static_cast<ClipboardMonitor*>(data)->own_offers_[offer] = value;
+  }
+}
 
 void ClipboardMonitor::Offer(void* data, zwlr_data_control_device_v1*,
                              zwlr_data_control_offer_v1* offer) {
@@ -160,6 +176,7 @@ void ClipboardMonitor::ReplaceOffer(zwlr_data_control_offer_v1** current,
                                     zwlr_data_control_offer_v1* next) {
   if (*current) {
     offers_.erase(*current);
+    own_offers_.erase(*current);
     zwlr_data_control_offer_v1_destroy(*current);
   }
   *current = next;
@@ -172,6 +189,22 @@ void ClipboardMonitor::Selection(void* data, zwlr_data_control_device_v1*,
   self->ready_ = true;
   // Never reset on reconnect: the old counter must not suppress a new copy.
   ++self->count_;
+  const auto own = self->own_offers_.find(offer);
+  // Keep a bounded window rather than assuming concurrent writes land in
+  // serial order. Old clipboard-history replays must never look like our write.
+  constexpr uint64_t kOwnWriteWindow = 1024;
+  if (own != self->own_offers_.end() &&
+      (own->second > self->last_own_write_ ||
+       self->last_own_write_ - own->second < kOwnWriteWindow) &&
+      self->consumed_own_writes_.insert(own->second).second) {
+    self->last_own_write_ = std::max(self->last_own_write_, own->second);
+    while (self->last_own_write_ - *self->consumed_own_writes_.begin() >= kOwnWriteWindow) {
+      self->consumed_own_writes_.erase(self->consumed_own_writes_.begin());
+    }
+  } else {
+    // A clipboard manager replaying an old GhostCopy item is a user copy.
+    ++self->external_count_;
+  }
   self->changed_();
 }
 

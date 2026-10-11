@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdio>
 #include <functional>
+#include <string>
 
 #include "clipboard_monitor.h"
 #include "wlr-data-control-server.h"
@@ -62,7 +63,7 @@ struct Server {
     }
   }
 
-  void Offer(bool primary = false) {
+  void Offer(bool primary = false, const std::string& marker = "") {
     assert(device);
     auto* offer = wl_resource_create(wl_resource_get_client(device), &zwlr_data_control_offer_v1_interface, 1, 0);
     static const struct zwlr_data_control_offer_v1_interface impl = {Receive, Destroy};
@@ -72,6 +73,7 @@ struct Server {
     zwlr_data_control_device_v1_send_data_offer(device, offer);
     zwlr_data_control_offer_v1_send_offer(offer, "text/plain");
     zwlr_data_control_offer_v1_send_offer(offer, "image/png");
+    if (!marker.empty()) zwlr_data_control_offer_v1_send_offer(offer, marker.c_str());
     if (primary) zwlr_data_control_device_v1_send_primary_selection(device, offer);
     else zwlr_data_control_device_v1_send_selection(device, offer);
     wl_display_flush_clients(display);
@@ -137,6 +139,39 @@ int main() {
     server.Until([&]() { return monitor.Read(&count); });
     wl_display_destroy_clients(server.display);
     server.Until([&]() { return !monitor.Read(&count); });
+  }
+  {
+    Server server;
+    ClipboardMonitor monitor([]() {});
+    int64_t count = 0;
+    int64_t activity = 0;
+    server.Until([&]() { return monitor.Read(&count); });
+    assert(monitor.Read(&activity, true) && activity == 1);
+    // Simulate write() returning before the XWayland selection is delivered.
+    assert(monitor.Read(&count) && count == 1);
+    const auto marker = "application/x-ghostcopy-owner-" + std::to_string(getpid());
+    server.Offer(false, marker + "-1");
+    assert(monitor.Read(&count) && count == 2);
+    assert(monitor.Read(&activity, true) && activity == 1);
+    // No grace period: a user's next selection must count immediately.
+    server.Offer();
+    assert(monitor.Read(&activity, true) && activity == 2);
+    // A different GhostCopy process is also an external copy.
+    server.Offer(false, "application/x-ghostcopy-owner-" + std::to_string(getpid() + 1) + "-1");
+    assert(monitor.Read(&activity, true) && activity == 3);
+    // A delayed own selection must not erase that user activity.
+    server.Offer(false, marker + "-2");
+    assert(monitor.Read(&activity, true) && activity == 3);
+    // Concurrent payload writes need not land in their creation order.
+    server.Offer(false, marker + "-4");
+    assert(monitor.Read(&activity, true) && activity == 3);
+    server.Offer(false, marker + "-3");
+    assert(monitor.Read(&activity, true) && activity == 3);
+    // Clipboard history may preserve custom formats; replay is user activity.
+    server.Offer(false, marker + "-1");
+    assert(monitor.Read(&activity, true) && activity == 4);
+    zwlr_data_control_device_v1_send_selection(server.device, nullptr);
+    server.Until([&]() { return monitor.Read(&activity, true) && activity == 5; });
   }
   {
     Server server(false);

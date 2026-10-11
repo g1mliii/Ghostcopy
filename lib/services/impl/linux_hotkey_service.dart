@@ -24,6 +24,7 @@ class LinuxHotkeyService implements IHotkeyService {
   VoidCallback? _lastCallback;
   int _serial = 0;
   bool _disposed = false;
+  Future<void>? _portalRegistration;
 
   @override
   Future<void> registerHotkey(HotKey hotkey, VoidCallback callback) async {
@@ -49,6 +50,7 @@ class LinuxHotkeyService implements IHotkeyService {
       return;
     }
     await _client.listNames().timeout(const Duration(seconds: 5));
+    await _ensurePortalRegistration();
     // Resolve before signal subscription; also starts the portal if needed.
     final portal = DBusRemoteObject(_client, name: _destination, path: _path);
     await portal
@@ -109,6 +111,45 @@ class LinuxHotkeyService implements IHotkeyService {
       retained = true;
     } finally {
       if (!retained && session != null) await _closeSession(session);
+    }
+  }
+
+  Future<void> _ensurePortalRegistration() async {
+    final pending = _portalRegistration ??= _registerPortalConnection();
+    try {
+      await pending;
+    } on Exception {
+      if (identical(_portalRegistration, pending)) _portalRegistration = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _registerPortalConnection() async {
+    try {
+      // Registry must be the first portal call on this connection. GTK's
+      // application ID only identifies GTK's separate D-Bus connection.
+      await _client
+          .callMethod(
+            destination: _destination,
+            path: _path,
+            interface: 'org.freedesktop.host.portal.Registry',
+            name: 'Register',
+            values: [
+              const DBusString('com.ghostcopy.ghostcopy'),
+              DBusDict.stringVariant({}),
+            ],
+            replySignature: DBusSignature(''),
+          )
+          .timeout(const Duration(seconds: 5));
+    } on DBusMethodResponseException catch (error) {
+      // Older portals can still infer an ID from the desktop launch scope.
+      // Only tolerate the missing API, never an actual registration denial.
+      if (error.response.errorName !=
+              'org.freedesktop.DBus.Error.UnknownMethod' &&
+          error.response.errorName !=
+              'org.freedesktop.DBus.Error.UnknownInterface') {
+        rethrow;
+      }
     }
   }
 

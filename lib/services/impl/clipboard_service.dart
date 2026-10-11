@@ -18,6 +18,24 @@ class ClipboardService implements IClipboardService {
   /// Singleton instance
   static final ClipboardService instance = ClipboardService._();
   final LinuxClipboardReader _linuxReader = LinuxClipboardReader();
+  static int _linuxWriteSerial = 0;
+
+  // The Wayland monitor sees selection metadata independently of the
+  // XWayland writer. Identify our selections even if their events arrive
+  // after write() returns, without reading any clipboard payload.
+  static DataWriterItem _newWriterItem() {
+    final item = DataWriterItem();
+    if (Platform.isLinux) {
+      item.add(
+        SimpleFileFormat(
+          linuxFormats: [
+            'application/x-ghostcopy-owner-$pid-${++_linuxWriteSerial}',
+          ],
+        )(Uint8List.fromList([1])),
+      );
+    }
+    return item;
+  }
 
   // Compiled once: these run on every clipboard read, which polls every 5s.
   static final _pathSeparator = RegExp(r'[/\\]');
@@ -162,7 +180,7 @@ class ClipboardService implements IClipboardService {
   @override
   Future<void> writeText(String text) async {
     try {
-      final item = DataWriterItem()..add(Formats.plainText(text));
+      final item = _newWriterItem()..add(Formats.plainText(text));
 
       await SystemClipboard.instance?.write([item]);
       debugPrint('[ClipboardService] ↑ Wrote text: ${text.length} chars');
@@ -177,7 +195,7 @@ class ClipboardService implements IClipboardService {
     try {
       final plainText = htmlToPlainText(html);
 
-      final item = DataWriterItem()
+      final item = _newWriterItem()
         ..add(Formats.htmlText(html))
         ..add(Formats.plainText(plainText));
 
@@ -192,7 +210,7 @@ class ClipboardService implements IClipboardService {
   @override
   Future<void> writeImage(Uint8List bytes) async {
     try {
-      final item = DataWriterItem()
+      final item = _newWriterItem()
         ..add(Formats.png(bytes)); // PNG format (lossless)
 
       await SystemClipboard.instance?.write([item]);
@@ -211,7 +229,7 @@ class ClipboardService implements IClipboardService {
         throw ClipboardException('File does not exist: $filePath');
       }
 
-      final item = DataWriterItem()..add(Formats.fileUri(Uri.file(filePath)));
+      final item = _newWriterItem()..add(Formats.fileUri(Uri.file(filePath)));
 
       await SystemClipboard.instance?.write([item]);
       debugPrint('[ClipboardService] ↑ Wrote file URI: $filePath');
@@ -265,7 +283,7 @@ class ClipboardService implements IClipboardService {
   Future<void> clear() async {
     try {
       // Write empty text to clear the clipboard
-      final item = DataWriterItem()..add(Formats.plainText(''));
+      final item = _newWriterItem()..add(Formats.plainText(''));
 
       final clipboard = SystemClipboard.instance;
       if (clipboard != null) {
