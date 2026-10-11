@@ -39,6 +39,10 @@ class SystemPowerService implements ISystemPowerService {
       debugPrint('[SystemPower] ✅ Power monitoring initialized');
     } on PlatformException catch (e) {
       debugPrint('[SystemPower] ⚠️  Failed to initialize: ${e.message}');
+    } on MissingPluginException {
+      // Linux does not yet have a native power-event bridge. Monitoring is
+      // optional: an unavailable bridge must not abandon desktop startup.
+      debugPrint('[SystemPower] Native power monitoring is unavailable');
     }
   }
 

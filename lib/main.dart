@@ -36,6 +36,11 @@ import 'services/impl/clipboard_sync_service.dart';
 import 'services/impl/game_mode_service.dart';
 import 'services/impl/hotkey_service.dart';
 import 'services/impl/lifecycle_controller.dart';
+import 'services/impl/linux_app_update_service.dart';
+import 'services/impl/linux_auto_start_service.dart';
+import 'services/impl/linux_clipboard_reader.dart';
+import 'services/impl/linux_hotkey_service.dart';
+import 'services/impl/linux_power_service.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/pkce_verifier_store.dart';
 import 'services/impl/security_service.dart';
@@ -459,12 +464,14 @@ Future<void> _appMain(
   if (_isDesktop()) {
     // Initialize core services first
     final trayService = TrayService();
-    final hotkeyService = HotkeyService();
+    final hotkeyService = LinuxClipboardReader.isWayland
+        ? LinuxHotkeyService()
+        : HotkeyService();
     final gameModeService = GameModeService();
     final settingsService = SettingsService();
-    final autoStartService = AutoStartService(
-      windowsPackageService: windowsPackage,
-    );
+    final autoStartService = Platform.isLinux
+        ? LinuxAutoStartService()
+        : AutoStartService(windowsPackageService: windowsPackage);
     final clipboardRepository = ClipboardRepository.instance;
 
     // Register generic services
@@ -526,7 +533,9 @@ Future<void> _appMain(
     );
 
     // PARALLEL GROUP 3: ClipboardSync and SystemPower (independent)
-    final systemPowerService = SystemPowerService();
+    final systemPowerService = Platform.isLinux
+        ? LinuxPowerService()
+        : SystemPowerService();
     await Future.wait([
       clipboardSyncService.initialize(),
       systemPowerService.initialize(),
@@ -1014,17 +1023,40 @@ class _MyAppState extends State<MyApp> with WindowListener {
           unawaited(_handleHotkeySpotlight());
         };
 
-      // macOS uses a real NSMenu, which has to be rebuilt whenever Game Mode
-      // changes so its checkmark matches the current state. On Windows this
-      // is a no-op and the custom window is used instead.
-      if (Platform.isMacOS) {
+      if (Platform.isLinux) {
+        locator.registerSingleton<IAppUpdateService>(
+          LinuxAppUpdateService(
+            confirmInstall: (version) => _showLinuxUpdateDialog(
+              'Install GhostCopy $version? The download will be verified, '
+              'then GhostCopy will close, update and reopen. The CLI updates too.',
+              confirm: true,
+            ),
+            showMessage: (message) async {
+              await _showLinuxUpdateDialog(message);
+            },
+            showDownloading: () => locator<INotificationService>().showToast(
+              message: 'Downloading update. GhostCopy will restart when ready.',
+              duration: const Duration(seconds: 8),
+            ),
+            quit: _handleQuit,
+          ),
+        );
+      }
+      if (Platform.isMacOS || Platform.isLinux) {
         locator<IAppUpdateService>().addListener(_onUpdaterStateChanged);
         unawaited(locator<IAppUpdateService>().initialize());
+      }
+      // macOS receives shared files from Finder.
+      if (Platform.isMacOS) {
+        unawaited(_listenForSharedFiles(locator<IAuthService>()));
+      }
+      // macOS and Linux use native tray menus. Rebuild when Game Mode changes
+      // so the checkmark matches its current state.
+      if (Platform.isMacOS || Platform.isLinux) {
         unawaited(_refreshNativeTrayMenu());
         _gameModeMenuSub = locator<IGameModeService>().isActiveStream.listen(
           (_) => unawaited(_refreshNativeTrayMenu()),
         );
-        unawaited(_listenForSharedFiles(locator<IAuthService>()));
       }
 
       // Register the global hotkey the user chose, falling back to the default
@@ -1032,6 +1064,11 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // hardcoded default, so a customised shortcut was discarded on restart.
       _onHotkeyPressed = _handleHotkeySpotlight;
       unawaited(_registerSavedHotkey());
+      if (Platform.isLinux && !widget.launchedAtStartup) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_handleHotkeySpotlight());
+        });
+      }
     } else {
       // Mobile: Check if user is already signed in
       final currentUser = locator<IAuthService>().currentUser;
@@ -1200,7 +1237,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
       _powerEventSubscription = null;
       _gameModeMenuSub?.cancel();
       _gameModeMenuSub = null;
-      if (Platform.isMacOS) {
+      if (Platform.isMacOS || Platform.isLinux) {
         locator<IAppUpdateService>()
           ..removeListener(_onUpdaterStateChanged)
           ..dispose();
@@ -1264,6 +1301,36 @@ class _MyAppState extends State<MyApp> with WindowListener {
     unawaited(_refreshNativeTrayMenu());
   }
 
+  Future<bool> _showLinuxUpdateDialog(
+    String message, {
+    bool confirm = false,
+  }) async {
+    await locator<IWindowService>().showSpotlight();
+    final dialogContext = _navigatorKey.currentContext;
+    if (!mounted || dialogContext == null || !dialogContext.mounted) {
+      return false;
+    }
+    return await showDialog<bool>(
+          context: dialogContext,
+          builder: (context) => AlertDialog(
+            title: const Text('GhostCopy updates'),
+            content: Text(message),
+            actions: [
+              if (confirm)
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Not now'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(confirm ? 'Download and install' : 'OK'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _runUpdateAction(Future<void> Function() action) async {
     try {
       await action();
@@ -1289,10 +1356,10 @@ class _MyAppState extends State<MyApp> with WindowListener {
   }
 
   Future<void> _refreshNativeTrayMenu() async {
-    final updater = locator<IAppUpdateService>();
+    final updater = locator.maybeGet<IAppUpdateService>();
     final gameMode = locator<IGameModeService>();
     await locator<ITrayService>().setUpdateAvailable(
-      available: updater.updateAvailable,
+      available: updater?.updateAvailable ?? false,
     );
     if (!mounted) return;
     await locator<ITrayService>().setContextMenu([
@@ -1306,14 +1373,15 @@ class _MyAppState extends State<MyApp> with WindowListener {
         onTap: gameMode.toggle,
       ),
       TrayMenuItem(label: 'Settings', onTap: _openSettingsFromTray),
-      const TrayMenuItem.separator(),
-      TrayMenuItem(
-        label: updater.updateAvailable
-            ? 'Update available…'
-            : 'Check for Updates…',
-        onTap: () => _runUpdateAction(updater.checkForUpdates),
-      ),
-      if (updater.isAvailable)
+      if (updater != null) const TrayMenuItem.separator(),
+      if (updater != null)
+        TrayMenuItem(
+          label: updater.updateAvailable
+              ? 'Update available…'
+              : 'Check for Updates…',
+          onTap: () => _runUpdateAction(updater.checkForUpdates),
+        ),
+      if (updater != null && updater.isAvailable)
         TrayMenuItem(
           label: 'Automatically check for updates',
           isChecked: updater.automaticChecks,
@@ -1852,7 +1920,7 @@ Future<int> _sendFileFromCommandLine(
   final exitCode = result.ok ? 0 : 1;
   final message = result.message;
   debugPrint('[SendFile] $message');
-  if (Platform.isWindows) {
+  if (Platform.isWindows || Platform.isLinux) {
     // The same Windows toast every other notification in the app uses, in the
     // corner and in the Action Center.
     //

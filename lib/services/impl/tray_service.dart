@@ -22,7 +22,9 @@ class TrayService with TrayListener implements ITrayService {
   /// vibrancy, keyboard navigation and positioning all come from AppKit. The
   /// Windows tray menu is still the custom Flutter window, because the native
   /// one there does not match the app at all.
-  bool get _usesNativeMenu => Platform.isMacOS;
+  /// Linux AppIndicator exposes its menu through the desktop shell; it does
+  /// not emit the mouse events used by our custom Windows tray window.
+  bool get _usesNativeMenu => Platform.isMacOS || Platform.isLinux;
 
   @override
   Future<void> initialize() async {
@@ -85,7 +87,7 @@ class TrayService with TrayListener implements ITrayService {
   /// Mark a pending macOS update without opening a window or taking focus.
   @override
   Future<void> setUpdateAvailable({required bool available}) async {
-    if (!_usesNativeMenu) return;
+    if (!Platform.isMacOS) return;
     await trayManager.setTitle(available ? '•' : '');
     await trayManager.setToolTip(
       available ? 'GhostCopy — Update available' : 'GhostCopy',
@@ -135,6 +137,9 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   void _openMenu() {
+    // AppIndicator opens the installed menu itself. popUpContextMenu is not
+    // implemented by the Linux plugin.
+    if (Platform.isLinux) return;
     if (_usesNativeMenu) {
       // AppKit owns placement, appearance and dismissal from here.
       unawaited(trayManager.popUpContextMenu());

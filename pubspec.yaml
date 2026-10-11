@@ -21,7 +21,7 @@ publish_to: 'none'
 # build so far therefore reported itself to Sentry as 1.0.0+5 no matter what
 # was in it. Bumped to match the other platforms; raise it for each build that
 # leaves this machine.
-version: 1.0.8+24
+version: 1.0.9+25
 
 environment:
   sdk: ^3.12.0
@@ -42,6 +42,8 @@ dependencies:
   clock: ^1.1.2
   crypto: ^3.0.3
   cryptography: ^2.7.0
+  # Linux desktop portals and logind lifecycle events.
+  dbus: ^0.7.15
 
   # Gives each device a readable name of its own. Without it every phone
   # registers as "<Platform> Device", and `devices` is uniquely indexed on
@@ -162,7 +164,8 @@ flutter:
 
 # MSIX Configuration for Windows Store packaging.
 #
-# Build with:  flutter build windows --release && dart run msix:create --store
+# Build with: installer\windows\build-store.ps1
+# The packaging script includes the CLI and patches its console execution alias.
 #
 # Everything GhostCopy registers for itself at first run is declared here
 # instead, because MSIX virtualizes the HKCU writes that would otherwise do it:
@@ -205,7 +208,7 @@ msix_config:
   # draft submission is not: delete the package in Partner Center and the same
   # version uploads again. So a rebuild during drafting can keep its number,
   # and only a released version forces a bump.
-  msix_version: 1.0.21.0
+  msix_version: 1.0.22.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
   # The Store signs the package; a signature applied here would be replaced.

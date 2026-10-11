@@ -75,7 +75,8 @@
         "End-to-end encryption with a passphrase that never leaves your devices",
         "Zero-CPU sleep while idle",
         "Automatic clipboard receive across devices",
-        "JSON, JWT and hex colour detection"
+        "JSON, JWT and hex colour detection",
+        "CLI and local MCP tools for AI assistants (companion setup required)"
       ]
     }
     </script>
@@ -92,6 +93,7 @@
   </svg>
         </a>
         <nav class="flex items-center gap-5 sm:gap-8">
+            <a href="/ai-tools" class="label hover:text-ink-4 transition-colors">CLI &amp; AI</a>
             <a href="/faq" class="label hover:text-ink-4 transition-colors hidden sm:inline">FAQ</a>
             <a href="/download" class="label !text-ink-2 hover:text-ink-4 transition-colors">Download</a>
         </nav>
@@ -321,6 +323,26 @@
                         Row&#8209;level security means your rows are unreachable from another account even if the
                         application layer got something wrong. The database enforces it, not the app.
                     </p>
+                </div>
+            </div>
+        </section>
+
+        <section class="shell py-16 sm:py-24" aria-labelledby="ai-heading">
+            <div class="rule mb-12"></div>
+            <div class="grid lg:grid-cols-2 gap-10 lg:gap-16">
+                <div>
+                    <p class="label !text-accent-text mb-5">For your terminal and your AI</p>
+                    <h2 id="ai-heading" class="font-bold text-3xl sm:text-4xl tracking-heading">Send the answer<br />straight to your phone.</h2>
+                    <p class="mt-6 text-ink-2 text-lg leading-relaxed max-w-xl">Give your assistant a way to send text, links and files to your devices. GhostCopy has a command line companion and a local MCP server, using your existing account.</p>
+                    <a href="/ai-tools" class="cta mt-7">Set up CLI &amp; AI tools <span aria-hidden="true">→</span></a>
+                    <p class="text-sm text-ink-1 mt-4">Companion setup required. Access is off until you enable it.</p>
+                </div>
+                <div class="min-w-0 bg-surface rounded-xl border border-line-strong p-6 sm:p-8 self-center">
+                    <p class="label mb-5">One command. Your other devices.</p>
+                    <pre class="overflow-x-auto font-mono text-sm text-ink-4"><code>ghostcopy send "Here's the summary" --to phone
+
+ghostcopy send-file report.pdf --to phone</code></pre>
+                    <p class="mt-6 text-ink-2 leading-relaxed">Or ask your connected AI: “Send this to my phone with GhostCopy.”</p>
                 </div>
             </div>
         </section>
