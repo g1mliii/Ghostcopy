@@ -29,31 +29,25 @@ class LinuxClipboardReader {
   /// Read using the same file/image/text/HTML priority as ClipboardService.
   Future<ClipboardContent> read() async {
     try {
-      final types = const LineSplitter()
-          .convert(utf8.decode(await _paste(['--list-types'])))
-          .toSet();
+      final types = await _listTypes();
       // Password managers mark these offers as unsuitable for history/sync.
       if (types.contains('x-kde-passwordManagerHint') ||
           types.contains('application/x-keepassxc-secret')) {
         return const ClipboardContent.empty();
       }
-      if (types.contains('text/uri-list')) {
-        final uris = utf8.decode(await _readType('text/uri-list'));
-        for (final line in const LineSplitter().convert(uris)) {
-          if (line.isEmpty || line.startsWith('#')) continue;
-          final uri = Uri.tryParse(line);
-          // Never treat remote URLs as files or open network mounts on behalf
-          // of an arbitrary clipboard producer.
-          if (uri == null || uri.scheme != 'file' || uri.host.isNotEmpty) {
-            continue;
-          }
-          final file = File(uri.toFilePath(windows: false));
-          if (!file.existsSync() ||
-              file.statSync().size > ClipboardLimits.maxFileBytes) {
-            continue;
-          }
+      for (final filePath in await _localFiles(types)) {
+        final file = File(filePath);
+        if (!file.existsSync() ||
+            file.statSync().size > ClipboardLimits.maxFileBytes) {
+          continue;
+        }
+        try {
           final bytes = await readBounded(file.openRead());
           return ClipboardContent.file(bytes, path.posix.basename(file.path));
+        } on FormatException {
+          // Grew past the limit while being read: skip it like an oversized
+          // file, and let the image or text offers still be used.
+          continue;
         }
       }
       for (final mime in ['image/png', 'image/jpeg']) {
@@ -90,17 +84,34 @@ class LinuxClipboardReader {
   /// Query the active file without loading its contents, for temp retention.
   /// Failures deliberately propagate so cleanup preserves an unknown selection.
   Future<Uri?> readFileUri() async {
-    final types = const LineSplitter().convert(
-      utf8.decode(await _paste(['--list-types'])),
-    );
-    if (!types.contains('text/uri-list')) return null;
+    final filePath = (await _localFiles(await _listTypes())).firstOrNull;
+    return filePath == null ? null : Uri.file(filePath, windows: false);
+  }
+
+  Future<Set<String>> _listTypes() async => const LineSplitter()
+      .convert(utf8.decode(await _paste(['--list-types'])))
+      .toSet();
+
+  /// Local paths in the offered uri-list. Never treats remote URLs as files or
+  /// opens network mounts on behalf of an arbitrary clipboard producer, and
+  /// skips URIs with no path form (a query, a fragment, an encoded slash).
+  Future<List<String>> _localFiles(Set<String> types) async {
+    if (!types.contains('text/uri-list')) return const [];
     final value = utf8.decode(await _readType('text/uri-list'));
+    final paths = <String>[];
     for (final line in const LineSplitter().convert(value)) {
       if (line.isEmpty || line.startsWith('#')) continue;
       final uri = Uri.tryParse(line);
-      if (uri != null && uri.scheme == 'file' && uri.host.isEmpty) return uri;
+      if (uri == null || uri.scheme != 'file' || uri.host.isNotEmpty) continue;
+      // The cases where toFilePath throws rather than returning a path.
+      if (uri.hasQuery ||
+          uri.hasFragment ||
+          uri.pathSegments.any((segment) => segment.contains('/'))) {
+        continue;
+      }
+      paths.add(uri.toFilePath(windows: false));
     }
-    return null;
+    return paths;
   }
 
   /// Enforce the size bound during streaming, including files that grow.

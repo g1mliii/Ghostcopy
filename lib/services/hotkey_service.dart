@@ -87,6 +87,15 @@ abstract class IHotkeyService {
   /// Unregister a previously registered hotkey
   Future<void> unregisterHotkey(HotKey hotkey);
 
+  /// Whether the desktop owns the binding - KDE's GlobalShortcuts portal on
+  /// Linux - so Settings offers the desktop's own shortcut editor instead of
+  /// recording a key combination itself.
+  bool get managedBySystem;
+
+  /// Open the desktop's shortcut editor. Only meaningful when
+  /// [managedBySystem].
+  Future<void> openSystemShortcutSettings();
+
   /// Dispose of the service and clean up resources
   Future<void> dispose();
 }

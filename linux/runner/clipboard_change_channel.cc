@@ -11,6 +11,8 @@ struct ClipboardChannel {
   GtkClipboard* clipboard = nullptr;
   gulong signal = 0;
   int64_t count = 0;
+  // Owner changes to anyone but this process, as Wayland's external count.
+  int64_t external_count = 0;
 
   void Changed() {
     fl_method_channel_invoke_method(channel, "changed", nullptr, nullptr, nullptr, nullptr);
@@ -32,7 +34,7 @@ void Handle(FlMethodChannel*, FlMethodCall* call, gpointer data) {
     fl_method_call_respond_not_implemented(call, nullptr);
     return;
   }
-  int64_t count = self->count;
+  int64_t count = external_only ? self->external_count : self->count;
   const bool available = self->wayland ? self->wayland->Read(&count, external_only) : true;
   g_autoptr(FlValue) value = available ? fl_value_new_int(count) : fl_value_new_null();
   fl_method_call_respond_success(call, value, nullptr);
@@ -51,10 +53,18 @@ void register_clipboard_change_channel(FlView* view) {
   } else {
     self->clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
     self->signal = g_signal_connect(self->clipboard, "owner-change",
-        G_CALLBACK(+[](GtkClipboard*, GdkEventOwnerChange*, gpointer data) {
+        G_CALLBACK(+[](GtkClipboard*, GdkEventOwnerChange* event, gpointer data) {
           auto* state = static_cast<ClipboardChannel*>(data);
           ++state->count;
-          state->Changed();
+          // GDK resolves an owner window of this process to its own GdkWindow
+          // and any other client's to a foreign one, so GhostCopy's writes are
+          // told apart synchronously, with no race against the write landing.
+          if (!event->owner ||
+              gdk_window_get_window_type(event->owner) == GDK_WINDOW_FOREIGN) {
+            ++state->external_count;
+            // Dart only watches for other apps' copies; our own wake nothing.
+            state->Changed();
+          }
         }), self);
   }
   fl_method_channel_set_method_call_handler(self->channel, Handle, self, nullptr);

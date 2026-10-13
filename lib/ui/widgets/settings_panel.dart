@@ -11,7 +11,6 @@ import '../../services/auto_start_service.dart';
 import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/hotkey_service.dart';
-import '../../services/impl/linux_hotkey_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
@@ -866,13 +865,13 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           ),
           const SizedBox(height: 10),
           if (widget.hotkeyService != null) ...[
-            if (widget.hotkeyService is LinuxHotkeyService)
+            if (widget.hotkeyService!.managedBySystem)
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Global shortcut'),
                 subtitle: const Text('Managed by KDE Plasma'),
                 trailing: TextButton(
-                  onPressed: _configureLinuxShortcut,
+                  onPressed: _configureSystemShortcut,
                   child: const Text('Configure'),
                 ),
               )
@@ -1520,9 +1519,9 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     );
   }
 
-  Future<void> _configureLinuxShortcut() async {
+  Future<void> _configureSystemShortcut() async {
     try {
-      await (widget.hotkeyService! as LinuxHotkeyService).configure();
+      await widget.hotkeyService!.openSystemShortcutSettings();
     } on Exception catch (error) {
       debugPrint('[Settings] Could not configure Linux shortcut: $error');
       if (!mounted) return;

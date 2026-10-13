@@ -74,6 +74,12 @@ class HotkeyService implements IHotkeyService {
     }
   }
 
+  @override
+  bool get managedBySystem => false;
+
+  @override
+  Future<void> openSystemShortcutSettings() async {}
+
   /// Dispose of the service and clean up resources
   @override
   Future<void> dispose() async {

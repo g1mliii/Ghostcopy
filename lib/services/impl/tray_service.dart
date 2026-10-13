@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:tray_manager/tray_manager.dart';
+import '../../utils/xdg.dart';
 import '../tray_service.dart';
 
 /// Concrete implementation of ITrayService using tray_manager package
@@ -25,7 +26,7 @@ class TrayService with TrayListener implements ITrayService {
   /// one there does not match the app at all.
   /// Linux AppIndicator exposes its menu through the desktop shell; it does
   /// not emit the mouse events used by our custom Windows tray window.
-  bool get _usesNativeMenu => Platform.isMacOS || Platform.isLinux;
+  bool get _installsNativeMenu => Platform.isMacOS || Platform.isLinux;
 
   @override
   Future<void> initialize() async {
@@ -58,7 +59,7 @@ class TrayService with TrayListener implements ITrayService {
   @override
   Future<void> setContextMenu(List<TrayMenuItem> items) async {
     // Windows drives the custom Flutter window from the click event instead.
-    if (!_usesNativeMenu) return;
+    if (!_installsNativeMenu) return;
 
     await trayManager.setContextMenu(
       Menu(
@@ -125,7 +126,7 @@ class TrayService with TrayListener implements ITrayService {
     // the app, right-click opens the menu, the way Discord, Steam and Dropbox
     // behave. Doing nothing at all, which is what it did before, reads as a
     // broken icon.
-    if (_usesNativeMenu) {
+    if (_installsNativeMenu) {
       _openMenu();
     } else {
       onLeftClick?.call();
@@ -138,13 +139,12 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   void _openMenu() {
-    // AppIndicator opens the installed menu itself. popUpContextMenu is not
-    // implemented by the Linux plugin.
-    if (Platform.isLinux) return;
-    if (_usesNativeMenu) {
+    if (Platform.isMacOS) {
       // AppKit owns placement, appearance and dismissal from here.
       unawaited(trayManager.popUpContextMenu());
-    } else {
+    } else if (!Platform.isLinux) {
+      // AppIndicator opens the installed menu itself; popUpContextMenu is not
+      // implemented by the Linux plugin.
       onRightClick?.call();
     }
   }
@@ -184,11 +184,8 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   static String? _readKdeGlobals() {
-    final configHome =
-        Platform.environment['XDG_CONFIG_HOME'] ??
-        '${Platform.environment['HOME']}/.config';
     try {
-      return File('$configHome/kdeglobals').readAsStringSync();
+      return File('${xdgConfigHome()}/kdeglobals').readAsStringSync();
     } on FileSystemException {
       return null;
     }

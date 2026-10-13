@@ -19,6 +19,8 @@ import uuid
 
 FEED = 'https://github.com/g1mliii/Ghostcopy/releases/download/linux-updates/latest.json'
 RELEASE_BASE = 'https://github.com/g1mliii/Ghostcopy/releases/download/'
+ARCHIVE_NAME = 'ghostcopy-linux-x64.tar.gz'
+USER_AGENT = {'User-Agent': 'GhostCopy-Linux-Updater/1'}
 MAX_ARCHIVE = 256 * 1024 * 1024
 MAX_EXPANDED = 1024 * 1024 * 1024
 
@@ -30,13 +32,21 @@ def version_key(version):
     return tuple(int(part) for part in match.groups())
 
 
+def release_url(version):
+    return RELEASE_BASE + 'linux-v' + version + '/' + ARCHIVE_NAME
+
+
+def sha256_file(path):
+    with path.open('rb') as source:
+        return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
 def validate_release(value):
     if not isinstance(value, dict) or value.get('schema') != 1:
         raise ValueError('Unsupported Linux update feed')
     version_key(value['version'])
     # Only immutable assets in this repository, not arbitrary installer URLs.
-    expected = RELEASE_BASE + 'linux-v' + value['version'] + '/ghostcopy-linux-x64.tar.gz'
-    if value.get('url') != expected:
+    if value.get('url') != release_url(value['version']):
         raise ValueError('Unexpected update download URL')
     if not re.fullmatch(r'[0-9a-f]{64}', value.get('sha256', '')):
         raise ValueError('Update feed is missing a SHA-256 checksum')
@@ -46,7 +56,7 @@ def validate_release(value):
 
 
 def fetch_release():
-    request = urllib.request.Request(FEED, headers={'User-Agent': 'GhostCopy-Linux-Updater/1'})
+    request = urllib.request.Request(FEED, headers=USER_AGENT)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = response.read(65537)
@@ -73,25 +83,39 @@ def check(target):
 def verify_archive(archive, release):
     if archive.stat().st_size != release['size']:
         raise ValueError('Update size did not match the release feed')
-    with archive.open('rb') as source:
-        digest = hashlib.file_digest(source, 'sha256').hexdigest()
-    if digest != release['sha256']:
+    if sha256_file(archive) != release['sha256']:
         raise ValueError('Update checksum did not match the release feed')
+
+
+def download_cache():
+    cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache')))
+    if not cache.is_absolute():
+        cache = Path.home() / '.cache'
+    return cache / 'ghostcopy/updates'
+
+
+def discard_download(directory):
+    """Each download is applied once; never remove a directory prepare did not make."""
+    directory = directory.resolve()
+    if directory.parent == download_cache().resolve() and directory.name.startswith('download-'):
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def launch(target):
+    subprocess.Popen([str(target / 'ghostcopy')], start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def prepare(target, expected):
     release = check(target)
     if not release['available'] or release['version'] != expected:
         raise ValueError('The release changed. Check for updates again.')
-    cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache')))
-    if not cache.is_absolute():
-        cache = Path.home() / '.cache'
-    cache = cache / 'ghostcopy/updates'
+    cache = download_cache()
     cache.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix='download-', dir=cache))
     try:
         archive = directory / 'update.tar.gz'
-        request = urllib.request.Request(release['url'], headers={'User-Agent': 'GhostCopy-Linux-Updater/1'})
+        request = urllib.request.Request(release['url'], headers=USER_AGENT)
         with urllib.request.urlopen(request, timeout=30) as response, archive.open('wb') as output:
             total = 0
             while chunk := response.read(1024 * 1024):
@@ -109,7 +133,9 @@ def prepare(target, expected):
 
 
 def extract_bundle(archive, destination, version):
-    """Extract regular bundle files only: no links, devices or traversal."""
+    """Extract regular bundle files only: no links, devices or traversal.
+
+    Returns the bundle-relative paths of the files written."""
     total = 0
     entries = 0
     seen = set()
@@ -130,9 +156,9 @@ def extract_bundle(archive, destination, version):
             if member.isdir():
                 output.mkdir(parents=True, exist_ok=True)
                 continue
-            if str(relative) in seen:
+            if relative.as_posix() in seen:
                 raise ValueError('Duplicate archive file')
-            seen.add(str(relative))
+            seen.add(relative.as_posix())
             total += member.size
             if total > MAX_EXPANDED or len(seen) > 20000:
                 raise ValueError('Expanded update is too large')
@@ -147,6 +173,7 @@ def extract_bundle(archive, destination, version):
         raise ValueError('Incomplete Flutter assets')
     if installed_version(destination) != version:
         raise ValueError('Bundle version does not match the release feed')
+    return sorted(seen)
 
 
 def running(target):
@@ -184,7 +211,7 @@ def apply_update(target, directory, wait_pid=None, restart=False):
             staging = Path(staging)
             fresh = staging / 'bundle'
             fresh.mkdir()
-            extract_bundle(archive, fresh, release['version'])
+            bundle_files = extract_bundle(archive, fresh, release['version'])
             if wait_pid:
                 (directory / 'ready').write_text('ready')
             deadline = time.monotonic() + 120
@@ -209,10 +236,7 @@ def apply_update(target, directory, wait_pid=None, restart=False):
                         output.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(path, output)
             # Count only new package files, never newly preserved user files.
-            with tarfile.open(archive, 'r:gz') as contents:
-                new_files = ['lib/ghostcopy/' + '/'.join(PurePosixPath(m.name).parts[2:])
-                             for m in contents if m.isfile() and
-                             PurePosixPath(m.name).parts[:2] == ('ghostcopy-linux-x64', 'bundle')]
+            new_files = ['lib/ghostcopy/' + name for name in bundle_files]
             external = [name for name in owned if not name.startswith('lib/ghostcopy/')]
             (fresh / 'install-manifest.json').write_text(json.dumps(external + new_files))
             backup = target.with_name('.ghostcopy-backup-' + uuid.uuid4().hex)
@@ -222,9 +246,12 @@ def apply_update(target, directory, wait_pid=None, restart=False):
             except OSError:
                 backup.rename(target)
                 raise
+            # One rollback copy is enough; each would otherwise stay forever.
+            for old in target.parent.glob('.ghostcopy-backup-*'):
+                if old != backup and old.is_dir() and not old.is_symlink():
+                    shutil.rmtree(old, ignore_errors=True)
     if restart:
-        subprocess.Popen([str(target / 'ghostcopy')], start_new_session=True,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        launch(target)
     return {'installed': release['version'], 'backup': str(backup)}
 
 
@@ -251,9 +278,11 @@ def main():
         except Exception as error:
             (cache / 'last-update.json').write_text(json.dumps({'error': str(error)}))
             if args.restart and not running(target):
-                subprocess.Popen([str(target / 'ghostcopy')], start_new_session=True,
-                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                launch(target)
             raise
+        finally:
+            # A retry prepares a fresh download, so this one is never reused.
+            discard_download(args.apply)
     elif args.prepare:
         result = prepare(target, args.prepare)
     else:

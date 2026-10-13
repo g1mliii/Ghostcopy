@@ -1026,14 +1026,15 @@ class _MyAppState extends State<MyApp> with WindowListener {
       if (Platform.isLinux) {
         locator.registerSingleton<IAppUpdateService>(
           LinuxAppUpdateService(
-            confirmInstall: (version) => _showLinuxUpdateDialog(
-              'Install GhostCopy $version? The download will be verified, '
-              'then GhostCopy will close, update and reopen. The CLI updates too.',
-              confirm: true,
+            confirmInstall: (version) => _showUpdateDialog(
+              title: 'GhostCopy updates',
+              message:
+                  'Install GhostCopy $version? The download will be verified, '
+                  'then GhostCopy will close, update and reopen. The CLI updates too.',
+              confirmText: 'Download and install',
             ),
-            showMessage: (message) async {
-              await _showLinuxUpdateDialog(message);
-            },
+            showMessage: (message) =>
+                _showUpdateDialog(title: 'GhostCopy updates', message: message),
             showDownloading: () => locator<INotificationService>().showToast(
               message: 'Downloading update. GhostCopy will restart when ready.',
               duration: const Duration(seconds: 8),
@@ -1042,17 +1043,15 @@ class _MyAppState extends State<MyApp> with WindowListener {
           ),
         );
       }
-      if (Platform.isMacOS || Platform.isLinux) {
-        locator<IAppUpdateService>().addListener(_onUpdaterStateChanged);
-        unawaited(locator<IAppUpdateService>().initialize());
-      }
       // macOS receives shared files from Finder.
       if (Platform.isMacOS) {
         unawaited(_listenForSharedFiles(locator<IAuthService>()));
       }
-      // macOS and Linux use native tray menus. Rebuild when Game Mode changes
-      // so the checkmark matches its current state.
       if (Platform.isMacOS || Platform.isLinux) {
+        locator<IAppUpdateService>().addListener(_onUpdaterStateChanged);
+        unawaited(locator<IAppUpdateService>().initialize());
+        // Native tray menus. Rebuild when Game Mode changes so the checkmark
+        // matches its current state.
         unawaited(_refreshNativeTrayMenu());
         _gameModeMenuSub = locator<IGameModeService>().isActiveStream.listen(
           (_) => unawaited(_refreshNativeTrayMenu()),
@@ -1301,34 +1300,41 @@ class _MyAppState extends State<MyApp> with WindowListener {
     unawaited(_refreshNativeTrayMenu());
   }
 
-  Future<bool> _showLinuxUpdateDialog(
-    String message, {
-    bool confirm = false,
+  /// Show the Spotlight and an updater dialog over it. With [confirmText] it
+  /// asks, and returns whether the user agreed; otherwise it informs.
+  Future<bool> _showUpdateDialog({
+    required String title,
+    required String message,
+    String? confirmText,
   }) async {
     await locator<IWindowService>().showSpotlight();
     final dialogContext = _navigatorKey.currentContext;
     if (!mounted || dialogContext == null || !dialogContext.mounted) {
       return false;
     }
-    return await showDialog<bool>(
-          context: dialogContext,
-          builder: (context) => AlertDialog(
-            title: const Text('GhostCopy updates'),
-            content: Text(message),
-            actions: [
-              if (confirm)
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Not now'),
-                ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: Text(confirm ? 'Download and install' : 'OK'),
-              ),
-            ],
+    if (confirmText != null) {
+      return Adaptive.confirm(
+        dialogContext,
+        title: title,
+        message: message,
+        confirmText: confirmText,
+        cancelText: 'Not now',
+      );
+    }
+    await showDialog<void>(
+      context: dialogContext,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
           ),
-        ) ??
-        false;
+        ],
+      ),
+    );
+    return true;
   }
 
   Future<void> _runUpdateAction(Future<void> Function() action) async {
@@ -1336,21 +1342,9 @@ class _MyAppState extends State<MyApp> with WindowListener {
       await action();
     } on PlatformException catch (error) {
       debugPrint('[AppUpdateService] Update action failed: ${error.message}');
-      await locator<IWindowService>().showSpotlight();
-      final dialogContext = _navigatorKey.currentContext;
-      if (!mounted || dialogContext == null || !dialogContext.mounted) return;
-      await showDialog<void>(
-        context: dialogContext,
-        builder: (context) => AlertDialog(
-          title: const Text('Unable to check for updates'),
-          content: Text(error.message ?? 'Please try again later.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
+      await _showUpdateDialog(
+        title: 'Unable to check for updates',
+        message: error.message ?? 'Please try again later.',
       );
     }
   }
@@ -1379,22 +1373,24 @@ class _MyAppState extends State<MyApp> with WindowListener {
         onTap: gameMode.toggle,
       ),
       TrayMenuItem(label: 'Settings', onTap: _openSettingsFromTray),
-      if (updater != null) const TrayMenuItem.separator(),
-      if (updater != null)
+      if (updater != null) ...[
+        const TrayMenuItem.separator(),
         TrayMenuItem(
           label: updater.updateAvailable
               ? 'Update available…'
               : 'Check for Updates…',
           onTap: () => _runUpdateAction(updater.checkForUpdates),
         ),
-      if (updater != null && updater.isAvailable)
-        TrayMenuItem(
-          label: 'Automatically check for updates',
-          isChecked: updater.automaticChecks,
-          onTap: () => _runUpdateAction(
-            () => updater.setAutomaticChecks(enabled: !updater.automaticChecks),
+        if (updater.isAvailable)
+          TrayMenuItem(
+            label: 'Automatically check for updates',
+            isChecked: updater.automaticChecks,
+            onTap: () => _runUpdateAction(
+              () =>
+                  updater.setAutomaticChecks(enabled: !updater.automaticChecks),
+            ),
           ),
-        ),
+      ],
       const TrayMenuItem.separator(),
       TrayMenuItem(label: 'Quit GhostCopy', onTap: _handleQuit),
     ]);

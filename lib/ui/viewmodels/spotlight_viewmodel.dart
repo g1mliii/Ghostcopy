@@ -231,12 +231,6 @@ class SpotlightViewModel extends ChangeNotifier {
   @visibleForTesting
   bool get hasDraft => _isDraft;
 
-  bool _draftRestored = false;
-
-  /// The opening found a kept draft instead of auto-pasting - the cue for
-  /// "Paste clipboard instead".
-  bool get draftRestored => _draftRestored;
-
   /// Where a staged file came from, so a hide can drop its bytes and the
   /// next opening read it again. The name and type are the ones staging
   /// settled on: a picker can hand over a cache copy whose path has a
@@ -297,7 +291,6 @@ class SpotlightViewModel extends ChangeNotifier {
 
   void _clearDraft() {
     _isDraft = false;
-    _draftRestored = false;
     _draftFile = null;
     _hiddenAt = null;
   }
@@ -420,7 +413,6 @@ class SpotlightViewModel extends ChangeNotifier {
       // HTML would be what goes out, without the edit.
       _clipboardContent = null;
     }
-    final wasRestored = _draftRestored;
     final wasRestoring = isRestoringDraft;
     if (newContent.trim().isEmpty && _clipboardContent == null) {
       _clearDraft();
@@ -434,15 +426,11 @@ class SpotlightViewModel extends ChangeNotifier {
         _hiddenAt = null;
       }
       _isDraft = true;
-      _draftRestored = false;
     }
     // The detector notifies only when the type changes, which an edit to
-    // plain text does not; without this the "Kept from before" row stays,
-    // offering to paste over what was just typed, and Send stays busy on a
-    // file that is no longer coming.
-    if (wasRestored != _draftRestored ||
-        wasRestoring != isRestoringDraft ||
-        payload != _clipboardContent) {
+    // plain text does not; without this Send stays busy on a file that is
+    // no longer coming.
+    if (wasRestoring != isRestoringDraft || payload != _clipboardContent) {
       notifyListeners();
     }
     _debouncedDetectContentType();
@@ -450,7 +438,7 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Stage an image, file or HTML payload as auto-paste would: not a draft,
   /// so the next hide releases it. The screen stages through
-  /// [populateFromClipboard] and [setFileContent]; this is for tests.
+  /// [setFileContent] and an opening's clipboard read; this is for tests.
   @visibleForTesting
   void updateClipboardContent(ClipboardContent? content) {
     _clipboardContent = content;
@@ -543,13 +531,8 @@ class SpotlightViewModel extends ChangeNotifier {
     if (_visibleState != before) notifyListeners();
   }
 
-  Object get _visibleState => (
-    _content,
-    _clipboardContent,
-    _draftRestored,
-    _detectedContentType,
-    _accountOfferVisible,
-  );
+  Object get _visibleState =>
+      (_content, _clipboardContent, _detectedContentType, _accountOfferVisible);
 
   /// Give back what a hidden window has no use for. Auto-paste's content
   /// goes entirely - the next opening reads the clipboard again anyway. A
@@ -615,7 +598,6 @@ class SpotlightViewModel extends ChangeNotifier {
       if (revision != _composerRevision) return;
       if (!expired && (!reading || file != null)) {
         if (file != null) _clipboardContent = file;
-        _draftRestored = true;
         notifyListeners();
         return;
       }
@@ -712,21 +694,21 @@ class SpotlightViewModel extends ChangeNotifier {
   /// Populate content from system clipboard
   /// Returns ClipboardContent if there's something to paste
   ///
-  /// Leaves a draft alone unless [force]d by "Paste clipboard instead".
-  Future<ClipboardContent?> populateFromClipboard({bool force = false}) async {
-    if (_isDraft && !force) return null;
+  /// Leaves a draft alone.
+  Future<ClipboardContent?> populateFromClipboard() async {
+    if (_isDraft) return null;
     final revision = _composerRevision;
     try {
       final content = await _clipboardService.read();
-      // The user typed, staged or cleared something during the read - forced
-      // or not, what they did since is newer than this clipboard.
+      // The user typed, staged or cleared something during the read: what
+      // they did since is newer than this clipboard.
       if (revision != _composerRevision) return null;
       // An empty clipboard replaces nothing, a draft included.
       if (content.isEmpty) return null;
-      if (force) _clearDraft();
       _markEdited();
-      // What the replaced content was detected as - a forced paste replaces
-      // a draft that may have been a JWT or a colour. Only text is detected,
+      // What the replaced content was detected as - a second focus re-pastes
+      // over auto-pasted text that may have been a JWT or a colour. Only
+      // text is detected,
       // and it detects again below, so its preview is left to be replaced
       // rather than blinking out for the debounce.
       if (content.hasImage || content.hasFile || content.hasHtml) {
@@ -970,7 +952,6 @@ class SpotlightViewModel extends ChangeNotifier {
     _clipboardContent = content;
     _content = displayText;
     _isDraft = true;
-    _draftRestored = false;
     _draftFile = sourcePath == null
         ? null
         : (

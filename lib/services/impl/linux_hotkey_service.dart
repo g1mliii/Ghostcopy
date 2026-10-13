@@ -311,8 +311,12 @@ class LinuxHotkeyService implements IHotkeyService {
     }
   }
 
+  @override
+  bool get managedBySystem => true;
+
   /// Let KDE display the real binding, including changes made outside the app.
-  Future<void> configure() async {
+  @override
+  Future<void> openSystemShortcutSettings() async {
     if (_bindings.isEmpty && _lastRequested != null && _lastCallback != null) {
       await registerHotkey(_lastRequested!, _lastCallback!);
       return;

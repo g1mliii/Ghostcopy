@@ -895,11 +895,13 @@ class ClipboardSyncService implements IClipboardSyncService {
     _writeEpoch++;
     try {
       await write();
+      // Linux's counter leaves our own writes out natively, and they reach it
+      // asynchronously, so a value read here could predate the write or
+      // include a user copy made during it. There is nothing to absorb.
+      if (_usesExternalActivityCounter) return;
       final count = await _readClipboardChangeCount();
       if (count != null) {
-        // Wayland's activity counter excludes our marked selections. Never
-        // absorb it here: a user change during this write must remain visible.
-        if (!_usesExternalActivityCounter) _activityChangeCount = count;
+        _activityChangeCount = count;
         // Auto-send's gate too: the write's content is already recorded, so
         // re-reading it - a whole image or file - on the next tick is waste.
         _lastClipboardChangeCount = count;
@@ -982,22 +984,20 @@ class ClipboardSyncService implements IClipboardSyncService {
   static bool get _counterPushesChanges =>
       debugCounterPushesChanges ?? (Platform.isWindows || Platform.isLinux);
 
-  /// Tests can exercise Wayland's counter, which excludes our MIME-marked writes.
+  /// Whether the counter leaves out GhostCopy's own writes. Linux's does:
+  /// Wayland by the MIME marker on our offers, X11 by the owner window being
+  /// ours. Both gate auto-send and date user copies with it.
   @visibleForTesting
   static bool? debugUsesExternalActivityCounter;
 
   static bool get _usesExternalActivityCounter =>
-      debugUsesExternalActivityCounter ??
-      (Platform.isLinux &&
-          (Platform.environment['WAYLAND_DISPLAY']?.isNotEmpty ?? false));
+      debugUsesExternalActivityCounter ?? Platform.isLinux;
 
-  Future<int?> _readClipboardChangeCount({bool activity = false}) async {
+  Future<int?> _readClipboardChangeCount() async {
     if (!_hasChangeCounter) return null;
     try {
       return await _clipboardChangeChannel.invokeMethod<int>(
-        activity && _usesExternalActivityCounter
-            ? 'activityChangeCount'
-            : 'changeCount',
+        _usesExternalActivityCounter ? 'activityChangeCount' : 'changeCount',
       );
     } on PlatformException catch (e) {
       debugPrint('[ClipboardSyncService] changeCount unavailable: $e');
@@ -1489,7 +1489,7 @@ class ClipboardSyncService implements IClipboardSyncService {
         continue;
       }
       final epoch = _writeEpoch;
-      final count = await _readClipboardChangeCount(activity: true);
+      final count = await _readClipboardChangeCount();
       if (count == null || _isDisposed) return;
       // A write started while the counter was read: that reading may predate
       // it, and storing it would undo the write's absorb. Read again.

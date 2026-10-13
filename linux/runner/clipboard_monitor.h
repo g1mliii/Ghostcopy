@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <string>
 
 #include "wlr-data-control-client.h"
 
@@ -16,6 +17,7 @@
 // Wayland copies are visible even while the Flutter window is unfocused.
 class ClipboardMonitor {
  public:
+  // [changed] runs when the external count moves, never for our own offers.
   explicit ClipboardMonitor(std::function<void()> changed);
   ~ClipboardMonitor();
   ClipboardMonitor(const ClipboardMonitor&) = delete;
@@ -28,6 +30,10 @@ class ClipboardMonitor {
  private:
   void Connect();
   void Disconnect();
+  // Re-arms the fd watch, adding writability only under backpressure.
+  void Watch(bool writable);
+  // A dropped connection reconnects by itself: nothing else may poll.
+  void ScheduleReconnect();
   void Flush();
   bool Drain();
   void BindDevice();
@@ -42,6 +48,8 @@ class ClipboardMonitor {
   void ReplaceOffer(zwlr_data_control_offer_v1** current, zwlr_data_control_offer_v1* next);
 
   std::function<void()> changed_;
+  // MIME prefix that marks this process's own selections.
+  const std::string own_prefix_;
   wl_display* display_ = nullptr;
   wl_registry* registry_ = nullptr;
   wl_seat* seat_ = nullptr;
@@ -56,6 +64,7 @@ class ClipboardMonitor {
   uint32_t seat_name_ = 0;
   uint32_t manager_name_ = 0;
   guint source_ = 0;
+  guint reconnect_source_ = 0;
   int64_t count_ = 0;
   int64_t external_count_ = 0;
   gint64 retry_at_ = 0;

@@ -11,9 +11,13 @@
 #include <utility>
 
 ClipboardMonitor::ClipboardMonitor(std::function<void()> changed)
-    : changed_(std::move(changed)) {}
+    : changed_(std::move(changed)),
+      own_prefix_("application/x-ghostcopy-owner-" + std::to_string(getpid()) + "-") {}
 
-ClipboardMonitor::~ClipboardMonitor() { Disconnect(); }
+ClipboardMonitor::~ClipboardMonitor() {
+  Disconnect();
+  if (reconnect_source_) g_source_remove(reconnect_source_);
+}
 
 bool ClipboardMonitor::Read(int64_t* count, bool external_only) {
   if (!display_ && g_get_monotonic_time() >= retry_at_) Connect();
@@ -44,17 +48,35 @@ bool ClipboardMonitor::Drain() {
 void ClipboardMonitor::Connect() {
   retry_at_ = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
   display_ = wl_display_connect(nullptr);
-  if (!display_) return;
+  if (!display_) {
+    ScheduleReconnect();
+    return;
+  }
   failed_ = false;
   registry_ = wl_display_get_registry(display_);
   static const wl_registry_listener listener = {Global, GlobalRemoved};
   wl_registry_add_listener(registry_, &listener, this);
   // No blocking roundtrips on the GTK thread. The counter stays unavailable
   // until the compositor delivers its initial selection.
-  source_ = g_unix_fd_add(wl_display_get_fd(display_),
-                         static_cast<GIOCondition>(G_IO_IN | G_IO_ERR | G_IO_HUP),
-                         Dispatch, this);
+  Watch(false);
   Flush();
+}
+
+void ClipboardMonitor::Watch(bool writable) {
+  if (source_) g_source_remove(source_);
+  const auto condition = G_IO_IN | G_IO_ERR | G_IO_HUP | (writable ? G_IO_OUT : 0);
+  source_ = g_unix_fd_add(wl_display_get_fd(display_),
+                          static_cast<GIOCondition>(condition), Dispatch, this);
+}
+
+void ClipboardMonitor::ScheduleReconnect() {
+  if (reconnect_source_) return;
+  reconnect_source_ = g_timeout_add_seconds(30, +[](gpointer data) -> gboolean {
+    auto* self = static_cast<ClipboardMonitor*>(data);
+    self->reconnect_source_ = 0;
+    if (!self->display_) self->Connect();
+    return G_SOURCE_REMOVE;
+  }, this);
 }
 
 void ClipboardMonitor::Disconnect() {
@@ -77,6 +99,7 @@ void ClipboardMonitor::Disconnect() {
   display_ = nullptr;
   seat_name_ = manager_name_ = 0;
   retry_at_ = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+  ScheduleReconnect();
 }
 
 void ClipboardMonitor::Flush() {
@@ -88,12 +111,7 @@ void ClipboardMonitor::Flush() {
   }
   // Watch writability only under backpressure; otherwise it would spin while
   // idle. All use of this private connection stays on the GTK thread.
-  if (result < 0) {
-    if (source_) g_source_remove(source_);
-    source_ = g_unix_fd_add(wl_display_get_fd(display_),
-                           static_cast<GIOCondition>(G_IO_IN | G_IO_OUT | G_IO_ERR | G_IO_HUP),
-                           Dispatch, this);
-  }
+  if (result < 0) Watch(true);
 }
 
 gboolean ClipboardMonitor::Dispatch(gint, GIOCondition condition, gpointer data) {
@@ -106,9 +124,8 @@ gboolean ClipboardMonitor::Dispatch(gint, GIOCondition condition, gpointer data)
     return G_SOURCE_REMOVE;
   }
   if (condition & G_IO_OUT) {
-    g_source_remove(self->source_);
-    self->source_ = g_unix_fd_add(wl_display_get_fd(self->display_),
-        static_cast<GIOCondition>(G_IO_IN | G_IO_ERR | G_IO_HUP), Dispatch, self);
+    // Watch() removes this very source, so tell the main loop it is gone.
+    self->Watch(false);
     self->Flush();
     return G_SOURCE_REMOVE;
   }
@@ -117,7 +134,7 @@ gboolean ClipboardMonitor::Dispatch(gint, GIOCondition condition, gpointer data)
 }
 
 void ClipboardMonitor::Global(void* data, wl_registry* registry, uint32_t name,
-                              const char* interface, uint32_t version) {
+                              const char* interface, uint32_t /*version*/) {
   auto* self = static_cast<ClipboardMonitor*>(data);
   if (strcmp(interface, wl_seat_interface.name) == 0 && !self->seat_) {
     self->seat_ = static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, 1));
@@ -126,8 +143,10 @@ void ClipboardMonitor::Global(void* data, wl_registry* registry, uint32_t name,
     wl_seat_add_listener(self->seat_, &seat_listener, self);
     self->seat_name_ = name;
   } else if (strcmp(interface, zwlr_data_control_manager_v1_interface.name) == 0 && !self->manager_) {
+    // Version 1: version 2 adds primary-selection events, and every text
+    // highlight in any app would wake this thread for an offer never used.
     self->manager_ = static_cast<zwlr_data_control_manager_v1*>(wl_registry_bind(
-        registry, name, &zwlr_data_control_manager_v1_interface, std::min(version, 2u)));
+        registry, name, &zwlr_data_control_manager_v1_interface, 1));
     self->manager_name_ = name;
   }
   self->BindDevice();
@@ -152,7 +171,7 @@ void ClipboardMonitor::BindDevice() {
 void ClipboardMonitor::Mime(void* data, zwlr_data_control_offer_v1* offer, const char* mime) {
   // MIME offers precede selection events. No payload request or timing grace
   // period is needed, and a real user copy immediately after ours still counts.
-  const auto prefix = "application/x-ghostcopy-owner-" + std::to_string(getpid()) + "-";
+  const auto& prefix = static_cast<ClipboardMonitor*>(data)->own_prefix_;
   if (strncmp(mime, prefix.c_str(), prefix.size()) != 0) return;
   const char* serial = mime + prefix.size();
   if (*serial < '0' || *serial > '9') return;
@@ -204,8 +223,9 @@ void ClipboardMonitor::Selection(void* data, zwlr_data_control_device_v1*,
   } else {
     // A clipboard manager replaying an old GhostCopy item is a user copy.
     ++self->external_count_;
+    // Dart only watches for other apps' copies; our own wake nothing.
+    self->changed_();
   }
-  self->changed_();
 }
 
 void ClipboardMonitor::Primary(void* data, zwlr_data_control_device_v1*,

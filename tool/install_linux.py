@@ -138,7 +138,13 @@ def uninstall(prefix: Path) -> None:
     manifest = prefix / 'lib/ghostcopy/install-manifest.json'
     entries = json.loads(manifest.read_text(encoding='utf-8'))
     entries.append('lib/ghostcopy/install-manifest.json')
-    remove_owned(prefix, owned_paths(prefix, entries))
+    paths = owned_paths(prefix, entries)
+    # The updater's rollback copy is a whole previous install of ours.
+    for backup in (prefix / 'lib').glob('.ghostcopy-backup-*'):
+        if backup.is_dir() and not backup.is_symlink():
+            shutil.rmtree(backup)
+    paths.append(prefix / 'lib/.ghostcopy-update.lock')
+    remove_owned(prefix, paths)
     # Remove the app's own login entry, if launch_at_startup created it.
     if sys.platform == 'linux' and prefix == Path.home() / '.local':
         config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))

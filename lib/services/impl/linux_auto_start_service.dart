@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import '../../utils/xdg.dart';
 import '../auto_start_service.dart';
 
 /// XDG login startup with quoted paths and XDG_CONFIG_HOME support.
@@ -9,7 +10,7 @@ class LinuxAutoStartService implements IAutoStartService {
   LinuxAutoStartService({String? configDirectory, String? executable})
     : _entry = File(
         path.join(
-          configDirectory ?? _configDirectory,
+          configDirectory ?? xdgConfigHome(),
           'autostart',
           'ghostcopy.desktop',
         ),
@@ -18,12 +19,6 @@ class LinuxAutoStartService implements IAutoStartService {
 
   final File _entry;
   final String _executable;
-
-  static String get _configDirectory {
-    final override = Platform.environment['XDG_CONFIG_HOME'];
-    if (override != null && path.isAbsolute(override)) return override;
-    return path.join(Platform.environment['HOME']!, '.config');
-  }
 
   /// Encode one Exec argument through both desktop-entry escaping layers.
   static String quoteExec(String value) {

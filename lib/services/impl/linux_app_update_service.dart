@@ -87,10 +87,7 @@ class LinuxAppUpdateService extends IAppUpdateService {
   Future<Map<String, Object?>> _run(List<String> arguments) async {
     final runner = runUpdater;
     if (runner != null) return runner(arguments);
-    final process = await Process.start('python3', [
-      '$_directory/linux_update.py',
-      ...arguments,
-    ]);
+    final process = await Process.start('python3', _updater(arguments));
     try {
       final outputs = await Future.wait<Object>([
         process.stdout.transform(utf8.decoder).join(),
@@ -113,15 +110,27 @@ class LinuxAppUpdateService extends IAppUpdateService {
     }
   }
 
+  List<String> _updater(List<String> arguments) => [
+    '$_directory/linux_update.py',
+    ...arguments,
+  ];
+
+  /// Ask the feed, and redraw only when the answer changed.
+  Future<Map<String, Object?>> _check() async {
+    final result = await _run(['--check']);
+    final available = result['available'] == true;
+    if (!_disposed && available != _updateAvailable) {
+      _updateAvailable = available;
+      notifyListeners();
+    }
+    return result;
+  }
+
   Future<void> _backgroundCheck() async {
     if (_busy || _disposed) return;
     _busy = true;
     try {
-      final result = await _run(['--check']);
-      if (!_disposed) {
-        _updateAvailable = result['available'] == true;
-        notifyListeners();
-      }
+      await _check();
     } on Exception catch (error) {
       debugPrint('[LinuxUpdater] Background check unavailable: $error');
     } finally {
@@ -145,10 +154,8 @@ class LinuxAppUpdateService extends IAppUpdateService {
     }
     _busy = true;
     try {
-      final result = await _run(['--check']);
+      final result = await _check();
       if (_disposed) return;
-      _updateAvailable = result['available'] == true;
-      notifyListeners();
       if (!_updateAvailable) {
         await showMessage('GhostCopy ${result['current']} is up to date.');
         return;
@@ -159,14 +166,11 @@ class LinuxAppUpdateService extends IAppUpdateService {
       final prepared = await _run(['--prepare', version]);
       if (_disposed) return;
       final directory = prepared['directory']! as String;
-      await Process.start('python3', [
-        '$_directory/linux_update.py',
-        '--apply',
-        directory,
-        '--wait-pid',
-        '$pid',
-        '--restart',
-      ], mode: ProcessStartMode.detached);
+      await Process.start(
+        'python3',
+        _updater(['--apply', directory, '--wait-pid', '$pid', '--restart']),
+        mode: ProcessStartMode.detached,
+      );
       // The helper validates and stages before signalling that we can quit.
       final ready = File('$directory/ready');
       final deadline = DateTime.now().add(const Duration(seconds: 30));

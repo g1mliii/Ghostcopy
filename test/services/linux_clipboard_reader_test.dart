@@ -47,6 +47,15 @@ void main() {
     expect(result.html, '<b>Hello</b>');
   });
 
+  test('a file URI with no path form falls through to text', () async {
+    final reader = readerFor({
+      'text/uri-list': utf8.encode('file:///tmp/a?x\nfile:///a%2Fb\n'),
+      'text/plain': utf8.encode('fallback'),
+    });
+    expect((await reader.read()).text, 'fallback');
+    expect(await reader.readFileUri(), isNull);
+  });
+
   test('password-manager offers are not imported', () async {
     final result = await readerFor({
       'x-kde-passwordManagerHint': utf8.encode('secret'),

@@ -157,7 +157,7 @@ void main() {
           );
           await portal.activate(portal.sessions.first.path);
           await activated.future.timeout(const Duration(seconds: 2));
-          await service.configure();
+          await service.openSystemShortcutSettings();
           expect(portal.configureCalled, isTrue);
           portal.denyNext = true;
           await expectLater(

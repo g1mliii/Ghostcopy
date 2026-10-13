@@ -1233,7 +1233,6 @@ void main() {
 
         await reopen();
         expect(composer.content, 'half a message');
-        expect(composer.draftRestored, isTrue);
         verifyNever(() => clipboard.read());
       },
     );
@@ -1290,7 +1289,6 @@ void main() {
         verifyNever(anyFileInsert);
         expect(clipboardSyncService.lastManualSendContent, isNull);
         expect(composer.hasDraft, isFalse);
-        expect(composer.draftRestored, isFalse);
         expect(composer.clipboardContent, isNull);
         expect(composer.content, isEmpty);
         expect(composer.errorMessage, contains('notes.txt'));
@@ -1371,30 +1369,6 @@ void main() {
       },
     );
 
-    draftTest('Paste clipboard instead replaces the draft', () async {
-      clipboardHolds('from clipboard');
-      composer
-        ..updateContent('half a message')
-        ..onSpotlightHidden();
-      await reopen();
-
-      await composer.populateFromClipboard(force: true);
-
-      expect(composer.content, 'from clipboard');
-      expect(composer.hasDraft, isFalse);
-      expect(composer.draftRestored, isFalse);
-    });
-
-    draftTest('an empty clipboard does not replace the draft', () async {
-      clipboardHolds('');
-      composer.updateContent('half a message');
-
-      await composer.populateFromClipboard(force: true);
-
-      expect(composer.content, 'half a message');
-      expect(composer.hasDraft, isTrue);
-    });
-
     draftTest('clearing the composer ends the draft', () async {
       clipboardHolds('from clipboard');
       stage([1, 2, 3]);
@@ -1450,20 +1424,6 @@ void main() {
       await reopen();
 
       expect(composer.content, 'from clipboard');
-    });
-
-    draftTest('a forced paste gives way to what was typed during it', () async {
-      final read = Completer<ClipboardContent>();
-      when(() => clipboard.read()).thenAnswer((_) => read.future);
-      composer.updateContent('first');
-
-      final pasting = composer.populateFromClipboard(force: true);
-      composer.updateContent('typed meanwhile');
-      read.complete(ClipboardContent.text('from clipboard'));
-      await pasting;
-
-      expect(composer.content, 'typed meanwhile');
-      expect(composer.hasDraft, isTrue);
     });
 
     draftTest('an expired draft takes its previews with it', () async {
@@ -1624,29 +1584,12 @@ void main() {
       composer.onSpotlightHidden();
 
       await composer.restoreOrPopulateComposer();
-      expect(composer.draftRestored, isFalse);
       verifyNever(() => clipboard.read());
 
       // The ten minutes were not reset by the restore that did not happen.
       now = now.add(SpotlightViewModel.draftLifetime);
       await reopen();
       expect(composer.content, 'from clipboard');
-    });
-
-    draftTest('editing a restored draft takes the hint away', () async {
-      composer
-        ..updateContent('half a message')
-        ..onSpotlightHidden();
-      await reopen();
-      expect(composer.draftRestored, isTrue);
-
-      var notified = 0;
-      composer
-        ..addListener(() => notified++)
-        ..updateContent('half a message, finished');
-
-      expect(composer.draftRestored, isFalse);
-      expect(notified, 1);
     });
 
     draftTest('an edited HTML preview sends as the edited text', () async {
@@ -1697,7 +1640,6 @@ void main() {
 
       expect(composer.clipboardContent, isNull);
       expect(composer.content, isEmpty);
-      expect(composer.draftRestored, isFalse);
     });
 
     draftTest(
@@ -1707,8 +1649,11 @@ void main() {
         stage([1, 2, 3]);
         composer.onSpotlightHidden();
         var restored = 0;
+        Uint8List? installed;
         composer.addListener(() {
-          if (composer.draftRestored) restored++;
+          final bytes = composer.clipboardContent?.fileBytes;
+          if (bytes != null && !identical(bytes, installed)) restored++;
+          installed = bytes;
         });
 
         // A remount's focus and showSpotlight's, both for one opening.
@@ -1719,32 +1664,6 @@ void main() {
 
         expect(composer.clipboardContent?.fileBytes, [1, 2, 3]);
         expect(restored, 1);
-      },
-    );
-
-    draftTest(
-      'Paste clipboard instead takes the old preview with the draft',
-      () async {
-        when(() => transformerService.detectContentType('#ff0000')).thenAnswer(
-          (_) async => const ContentDetectionResult(
-            type: TransformerContentType.hexColor,
-          ),
-        );
-        when(() => clipboard.read()).thenAnswer(
-          (_) async =>
-              ClipboardContent.image(Uint8List.fromList([9, 9]), 'image/png'),
-        );
-        composer.updateContent('#ff0000');
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-        expect(
-          composer.detectedContentType?.type,
-          TransformerContentType.hexColor,
-        );
-
-        await composer.populateFromClipboard(force: true);
-
-        expect(composer.clipboardContent?.hasImage, isTrue);
-        expect(composer.detectedContentType, isNull);
       },
     );
 

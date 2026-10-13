@@ -2,7 +2,6 @@
 """Prepare a Linux test/release archive and its update feed. Never publishes."""
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -11,7 +10,7 @@ import tarfile
 import tempfile
 import xml.etree.ElementTree as ET
 
-from linux_update import RELEASE_BASE, validate_release, version_key
+from linux_update import ARCHIVE_NAME, release_url, sha256_file, validate_release, version_key
 
 
 def prepare_bundle(bundle):
@@ -33,7 +32,7 @@ def prepare_bundle(bundle):
 def package(bundle, output):
     version = prepare_bundle(bundle)
     output.mkdir(parents=True, exist_ok=True)
-    archive = output / 'ghostcopy-linux-x64.tar.gz'
+    archive = output / ARCHIVE_NAME
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix='ghostcopy-package-') as directory:
         package_root = Path(directory) / 'ghostcopy-linux-x64'
@@ -43,15 +42,13 @@ def package(bundle, output):
         shutil.copy2(root / 'docs/linux-cachyos.md', package_root / 'README.md')
         with tarfile.open(archive, 'w:gz', dereference=True) as target:
             target.add(package_root, arcname=package_root.name)
-    with archive.open('rb') as source:
-        digest = hashlib.file_digest(source, 'sha256').hexdigest()
+    digest = sha256_file(archive)
     feed = validate_release({
         'schema': 1, 'version': version, 'sha256': digest,
-        'size': archive.stat().st_size,
-        'url': RELEASE_BASE + 'linux-v' + version + '/ghostcopy-linux-x64.tar.gz',
+        'size': archive.stat().st_size, 'url': release_url(version),
     })
     (output / 'latest.json').write_text(json.dumps(feed, indent=2) + '\n')
-    (output / 'ghostcopy-linux-x64.tar.gz.sha256').write_text(digest + '  ' + archive.name + '\n')
+    (output / (ARCHIVE_NAME + '.sha256')).write_text(digest + '  ' + archive.name + '\n')
     print(f'Prepared {archive} for linux-v{version}. Nothing was published.')
 
 

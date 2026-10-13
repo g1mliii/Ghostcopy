@@ -8,15 +8,6 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
-  test('missing native power bridge does not abort desktop startup', () async {
-    final service = SystemPowerService();
-    addTearDown(service.dispose);
-    // No handler: this is the MissingPluginException raised by the Linux
-    // runner until its native power monitoring is implemented.
-    messenger.setMockMethodCallHandler(channel, null);
-    await expectLater(service.initialize(), completes);
-  });
-
   test('native power initialization failure remains nonfatal', () async {
     final service = SystemPowerService();
     addTearDown(service.dispose);

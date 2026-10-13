@@ -75,26 +75,40 @@ class TempFileService implements ITempFileService {
   Future<void> cleanupTempFiles() async {
     try {
       final tempDir = await _temporaryDirectory();
-      // If clipboard access fails, retain the files and try again next time.
-      // Deleting an unknown active URI would break a pending paste operation.
-      final activeUri = await _clipboardFile();
-      final activePath = activeUri?.scheme == 'file'
-          ? activeUri!.toFilePath()
-          : null;
       final cutoffTimestamp = DateTime.now()
           .subtract(const Duration(hours: 1))
           .millisecondsSinceEpoch;
       final earlier = _earlierTemporaryDirectory();
-      var deletedCount = 0;
+      final expired = <String>[];
       for (final dir in [
         tempDir.path,
         if (earlier != null && !path.equals(earlier.path, tempDir.path))
           earlier.path,
       ]) {
-        deletedCount += await compute(
-          _cleanupTempFilesInIsolate,
-          _TempCleanupParams(dir, filePrefix, cutoffTimestamp, activePath),
+        expired.addAll(
+          await compute(
+            _expiredTempFilesInIsolate,
+            _TempCleanupParams(dir, filePrefix, cutoffTimestamp),
+          ),
         );
+      }
+      // Asked only when there is something to delete: on Wayland the answer
+      // costs wl-paste processes, and this runs every 15 minutes in the tray.
+      // If clipboard access fails, retain the files and try again next time.
+      // Deleting an unknown active URI would break a pending paste operation.
+      final activeUri = expired.isEmpty ? null : await _clipboardFile();
+      final activePath = activeUri?.scheme == 'file'
+          ? activeUri!.toFilePath()
+          : null;
+      var deletedCount = 0;
+      for (final filePath in expired) {
+        if (activePath != null && path.equals(filePath, activePath)) continue;
+        try {
+          await File(filePath).delete();
+          deletedCount++;
+        } on FileSystemException {
+          // Best effort cleanup only.
+        }
       }
 
       if (deletedCount > 0) {
@@ -174,40 +188,30 @@ class _TempCleanupParams {
     this.tempDirPath,
     this.filePrefix,
     this.cutoffEpochMs,
-    this.activePath,
   );
 
   final String tempDirPath;
   final String filePrefix;
   final int cutoffEpochMs;
-  final String? activePath;
 }
 
-int _cleanupTempFilesInIsolate(_TempCleanupParams params) {
+/// Our temp files last modified before the cutoff.
+List<String> _expiredTempFilesInIsolate(_TempCleanupParams params) {
   final tempDir = Directory(params.tempDirPath);
-  if (!tempDir.existsSync()) return 0;
+  if (!tempDir.existsSync()) return const [];
 
   final cutoff = DateTime.fromMillisecondsSinceEpoch(params.cutoffEpochMs);
-  var deletedCount = 0;
+  final expired = <String>[];
 
   for (final entity in tempDir.listSync()) {
     if (entity is! File) continue;
     if (!path.basename(entity.path).startsWith(params.filePrefix)) continue;
-    if (params.activePath != null &&
-        path.equals(entity.path, params.activePath!)) {
-      continue;
-    }
-
     try {
-      final stat = entity.statSync();
-      if (stat.modified.isBefore(cutoff)) {
-        entity.deleteSync();
-        deletedCount++;
-      }
+      if (entity.statSync().modified.isBefore(cutoff)) expired.add(entity.path);
     } on Exception {
       // Best effort cleanup only.
     }
   }
 
-  return deletedCount;
+  return expired;
 }

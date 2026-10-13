@@ -63,8 +63,12 @@ class LinuxInstallerTest(unittest.TestCase):
                 installer.uninstall(prefix)
             self.assertTrue(helper.exists())
             manifest.write_text(valid)
+            backup = prefix / 'lib/.ghostcopy-backup-0123'
+            (backup / 'data').mkdir(parents=True)
+            (backup / 'data/old').write_bytes(b'old')
             with patch.object(installer.sys, 'platform', 'win32'):
                 installer.uninstall(prefix)
+            self.assertFalse(backup.exists())
             self.assertEqual(keep.read_text(), 'unowned')
             self.assertFalse(helper.exists())
             self.assertFalse(desktop.exists())

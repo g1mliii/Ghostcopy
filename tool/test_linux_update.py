@@ -109,7 +109,34 @@ class LinuxUpdateTest(unittest.TestCase):
             self.assertEqual((Path(result['backup']) / 'ghostcopy').read_bytes(), b'old gui')
             owned = json.loads((target / 'install-manifest.json').read_text())
             self.assertIn('bin/ghostcopy', owned)
+            self.assertIn('lib/ghostcopy/data/flutter_assets/example', owned)
             self.assertNotIn('lib/ghostcopy/personal.txt', owned)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Uses Linux file locking')
+    def test_apply_keeps_only_the_newest_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target, download = self.install_fixture(root)
+            stale = target.with_name('.ghostcopy-backup-old')
+            stale.mkdir()
+            (stale / 'ghostcopy').write_bytes(b'older gui')
+            with patch.object(updater, 'running', return_value=False):
+                result = updater.apply_update(target, download)
+            self.assertFalse(stale.exists())
+            self.assertTrue(Path(result['backup']).is_dir())
+
+    def test_discard_download_only_removes_prepared_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.dict(updater.os.environ, {'XDG_CACHE_HOME': str(root)}):
+                prepared = updater.download_cache() / 'download-abc'
+                prepared.mkdir(parents=True)
+                elsewhere = root / 'download-elsewhere'
+                elsewhere.mkdir()
+                updater.discard_download(prepared)
+                updater.discard_download(elsewhere)
+            self.assertFalse(prepared.exists())
+            self.assertTrue(elsewhere.exists())
 
     @unittest.skipUnless(sys.platform == 'linux', 'Uses Linux file locking')
     def test_failed_swap_restores_previous_install(self):
