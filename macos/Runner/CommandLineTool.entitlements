@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The bundled `ghostcopy` command (Contents/Helpers/ghostcopy) is a Dart
+	     AOT executable. Under Hardened Runtime the kernel kills it at launch
+	     (SIGKILL, exit 137) unless it may map its embedded snapshot as
+	     executable; allow-jit is not enough. Measured with Dart 3.12. -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

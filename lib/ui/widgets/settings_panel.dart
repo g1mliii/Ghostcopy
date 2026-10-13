@@ -8,6 +8,7 @@ import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
+import '../../services/command_line_tool_service.dart';
 import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/hotkey_service.dart';
@@ -45,6 +46,7 @@ class SettingsPanel extends StatefulWidget {
     this.onEncryptionChanged,
     this.autoStartService,
     this.hotkeyService,
+    this.commandLineToolService,
     this.deviceService,
     this.encryptionService,
     this.onCreateAccount,
@@ -55,6 +57,9 @@ class SettingsPanel extends StatefulWidget {
   final ISettingsService settingsService;
   final IAutoStartService? autoStartService;
   final IHotkeyService? hotkeyService;
+
+  /// macOS only: puts the bundled `ghostcopy` command on the PATH.
+  final ICommandLineToolService? commandLineToolService;
   final IDeviceService? deviceService;
   final IEncryptionService? encryptionService;
   final bool autoSendEnabled;
@@ -83,6 +88,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   bool _autoShortenUrls = false;
   bool _webhookEnabled = false;
   bool _agentAccessEnabled = false;
+  CommandLineToolState _commandLineTool = CommandLineToolState.unavailable;
   String _webhookUrl = '';
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
@@ -131,6 +137,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _loadUrlShorteningStatus();
     _loadWebhookStatus();
     _loadAgentAccess();
+    _loadCommandLineTool();
     _loadObsidianStatus();
 
     // Filtered to actual identity changes, for two reasons.
@@ -349,6 +356,24 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     if (!mounted) return;
     _agentAccessEnabled = enabled;
     scheduleRebuild();
+  }
+
+  Future<void> _loadCommandLineTool() async {
+    final service = widget.commandLineToolService;
+    if (service == null) return;
+    final state = await service.state();
+    if (!mounted) return;
+    _commandLineTool = state;
+    scheduleRebuild();
+  }
+
+  Future<void> _installCommandLineTool() async {
+    final installed = await widget.commandLineToolService!.install();
+    await _loadCommandLineTool();
+    if (installed || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('The ghostcopy command was not installed.')),
+    );
   }
 
   Future<void> _loadObsidianStatus() async {
@@ -863,6 +888,22 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
               if (mounted && saved) setState(() => _agentAccessEnabled = value);
             },
           ),
+          if (_commandLineTool != CommandLineToolState.unavailable)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('ghostcopy command'),
+              subtitle: Text(
+                _commandLineTool == CommandLineToolState.installed
+                    ? 'Installed in /usr/local/bin'
+                    : 'Add it to your PATH (asks for your password)',
+              ),
+              trailing: _commandLineTool == CommandLineToolState.installed
+                  ? null
+                  : TextButton(
+                      onPressed: _installCommandLineTool,
+                      child: const Text('Install'),
+                    ),
+            ),
           const SizedBox(height: 10),
           if (widget.hotkeyService != null) ...[
             if (widget.hotkeyService!.managedBySystem)

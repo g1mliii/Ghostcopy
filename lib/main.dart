@@ -25,6 +25,7 @@ import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
+import 'services/command_line_tool_service.dart';
 import 'services/crash_reporting_service.dart';
 import 'services/device_service.dart';
 import 'services/fcm_service.dart';
@@ -484,7 +485,9 @@ Future<void> _appMain(
       ..registerSingleton<IClipboardRepository>(clipboardRepository);
 
     if (Platform.isMacOS) {
-      locator.registerSingleton<IAppUpdateService>(AppUpdateService());
+      locator
+        ..registerSingleton<IAppUpdateService>(AppUpdateService())
+        ..registerSingleton<ICommandLineToolService>(CommandLineToolService());
     }
     // Before any Attach or Save as: see prepareFilePicker.
     unawaited(prepareFilePicker(isMacOS: Platform.isMacOS));

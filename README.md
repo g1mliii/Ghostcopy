@@ -91,9 +91,11 @@ For assistants without a shell, such as Claude Desktop, `ghostcopy mcp` is an MC
 ```
 
 Windows MSIX packages from 1.0.22.0 register `ghostcopy` automatically, and the Linux installer puts
-it in `~/.local/bin`. macOS does not yet.
+it in `~/.local/bin`. The macOS app carries it from 1.0.10, at
+`/Applications/GhostCopy.app/Contents/Helpers/ghostcopy`; **Settings &rarr; ghostcopy command &rarr;
+Install** links it into `/usr/local/bin`.
 Full setup instructions: [CLI and AI tools](website/ai-tools.html) (website route `/ai-tools`).
-For macOS or older Windows packages, build it with
+For older packages, build it with
 `cd packages/ghostcopy_agent && dart pub get && dart compile exe bin/ghostcopy.dart -o ghostcopy`.
 
 ---

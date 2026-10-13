@@ -25,6 +25,15 @@ marketing version (`CFBundleShortVersionString`) is what people see. Both are
 passed on the command line; `pubspec.yaml` stays at `1.0.0+1` and is not the
 source of truth for a release.
 
+## Apple silicon only
+
+From 1.0.10 (build 27) the app is arm64 only, so it can carry the `ghostcopy`
+command (`Contents/Helpers/ghostcopy`), which Dart cannot build for Intel from
+an Apple silicon Mac. Intel Macs stay on 1.0.9 (26): `generate_appcast` sees no
+x86_64 slice and writes `sparkle:hardwareRequirements` arm64 into the signed
+feed, so Sparkle never offers them the update, and `prepare-update.sh` refuses
+a feed that lacks it. The website's DMG is the arm64 build too.
+
 ## What a user actually experiences
 
 Nothing installs by itself. `SUAutomaticallyUpdate` is `false`, so every
