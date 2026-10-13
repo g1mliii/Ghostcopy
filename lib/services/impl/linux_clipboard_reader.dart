@@ -66,12 +66,15 @@ class LinuxClipboardReader {
         'text/plain',
         'UTF8_STRING',
       ]) {
-        if (types.contains(mime)) {
-          return ClipboardContent.text(utf8.decode(await _readType(mime)));
-        }
+        if (!types.contains(mime)) continue;
+        // An empty plain-text alternative falls through to the next offer,
+        // as ClipboardService does, rather than discarding valid HTML.
+        final text = utf8.decode(await _readType(mime));
+        if (text.isNotEmpty) return ClipboardContent.text(text);
       }
       if (types.contains('text/html')) {
-        return ClipboardContent.html(utf8.decode(await _readType('text/html')));
+        final html = utf8.decode(await _readType('text/html'));
+        if (html.isNotEmpty) return ClipboardContent.html(html);
       }
       return const ClipboardContent.empty();
     } on Exception catch (error) {

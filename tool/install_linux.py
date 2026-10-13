@@ -36,6 +36,9 @@ def install(bundle: Path, prefix: Path) -> None:
     # itself may contain relative library symlinks, which copytree dereferences.
     if target.exists() and any(p.is_symlink() for p in [target, *target.rglob('*')]):
         raise ValueError('Installation contains symlinks; choose a clean prefix')
+    manifest = target / 'install-manifest.json'
+    previous = owned_paths(prefix, json.loads(manifest.read_text(encoding='utf-8'))
+                           if manifest.is_file() else [])
     target.mkdir(parents=True, exist_ok=True)
     shutil.copytree(bundle, target, dirs_exist_ok=True)
     owned = [('lib/ghostcopy/' + p.relative_to(bundle).as_posix())
@@ -66,7 +69,7 @@ def install(bundle: Path, prefix: Path) -> None:
           '        status = 1\n'
           'sys.exit(status)\n', True)
     # The CLI is separately named from the GUI and keeps its documented name.
-    if (target / 'ghostcopy-agent').is_file():
+    if (bundle / 'ghostcopy-agent').is_file():
         write('bin/ghostcopy', '#!/bin/sh\nexec ' +
               shlex.quote(str(target / 'ghostcopy-agent')) + ' "$@"\n', True)
 
@@ -87,6 +90,9 @@ def install(bundle: Path, prefix: Path) -> None:
           f'Exec={desktop_exec(str(prefix / "bin/ghostcopy-send"))} %F\n', True)
     # Record only our files. Uninstall does not touch credentials or history.
     write('lib/ghostcopy/install-manifest.json', json.dumps(owned, indent=2) + '\n')
+    # A reinstall overlays the new bundle, so drop what only the old one owned.
+    current = {prefix / relative for relative in owned}
+    remove_owned(prefix, [p for p in previous if p not in current])
     refresh_desktop(prefix)
 
 
@@ -104,17 +110,17 @@ def refresh_desktop(prefix: Path) -> None:
                         'x-scheme-handler/ghostcopy'], check=True)
 
 
-def uninstall(prefix: Path) -> None:
-    prefix = prefix.resolve()
-    manifest = prefix / 'lib/ghostcopy/install-manifest.json'
-    entries = json.loads(manifest.read_text(encoding='utf-8'))
-    entries.append('lib/ghostcopy/install-manifest.json')
+def owned_paths(prefix: Path, entries: list) -> list:
     paths = []
     for relative in entries:
         candidate = prefix / relative
         if not candidate.resolve().is_relative_to(prefix) or candidate.is_symlink():
             raise ValueError('Unsafe installation manifest path')
         paths.append(candidate)
+    return paths
+
+
+def remove_owned(prefix: Path, paths: list) -> None:
     # No recursive deletion. Remove only recorded files and now-empty parents.
     for candidate in paths:
         candidate.unlink(missing_ok=True)
@@ -125,6 +131,14 @@ def uninstall(prefix: Path) -> None:
             except OSError:
                 break
             parent = parent.parent
+
+
+def uninstall(prefix: Path) -> None:
+    prefix = prefix.resolve()
+    manifest = prefix / 'lib/ghostcopy/install-manifest.json'
+    entries = json.loads(manifest.read_text(encoding='utf-8'))
+    entries.append('lib/ghostcopy/install-manifest.json')
+    remove_owned(prefix, owned_paths(prefix, entries))
     # Remove the app's own login entry, if launch_at_startup created it.
     if sys.platform == 'linux' and prefix == Path.home() / '.local':
         config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))

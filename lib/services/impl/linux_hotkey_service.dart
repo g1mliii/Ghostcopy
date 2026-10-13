@@ -19,7 +19,11 @@ class LinuxHotkeyService implements IHotkeyService {
   final Map<HotKey, (DBusObjectPath, VoidCallback)> _bindings = {};
   final Map<HotKey, Future<void>> _registrations = {};
   final Map<DBusObjectPath, Completer<DBusSignal>> _requests = {};
+
+  /// Bindings a portal restart dropped that are not yet bound again.
+  final Map<HotKey, VoidCallback> _orphaned = {};
   StreamSubscription<DBusSignal>? _activated;
+  StreamSubscription<DBusNameOwnerChangedEvent>? _ownerWatch;
 
   /// The portal's unique bus name, which every portal signal is matched on.
   String? _portalOwner;
@@ -53,6 +57,9 @@ class LinuxHotkeyService implements IHotkeyService {
       return;
     }
     await _client.listNames().timeout(const Duration(seconds: 5));
+    _ownerWatch ??= _client.nameOwnerChanged
+        .where((event) => event.name == _destination)
+        .listen(_onPortalOwnerChanged);
     await _ensurePortalRegistration();
     // Resolve before signal subscription; also starts the portal if needed.
     final portal = DBusRemoteObject(_client, name: _destination, path: _path);
@@ -132,6 +139,35 @@ class LinuxHotkeyService implements IHotkeyService {
       retained = true;
     } finally {
       if (!retained && session != null) await _closeSession(session);
+    }
+  }
+
+  /// A restarted portal takes its sessions, our Registry entry and the
+  /// Activated subscription with it, so start over and bind again.
+  void _onPortalOwnerChanged(DBusNameOwnerChangedEvent event) {
+    if (_disposed) return;
+    if (_portalOwner != null && event.oldOwner == _portalOwner) {
+      unawaited(_activated?.cancel());
+      _activated = null;
+      _portalOwner = null;
+      _portalRegistration = null;
+      for (final MapEntry(:key, :value) in _bindings.entries) {
+        _orphaned[key] = value.$2;
+      }
+      _bindings.clear();
+    }
+    // Rebinding D-Bus-activates a portal that exited. One that cannot start
+    // yet is retried when it next takes the name.
+    for (final MapEntry(key: hotkey, value: callback)
+        in _orphaned.entries.toList()) {
+      unawaited(
+        registerHotkey(hotkey, callback).then<void>(
+          (_) => _orphaned.remove(hotkey),
+          onError: (Object error) {
+            debugPrint('[LinuxHotkey] Rebind after portal restart: $error');
+          },
+        ),
+      );
     }
   }
 
@@ -302,6 +338,7 @@ class LinuxHotkeyService implements IHotkeyService {
 
   @override
   Future<void> unregisterHotkey(HotKey hotkey) async {
+    _orphaned.remove(hotkey);
     final binding = _bindings.remove(hotkey);
     if (binding != null) await _closeSession(binding.$1);
   }
@@ -336,6 +373,7 @@ class LinuxHotkeyService implements IHotkeyService {
         );
       }
     }
+    await _ownerWatch?.cancel();
     await _activated?.cancel();
     for (final binding in _bindings.values.toList()) {
       await _closeSession(binding.$1);

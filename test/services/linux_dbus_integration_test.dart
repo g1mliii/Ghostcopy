@@ -173,6 +173,39 @@ void main() {
         timeout: const Timeout(Duration(seconds: 15)),
       );
 
+      test(
+        'rebinds after the portal restarts under a new unique name',
+        () async {
+          final first = _Portal();
+          final firstHost = DBusClient(address);
+          await firstHost.requestName('org.freedesktop.portal.Desktop');
+          await firstHost.registerObject(first);
+          final service = LinuxHotkeyService(client: DBusClient(address));
+          addTearDown(service.dispose);
+          final activated = Completer<void>();
+          await service.registerHotkey(const HotKey(key: 's', ctrl: true), () {
+            if (!activated.isCompleted) activated.complete();
+          });
+          expect(first.sessions, hasLength(1));
+
+          await firstHost.close();
+          final second = _Portal();
+          final secondHost = DBusClient(address);
+          addTearDown(secondHost.close);
+          // Objects first, as a real portal does, then take the name.
+          await secondHost.registerObject(second);
+          await secondHost.requestName('org.freedesktop.portal.Desktop');
+          while (second.sessions.isEmpty) {
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
+          // A fresh Registry entry on the new portal, then a new session.
+          expect(second.registrationCalls, 1);
+          await second.activate(second.sessions.single.path);
+          await activated.future.timeout(const Duration(seconds: 2));
+        },
+        timeout: const Timeout(Duration(seconds: 15)),
+      );
+
       test('older portals without Registry still accept shortcuts', () async {
         final portal = _Portal()..registryAvailable = false;
         await daemon.requestName('org.freedesktop.portal.Desktop');

@@ -69,6 +69,32 @@ class LinuxInstallerTest(unittest.TestCase):
             self.assertFalse(helper.exists())
             self.assertFalse(desktop.exists())
 
+    def test_reinstall_removes_files_only_the_old_bundle_owned(self):
+        with tempfile.TemporaryDirectory(prefix='ghostcopy-linux-reinstall-') as directory:
+            root = Path(directory)
+            bundle = root / 'bundle'
+            (bundle / 'data/flutter_assets').mkdir(parents=True)
+            (bundle / 'ghostcopy').write_bytes(b'fake executable')
+            (bundle / 'lib').mkdir()
+            (bundle / 'lib/libold.so').write_bytes(b'old library')
+            (bundle / 'ghostcopy-agent').write_bytes(b'fake agent')
+            prefix = root / 'prefix'
+            with patch.object(installer, 'refresh_desktop'):
+                installer.install(bundle, prefix)
+            keep = prefix / 'lib/ghostcopy/lib/keep-me.txt'
+            keep.write_text('unowned')
+            (bundle / 'lib/libold.so').unlink()
+            (bundle / 'ghostcopy-agent').unlink()
+            with patch.object(installer, 'refresh_desktop'):
+                installer.install(bundle, prefix)
+            self.assertFalse((prefix / 'lib/ghostcopy/lib/libold.so').exists())
+            self.assertFalse((prefix / 'lib/ghostcopy/ghostcopy-agent').exists())
+            self.assertFalse((prefix / 'bin/ghostcopy').exists())
+            self.assertTrue((prefix / 'lib/ghostcopy/ghostcopy').exists())
+            self.assertEqual(keep.read_text(), 'unowned')
+            manifest = json.loads((prefix / 'lib/ghostcopy/install-manifest.json').read_text())
+            self.assertNotIn('lib/ghostcopy/lib/libold.so', manifest)
+
     def test_desktop_argument_escaping(self):
         self.assertEqual(installer.desktop_exec('/home/a b/100%/app'), '"/home/a b/100%%/app"')
         self.assertEqual(installer.desktop_exec('/home/a$b/app'), '"/home/a\\\\$b/app"')

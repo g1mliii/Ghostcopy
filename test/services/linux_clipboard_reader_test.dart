@@ -39,6 +39,14 @@ void main() {
     expect(result.html, '<b>Hello</b>');
   });
 
+  test('an empty plain-text alternative falls through to HTML', () async {
+    final result = await readerFor({
+      'text/plain;charset=utf-8': <int>[],
+      'text/html': utf8.encode('<b>Hello</b>'),
+    }).read();
+    expect(result.html, '<b>Hello</b>');
+  });
+
   test('password-manager offers are not imported', () async {
     final result = await readerFor({
       'x-kde-passwordManagerHint': utf8.encode('secret'),
