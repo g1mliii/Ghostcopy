@@ -63,9 +63,12 @@ failed updates are recorded in `~/.cache/ghostcopy/last-update.json`; errors are
 shown on the next app launch. The download cache is `~/.cache/ghostcopy/updates`
 (or under XDG_CACHE_HOME).
 
-Until the first release feed is published, a manual check explains that the feed
-is unavailable. You can still quit the app and rerun the installer with a new
-bundle. Uninstall with `python3 install_linux.py --uninstall`. It removes
+The `ghostcopy-bin` AUR package installs the same release under `/opt/ghostcopy`
+and leaves updates to pacman; the in-app updater stays off there. See
+`installer/linux/aur/README.md`.
+
+If the release feed cannot be reached, a manual check says so. You can always
+quit the app and rerun the installer with a new bundle. Uninstall with `python3 install_linux.py --uninstall`. It removes
 recorded application files and the default installation's login entry, while
 retaining credentials and account data. Custom `--prefix` installations need
 `share` in XDG_DATA_DIRS and may require manual URI registration.

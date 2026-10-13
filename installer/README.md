@@ -7,6 +7,7 @@ One directory per platform, plus the symbol upload they share.
 | [`windows/`](windows/) | The Microsoft Store MSIX |
 | [`macos/`](macos/README.md) | The signed, notarized drag-to-Applications DMG |
 | [`ios/`](ios/) | The TestFlight / App Store build |
+| [`linux/aur/`](linux/aur/README.md) | The `ghostcopy-bin` AUR package, wrapping the Linux release tarball |
 | `upload-debug-symbols.sh` | dSYMs to Sentry, called by the macOS and iOS builds |
 
 ## Windows

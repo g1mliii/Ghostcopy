@@ -1356,7 +1356,13 @@ class _MyAppState extends State<MyApp> with WindowListener {
   }
 
   Future<void> _refreshNativeTrayMenu() async {
-    final updater = locator.maybeGet<IAppUpdateService>();
+    // A Linux build that did not come from install_linux.py - the AUR package,
+    // or a source build - is updated by whoever installed it. Offering a
+    // check there only ends in an error naming an installer they never used.
+    final registered = locator.maybeGet<IAppUpdateService>();
+    final updater = Platform.isLinux && !(registered?.isAvailable ?? false)
+        ? null
+        : registered;
     final gameMode = locator<IGameModeService>();
     await locator<ITrayService>().setUpdateAvailable(
       available: updater?.updateAvailable ?? false,
