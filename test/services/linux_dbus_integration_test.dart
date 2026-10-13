@@ -195,13 +195,21 @@ void main() {
           // Objects first, as a real portal does, then take the name.
           await secondHost.registerObject(second);
           await secondHost.requestName('org.freedesktop.portal.Desktop');
-          while (second.sessions.isEmpty) {
+          // The session exists before BindShortcuts returns and the binding
+          // is stored, so keep pressing until the press reaches the callback.
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          while (!activated.isCompleted) {
+            if (DateTime.now().isAfter(deadline)) {
+              fail('The shortcut was not bound again after the restart');
+            }
+            if (second.sessions.isNotEmpty) {
+              await second.activate(second.sessions.single.path);
+            }
             await Future<void>.delayed(const Duration(milliseconds: 20));
           }
-          // A fresh Registry entry on the new portal, then a new session.
+          // A fresh Registry entry on the new portal, then one new session.
           expect(second.registrationCalls, 1);
-          await second.activate(second.sessions.single.path);
-          await activated.future.timeout(const Duration(seconds: 2));
+          expect(second.sessions, hasLength(1));
         },
         timeout: const Timeout(Duration(seconds: 15)),
       );
