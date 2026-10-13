@@ -196,10 +196,11 @@ void main() {
           unawaited(updater.initialize());
           async.elapse(Duration.zero);
           unawaited(updater.checkForUpdates());
-          async.flushMicrotasks();
           // Overdue while busy: a zero-delay re-arm would never let this
           // elapse finish.
-          async.elapse(const Duration(hours: 30));
+          async
+            ..flushMicrotasks()
+            ..elapse(const Duration(hours: 30));
           expect(commands, hasLength(2));
           confirm.complete(false);
           async.elapse(Duration.zero);
