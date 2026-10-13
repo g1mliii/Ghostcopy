@@ -207,13 +207,26 @@ def refresh_integration(target, previous):
     prefix = target.parent.parent
     if not module_path.is_file() or target != prefix / 'lib/ghostcopy':
         return previous
+    cli = (target / 'ghostcopy-agent').is_file()
+    # No __pycache__ beside the installed module: the manifest is already
+    # written, so it would be left behind as an unowned file.
+    write_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         spec = importlib.util.spec_from_file_location('ghostcopy_linux_integration', module_path)
         integration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(integration)
-        written = integration.install(prefix, cli=(target / 'ghostcopy-agent').is_file(),
-                                      previous=previous)
     except Exception as error:
+        print(f'Desktop integration was not refreshed: {error}', file=sys.stderr)
+        return previous
+    finally:
+        sys.dont_write_bytecode = write_bytecode
+    try:
+        written = integration.install(prefix, cli=cli, previous=previous)
+    except Exception as error:
+        # It raises only when its all-or-none write put the previous files
+        # back, so the previous entries are exactly what is installed. Never
+        # infer ownership from a path existing: it may be the user's file.
         print(f'Desktop integration was not refreshed: {error}', file=sys.stderr)
         return previous
     try:

@@ -138,6 +138,8 @@ class LinuxUpdateTest(unittest.TestCase):
             self.assertIn('bin/ghostcopy', owned)
             self.assertNotIn('bin/ghostcopy-retired', owned)
             self.assertIn('lib/ghostcopy/linux_integration.py', owned)
+            # Loading the new module must not leave bytecode the manifest misses.
+            self.assertFalse((target / '__pycache__').exists())
 
     @unittest.skipUnless(sys.platform == 'linux', 'Uses Linux file locking')
     def test_apply_keeps_only_the_newest_backup(self):

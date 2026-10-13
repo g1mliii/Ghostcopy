@@ -170,19 +170,19 @@ class LinuxAppUpdateService extends IAppUpdateService {
   }
 
   Future<void> _backgroundCheck() async {
-    if (_disposed) return;
-    // A manual check already in flight has recorded itself as today's.
-    if (!_busy) {
-      _busy = true;
-      try {
-        await _check();
-      } on Exception catch (error) {
-        debugPrint('[LinuxUpdater] Background check unavailable: $error');
-      } finally {
-        _busy = false;
-      }
+    // A manual flow in progress - a dialog can stay open for days - has
+    // recorded its own check and re-arms the timer when it ends. Re-arming
+    // here would spin on an overdue deadline until then.
+    if (_disposed || _busy) return;
+    _busy = true;
+    try {
+      // Re-arms the timer itself, before it runs.
+      await _check();
+    } on Exception catch (error) {
+      debugPrint('[LinuxUpdater] Background check unavailable: $error');
+    } finally {
+      _busy = false;
     }
-    _schedule();
   }
 
   @override
@@ -248,6 +248,8 @@ class LinuxAppUpdateService extends IAppUpdateService {
       throw PlatformException(code: 'linux_update_failed', message: '$error');
     } finally {
       _busy = false;
+      // An automatic check that came due while this ran was skipped.
+      _schedule();
     }
   }
 
