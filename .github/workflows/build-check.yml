@@ -73,6 +73,14 @@ jobs:
       - run: bash tool/build_linux.sh
       - run: python3 test/linux/cli_smoke_test.py build/linux/x64/release/bundle/ghostcopy-agent
       - run: python3 tool/package_linux.py
+      # The release tarball, checksum and latest.json, ready to publish with
+      # the gh commands in docs/linux-cachyos.md. Built on Ubuntu 24.04, whose
+      # glibc is older than any rolling distribution's, so it runs on both.
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ghostcopy-linux-x64
+          path: build/linux-package/
+          if-no-files-found: error
 
   windows:
     name: Windows

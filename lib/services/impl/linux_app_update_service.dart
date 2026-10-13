@@ -155,6 +155,9 @@ class LinuxAppUpdateService extends IAppUpdateService {
   Future<Map<String, Object?>> _check() async {
     final now = clock.now();
     _lastCheck = now;
+    // Re-arm from this check, so a manual one also moves the automatic
+    // deadline rather than leaving the old timer to check again within a day.
+    _schedule();
     final preferences = await SharedPreferences.getInstance();
     await preferences.setInt(lastCheckPreference, now.millisecondsSinceEpoch);
     final result = await _run(['--check']);

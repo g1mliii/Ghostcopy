@@ -150,6 +150,32 @@ void main() {
       });
     });
 
+    test('a manual check moves the automatic one a day on', () {
+      SharedPreferences.setMockInitialValues({
+        LinuxAppUpdateService.lastCheckPreference: start
+            .subtract(const Duration(hours: 23))
+            .millisecondsSinceEpoch,
+      });
+      fakeAsync((async) {
+        withClock(async.getClock(start), () {
+          final commands = <List<String>>[];
+          final updater = service(commands);
+          unawaited(updater.initialize());
+          async.elapse(const Duration(minutes: 30));
+          unawaited(updater.checkForUpdates());
+          async.flushMicrotasks();
+          expect(commands, hasLength(1));
+          // The old deadline, an hour after launch, no longer checks.
+          async.elapse(const Duration(hours: 2));
+          expect(commands, hasLength(1));
+          // A day after the manual check, it does.
+          async.elapse(const Duration(hours: 22, minutes: 31));
+          expect(commands, hasLength(2));
+          updater.dispose();
+        });
+      });
+    });
+
     test('a first launch checks at once and records it', () {
       SharedPreferences.setMockInitialValues({});
       fakeAsync((async) {

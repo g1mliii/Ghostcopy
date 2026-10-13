@@ -135,6 +135,12 @@ bash tool/build_linux.sh --build-name=1.0.9 --build-number=25
 python3 tool/package_linux.py
 ```
 
+Or, without a Linux machine: run the **Build check (opt-in)** workflow with
+platform `linux` on the release commit. It builds from `pubspec.yaml`'s
+version, runs the native and Python tests, and uploads `build/linux-package`
+as the `ghostcopy-linux-x64` artifact
+(`gh run download <run-id> -n ghostcopy-linux-x64 -D build/linux-package`).
+
 The packager reads the compiled Flutter version, includes the updater and CLI,
 and writes the tarball, checksum, and `latest.json` to `build/linux-package`.
 It never publishes. Publish the archive under the exact versioned tag
