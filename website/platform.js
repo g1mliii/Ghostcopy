@@ -1,6 +1,6 @@
 // Highlight the download for the visitor's own device.
 //
-// The landing page lists Mac, Windows and iPhone side by side, and the accent
+// The landing page lists Mac, Windows, Linux and iPhone side by side, and the accent
 // button used to be the Mac's whatever you were on - a Windows visitor saw
 // their download as the secondary option. This moves the accent (.cta) to the
 // visitor's platform, whitens the others (.cta-alt) and puts theirs first.
@@ -19,6 +19,10 @@
         if (/Android/i.test(ua)) return null;
         if (/Mac/.test(platform) || /Macintosh/.test(ua)) return 'mac';
         if (/Win/.test(platform) || /Windows/.test(ua)) return 'windows';
+        // Android is ruled out above. ChromeOS reports itself as Linux in
+        // platform but has no Plasma session, so it keeps the served page.
+        if (/CrOS/.test(ua)) return null;
+        if (/Linux/.test(platform) || /Linux/.test(ua)) return 'linux';
         return null;
     }
 

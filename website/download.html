@@ -4,18 +4,18 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Download GhostCopy for Mac, iPhone and Windows</title>
+    <title>Download GhostCopy for Mac, iPhone, Windows and Linux</title>
     <meta name="description"
-        content="GhostCopy for macOS is out now, signed and notarized. Windows is on the Microsoft Store, and the iPhone app is on TestFlight." />
+        content="GhostCopy for macOS is out now, signed and notarized. Windows is on the Microsoft Store, Linux is a self-updating download, and the iPhone app is on TestFlight." />
     <meta name="theme-color" content="#0F0F13" />
     <link rel="canonical" href="https://ghostcopy.app/download" />
     <meta property="og:url" content="https://ghostcopy.app/download" />
     <meta property="og:site_name" content="GhostCopy" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Download GhostCopy for Mac, iPhone and Windows" />
+    <meta property="og:title" content="Download GhostCopy for Mac, iPhone, Windows and Linux" />
     <meta property="og:description"
-        content="GhostCopy for macOS is out now, signed and notarized. Windows is on the Microsoft Store, and the iPhone app is on TestFlight." />
+        content="GhostCopy for macOS is out now, signed and notarized. Windows is on the Microsoft Store, Linux is a self-updating download, and the iPhone app is on TestFlight." />
     <meta property="og:image" content="https://ghostcopy.app/icons/og-card.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -59,7 +59,7 @@
             </h1>
             <p class="mt-8 text-base sm:text-lg lg:text-[19px] leading-[1.7] text-ink-2 max-w-[600px]">
                 The Mac build is signed and notarized by Apple, and updates itself. Windows comes from the Microsoft
-                Store, which keeps it updated. The iPhone app is on TestFlight today; Android is next.
+                Store, which keeps it updated, and Linux installs for your user and updates itself. The iPhone app is on TestFlight today; Android is next.
             </p>
         </section>
 
@@ -138,6 +138,42 @@
                 </div>
                 <div class="shrink-0 md:pt-1.5">
                     <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80" class="cta" rel="noopener">Get it from Microsoft <span aria-hidden="true">&rarr;</span></a>
+                </div>
+            </article>
+
+            <!-- Linux -->
+            <article class="flex flex-col md:flex-row md:items-start gap-5 md:gap-10 lg:gap-14 py-9 sm:py-10 border-b border-line">
+                <div class="shrink-0 md:pt-1.5">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#F5F6FA" stroke-width="1.5"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="2.5" y="4" width="19" height="16" rx="2.5" />
+                        <path d="M6.5 9.5l3 2.5-3 2.5M12 15h5" />
+                    </svg>
+                </div>
+                <div class="md:w-[240px] lg:w-[300px] shrink-0">
+                    <h2 class="font-bold tracking-heading text-[28px] sm:text-3xl lg:text-[34px] text-ink-4">Linux</h2>
+                    <p class="label !text-accent-text mt-2">Available now</p>
+                </div>
+                <div class="grow max-w-[480px] md:pt-1">
+                    <p class="text-base sm:text-[17px] leading-[1.65] text-ink-2">
+                        Lives in the system tray; Meta+Shift+V opens it from anywhere. Installs for your user with no
+                        sudo, adds Send with GhostCopy to Dolphin and the <code class="font-mono text-[15px]">ghostcopy</code>
+                        command line, and keeps itself up to date.
+                    </p>
+                    <pre class="bg-surface rounded-xl p-4 overflow-x-auto text-[13px] text-ink-4 mt-4"><code>tar xzf ghostcopy-linux-x64.tar.gz
+cd ghostcopy-linux-x64
+bash linux_doctor.sh
+python3 install_linux.py --bundle bundle</code></pre>
+                    <p class="text-sm leading-[1.6] text-ink-1 mt-3">
+                        On Arch or CachyOS, install what the doctor reports missing with
+                        <code class="font-mono">sudo pacman -S --needed wl-clipboard libkeybinder3 libayatana-appindicator</code>.
+                    </p>
+                    <p class="font-mono text-xs text-ink-1 mt-2.5">X86&#8209;64 · KDE PLASMA 6 ON WAYLAND · TESTED ON CACHYOS</p>
+                </div>
+                <div class="shrink-0 md:pt-1.5">
+                    <!-- /download/linux is a redirect in _redirects to the
+                         current tarball on GitHub Releases. -->
+                    <a href="/download/linux" class="cta">Download .tar.gz <span aria-hidden="true">&darr;</span></a>
                 </div>
             </article>
 
