@@ -5,6 +5,7 @@ pkgbase = ghostcopy-bin
 	url = https://ghostcopy.app
 	arch = x86_64
 	license = MIT
+	makedepends = python
 	depends = at-spi2-core
 	depends = cairo
 	depends = curl

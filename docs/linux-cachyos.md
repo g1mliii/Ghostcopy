@@ -52,13 +52,15 @@ For CLI/MCP access, enable **Command line & AI tools** in GhostCopy settings.
 
 Use the tray's **Check for Updates** action to download and install a newer
 Linux release. **Automatically check for updates** is enabled by default and
-checks at startup and every 24 hours while running; it changes the tray action
-to **Update available**. Downloads and installation require your confirmation.
+checks once a day, counted across launches, so logging in again within a day
+of the last check does not check again; it changes the tray action to
+**Update available**. Downloads and installation require your confirmation.
 The updater verifies the SHA-256 digest and version, stages the full GUI/CLI
 bundle, waits for GhostCopy to quit, swaps the bundle and reopens it. No sudo.
-It retains the previous bundle beside the installation as
-`~/.local/lib/.ghostcopy-backup-<id>`; remove that backup after verifying the new
-version. A replacement failure restores the previous bundle. Interrupted or
+It then rewrites the launchers, menu entries and Dolphin action from the new
+release's `linux_integration.py`, so changes to those reach in-app updates too.
+It keeps the previous bundle beside the installation as
+`~/.local/lib/.ghostcopy-backup-<id>`, one at a time; uninstalling removes it. A replacement failure restores the previous bundle. Interrupted or
 failed updates are recorded in `~/.cache/ghostcopy/last-update.json`; errors are
 shown on the next app launch. The download cache is `~/.cache/ghostcopy/updates`
 (or under XDG_CACHE_HOME).

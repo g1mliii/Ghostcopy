@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,6 +35,15 @@ class LinuxAppUpdateService extends IAppUpdateService {
   /// How long the apply helper may take to stage a downloaded bundle.
   @visibleForTesting
   static const stagingTimeout = Duration(minutes: 10);
+
+  /// When the feed was last asked, in milliseconds since the epoch.
+  @visibleForTesting
+  static const lastCheckPreference = 'linuxLastUpdateCheck';
+
+  /// One check a day, counted across launches.
+  @visibleForTesting
+  static const checkInterval = Duration(hours: 24);
+  DateTime? _lastCheck;
   bool _available = false;
   bool _automatic = true;
   bool _updateAvailable = false;
@@ -57,9 +67,12 @@ class LinuxAppUpdateService extends IAppUpdateService {
     final preferences = await SharedPreferences.getInstance();
     if (_disposed) return;
     _automatic = preferences.getBool(_preference) ?? true;
+    final last = preferences.getInt(lastCheckPreference);
+    _lastCheck = last == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(last);
     notifyListeners();
     _schedule();
-    if (_automatic && _available) unawaited(_backgroundCheck());
     try {
       final error = await _takeReceiptError();
       if (error != null && !_disposed) {
@@ -89,13 +102,20 @@ class LinuxAppUpdateService extends IAppUpdateService {
         : null;
   }
 
+  /// Arm the next automatic check for a day after the last one, whichever
+  /// launch made it. Autostart used to start python3 and fetch the feed at
+  /// every login, however recently it had been asked.
   void _schedule() {
     _timer?.cancel();
-    if (_automatic && _available && !_disposed) {
-      _timer = Timer.periodic(const Duration(hours: 24), (_) {
-        unawaited(_backgroundCheck());
-      });
-    }
+    _timer = null;
+    if (!_automatic || !_available || _disposed) return;
+    final last = _lastCheck;
+    final wait = last == null
+        ? Duration.zero
+        : last.add(checkInterval).difference(clock.now());
+    _timer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      unawaited(_backgroundCheck());
+    });
   }
 
   Future<Map<String, Object?>> _run(List<String> arguments) async {
@@ -129,8 +149,14 @@ class LinuxAppUpdateService extends IAppUpdateService {
     ...arguments,
   ];
 
-  /// Ask the feed, and redraw only when the answer changed.
+  /// Ask the feed, and redraw only when the answer changed. The attempt is
+  /// recorded before it runs, so a failure is not retried until the next
+  /// interval and a manual check also counts as the day's check.
   Future<Map<String, Object?>> _check() async {
+    final now = clock.now();
+    _lastCheck = now;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setInt(lastCheckPreference, now.millisecondsSinceEpoch);
     final result = await _run(['--check']);
     final available = result['available'] == true;
     if (!_disposed && available != _updateAvailable) {
@@ -141,15 +167,19 @@ class LinuxAppUpdateService extends IAppUpdateService {
   }
 
   Future<void> _backgroundCheck() async {
-    if (_busy || _disposed) return;
-    _busy = true;
-    try {
-      await _check();
-    } on Exception catch (error) {
-      debugPrint('[LinuxUpdater] Background check unavailable: $error');
-    } finally {
-      _busy = false;
+    if (_disposed) return;
+    // A manual check already in flight has recorded itself as today's.
+    if (!_busy) {
+      _busy = true;
+      try {
+        await _check();
+      } on Exception catch (error) {
+        debugPrint('[LinuxUpdater] Background check unavailable: $error');
+      } finally {
+        _busy = false;
+      }
     }
+    _schedule();
   }
 
   @override
@@ -229,9 +259,9 @@ class LinuxAppUpdateService extends IAppUpdateService {
     }
     if (_disposed) return;
     _automatic = enabled;
+    // A check is due at once only if the last one was a day ago or more.
     _schedule();
     notifyListeners();
-    if (enabled) unawaited(_backgroundCheck());
   }
 
   @override

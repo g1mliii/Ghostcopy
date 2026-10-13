@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -194,6 +195,34 @@ def running(target):
     return False
 
 
+def refresh_integration(target, previous):
+    """Rewrite the launchers and menu entries from the release just installed.
+
+    Its own linux_integration.py defines them, so a release that changes one
+    reaches people who update in-app. Returns the manifest's entries outside
+    the bundle. A failure keeps the previous files - they still point at this
+    same path - and never undoes the update.
+    """
+    module_path = target / 'linux_integration.py'
+    prefix = target.parent.parent
+    if not module_path.is_file() or target != prefix / 'lib/ghostcopy':
+        return previous
+    try:
+        spec = importlib.util.spec_from_file_location('ghostcopy_linux_integration', module_path)
+        integration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(integration)
+        written = integration.install(prefix, cli=(target / 'ghostcopy-agent').is_file(),
+                                      previous=previous)
+    except Exception as error:
+        print(f'Desktop integration was not refreshed: {error}', file=sys.stderr)
+        return previous
+    try:
+        integration.refresh_desktop(prefix)
+    except Exception as error:
+        print(f'Desktop database was not refreshed: {error}', file=sys.stderr)
+    return written
+
+
 def apply_update(target, directory, wait_pid=None, restart=False):
     """Swap a complete bundle on one filesystem; keep a rollback copy."""
     import fcntl
@@ -255,6 +284,9 @@ def apply_update(target, directory, wait_pid=None, restart=False):
             for old in target.parent.glob('.ghostcopy-backup-*'):
                 if old != backup and old.is_dir() and not old.is_symlink():
                     shutil.rmtree(old, ignore_errors=True)
+            integration = refresh_integration(target, external)
+            if integration != external:
+                (target / 'install-manifest.json').write_text(json.dumps(integration + new_files))
     if restart:
         launch(target)
     return {'installed': release['version'], 'backup': str(backup)}

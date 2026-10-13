@@ -21,11 +21,13 @@ def manifest(archive, version='1.0.9+22'):
             'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}
 
 
-def make_archive(archive, extras=(), version='1.0.9+22'):
+def make_archive(archive, extras=(), version='1.0.9+22', integration=False):
     files = {'ghostcopy': b'new gui', 'ghostcopy-agent': b'new cli',
              'linux_update.py': b'new updater',
              'linux-version.json': json.dumps({'version': version}).encode(),
              'data/flutter_assets/example': b'asset'}
+    if integration:
+        files['linux_integration.py'] = Path(__file__).with_name('linux_integration.py').read_bytes()
     with tarfile.open(archive, 'w:gz') as target:
         for name, value in files.items():
             member = tarfile.TarInfo('ghostcopy-linux-x64/bundle/' + name)
@@ -113,6 +115,31 @@ class LinuxUpdateTest(unittest.TestCase):
             self.assertNotIn('lib/ghostcopy/personal.txt', owned)
 
     @unittest.skipUnless(sys.platform == 'linux', 'Uses Linux file locking')
+    def test_apply_rewrites_integration_from_the_new_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target, download = self.install_fixture(root, integration=True)
+            prefix = target.parent.parent
+            retired = prefix / 'bin/ghostcopy-retired'
+            retired.parent.mkdir(parents=True)
+            retired.write_text('old helper')
+            manifest = json.loads((target / 'install-manifest.json').read_text())
+            (target / 'install-manifest.json').write_text(
+                json.dumps(manifest + ['bin/ghostcopy-retired']))
+            with patch.object(updater, 'running', return_value=False),                     patch('shutil.which', return_value=None):
+                updater.apply_update(target, download)
+            send = (prefix / 'bin/ghostcopy-send').read_text()
+            self.assertIn(str(target / 'ghostcopy'), send)
+            entry = prefix / 'share/applications/com.ghostcopy.ghostcopy.desktop'
+            self.assertIn('ghostcopy-desktop', entry.read_text())
+            self.assertFalse(retired.exists())
+            owned = json.loads((target / 'install-manifest.json').read_text())
+            self.assertIn('share/applications/com.ghostcopy.ghostcopy.desktop', owned)
+            self.assertIn('bin/ghostcopy', owned)
+            self.assertNotIn('bin/ghostcopy-retired', owned)
+            self.assertIn('lib/ghostcopy/linux_integration.py', owned)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Uses Linux file locking')
     def test_apply_keeps_only_the_newest_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -164,7 +191,7 @@ class LinuxUpdateTest(unittest.TestCase):
                     updater.apply_update(target, download)
             self.assertEqual((target / 'ghostcopy').read_bytes(), b'old gui')
 
-    def install_fixture(self, root):
+    def install_fixture(self, root, integration=False):
         target = root / 'prefix/lib/ghostcopy'
         target.mkdir(parents=True)
         (target / 'ghostcopy').write_bytes(b'old gui')
@@ -177,7 +204,7 @@ class LinuxUpdateTest(unittest.TestCase):
         download = root / 'download'
         download.mkdir()
         archive = download / 'update.tar.gz'
-        make_archive(archive)
+        make_archive(archive, integration=integration)
         (download / 'release.json').write_text(json.dumps(manifest(archive)))
         return target, download
 
