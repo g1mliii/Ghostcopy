@@ -72,8 +72,9 @@ def write(root, files):
     """Write [files] under [root], all or none; returns their relative paths.
 
     Every file is checked and staged beside its target before any is
-    replaced, so a symlink, a permission error or a full disk leaves the
-    previous set intact rather than half rewritten.
+    replaced, and each target is copied aside before its replacement, so a
+    symlink, a permission error, a full disk or a failed rename puts the
+    previous set back rather than leaving it half rewritten.
     """
     root = Path(root)
     outputs = []
@@ -83,6 +84,8 @@ def write(root, files):
             raise ValueError(f'Refusing to replace a symlink: {output}')
         outputs.append(output)
     staged = []
+    backups = []
+    replaced = []
     try:
         for output, (content, executable) in zip(outputs, files.values()):
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -90,12 +93,24 @@ def write(root, files):
             staged.append(temporary)
             temporary.write_text(content, encoding='utf-8', newline='\n')
             temporary.chmod(0o755 if executable else 0o644)
-        # Renames within one directory: atomic each, and not expected to fail.
         for temporary, output in zip(staged, outputs):
+            backup = None
+            if output.exists():
+                backup = output.with_name('.' + output.name + '.ghostcopy-old')
+                shutil.copy2(output, backup)
+                backups.append(backup)
             os.replace(temporary, output)
+            replaced.append((output, backup))
+    except BaseException:
+        for output, backup in reversed(replaced):
+            if backup is None:
+                output.unlink(missing_ok=True)
+            else:
+                os.replace(backup, output)
+        raise
     finally:
-        for temporary in staged:
-            temporary.unlink(missing_ok=True)
+        for leftover in staged + backups:
+            leftover.unlink(missing_ok=True)
     return list(files)
 
 
@@ -129,14 +144,29 @@ def install(prefix, cli, previous=()):
     [cli] is whether the release ships ghostcopy-agent - asked of the new
     bundle, since an install overlaid on an older one may still hold its
     agent. [previous] is the manifest's earlier integration entries; any
-    this release no longer writes are removed. Returns the entries written.
+    this release no longer writes are removed.
+
+    Returns the entries to own: those written, plus any retired one that
+    could not be removed, so uninstall still finds it. Raises only if
+    nothing was written, which [write] guarantees by putting the previous
+    files back.
     """
     prefix = Path(prefix).resolve()
     app_dir = prefix / APP_DIR
     written = write(prefix, entries(app_dir, prefix / 'bin', app_dir / ICON, cli=cli))
-    stale = [relative for relative in previous if relative not in written]
-    remove_owned(prefix, owned_paths(prefix, stale))
-    return written
+    kept = []
+    for relative in previous:
+        if relative in written:
+            continue
+        try:
+            remove_owned(prefix, owned_paths(prefix, [relative]))
+        except ValueError:
+            # Now a symlink or outside the prefix: not ours to delete or own.
+            print(f'Not removing unsafe path {relative}', file=sys.stderr)
+        except OSError as error:
+            print(f'Could not remove {relative}: {error}', file=sys.stderr)
+            kept.append(relative)
+    return written + kept
 
 
 def refresh_desktop(prefix):

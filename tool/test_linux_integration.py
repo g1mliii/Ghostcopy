@@ -49,6 +49,46 @@ class LinuxIntegrationTest(unittest.TestCase):
             self.assertEqual((root / 'bin/b').read_text(), 'old b')
             self.assertEqual(sorted(p.name for p in (root / 'bin').iterdir()), ['a', 'b'])
 
+    def test_a_failed_rename_puts_earlier_files_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            linux_integration.write(root, {'bin/a': ('old a', True)})
+            original = linux_integration.os.replace
+            renames = []
+
+            def failing(source, destination):
+                if str(source).endswith('.ghostcopy-new'):
+                    renames.append(source)
+                    if len(renames) == 2:
+                        raise OSError(5, 'Input/output error')
+                return original(source, destination)
+
+            with patch.object(linux_integration.os, 'replace', failing), \
+                    self.assertRaises(OSError):
+                linux_integration.write(root, {'bin/a': ('new a', True), 'bin/b': ('new b', True)})
+            self.assertEqual((root / 'bin/a').read_text(), 'old a')
+            self.assertEqual(sorted(p.name for p in (root / 'bin').iterdir()), ['a'])
+
+    def test_a_retired_entry_that_cannot_be_removed_stays_owned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            (prefix / 'lib/ghostcopy').mkdir(parents=True)
+            stuck = prefix / 'share/old/stuck.desktop'
+            stuck.parent.mkdir(parents=True)
+            stuck.write_text('old')
+            original = Path.unlink
+
+            def busy(path, *args, **kwargs):
+                if path.name == 'stuck.desktop':
+                    raise PermissionError(13, 'Permission denied')
+                return original(path, *args, **kwargs)
+
+            with patch.object(Path, 'unlink', busy):
+                owned = linux_integration.install(
+                    prefix, cli=False, previous=['share/old/stuck.desktop'])
+            self.assertIn('share/old/stuck.desktop', owned)
+            self.assertIn('bin/ghostcopy-send', owned)
+
     def test_install_removes_entries_a_release_no_longer_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             prefix = Path(directory)

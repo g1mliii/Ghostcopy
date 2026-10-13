@@ -224,13 +224,11 @@ def refresh_integration(target, previous):
     try:
         written = integration.install(prefix, cli=cli, previous=previous)
     except Exception as error:
-        # Its files are written all or none, so this is either nothing new or
-        # a complete new set whose old entries could not all be removed. Own
-        # whatever now exists, so uninstall still finds it.
+        # It raises only when its all-or-none write put the previous files
+        # back, so the previous entries are exactly what is installed. Never
+        # infer ownership from a path existing: it may be the user's file.
         print(f'Desktop integration was not refreshed: {error}', file=sys.stderr)
-        new = integration.entries(target, prefix / 'bin', target / integration.ICON, cli=cli)
-        return previous + [name for name in new
-                           if name not in previous and (prefix / name).exists()]
+        return previous
     try:
         integration.refresh_desktop(prefix)
     except Exception as error:
