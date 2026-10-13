@@ -865,10 +865,21 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           ),
           const SizedBox(height: 10),
           if (widget.hotkeyService != null) ...[
-            HotkeyCapture(
-              currentHotkey: _currentHotkey,
-              onHotkeyChanged: _handleHotkeyChanged,
-            ),
+            if (widget.hotkeyService!.managedBySystem)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Global shortcut'),
+                subtitle: const Text('Managed by KDE Plasma'),
+                trailing: TextButton(
+                  onPressed: _configureSystemShortcut,
+                  child: const Text('Configure'),
+                ),
+              )
+            else
+              HotkeyCapture(
+                currentHotkey: _currentHotkey,
+                onHotkeyChanged: _handleHotkeyChanged,
+              ),
             const SizedBox(height: 20),
           ],
         ],
@@ -1506,6 +1517,22 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         ],
       ),
     );
+  }
+
+  Future<void> _configureSystemShortcut() async {
+    try {
+      await widget.hotkeyService!.openSystemShortcutSettings();
+    } on Exception catch (error) {
+      debugPrint('[Settings] Could not configure Linux shortcut: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Open System Settings → Keyboard → Shortcuts to configure GhostCopy.',
+          ),
+        ),
+      );
+    }
   }
 
   /// Apply a newly captured hotkey: register it, persist it, and only then

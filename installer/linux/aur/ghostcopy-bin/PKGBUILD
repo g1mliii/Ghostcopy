@@ -1,0 +1,90 @@
+# Maintainer: g1mliii <subaigsuri1 at gmail dot com>
+#
+# Repackages the published Linux release tarball system-wide under
+# /opt/ghostcopy. Built and published from installer/linux/aur/ in the
+# GhostCopy repository - see the README there before editing it on the AUR.
+#
+# pacman owns updates for this package. The app's own updater stays off
+# because neither install-manifest.json nor linux_update.py is installed:
+# LinuxAppUpdateService needs both, and the tray then hides its update items.
+#
+# The launchers and desktop entries come from the tarball's
+# linux_integration.py, the same definition install_linux.py and the in-app
+# updater use. Releases up to 1.0.9+25 do not ship it.
+
+pkgname=ghostcopy-bin
+pkgver=1.0.9
+_build=25
+pkgrel=1
+pkgdesc='Clipboard sync between your computers and phone, with a Spotlight-style popup'
+arch=('x86_64')
+url='https://ghostcopy.app'
+license=('MIT')
+# Direct ELF dependencies of the bundle, plus what it runs: wl-paste for
+# background clipboard reads and XWayland for the window. libdartjni.so links
+# libjvm.so but is never loaded on Linux, so no JDK is needed at runtime.
+depends=(
+  'at-spi2-core'
+  'cairo'
+  'curl'
+  'fontconfig'
+  'gcc-libs'
+  'gdk-pixbuf2'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'harfbuzz'
+  'libayatana-appindicator'
+  'libdbusmenu-glib'
+  'libepoxy'
+  'libkeybinder3'
+  'libsecret'
+  'pango'
+  'wayland'
+  'wl-clipboard'
+  'xdg-desktop-portal'
+  'xorg-xwayland'
+  'zlib'
+)
+makedepends=('python')
+optdepends=(
+  'xdg-desktop-portal-kde: global shortcut on KDE Plasma'
+  'kwallet: Secret Service for the saved sign-in and encryption key'
+  'gnome-keyring: Secret Service outside KDE'
+  'dolphin: Send with GhostCopy in the file manager'
+)
+provides=('ghostcopy')
+conflicts=('ghostcopy')
+options=('!strip' '!debug')
+_tag="linux-v${pkgver}+${_build}"
+# The release tarball does not carry the repository LICENSE, so it is fetched
+# from the same tag.
+source=("ghostcopy-linux-x64-${pkgver}+${_build}.tar.gz::https://github.com/g1mliii/Ghostcopy/releases/download/${_tag}/ghostcopy-linux-x64.tar.gz"
+        "LICENSE-${pkgver}+${_build}::https://raw.githubusercontent.com/g1mliii/Ghostcopy/${_tag}/LICENSE")
+sha256sums=('100d985637e6fd5097547ff585ce4fccd45873df305ab6bd2d63ca16786c2bdd'
+            '72565f594ce7e3628059b4c82418a8790bf315ab906f5f83375e60cb713bad90')
+
+_appid=com.ghostcopy.ghostcopy
+
+package() {
+  cd "${srcdir}/ghostcopy-linux-x64"
+
+  install -dm755 "${pkgdir}/opt/ghostcopy"
+  cp -a bundle/. "${pkgdir}/opt/ghostcopy/"
+  # The self-updater replaces /opt/ghostcopy in place, which pacman owns.
+  rm -f "${pkgdir}/opt/ghostcopy/linux_update.py" \
+    "${pkgdir}/opt/ghostcopy/linux_integration.py"
+
+  # ghostcopy-desktop, ghostcopy, ghostcopy-send, the menu entry with the
+  # ghostcopy:// handler, and Dolphin's Send with GhostCopy.
+  python3 linux_integration.py --root "${pkgdir}/usr" \
+    --app-dir /opt/ghostcopy --bin-dir /usr/bin --icon "${_appid}"
+
+  install -Dm644 bundle/data/flutter_assets/assets/icons/app_icon.png \
+    "${pkgdir}/usr/share/pixmaps/${_appid}.png"
+
+  install -Dm644 "${srcdir}/LICENSE-${pkgver}+${_build}" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 bundle/wlr-data-control-LICENSE.txt \
+    "${pkgdir}/usr/share/licenses/${pkgname}/wlr-data-control-LICENSE.txt"
+}

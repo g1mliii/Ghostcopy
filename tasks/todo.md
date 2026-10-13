@@ -147,6 +147,26 @@ it better, and also covers backups and leaving without losing anything.
 - [ ] Does not need to be instant. A queued job that emails or exposes a
       signed download is cheaper and sidesteps timeouts on large histories
 
+## Later: one clipboard read path on Linux
+
+`LinuxClipboardReader` (Wayland, through `wl-paste`) re-implements the whole
+file -> PNG -> JPEG -> text -> HTML ladder that `ClipboardService.read()` runs
+over super_clipboard, and `TempFileService` has its own Wayland branch. They
+have already drifted once: password-manager hints are honoured only on the
+`wl-paste` path, and a failing format used to fail the whole Wayland read
+where `ClipboardService` falls through.
+
+- [ ] Keep the ladder, sensitive-content filtering and size limits in
+      `ClipboardService` only, over a small source interface: offered MIME
+      types, and bytes for one type
+- [ ] A super_clipboard source and a `wl-paste` source
+- [ ] `TempFileService._readClipboardFile` reads through the same source
+- [ ] Optional, same PR or after: offered types from the native Wayland
+      monitor over `com.ghostcopy.app/clipboard_change`, saving the
+      `wl-paste --list-types` process on every read
+- [ ] Run the existing reader and `ClipboardService` tests against both
+      sources
+
 ## Later: widget extraction
 
 Left over from the February ViewModel refactor (Phases 1.1 and 1.2 done).

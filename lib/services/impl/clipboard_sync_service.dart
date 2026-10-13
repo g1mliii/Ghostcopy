@@ -573,10 +573,14 @@ class ClipboardSyncService implements IClipboardSyncService {
       Future<bool> smartAllowsCopy() async {
         await _checkClipboardActivity();
         final lastModified = _lastClipboardModificationTime;
+        // A counter that cannot be read right now - Linux's monitor while it
+        // reconnects - may be hiding a copy made a moment ago, so the clip is
+        // offered rather than written over it.
         final stale =
-            lastModified == null ||
-            clock.now().difference(lastModified) >=
-                Duration(minutes: staleDurationMinutes);
+            !_activityUnknown &&
+            (lastModified == null ||
+                clock.now().difference(lastModified) >=
+                    Duration(minutes: staleDurationMinutes));
         debugPrint(
           '[ClipboardSyncService] Smart check: last user copy '
           '$lastModified, window $staleDurationMinutes min, stale $stale',
@@ -895,6 +899,10 @@ class ClipboardSyncService implements IClipboardSyncService {
     _writeEpoch++;
     try {
       await write();
+      // Linux's counter leaves our own writes out natively, and they reach it
+      // asynchronously, so a value read here could predate the write or
+      // include a user copy made during it. There is nothing to absorb.
+      if (_usesExternalActivityCounter) return;
       final count = await _readClipboardChangeCount();
       if (count != null) {
         _activityChangeCount = count;
@@ -940,8 +948,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// NSPasteboard's changeCount on macOS, GetClipboardSequenceNumber on
   /// Windows - both answered natively on this channel. Reading the clipboard
   /// pulls the whole payload - a copied file or image is re-read from disk in
-  /// full - so this cheap integer gates that read. Linux has no counter and
-  /// reads as before.
+  /// full - so this cheap integer gates that read. Linux observes native
+  /// Wayland selection events (GTK owner changes on X11) without reading data.
+  /// An unavailable counter always falls back to the full read.
   static const _clipboardChangeChannel = MethodChannel(
     'com.ghostcopy.app/clipboard_change',
   );
@@ -968,20 +977,32 @@ class ClipboardSyncService implements IClipboardSyncService {
   static bool? debugHasChangeCounter;
 
   static bool get _hasChangeCounter =>
-      debugHasChangeCounter ?? (Platform.isMacOS || Platform.isWindows);
+      debugHasChangeCounter ??
+      (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   /// Whether the platform pushes "changed" when the counter moves, so the
-  /// activity watch needs no timer. Windows does; macOS cannot.
+  /// activity watch needs no timer. Windows and Linux do; macOS cannot.
   @visibleForTesting
   static bool? debugCounterPushesChanges;
 
   static bool get _counterPushesChanges =>
-      debugCounterPushesChanges ?? Platform.isWindows;
+      debugCounterPushesChanges ?? (Platform.isWindows || Platform.isLinux);
+
+  /// Whether the counter leaves out GhostCopy's own writes. Linux's does:
+  /// Wayland by the MIME marker on our offers, X11 by the owner window being
+  /// ours. Both gate auto-send and date user copies with it.
+  @visibleForTesting
+  static bool? debugUsesExternalActivityCounter;
+
+  static bool get _usesExternalActivityCounter =>
+      debugUsesExternalActivityCounter ?? Platform.isLinux;
 
   Future<int?> _readClipboardChangeCount() async {
     if (!_hasChangeCounter) return null;
     try {
-      return await _clipboardChangeChannel.invokeMethod<int>('changeCount');
+      return await _clipboardChangeChannel.invokeMethod<int>(
+        _usesExternalActivityCounter ? 'activityChangeCount' : 'changeCount',
+      );
     } on PlatformException catch (e) {
       debugPrint('[ClipboardSyncService] changeCount unavailable: $e');
       return null;
@@ -1433,6 +1454,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Bumped by every stop, invalidating any refresh still reading settings.
   int _watchGeneration = 0;
 
+  /// Whether the watch's latest counter read came back unavailable.
+  bool _activityUnknown = false;
+
   /// Stopped around screen lock and system sleep, with everything else the
   /// lifecycle pauses.
   @override
@@ -1473,6 +1497,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
       final epoch = _writeEpoch;
       final count = await _readClipboardChangeCount();
+      _activityUnknown = count == null;
       if (count == null || _isDisposed) return;
       // A write started while the counter was read: that reading may predate
       // it, and storing it would undo the write's absorb. Read again.

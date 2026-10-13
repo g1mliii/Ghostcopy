@@ -36,6 +36,11 @@ import 'services/impl/clipboard_sync_service.dart';
 import 'services/impl/game_mode_service.dart';
 import 'services/impl/hotkey_service.dart';
 import 'services/impl/lifecycle_controller.dart';
+import 'services/impl/linux_app_update_service.dart';
+import 'services/impl/linux_auto_start_service.dart';
+import 'services/impl/linux_clipboard_reader.dart';
+import 'services/impl/linux_hotkey_service.dart';
+import 'services/impl/linux_power_service.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/pkce_verifier_store.dart';
 import 'services/impl/security_service.dart';
@@ -459,12 +464,14 @@ Future<void> _appMain(
   if (_isDesktop()) {
     // Initialize core services first
     final trayService = TrayService();
-    final hotkeyService = HotkeyService();
+    final hotkeyService = LinuxClipboardReader.isWayland
+        ? LinuxHotkeyService()
+        : HotkeyService();
     final gameModeService = GameModeService();
     final settingsService = SettingsService();
-    final autoStartService = AutoStartService(
-      windowsPackageService: windowsPackage,
-    );
+    final autoStartService = Platform.isLinux
+        ? LinuxAutoStartService()
+        : AutoStartService(windowsPackageService: windowsPackage);
     final clipboardRepository = ClipboardRepository.instance;
 
     // Register generic services
@@ -526,7 +533,9 @@ Future<void> _appMain(
     );
 
     // PARALLEL GROUP 3: ClipboardSync and SystemPower (independent)
-    final systemPowerService = SystemPowerService();
+    final systemPowerService = Platform.isLinux
+        ? LinuxPowerService()
+        : SystemPowerService();
     await Future.wait([
       clipboardSyncService.initialize(),
       systemPowerService.initialize(),
@@ -598,7 +607,7 @@ Future<void> _appMain(
     }
 
     // Register global hotkey (Requirement 1.1, 3.4)
-    // Default: Ctrl+Shift+S to show Spotlight window
+    // Saved shortcut, else defaultHotkey, to show the Spotlight window
     // Note: We'll set the callback in MyApp since it needs state access
 
     // Complete OAuth when the browser hands us back a ghostcopy:// callback -
@@ -1014,17 +1023,39 @@ class _MyAppState extends State<MyApp> with WindowListener {
           unawaited(_handleHotkeySpotlight());
         };
 
-      // macOS uses a real NSMenu, which has to be rebuilt whenever Game Mode
-      // changes so its checkmark matches the current state. On Windows this
-      // is a no-op and the custom window is used instead.
+      if (Platform.isLinux) {
+        locator.registerSingleton<IAppUpdateService>(
+          LinuxAppUpdateService(
+            confirmInstall: (version) => _showUpdateDialog(
+              title: 'GhostCopy updates',
+              message:
+                  'Install GhostCopy $version? The download will be verified, '
+                  'then GhostCopy will close, update and reopen. The CLI updates too.',
+              confirmText: 'Download and install',
+            ),
+            showMessage: (message) =>
+                _showUpdateDialog(title: 'GhostCopy updates', message: message),
+            showDownloading: () => locator<INotificationService>().showToast(
+              message: 'Downloading update. GhostCopy will restart when ready.',
+              duration: const Duration(seconds: 8),
+            ),
+            quit: _handleQuit,
+          ),
+        );
+      }
+      // macOS receives shared files from Finder.
       if (Platform.isMacOS) {
+        unawaited(_listenForSharedFiles(locator<IAuthService>()));
+      }
+      if (Platform.isMacOS || Platform.isLinux) {
         locator<IAppUpdateService>().addListener(_onUpdaterStateChanged);
         unawaited(locator<IAppUpdateService>().initialize());
+        // Native tray menus. Rebuild when Game Mode changes so the checkmark
+        // matches its current state.
         unawaited(_refreshNativeTrayMenu());
         _gameModeMenuSub = locator<IGameModeService>().isActiveStream.listen(
           (_) => unawaited(_refreshNativeTrayMenu()),
         );
-        unawaited(_listenForSharedFiles(locator<IAuthService>()));
       }
 
       // Register the global hotkey the user chose, falling back to the default
@@ -1032,6 +1063,11 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // hardcoded default, so a customised shortcut was discarded on restart.
       _onHotkeyPressed = _handleHotkeySpotlight;
       unawaited(_registerSavedHotkey());
+      if (Platform.isLinux && !widget.launchedAtStartup) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_handleHotkeySpotlight());
+        });
+      }
     } else {
       // Mobile: Check if user is already signed in
       final currentUser = locator<IAuthService>().currentUser;
@@ -1200,7 +1236,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
       _powerEventSubscription = null;
       _gameModeMenuSub?.cancel();
       _gameModeMenuSub = null;
-      if (Platform.isMacOS) {
+      if (Platform.isMacOS || Platform.isLinux) {
         locator<IAppUpdateService>()
           ..removeListener(_onUpdaterStateChanged)
           ..dispose();
@@ -1264,35 +1300,66 @@ class _MyAppState extends State<MyApp> with WindowListener {
     unawaited(_refreshNativeTrayMenu());
   }
 
+  /// Show the Spotlight and an updater dialog over it. With [confirmText] it
+  /// asks, and returns whether the user agreed; otherwise it informs.
+  Future<bool> _showUpdateDialog({
+    required String title,
+    required String message,
+    String? confirmText,
+  }) async {
+    await locator<IWindowService>().showSpotlight();
+    final dialogContext = _navigatorKey.currentContext;
+    if (!mounted || dialogContext == null || !dialogContext.mounted) {
+      return false;
+    }
+    if (confirmText != null) {
+      return Adaptive.confirm(
+        dialogContext,
+        title: title,
+        message: message,
+        confirmText: confirmText,
+        cancelText: 'Not now',
+      );
+    }
+    await showDialog<void>(
+      context: dialogContext,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    return true;
+  }
+
   Future<void> _runUpdateAction(Future<void> Function() action) async {
     try {
       await action();
     } on PlatformException catch (error) {
       debugPrint('[AppUpdateService] Update action failed: ${error.message}');
-      await locator<IWindowService>().showSpotlight();
-      final dialogContext = _navigatorKey.currentContext;
-      if (!mounted || dialogContext == null || !dialogContext.mounted) return;
-      await showDialog<void>(
-        context: dialogContext,
-        builder: (context) => AlertDialog(
-          title: const Text('Unable to check for updates'),
-          content: Text(error.message ?? 'Please try again later.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
+      await _showUpdateDialog(
+        title: 'Unable to check for updates',
+        message: error.message ?? 'Please try again later.',
       );
     }
   }
 
   Future<void> _refreshNativeTrayMenu() async {
-    final updater = locator<IAppUpdateService>();
+    // A Linux build that did not come from install_linux.py - the AUR package,
+    // or a source build - is updated by whoever installed it. Offering a
+    // check there only ends in an error naming an installer they never used.
+    final registered = locator.maybeGet<IAppUpdateService>();
+    final updater = Platform.isLinux && !(registered?.isAvailable ?? false)
+        ? null
+        : registered;
     final gameMode = locator<IGameModeService>();
     await locator<ITrayService>().setUpdateAvailable(
-      available: updater.updateAvailable,
+      available: updater?.updateAvailable ?? false,
     );
     if (!mounted) return;
     await locator<ITrayService>().setContextMenu([
@@ -1306,21 +1373,24 @@ class _MyAppState extends State<MyApp> with WindowListener {
         onTap: gameMode.toggle,
       ),
       TrayMenuItem(label: 'Settings', onTap: _openSettingsFromTray),
-      const TrayMenuItem.separator(),
-      TrayMenuItem(
-        label: updater.updateAvailable
-            ? 'Update available…'
-            : 'Check for Updates…',
-        onTap: () => _runUpdateAction(updater.checkForUpdates),
-      ),
-      if (updater.isAvailable)
+      if (updater != null) ...[
+        const TrayMenuItem.separator(),
         TrayMenuItem(
-          label: 'Automatically check for updates',
-          isChecked: updater.automaticChecks,
-          onTap: () => _runUpdateAction(
-            () => updater.setAutomaticChecks(enabled: !updater.automaticChecks),
-          ),
+          label: updater.updateAvailable
+              ? 'Update available…'
+              : 'Check for Updates…',
+          onTap: () => _runUpdateAction(updater.checkForUpdates),
         ),
+        if (updater.isAvailable)
+          TrayMenuItem(
+            label: 'Automatically check for updates',
+            isChecked: updater.automaticChecks,
+            onTap: () => _runUpdateAction(
+              () =>
+                  updater.setAutomaticChecks(enabled: !updater.automaticChecks),
+            ),
+          ),
+      ],
       const TrayMenuItem.separator(),
       TrayMenuItem(label: 'Quit GhostCopy', onTap: _handleQuit),
     ]);
@@ -1515,8 +1585,15 @@ class _MyAppState extends State<MyApp> with WindowListener {
 /// character most users never type on purpose. Anyone who does need it, or
 /// who already runs a launcher on this combination, can rebind in Settings;
 /// only this fallback is affected.
+///
+/// On Linux it is Meta+Shift+V. Ctrl+Shift+S is Save As in most Linux apps
+/// too, and there the portal really does take it from all of them. KDE keeps
+/// global shortcuts on Meta, and Meta+V is already Plasma's clipboard history,
+/// so the Shift variant sits beside it rather than on it.
 final HotKey defaultHotkey = Platform.isMacOS
     ? const HotKey(key: 'space', alt: true)
+    : Platform.isLinux
+    ? const HotKey(key: 'v', meta: true, shift: true)
     : const HotKey(key: 's', ctrl: true, shift: true);
 
 /// Invoked when the global hotkey fires.
@@ -1852,7 +1929,7 @@ Future<int> _sendFileFromCommandLine(
   final exitCode = result.ok ? 0 : 1;
   final message = result.message;
   debugPrint('[SendFile] $message');
-  if (Platform.isWindows) {
+  if (Platform.isWindows || Platform.isLinux) {
     // The same Windows toast every other notification in the app uses, in the
     // corner and in the Action Center.
     //

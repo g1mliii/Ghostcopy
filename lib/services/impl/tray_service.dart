@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:tray_manager/tray_manager.dart';
+import '../../utils/xdg.dart';
 import '../tray_service.dart';
 
 /// Concrete implementation of ITrayService using tray_manager package
@@ -22,7 +24,9 @@ class TrayService with TrayListener implements ITrayService {
   /// vibrancy, keyboard navigation and positioning all come from AppKit. The
   /// Windows tray menu is still the custom Flutter window, because the native
   /// one there does not match the app at all.
-  bool get _usesNativeMenu => Platform.isMacOS;
+  /// Linux AppIndicator exposes its menu through the desktop shell; it does
+  /// not emit the mouse events used by our custom Windows tray window.
+  bool get _installsNativeMenu => Platform.isMacOS || Platform.isLinux;
 
   @override
   Future<void> initialize() async {
@@ -55,7 +59,7 @@ class TrayService with TrayListener implements ITrayService {
   @override
   Future<void> setContextMenu(List<TrayMenuItem> items) async {
     // Windows drives the custom Flutter window from the click event instead.
-    if (!_usesNativeMenu) return;
+    if (!_installsNativeMenu) return;
 
     await trayManager.setContextMenu(
       Menu(
@@ -85,7 +89,7 @@ class TrayService with TrayListener implements ITrayService {
   /// Mark a pending macOS update without opening a window or taking focus.
   @override
   Future<void> setUpdateAvailable({required bool available}) async {
-    if (!_usesNativeMenu) return;
+    if (!Platform.isMacOS) return;
     await trayManager.setTitle(available ? '•' : '');
     await trayManager.setToolTip(
       available ? 'GhostCopy — Update available' : 'GhostCopy',
@@ -122,7 +126,7 @@ class TrayService with TrayListener implements ITrayService {
     // the app, right-click opens the menu, the way Discord, Steam and Dropbox
     // behave. Doing nothing at all, which is what it did before, reads as a
     // broken icon.
-    if (_usesNativeMenu) {
+    if (_installsNativeMenu) {
       _openMenu();
     } else {
       onLeftClick?.call();
@@ -135,10 +139,12 @@ class TrayService with TrayListener implements ITrayService {
   }
 
   void _openMenu() {
-    if (_usesNativeMenu) {
+    if (Platform.isMacOS) {
       // AppKit owns placement, appearance and dismissal from here.
       unawaited(trayManager.popUpContextMenu());
-    } else {
+    } else if (!Platform.isLinux) {
+      // AppIndicator opens the installed menu itself; popUpContextMenu is not
+      // implemented by the Linux plugin.
       onRightClick?.call();
     }
   }
@@ -162,16 +168,62 @@ class TrayService with TrayListener implements ITrayService {
   ///   makes it invert correctly in dark mode and when the bar is highlighted.
   ///   A full-colour icon cannot do that. The tinting only happens when
   ///   `isTemplate` is passed to setIcon, so the two go together.
-  /// - Linux: 24px, the size most panels expect.
+  /// - Linux: a bare monochrome ghost, matching Plasma's own tray icons.
+  ///   AppIndicator hands Plasma a file path, which it never recolours, so the
+  ///   ink is picked here from the panel's colour scheme - see
+  ///   [linuxTrayIconFor].
   String _getTrayIconPath() {
     if (Platform.isWindows) {
       return 'assets/icons/tray_icon.ico';
     } else if (Platform.isMacOS) {
       return 'assets/icons/tray_icon_macos.png';
     } else if (Platform.isLinux) {
-      return 'assets/icons/tray_icon_linux.png';
+      return linuxTrayIconFor(_readKdeGlobals());
     }
     return '';
+  }
+
+  static String? _readKdeGlobals() {
+    try {
+      return File('${xdgConfigHome()}/kdeglobals').readAsStringSync();
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  /// White ghost for a dark panel, dark ghost for a light one.
+  ///
+  /// Plasma's panel takes its background from the colour scheme's
+  /// `[Colors:Window]` group in kdeglobals. Without one - no KDE, or a scheme
+  /// that does not set it - white is the default, since Breeze Dark is what
+  /// CachyOS ships. Read once at startup, so a scheme change shows on the next
+  /// launch.
+  @visibleForTesting
+  static String linuxTrayIconFor(String? kdeglobals) {
+    const white = 'assets/icons/tray_icon_linux.png';
+    const dark = 'assets/icons/tray_icon_linux_light_panel.png';
+    if (kdeglobals == null) return white;
+
+    var inWindowGroup = false;
+    for (final raw in kdeglobals.split('\n')) {
+      final line = raw.trim();
+      if (line.startsWith('[')) {
+        inWindowGroup = line == '[Colors:Window]';
+        continue;
+      }
+      if (!inWindowGroup || !line.startsWith('BackgroundNormal=')) continue;
+
+      final rgb = line
+          .substring('BackgroundNormal='.length)
+          .split(',')
+          .map((part) => int.tryParse(part.trim()))
+          .toList();
+      if (rgb.length < 3 || rgb.take(3).any((c) => c == null)) return white;
+      // Rec. 709 luma: a light panel is one the eye reads as light.
+      final luma = 0.2126 * rgb[0]! + 0.7152 * rgb[1]! + 0.0722 * rgb[2]!;
+      return luma > 127.5 ? dark : white;
+    }
+    return white;
   }
 
   /// Check if running on desktop platform

@@ -1,0 +1,4 @@
+# Linux/macOS entry points must remain executable by their interpreters even
+# when a checkout or release archive is prepared on Windows.
+*.sh text eol=lf
+*.py text eol=lf

@@ -10,3 +10,8 @@
 # URL, so publish-update.sh also uploads each DMG to the fixed macos-updates
 # release as GhostCopy.dmg, beside appcast.xml. This line never changes.
 /download/macos https://github.com/g1mliii/Ghostcopy/releases/download/macos-updates/GhostCopy.dmg 302
+
+# The current Linux tarball, kept the same way: the release flow uploads each
+# archive to the fixed linux-updates release beside latest.json. The versioned
+# copy under linux-v<version> is what the in-app updater downloads.
+/download/linux https://github.com/g1mliii/Ghostcopy/releases/download/linux-updates/ghostcopy-linux-x64.tar.gz 302

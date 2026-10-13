@@ -330,8 +330,14 @@ def tray_icons() -> None:
     save(on_transparent(44, "logo-black.svg"), "assets", "icons",
          "tray_icon_macos.png")
     save(tile(64, radius=0.2, opaque=False), "assets", "icons", "tray_icon.png")
-    save(tile(24, radius=0.2, opaque=False), "assets", "icons",
+    # Linux: a bare monochrome ghost, like Plasma's own tray icons. The panel
+    # never recolours a file-path icon, so tray_service.dart picks between
+    # these from the colour scheme: Breeze Dark's and Breeze's text colours.
+    # 48px so it stays sharp on a 2x panel; Plasma scales it down to fit.
+    save(bare_mark(48, color=(0xFC, 0xFC, 0xFC)), "assets", "icons",
          "tray_icon_linux.png")
+    save(bare_mark(48, color=(0x23, 0x26, 0x29)), "assets", "icons",
+         "tray_icon_linux_light_panel.png")
     # Windows loads this one, not the PNG - see tray_service.dart. It was left
     # out when this script took over from tool/generate_desktop_icons.py, so
     # the Windows tray kept showing the pre-rebrand mark while every other

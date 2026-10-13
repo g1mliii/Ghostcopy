@@ -634,34 +634,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     debugPrint('[Spotlight] Cleared pending attachment preview');
   }
 
-  /// Shown when an opening kept the user's draft rather than auto-pasting,
-  /// so the clipboard is still one click away.
-  Widget _buildDraftKeptHint() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      // Wrap, not Row: at large text scales the two do not fit on one line
-      // of a 500px window.
-      child: Wrap(
-        alignment: WrapAlignment.end,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(
-            'Kept from before',
-            style: GhostTypography.caption.copyWith(
-              color: GhostColors.textMuted,
-            ),
-          ),
-          TextButton(
-            onPressed: () =>
-                unawaited(_viewModel.populateFromClipboard(force: true)),
-            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-            child: const Text('Paste clipboard instead'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAttachmentClearButton({required String tooltip}) {
     return Container(
       width: 28,
@@ -940,8 +912,6 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                             const SizedBox(height: 10),
                                           ],
                                           _buildTextField(),
-                                          if (_viewModel.draftRestored)
-                                            _buildDraftKeptHint(),
                                           const SizedBox(height: 10),
                                           // Empty for JSON and plain text, so
                                           // this spreads to nothing rather
@@ -2750,128 +2720,132 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   Widget build(BuildContext context) {
     // Perf: Merged GestureDetector+MouseRegion+InkWell into single InkWell
     // with onSecondaryTapDown. Reduces hit-test layers from 5 to 2 per item.
-    return DragItemWidget(
-      allowedOperations: () => const [DropOperation.copy],
-      dragItemProvider: _buildDragItem,
-      child: DraggableWidget(
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: widget.onTap,
-            onSecondaryTapDown: (details) {
-              _showContextMenu(context, details.globalPosition);
-            },
-            onHover: (hovering) => _isHovered.value = hovering,
-            hoverColor: GhostColors.surfaceAlpha70,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Column(
+    final content = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        onSecondaryTapDown: (details) {
+          _showContextMenu(context, details.globalPosition);
+        },
+        onHover: (hovering) => _isHovered.value = hovering,
+        hoverColor: GhostColors.surfaceAlpha70,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _buildContentPreview()),
-                      if (!widget.item.isImage &&
-                          !widget.item.isFile &&
-                          widget.item.content.length > 100) ...[
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () =>
-                              setState(() => _isExpanded = !_isExpanded),
-                          child: AnimatedRotation(
-                            turns: _isExpanded ? 0.5 : 0,
-                            duration: GhostAnimations.normal,
-                            child: ValueListenableBuilder<bool>(
-                              valueListenable: _isHovered,
-                              builder: (context, hovered, _) => Icon(
-                                Icons.expand_more,
-                                size: 16,
-                                color: GhostColors.primary.withValues(
-                                  alpha: hovered ? 1 : 0.6,
-                                ),
-                              ),
+                  Expanded(child: _buildContentPreview()),
+                  if (!widget.item.isImage &&
+                      !widget.item.isFile &&
+                      widget.item.content.length > 100) ...[
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => setState(() => _isExpanded = !_isExpanded),
+                      child: AnimatedRotation(
+                        turns: _isExpanded ? 0.5 : 0,
+                        duration: GhostAnimations.normal,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: _isHovered,
+                          builder: (context, hovered, _) => Icon(
+                            Icons.expand_more,
+                            size: 16,
+                            color: GhostColors.primary.withValues(
+                              alpha: hovered ? 1 : 0.6,
                             ),
                           ),
                         ),
-                      ],
-                    ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    iconForDeviceType(_deviceLower),
+                    size: 12,
+                    color: GhostColors.textMuted,
                   ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(
-                        iconForDeviceType(_deviceLower),
-                        size: 12,
-                        color: GhostColors.textMuted,
+                  const SizedBox(width: 4),
+                  Text(
+                    widget.device,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.arrow_forward,
+                    size: 10,
+                    color: GhostColors.primaryAlpha70,
+                  ),
+                  const SizedBox(width: 6),
+                  if (widget.item.targetDeviceTypes == null ||
+                      widget.item.targetDeviceTypes!.isEmpty)
+                    const Text(
+                      'All',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: GhostColors.primary,
+                        fontWeight: FontWeight.w600,
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        widget.device,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: GhostColors.textMuted,
-                        ),
+                    )
+                  else if (widget.item.targetDeviceTypes!.length == 1)
+                    Icon(
+                      iconForDeviceType(widget.item.targetDeviceTypes!.first),
+                      size: 12,
+                      color: GhostColors.primary,
+                    )
+                  else
+                    Text(
+                      '${widget.item.targetDeviceTypes!.length}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: GhostColors.primary,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(width: 6),
-                      Icon(
-                        Icons.arrow_forward,
-                        size: 10,
-                        color: GhostColors.primaryAlpha70,
-                      ),
-                      const SizedBox(width: 6),
-                      if (widget.item.targetDeviceTypes == null ||
-                          widget.item.targetDeviceTypes!.isEmpty)
-                        const Text(
-                          'All',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: GhostColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      else if (widget.item.targetDeviceTypes!.length == 1)
-                        Icon(
-                          iconForDeviceType(
-                            widget.item.targetDeviceTypes!.first,
-                          ),
-                          size: 12,
-                          color: GhostColors.primary,
-                        )
-                      else
-                        Text(
-                          '${widget.item.targetDeviceTypes!.length}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: GhostColors.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        '\u2022',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: GhostColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.timeAgo,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: GhostColors.textMuted,
-                        ),
-                      ),
-                    ],
+                    ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    '\u2022',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: GhostColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.timeAgo,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: GhostColors.textMuted,
+                    ),
                   ),
                 ],
               ),
-            ),
+            ],
           ),
         ),
       ),
+    );
+
+    // No drag-out on Linux. The window is XWayland, and KWin 6.7's
+    // XWayland-to-Wayland drag bridge sends a foreign object in
+    // wl_data_device.enter when the drag crosses plasmashell, which kills
+    // plasmashell's connection and restarts the desktop. Dolphin survives it,
+    // the desktop does not. Save to computer still covers the use.
+    if (Platform.isLinux) return content;
+
+    return DragItemWidget(
+      allowedOperations: () => const [DropOperation.copy],
+      dragItemProvider: _buildDragItem,
+      child: DraggableWidget(child: content),
     );
   }
 }
