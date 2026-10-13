@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 APP_ID = 'com.ghostcopy.ghostcopy'
 APP_DIR = 'lib/ghostcopy'
@@ -86,19 +87,30 @@ def write(root, files):
     staged = []
     backups = []
     replaced = []
+
+    def sibling(output, suffix):
+        # Created exclusively, never at a predictable name a symlink could
+        # already occupy and redirect the write through.
+        descriptor, name = tempfile.mkstemp(prefix='.' + output.name + '.', suffix=suffix,
+                                            dir=output.parent)
+        return descriptor, Path(name)
+
     try:
         for output, (content, executable) in zip(outputs, files.values()):
             output.parent.mkdir(parents=True, exist_ok=True)
-            temporary = output.with_name('.' + output.name + '.ghostcopy-new')
+            descriptor, temporary = sibling(output, '.ghostcopy-new')
             staged.append(temporary)
-            temporary.write_text(content, encoding='utf-8', newline='\n')
+            with os.fdopen(descriptor, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(content)
             temporary.chmod(0o755 if executable else 0o644)
         for temporary, output in zip(staged, outputs):
             backup = None
             if output.exists():
-                backup = output.with_name('.' + output.name + '.ghostcopy-old')
-                shutil.copy2(output, backup)
+                descriptor, backup = sibling(output, '.ghostcopy-old')
                 backups.append(backup)
+                with os.fdopen(descriptor, 'wb') as handle, output.open('rb') as source:
+                    shutil.copyfileobj(source, handle)
+                shutil.copymode(output, backup)
             os.replace(temporary, output)
             replaced.append((output, backup))
     except BaseException:

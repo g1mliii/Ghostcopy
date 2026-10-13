@@ -148,7 +148,7 @@ as the `ghostcopy-linux-x64` artifact
 The packager reads the compiled Flutter version, includes the updater and CLI,
 and writes the tarball, checksum, and `latest.json` to `build/linux-package`.
 It never publishes. Publish the archive under the exact versioned tag
-`linux-v$version+$build`, then upload the same archive and `latest.json` to the
+`linux-v<version>+<build>`, then upload the same archive and `latest.json` to the
 separate `linux-updates` release, replacing the previous ones. Upload the
 versioned archive first so clients never see an unavailable payload. The
 `linux-updates` copy is what the website's `/download/linux` redirect serves;
@@ -156,7 +156,9 @@ skip it and every Download for Linux link points at the old version, or at
 nothing on a first release:
 
 ```sh
-gh release create "linux-v$version+$build" --title "GhostCopy $version-$build for Linux" \
+# The version the package was built as, however it was built.
+release=$(python3 -c "import json; print(json.load(open('build/linux-package/latest.json'))['version'])")
+gh release create "linux-v$release" --title "GhostCopy ${release/+/-} for Linux" \
   build/linux-package/ghostcopy-linux-x64.tar.gz \
   build/linux-package/ghostcopy-linux-x64.tar.gz.sha256
 gh release upload linux-updates --clobber \
