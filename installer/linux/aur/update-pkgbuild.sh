@@ -23,10 +23,11 @@ license_sha=$(curl -fsSL "https://raw.githubusercontent.com/g1mliii/Ghostcopy/$t
 [[ $archive_sha =~ ^[0-9a-f]{64}$ ]] || { echo "No checksum published for $tag" >&2; exit 1; }
 
 current=$(sed -n 's/^pkgver=//p' "$here/PKGBUILD")
-current_build=$(sed -n 's/^_build=//p' "$here/PKGBUILD")
 rel=1
-if [[ $current == "$version" && $current_build == "$build" ]]; then
-  # Same upstream release, packaging change only.
+if [[ $current == "$version" ]]; then
+  # pacman compares only pkgver-pkgrel, never _build. A packaging change, or
+  # a new build of the same version (1.0.9+25 -> 1.0.9+26), must raise
+  # pkgrel or AUR helpers will not see an upgrade.
   rel=$(( $(sed -n 's/^pkgrel=//p' "$here/PKGBUILD") + 1 ))
 fi
 

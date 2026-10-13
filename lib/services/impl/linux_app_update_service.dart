@@ -30,6 +30,10 @@ class LinuxAppUpdateService extends IAppUpdateService {
   final Future<Map<String, Object?>> Function(List<String> arguments)?
   runUpdater;
   static const _preference = 'linuxAutomaticUpdateChecks';
+
+  /// How long the apply helper may take to stage a downloaded bundle.
+  @visibleForTesting
+  static const stagingTimeout = Duration(minutes: 10);
   bool _available = false;
   bool _automatic = true;
   bool _updateAvailable = false;
@@ -56,23 +60,33 @@ class LinuxAppUpdateService extends IAppUpdateService {
     notifyListeners();
     _schedule();
     if (_automatic && _available) unawaited(_backgroundCheck());
-    final home = Platform.environment['HOME'];
-    if (home != null) {
-      final receipt = File('$home/.cache/ghostcopy/last-update.json');
-      if (receipt.existsSync()) {
-        try {
-          final data = jsonDecode(await receipt.readAsString());
-          await receipt.delete();
-          if (!_disposed &&
-              data is Map<String, Object?> &&
-              data['error'] is String) {
-            await showMessage('The update could not finish: ${data['error']}');
-          }
-        } on Exception catch (error) {
-          debugPrint('[LinuxUpdater] Could not read update receipt: $error');
-        }
+    try {
+      final error = await _takeReceiptError();
+      if (error != null && !_disposed) {
+        await showMessage('The update could not finish: $error');
       }
+    } on Exception catch (error) {
+      debugPrint('[LinuxUpdater] Could not read update receipt: $error');
     }
+  }
+
+  /// The detached helper's result, written by linux_update.py --apply.
+  static File? get _receipt {
+    final home = Platform.environment['HOME'];
+    return home == null
+        ? null
+        : File('$home/.cache/ghostcopy/last-update.json');
+  }
+
+  /// The error the last apply reported, consuming its receipt.
+  static Future<String?> _takeReceiptError() async {
+    final receipt = _receipt;
+    if (receipt == null || !receipt.existsSync()) return null;
+    final data = jsonDecode(await receipt.readAsString());
+    await receipt.delete();
+    return data is Map<String, Object?> && data['error'] is String
+        ? data['error']! as String
+        : null;
   }
 
   void _schedule() {
@@ -164,21 +178,32 @@ class LinuxAppUpdateService extends IAppUpdateService {
       if (!await confirmInstall(version) || _disposed) return;
       showDownloading();
       final prepared = await _run(['--prepare', version]);
-      if (_disposed) return;
       final directory = prepared['directory']! as String;
+      if (_disposed) {
+        // Quit during the download: nothing will apply it now, and each
+        // abandoned one is up to the archive size limit.
+        await Directory(directory).delete(recursive: true);
+        return;
+      }
+      // A failure left over from an earlier attempt must not read as this one's.
+      await _takeReceiptError();
       await Process.start(
         'python3',
         _updater(['--apply', directory, '--wait-pid', '$pid', '--restart']),
         mode: ProcessStartMode.detached,
       );
-      // The helper validates and stages before signalling that we can quit.
+      // The helper extracts and validates the whole bundle - up to 1 GiB -
+      // before signalling that we can quit, so the wait covers staging, and
+      // ends early when the helper reports that it failed.
       final ready = File('$directory/ready');
-      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      final deadline = DateTime.now().add(stagingTimeout);
       while (!ready.existsSync()) {
         if (_disposed) return;
+        final error = await _takeReceiptError();
+        if (error != null) throw FormatException(error);
         if (DateTime.now().isAfter(deadline)) {
           throw const FormatException(
-            'The updater did not start. GhostCopy has stayed open.',
+            'The updater did not finish preparing. GhostCopy has stayed open.',
           );
         }
         await Future<void>.delayed(const Duration(milliseconds: 100));

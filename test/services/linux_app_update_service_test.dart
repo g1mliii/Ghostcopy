@@ -81,6 +81,30 @@ void main() {
     },
   );
 
+  test('quitting during the download deletes what it downloaded', () async {
+    final download = Directory('${installation.path}/download-test')
+      ..createSync();
+    File('${download.path}/update.tar.gz').writeAsStringSync('archive');
+    late LinuxAppUpdateService service;
+    service = LinuxAppUpdateService(
+      executableDirectory: installation.path,
+      runUpdater: (arguments) async {
+        if (arguments.first == '--prepare') {
+          service.dispose(); // GhostCopy quit while this ran.
+          return {'directory': download.path, 'version': '1.0.9+22'};
+        }
+        return {'available': true, 'version': '1.0.9+22'};
+      },
+      confirmInstall: (_) async => true,
+      showMessage: (_) async {},
+      showDownloading: () {},
+      quit: () async => fail('Already quitting'),
+    );
+    await service.initialize();
+    await service.checkForUpdates();
+    expect(download.existsSync(), isFalse);
+  });
+
   test('uninstalled source builds do not offer automatic updates', () async {
     File('${installation.path}/install-manifest.json').deleteSync();
     final service = LinuxAppUpdateService(

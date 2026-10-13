@@ -1146,6 +1146,32 @@ void main() {
         ..stopClipboardActivityWatch();
     });
 
+    testWidgets('an unreadable counter offers the clip instead of copying', (
+      tester,
+    ) async {
+      // Linux's monitor while it reconnects: no baseline, no change seen.
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        clipboardChangeChannel,
+        (_) async => null,
+      );
+      await watch(tester);
+
+      await receive(tester);
+
+      verifyNever(() => clipboard.writeText(any()));
+      verify(
+        () => notifier.showClickableToast(
+          message: any(named: 'message'),
+          actionLabel: 'Copy',
+          onAction: any(named: 'onAction'),
+          duration: any(named: 'duration'),
+        ),
+      ).called(1);
+      service
+        ..stopPolling()
+        ..stopClipboardActivityWatch();
+    });
+
     testWidgets('a Wayland user copy during a write is not absorbed', (
       tester,
     ) async {

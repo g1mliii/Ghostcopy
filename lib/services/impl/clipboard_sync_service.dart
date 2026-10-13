@@ -573,10 +573,14 @@ class ClipboardSyncService implements IClipboardSyncService {
       Future<bool> smartAllowsCopy() async {
         await _checkClipboardActivity();
         final lastModified = _lastClipboardModificationTime;
+        // A counter that cannot be read right now - Linux's monitor while it
+        // reconnects - may be hiding a copy made a moment ago, so the clip is
+        // offered rather than written over it.
         final stale =
-            lastModified == null ||
-            clock.now().difference(lastModified) >=
-                Duration(minutes: staleDurationMinutes);
+            !_activityUnknown &&
+            (lastModified == null ||
+                clock.now().difference(lastModified) >=
+                    Duration(minutes: staleDurationMinutes));
         debugPrint(
           '[ClipboardSyncService] Smart check: last user copy '
           '$lastModified, window $staleDurationMinutes min, stale $stale',
@@ -1450,6 +1454,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Bumped by every stop, invalidating any refresh still reading settings.
   int _watchGeneration = 0;
 
+  /// Whether the watch's latest counter read came back unavailable.
+  bool _activityUnknown = false;
+
   /// Stopped around screen lock and system sleep, with everything else the
   /// lifecycle pauses.
   @override
@@ -1490,6 +1497,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
       final epoch = _writeEpoch;
       final count = await _readClipboardChangeCount();
+      _activityUnknown = count == null;
       if (count == null || _isDisposed) return;
       // A write started while the counter was read: that reading may predate
       // it, and storing it would undo the write's absorb. Read again.

@@ -112,6 +112,11 @@ def prepare(target, expected):
         raise ValueError('The release changed. Check for updates again.')
     cache = download_cache()
     cache.mkdir(parents=True, exist_ok=True)
+    # Downloads whose app quit before applying them. A day old, so never one
+    # an apply helper started minutes ago is still waiting on.
+    for old in cache.glob('download-*'):
+        if old.is_dir() and not old.is_symlink() and time.time() - old.stat().st_mtime > 86400:
+            shutil.rmtree(old, ignore_errors=True)
     directory = Path(tempfile.mkdtemp(prefix='download-', dir=cache))
     try:
         archive = directory / 'update.tar.gz'
