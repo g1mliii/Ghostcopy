@@ -24,7 +24,8 @@ because the new generator did not write it. One generator, one source of truth.
 | `../../windows/runner/resources/app_icon.ico` | The Windows exe, title bar, taskbar and Alt-Tab, via `windows/runner/Runner.rc` |
 | `tray_icon.ico` | Windows system tray (16/20/24/32/48 frames, picked per DPI) |
 | `tray_icon_macos.png` | macOS menu bar |
-| `tray_icon_linux.png` | Linux panels |
+| `tray_icon_linux.png` | Linux panels with a dark colour scheme (white ghost) |
+| `tray_icon_linux_light_panel.png` | Linux panels with a light colour scheme (dark ghost) |
 | `tray_icon.png` | Flutter-side previews that want a PNG |
 
 `app_icon.png`, `logo_dark.png` and `logo_white.png` are the shared 1024px
@@ -41,8 +42,13 @@ It is drawn in brand indigo with the eyes knocked through to transparency,
 which keeps it legible on both a dark and a light taskbar. A white silhouette —
 what this used to ship — disappears entirely on a light taskbar.
 
-This is `bare_mark()` in the generator, and only `tray_icon.ico` uses it. The
-Linux and preview PNGs are still the tile. A generator change that regenerated
+This is `bare_mark()` in the generator. `tray_icon.ico` uses it in indigo,
+and the Linux pair uses it monochrome; the preview PNG is still the tile.
+
+Linux is monochrome because Plasma's own tray icons are, and the indigo tile
+looked out of place among them. AppIndicator hands Plasma a file path, which it
+never recolours, so `tray_service.dart` picks white or dark ink from the
+`[Colors:Window]` background in kdeglobals at startup. A generator change that regenerated
 "every icon drawn with tile()" once put the Windows tray back on the squircle
 too, so if the tray grows a square again, check `tray_icons()` first.
 

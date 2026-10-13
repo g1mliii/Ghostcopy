@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:tray_manager/tray_manager.dart';
 import '../tray_service.dart';
 
@@ -167,16 +168,65 @@ class TrayService with TrayListener implements ITrayService {
   ///   makes it invert correctly in dark mode and when the bar is highlighted.
   ///   A full-colour icon cannot do that. The tinting only happens when
   ///   `isTemplate` is passed to setIcon, so the two go together.
-  /// - Linux: 24px, the size most panels expect.
+  /// - Linux: a bare monochrome ghost, matching Plasma's own tray icons.
+  ///   AppIndicator hands Plasma a file path, which it never recolours, so the
+  ///   ink is picked here from the panel's colour scheme - see
+  ///   [linuxTrayIconFor].
   String _getTrayIconPath() {
     if (Platform.isWindows) {
       return 'assets/icons/tray_icon.ico';
     } else if (Platform.isMacOS) {
       return 'assets/icons/tray_icon_macos.png';
     } else if (Platform.isLinux) {
-      return 'assets/icons/tray_icon_linux.png';
+      return linuxTrayIconFor(_readKdeGlobals());
     }
     return '';
+  }
+
+  static String? _readKdeGlobals() {
+    final configHome =
+        Platform.environment['XDG_CONFIG_HOME'] ??
+        '${Platform.environment['HOME']}/.config';
+    try {
+      return File('$configHome/kdeglobals').readAsStringSync();
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  /// White ghost for a dark panel, dark ghost for a light one.
+  ///
+  /// Plasma's panel takes its background from the colour scheme's
+  /// `[Colors:Window]` group in kdeglobals. Without one - no KDE, or a scheme
+  /// that does not set it - white is the default, since Breeze Dark is what
+  /// CachyOS ships. Read once at startup, so a scheme change shows on the next
+  /// launch.
+  @visibleForTesting
+  static String linuxTrayIconFor(String? kdeglobals) {
+    const white = 'assets/icons/tray_icon_linux.png';
+    const dark = 'assets/icons/tray_icon_linux_light_panel.png';
+    if (kdeglobals == null) return white;
+
+    var inWindowGroup = false;
+    for (final raw in kdeglobals.split('\n')) {
+      final line = raw.trim();
+      if (line.startsWith('[')) {
+        inWindowGroup = line == '[Colors:Window]';
+        continue;
+      }
+      if (!inWindowGroup || !line.startsWith('BackgroundNormal=')) continue;
+
+      final rgb = line
+          .substring('BackgroundNormal='.length)
+          .split(',')
+          .map((part) => int.tryParse(part.trim()))
+          .toList();
+      if (rgb.length < 3 || rgb.take(3).any((c) => c == null)) return white;
+      // Rec. 709 luma: a light panel is one the eye reads as light.
+      final luma = 0.2126 * rgb[0]! + 0.7152 * rgb[1]! + 0.0722 * rgb[2]!;
+      return luma > 127.5 ? dark : white;
+    }
+    return white;
   }
 
   /// Check if running on desktop platform

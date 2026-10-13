@@ -3,7 +3,10 @@
 This branch produces an x86-64 Linux test build with the desktop integrations
 below. The Flutter window uses XWayland; background clipboard reads use native
 Wayland data-control through wl-paste, and global shortcuts use KDE's portal.
-Real Plasma session acceptance remains to be done on CachyOS. The window still
+Real Plasma session acceptance is in progress on CachyOS. Dragging clips out of
+the window is disabled on Linux: KWin 6.7's XWayland-to-Wayland drag bridge
+kills plasmashell's connection when such a drag crosses the desktop. Use Save
+to computer instead. The window still
 uses XWayland. Installed builds support automatic update checks and confirmed
 download/install; live updates require the Linux release feed to be published.
 
@@ -12,7 +15,7 @@ download/install; live updates require the Linux release feed to be published.
 Install the runtime prerequisites (many will already be installed):
 
 ```sh
-sudo pacman -S --needed gtk3 libsecret keybinder3 libayatana-appindicator wayland wl-clipboard xorg-xwayland xdg-desktop-portal-kde desktop-file-utils python
+sudo pacman -S --needed gtk3 libsecret libkeybinder3 libayatana-appindicator wayland wl-clipboard xorg-xwayland xdg-desktop-portal-kde desktop-file-utils python
 ```
 
 Secure storage also needs an unlocked Secret Service provider. KDE Wallet can
@@ -31,8 +34,10 @@ quit any previous GhostCopy instance, and install **without sudo**:
 python3 install_linux.py --bundle bundle
 ```
 
-Launch **GhostCopy** from Plasma's application menu. Approve its global shortcut
-request when KDE asks. Change the actual binding through GhostCopy Settings →
+Launch **GhostCopy** from Plasma's application menu. The default shortcut is
+**Meta+Shift+V** (Meta+V is Plasma's clipboard history; Ctrl+Shift+S, the
+Windows default, is Save As in most Linux apps). KDE may grant it without a
+prompt; approve the request if it asks. Change the actual binding through GhostCopy Settings →
 Global shortcut → Configure. KDE owns that binding. Configure retries if you
 cancel the initial request; the tray Open action works without a shortcut.
 
@@ -100,10 +105,18 @@ on Ubuntu 24.04 in a container.
 Install the runtime prerequisites above, then:
 
 ```sh
-sudo pacman -S --needed base-devel clang cmake ninja pkgconf wayland
+sudo pacman -S --needed base-devel clang cmake ninja pkgconf wayland jdk-openjdk
+export JAVA_HOME=/usr/lib/jvm/default
+bash tool/linux_doctor.sh
 bash tool/build_linux.sh
 python3 tool/install_linux.py
 ```
+
+The JDK is not for the app: `sentry_flutter` pins `jni` 0.14.2, whose CMake
+requires JNI on every platform, so configure fails with "Could NOT find JNI"
+without `JAVA_HOME`. Newer CachyOS toolchains also warn in the `tray_manager`
+and `hotkey_manager_linux` plugins; `linux/CMakeLists.txt` keeps those warnings
+non-fatal for those two plugins only.
 
 The clipboard plugin needs a Rust toolchain when a prebuilt native library is
 unavailable. The build script builds the GUI and CLI and targets Linux x86-64.

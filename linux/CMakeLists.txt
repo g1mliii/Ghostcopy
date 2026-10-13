@@ -74,6 +74,13 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# Newer toolchains (CachyOS clang + libayatana-appindicator) warn in these
+# third-party plugins: app_indicator_new is deprecated, and hotkey_manager_linux
+# has maybe-uninitialized locals. apply_standard_settings makes that fatal.
+foreach(plugin tray_manager hotkey_manager_linux)
+  target_compile_options(${plugin}_plugin PRIVATE -Wno-error)
+endforeach(plugin)
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build
@@ -101,9 +108,18 @@ install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
-  install(FILES "${bundled_library}"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-    COMPONENT Runtime)
+  # sentry_flutter bundles crashpad_handler, an executable, through the same
+  # list as the shared libraries. install(FILES) leaves it 0644 and Sentry
+  # then fails to spawn it on every launch, so native crashes go unreported.
+  if(bundled_library MATCHES "crashpad_handler")
+    install(PROGRAMS "${bundled_library}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  else()
+    install(FILES "${bundled_library}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  endif()
 endforeach(bundled_library)
 
 # Copy the native assets provided by the build.dart from all packages.

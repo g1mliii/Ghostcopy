@@ -20,6 +20,9 @@ class LinuxHotkeyService implements IHotkeyService {
   final Map<HotKey, Future<void>> _registrations = {};
   final Map<DBusObjectPath, Completer<DBusSignal>> _requests = {};
   StreamSubscription<DBusSignal>? _activated;
+
+  /// The portal's unique bus name, which every portal signal is matched on.
+  String? _portalOwner;
   HotKey? _lastRequested;
   VoidCallback? _lastCallback;
   int _serial = 0;
@@ -56,11 +59,29 @@ class LinuxHotkeyService implements IHotkeyService {
     await portal
         .getProperty(_interface, 'version')
         .timeout(const Duration(seconds: 5));
+    // Match portal signals on its unique name, resolved here. Given the
+    // well-known name, package:dbus 0.7.15 resolves the owner in the
+    // background and drops any signal that arrives before that lookup lands.
+    // KDE's portal sends CreateSession's Response within a millisecond, in the
+    // same read as the lookup's reply, so every registration hung until the
+    // two-minute timeout and the shortcut was never bound.
+    final owner = await _client
+        .getNameOwner(_destination)
+        .timeout(const Duration(seconds: 5));
+    if (owner == null) {
+      throw const FormatException('Global shortcut portal is not running');
+    }
     if (_disposed) throw const FormatException('Shortcut service is closed');
+    if (owner != _portalOwner) {
+      // A restarted portal has a new name; the old subscription is dead.
+      await _activated?.cancel();
+      _activated = null;
+      _portalOwner = owner;
+    }
     _activated ??=
         DBusSignalStream(
           _client,
-          sender: _destination,
+          sender: owner,
           path: _path,
           interface: _interface,
           name: 'Activated',
@@ -205,7 +226,7 @@ class LinuxHotkeyService implements IHotkeyService {
     final subscription =
         DBusSignalStream(
           _client,
-          sender: _destination,
+          sender: _portalOwner,
           path: requestPath,
           interface: 'org.freedesktop.portal.Request',
           name: 'Response',

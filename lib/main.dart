@@ -607,7 +607,7 @@ Future<void> _appMain(
     }
 
     // Register global hotkey (Requirement 1.1, 3.4)
-    // Default: Ctrl+Shift+S to show Spotlight window
+    // Saved shortcut, else defaultHotkey, to show the Spotlight window
     // Note: We'll set the callback in MyApp since it needs state access
 
     // Complete OAuth when the browser hands us back a ghostcopy:// callback -
@@ -1583,8 +1583,15 @@ class _MyAppState extends State<MyApp> with WindowListener {
 /// character most users never type on purpose. Anyone who does need it, or
 /// who already runs a launcher on this combination, can rebind in Settings;
 /// only this fallback is affected.
+///
+/// On Linux it is Meta+Shift+V. Ctrl+Shift+S is Save As in most Linux apps
+/// too, and there the portal really does take it from all of them. KDE keeps
+/// global shortcuts on Meta, and Meta+V is already Plasma's clipboard history,
+/// so the Shift variant sits beside it rather than on it.
 final HotKey defaultHotkey = Platform.isMacOS
     ? const HotKey(key: 'space', alt: true)
+    : Platform.isLinux
+    ? const HotKey(key: 'v', meta: true, shift: true)
     : const HotKey(key: 's', ctrl: true, shift: true);
 
 /// Invoked when the global hotkey fires.
