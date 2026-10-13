@@ -48,6 +48,8 @@ post_install do |installer|
       # Force macOS 14.0 for all pods, especially mobile_scanner which needs Swift concurrency
       config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '14.0'
       config.build_settings['SWIFT_VERSION'] = '5.0'
+      # Apple silicon only, like the app: no Intel slice to compile or ship.
+      config.build_settings['ARCHS'] = 'arm64'
 
       # Force the deployment target in compiler flags too
       if config.build_settings['OTHER_SWIFT_FLAGS']

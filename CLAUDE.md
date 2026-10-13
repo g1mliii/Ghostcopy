@@ -266,6 +266,17 @@ drag-to-install DMG, and updates ship through Sparkle over a signed appcast.
 See [`docs/macos-releases.md`](docs/macos-releases.md) for the release runbook
 and `installer/macos/` for the scripts.
 
+Apple silicon only from 1.0.10 (`ARCHS = arm64` in the project and Podfile).
+The `ghostcopy` CLI is compiled into `Contents/Helpers/ghostcopy` by the
+Runner's "Embed ghostcopy Command" build phase, and `dart compile exe` cannot
+cross-compile to Intel macOS, so a universal app would carry a command that
+does not run on half its machines. The appcast carries
+`sparkle:hardwareRequirements` arm64 (generate_appcast adds it; prepare-update.sh
+refuses a feed without it) so Intel Macs on 1.0.9 are not offered an update
+they cannot launch. The helper needs
+`com.apple.security.cs.allow-unsigned-executable-memory` under Hardened
+Runtime or it is killed at launch; `verify-app.py` runs it to prove that.
+
 Global hotkeys use Carbon's `RegisterEventHotKey` (via `hotkey_manager`), which does not require Accessibility permission — do not add an `AXIsProcessTrustedWithOptions` prompt; nothing needs it, and it would ask users for a permission the app has no use for. The app is **not** sandboxed: the sandbox was dropped for Developer ID distribution (`9ef4116`), and `Release.entitlements` carries no `com.apple.security.app-sandbox` key, so there are no sandbox network entitlements to maintain either.
 
 **Mobile (iOS/Android)**:

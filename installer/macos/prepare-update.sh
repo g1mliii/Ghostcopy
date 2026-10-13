@@ -67,6 +67,15 @@ fi
     --download-url-prefix "https://github.com/g1mliii/Ghostcopy/releases/download/$tag/" \
     "$updates"
 python3 "$script_dir/check-release-notes.py" "$updates/appcast.xml" --warn
+# An Apple-silicon-only build offered to an Intel Mac installs and then never
+# launches. sparkle:hardwareRequirements arm64 keeps Sparkle from offering it
+# there; it is part of the signed feed, so it must come from generate_appcast.
+if ! lipo -archs "$app/Contents/MacOS/ghostcopy" | grep -qw x86_64 &&
+    ! grep -q '<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>' "$updates/appcast.xml"; then
+    echo 'The app has no Intel slice, but the appcast does not require arm64:' >&2
+    echo 'Intel Macs would be offered an update that cannot launch.' >&2
+    exit 1
+fi
 "$bin/sign_update" --account com.ghostcopy.ghostcopy --verify "$updates/appcast.xml"
 python3 - "$updates" <<'PY'
 import pathlib, sys, xml.etree.ElementTree as ET

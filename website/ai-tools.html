@@ -26,7 +26,7 @@
             <p class="label !text-accent-text mb-6">Command line &amp; MCP</p>
             <h1 class="font-bold tracking-display text-4xl sm:text-6xl leading-tight">Your assistant.<br />Your other devices.</h1>
             <p class="mt-8 text-lg leading-relaxed text-ink-2">Send a result, link or file to your phone without leaving your terminal or AI conversation. GhostCopy uses the account and encryption settings in your running desktop app.</p>
-            <p class="mt-5 text-ink-2 leading-relaxed">The CLI and MCP server are implemented. Windows packages starting with 1.0.22.0 and the Linux test installer include the companion executable. macOS currently requires building it from source. If your Store version is older, update when the new version becomes available.</p>
+            <p class="mt-5 text-ink-2 leading-relaxed">The CLI and MCP server are implemented. GhostCopy for macOS from 1.0.10, Windows packages from 1.0.22.0 and the Linux installer include the companion executable. If your version is older, update when the new version becomes available.</p>
             <nav aria-label="On this page" class="flex flex-wrap gap-5 mt-8 text-accent-text">
                 <a href="#install" class="underline">Install</a><a href="#terminal" class="underline">Terminal</a><a href="#mcp" class="underline">Connect your AI</a><a href="#troubleshooting" class="underline">Troubleshooting</a>
             </nav>
@@ -36,7 +36,8 @@
                 <h2 class="text-2xl sm:text-3xl font-semibold text-ink-4 mb-6">1. Get the companion</h2>
                 <p>On Windows, install or update GhostCopy from the Microsoft Store to package version <strong class="text-ink-4">1.0.22.0 or later</strong>, then open a new terminal. Windows registers <code>ghostcopy</code> automatically. You do not need Dart or Flutter. If the command is missing, enable GhostCopy under Windows Settings → Apps → Advanced app settings → App execution aliases.</p>
                 <p class="mt-4">On Linux, the installer places <code>ghostcopy</code> in <code>~/.local/bin</code>. Add that directory to your PATH, or use the full path. <code>ghostcopy-desktop</code> is the separate GUI launcher.</p>
-                <p class="mt-4">For macOS (or an older Windows build), install a Dart SDK satisfying the repository requirements (Flutter includes Dart), clone <a class="text-accent-text underline" href="https://github.com/g1mliii/Ghostcopy">the GhostCopy repository</a>, and run:</p>
+                <p class="mt-4">On macOS, GhostCopy 1.0.10 or later carries the command inside the app. Open <strong class="text-ink-4">Settings</strong> and click <strong class="text-ink-4">Install</strong> next to <strong class="text-ink-4">ghostcopy command</strong>; after your password it is in <code>/usr/local/bin</code> and stays current through app updates. For MCP, its full path is <code>/Applications/GhostCopy.app/Contents/Helpers/ghostcopy</code>.</p>
+                <p class="mt-4">For an older Windows build, install a Dart SDK satisfying the repository requirements (Flutter includes Dart), clone <a class="text-accent-text underline" href="https://github.com/g1mliii/Ghostcopy">the GhostCopy repository</a>, and run:</p>
                 <pre class="bg-surface rounded-xl p-5 overflow-x-auto text-sm text-ink-4 mt-5"><code>cd packages/ghostcopy_agent
 dart pub get
 dart compile exe bin/ghostcopy.dart -o ghostcopy</code></pre>
@@ -62,7 +63,7 @@ ghostcopy devices --json</code></pre>
                 <pre class="bg-surface rounded-xl p-5 overflow-x-auto text-sm text-ink-4 mt-5"><code>{
   "mcpServers": {
     "ghostcopy": {
-      "command": "/Users/yourname/bin/ghostcopy",
+      "command": "/Applications/GhostCopy.app/Contents/Helpers/ghostcopy",
       "args": ["mcp"]
     }
   }
@@ -87,7 +88,7 @@ ghostcopy devices --json</code></pre>
             <section id="troubleshooting">
                 <h2 class="text-2xl sm:text-3xl font-semibold text-ink-4 mb-6">When it does not connect</h2>
                 <ul class="list-disc pl-6 space-y-4">
-                    <li><strong class="text-ink-4">Command not found:</strong> use the executable's full path. Windows requires package 1.0.22.0 or later with its execution alias enabled. macOS still needs the separately built companion.</li>
+                    <li><strong class="text-ink-4">Command not found:</strong> use the executable's full path. Windows requires package 1.0.22.0 or later with its execution alias enabled. On macOS, use Install in Settings, or the full path inside GhostCopy.app.</li>
                     <li><strong class="text-ink-4">Unreachable:</strong> start GhostCopy under the same OS user as your terminal or AI client. Run the server on the host desktop, not in a container or separate WSL environment.</li>
                     <li><strong class="text-ink-4">Refused:</strong> check your sign-in and enable Command line &amp; AI tools. If encryption is enabled, unlock it in the app.</li>
                     <li><strong class="text-ink-4">MCP has no tools:</strong> check the absolute path and JSON escaping, then fully restart the client. <code>ghostcopy mcp</code> waiting silently in a terminal is normal: it expects protocol messages on standard input.</li>

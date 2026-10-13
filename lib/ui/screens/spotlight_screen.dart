@@ -18,6 +18,7 @@ import '../../services/auth_service.dart';
 import '../../services/auto_start_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
+import '../../services/command_line_tool_service.dart';
 import '../../services/device_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/hotkey_service.dart';
@@ -162,6 +163,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       : null;
   late final IHotkeyService? _hotkeyService =
       locator.isRegistered<IHotkeyService>() ? locator<IHotkeyService>() : null;
+  late final ICommandLineToolService? _commandLineToolService =
+      locator.isRegistered<ICommandLineToolService>()
+      ? locator<ICommandLineToolService>()
+      : null;
   late final IDeviceService? _deviceService =
       locator.isRegistered<IDeviceService>() ? locator<IDeviceService>() : null;
 
@@ -1843,6 +1848,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 autoReceiveBehavior: _autoReceiveBehavior,
                 autoStartService: _autoStartService,
                 hotkeyService: _hotkeyService,
+                commandLineToolService: _commandLineToolService,
                 deviceService: _deviceService,
                 encryptionService: EncryptionService.instance,
                 onEncryptionChanged: _viewModel.refreshHistory,

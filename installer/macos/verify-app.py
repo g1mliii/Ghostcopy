@@ -51,6 +51,25 @@ def _check_signing_key_matches(embedded_key, sparkle_bin):
     )
 
 
+def _check_command_line_tool(app, app_signature):
+    """The bundled `ghostcopy` command must survive export and still launch.
+
+    It is signed by a build phase, then re-signed by export. Hardened Runtime
+    without its entitlement does not fail any signature check - the kernel
+    kills it at launch (exit 137) - so it is run, not only inspected.
+    """
+    tool = app / 'Contents/Helpers/ghostcopy'
+    check(tool.is_file(), 'The ghostcopy command is not bundled in Contents/Helpers')
+    signature = subprocess.run(
+        ['codesign', '-dvv', str(tool)], capture_output=True, text=True, check=True,
+    ).stderr
+    authority = next(line for line in app_signature.splitlines() if line.startswith('Authority='))
+    check(authority in signature.splitlines(), 'The ghostcopy command is not signed like the app')
+    check('runtime' in signature, 'The ghostcopy command lacks Hardened Runtime')
+    help_run = subprocess.run([str(tool), '--help'], capture_output=True, text=True)
+    check(help_run.returncode == 0, f'The bundled ghostcopy command does not run (exit {help_run.returncode})')
+
+
 def verify(app, require_updater=False, sparkle_bin=None):
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     signature = subprocess.run(
@@ -85,6 +104,7 @@ def verify(app, require_updater=False, sparkle_bin=None):
         check(info.get('SURequireSignedFeed') is True, 'Signed update feed is required')
         check((app / 'Contents/Frameworks/Sparkle.framework').is_dir(), 'Sparkle framework not embedded')
         _check_signing_key_matches(info['SUPublicEDKey'], sparkle_bin)
+        _check_command_line_tool(app, signature)
     team = entitlements.get('com.apple.developer.team-identifier')
     check(team and team == allowed.get('com.apple.developer.team-identifier'), 'Team does not match profile')
     app_id = entitlements.get('com.apple.application-identifier', '')
