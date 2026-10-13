@@ -14,6 +14,7 @@
   <a href="https://ghostcopy.app/download/macos"><img src="https://img.shields.io/badge/Download_for_Mac-6670FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac" /></a>
   <a href="https://testflight.apple.com/join/62aWHQzj"><img src="https://img.shields.io/badge/iPhone_on_TestFlight-6670FF?style=for-the-badge&logo=appstore&logoColor=white" alt="iPhone on TestFlight" /></a>
   <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80"><img src="https://img.shields.io/badge/Get_for_Windows-6670FF?style=for-the-badge&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDBoMTF2MTFIMHpNMTMgMGgxMXYxMUgxM3pNMCAxM2gxMXYxMUgwek0xMyAxM2gxMXYxMUgxM3oiLz48L3N2Zz4%3D" alt="Get for Windows" /></a>
+  <a href="https://ghostcopy.app/download/linux"><img src="https://img.shields.io/badge/Download_for_Linux-6670FF?style=for-the-badge&logo=linux&logoColor=white" alt="Download for Linux" /></a>
 </p>
 
 <p align="center">
@@ -28,8 +29,8 @@
 ## What it does
 
 - **One keystroke on the desktop.** <kbd>Option</kbd>+<kbd>Space</kbd> on a Mac,
-  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> on Windows opens a small window over whatever you are
-  doing. Paste, press Enter, and it is on your phone.
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> on Windows, <kbd>Meta</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
+  on Linux opens a small window over whatever you are doing. Paste, press Enter, and it is on your phone.
 - **Tap to copy on the phone.** A clip from your computer arrives as a notification; tap it and it is
   on the phone's clipboard. Going the other way is paste-then-send, or the share sheet.
 - **Files and photos too.** Up to 10 MB. iPhone photos are converted from HEIC to JPEG on the way
@@ -49,6 +50,7 @@
 | **macOS** 14+ | Available | [Download the .dmg](https://ghostcopy.app/download/macos) &mdash; signed and notarized by Apple, and keeps itself up to date |
 | **iPhone** iOS 16+ | Public beta | [Join on TestFlight](https://testflight.apple.com/join/62aWHQzj) &mdash; install TestFlight, open the link on your iPhone, tap Accept |
 | **Windows** 10/11 | Available | [Get it from the Microsoft Store](https://apps.microsoft.com/detail/9NW0TTGMSF80) &mdash; signed by Microsoft, and updates itself |
+| **Linux** x86-64 | Available | [Download the .tar.gz](https://ghostcopy.app/download/linux) &mdash; KDE Plasma 6 on Wayland; installs for your user without sudo, and updates itself |
 | **Android** 8+ | Next | [Get told when it lands](https://ghostcopy.app/download#notify) |
 
 Everything else &mdash; the FAQ, privacy policy and terms &mdash; is at **[ghostcopy.app](https://ghostcopy.app/)**.
@@ -88,8 +90,8 @@ For assistants without a shell, such as Claude Desktop, `ghostcopy mcp` is an MC
 }
 ```
 
-Windows MSIX packages from 1.0.22.0 register `ghostcopy` automatically, and the Linux installer
-bundles the companion. The macOS app carries it from 1.0.10, at
+Windows MSIX packages from 1.0.22.0 register `ghostcopy` automatically, and the Linux installer puts
+it in `~/.local/bin`. The macOS app carries it from 1.0.10, at
 `/Applications/GhostCopy.app/Contents/Helpers/ghostcopy`; **Settings &rarr; ghostcopy command &rarr;
 Install** links it into `/usr/local/bin`.
 Full setup instructions: [CLI and AI tools](website/ai-tools.html) (website route `/ai-tools`).
@@ -147,11 +149,11 @@ For older packages, build it with
 
 ## Tech stack
 
-- **App:** Flutter (Dart 3) on macOS, Windows, iOS and Android, with native Swift and Kotlin where
-  the platform needs it
+- **App:** Flutter (Dart 3) on macOS, Windows, Linux, iOS and Android, with native Swift, Kotlin and
+  C++ where the platform needs it
 - **Backend:** Supabase &mdash; PostgreSQL with row-level security, Realtime, Auth and Edge Functions
 - **Delivery:** Firebase Cloud Messaging for push; Sparkle for macOS updates; MSIX through the
-  Microsoft Store for Windows
+  Microsoft Store for Windows; a per-user tarball with its own updater for Linux
 - **Desktop:** window_manager, hotkey_manager, tray_manager
 - **Crash reporting:** Sentry, with clip content stripped on the device before anything is sent
 
