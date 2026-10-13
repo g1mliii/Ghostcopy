@@ -5,20 +5,13 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import sys
 
-APP_ID = 'com.ghostcopy.ghostcopy'
-
-
-def desktop_exec(value: str) -> str:
-    """Quote one Exec argument through both desktop-entry escaping layers."""
-    if '\n' in value or '\r' in value:
-        raise ValueError('Desktop executable path contains a newline')
-    escaped = ''.join('\\' + ch if ch in '\\"`$' else ch for ch in value)
-    return '"' + escaped.replace('\\', '\\\\').replace('%', '%%') + '"'
+# Beside this script in the repository and in the release archive.
+import linux_integration
+from linux_integration import owned_paths, remove_owned
 
 
 def install(bundle: Path, prefix: Path) -> None:
@@ -44,93 +37,14 @@ def install(bundle: Path, prefix: Path) -> None:
     owned = [('lib/ghostcopy/' + p.relative_to(bundle).as_posix())
              for p in bundle.rglob('*') if p.is_file()]
 
-    def write(relative: str, content: str, executable_file: bool = False) -> None:
-        output = prefix / relative
-        if output.is_symlink() or not output.resolve().is_relative_to(prefix):
-            raise ValueError(f'Refusing to replace a symlink: {output}')
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(content, encoding='utf-8', newline='\n')
-        if executable_file:
-            output.chmod(0o755)
-        owned.append(relative)
-
-    launcher = prefix / 'bin/ghostcopy-desktop'
-    write('bin/ghostcopy-desktop',
-          '#!/bin/sh\nexec ' + shlex.quote(str(target / 'ghostcopy')) + ' "$@"\n', True)
-    # A real argv array preserves spaces, percent signs, quotes and newlines.
-    # One headless process per file matches Windows Explorer's send behavior.
-    write('bin/ghostcopy-send',
-          '#!/usr/bin/env python3\nimport subprocess\nimport sys\n'
-          f'app = {str(target / "ghostcopy")!r}\n'
-          'status = 0\n'
-          'for filename in sys.argv[1:]:\n'
-          '    result = subprocess.run([app, "--send-file", filename], check=False)\n'
-          '    if result.returncode != 0:\n'
-          '        status = 1\n'
-          'sys.exit(status)\n', True)
-    # The CLI is separately named from the GUI and keeps its documented name.
-    if (bundle / 'ghostcopy-agent').is_file():
-        write('bin/ghostcopy', '#!/bin/sh\nexec ' +
-              shlex.quote(str(target / 'ghostcopy-agent')) + ' "$@"\n', True)
-
-    icon = target / 'data/flutter_assets/assets/icons/app_icon.png'
-    write(f'share/applications/{APP_ID}.desktop',
-          '[Desktop Entry]\nType=Application\nName=GhostCopy\n'
-          'Comment=Sync your clipboard across devices\n'
-          f'Exec={desktop_exec(str(launcher))} %u\n'
-          f'Icon={str(icon).replace(chr(92), chr(92) * 2)}\n'
-          'Terminal=false\nCategories=Utility;\n'
-          'MimeType=x-scheme-handler/ghostcopy;\n'
-          f'StartupWMClass={APP_ID}\nStartupNotify=false\n')
-    write(f'share/kio/servicemenus/{APP_ID}.send.desktop',
-          '[Desktop Entry]\nType=Service\nMimeType=all/allfiles;\n'
-          'Actions=send;\nX-KDE-Protocols=file\n'
-          '\n[Desktop Action send]\nName=Send with GhostCopy\n'
-          'Icon=edit-paste\n'
-          f'Exec={desktop_exec(str(prefix / "bin/ghostcopy-send"))} %F\n', True)
+    owned += linux_integration.install(prefix, cli=(bundle / 'ghostcopy-agent').is_file())
     # Record only our files. Uninstall does not touch credentials or history.
-    write('lib/ghostcopy/install-manifest.json', json.dumps(owned, indent=2) + '\n')
-    # A reinstall overlays the new bundle, so drop what only the old one owned.
+    manifest.write_text(json.dumps(owned, indent=2) + '\n', encoding='utf-8', newline='\n')
+    # A reinstall overlays the new bundle, so drop what only the old one owned,
+    # integration files included.
     current = {prefix / relative for relative in owned}
     remove_owned(prefix, [p for p in previous if p not in current])
-    refresh_desktop(prefix)
-
-
-def refresh_desktop(prefix: Path) -> None:
-    if sys.platform != 'linux':
-        return
-    desktop_dir = prefix / 'share/applications'
-    if shutil.which('update-desktop-database'):
-        subprocess.run(['update-desktop-database', str(desktop_dir)], check=True)
-    # Only set a default handler when this prefix is actually discoverable by
-    # the desktop. Custom staging prefixes must never change the user's MIME map.
-    data_home = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
-    if prefix / 'share' == data_home and shutil.which('xdg-mime'):
-        subprocess.run(['xdg-mime', 'default', APP_ID + '.desktop',
-                        'x-scheme-handler/ghostcopy'], check=True)
-
-
-def owned_paths(prefix: Path, entries: list) -> list:
-    paths = []
-    for relative in entries:
-        candidate = prefix / relative
-        if not candidate.resolve().is_relative_to(prefix) or candidate.is_symlink():
-            raise ValueError('Unsafe installation manifest path')
-        paths.append(candidate)
-    return paths
-
-
-def remove_owned(prefix: Path, paths: list) -> None:
-    # No recursive deletion. Remove only recorded files and now-empty parents.
-    for candidate in paths:
-        candidate.unlink(missing_ok=True)
-    for parent in sorted({p.parent for p in paths}, key=lambda p: len(p.parts), reverse=True):
-        while parent != prefix:
-            try:
-                parent.rmdir()
-            except OSError:
-                break
-            parent = parent.parent
+    linux_integration.refresh_desktop(prefix)
 
 
 def uninstall(prefix: Path) -> None:

@@ -20,7 +20,9 @@ def prepare_bundle(bundle):
     if not (bundle / 'ghostcopy-agent').is_file():
         raise ValueError('Build the companion CLI before packaging')
     (bundle / 'linux-version.json').write_text(json.dumps({'version': version}) + '\n')
-    shutil.copy2(Path(__file__).with_name('linux_update.py'), bundle / 'linux_update.py')
+    # The updater runs the new release's linux_integration.py after a swap.
+    for name in ('linux_update.py', 'linux_integration.py'):
+        shutil.copy2(Path(__file__).with_name(name), bundle / name)
     protocol = Path(__file__).resolve().parent.parent / 'linux/protocols/wlr-data-control-unstable-v1.xml'
     notice = ET.parse(protocol).getroot().findtext('copyright')
     if not notice:
@@ -37,7 +39,7 @@ def package(bundle, output):
     with tempfile.TemporaryDirectory(prefix='ghostcopy-package-') as directory:
         package_root = Path(directory) / 'ghostcopy-linux-x64'
         shutil.copytree(bundle, package_root / 'bundle')
-        for name in ('install_linux.py', 'linux_doctor.sh'):
+        for name in ('install_linux.py', 'linux_integration.py', 'linux_doctor.sh'):
             shutil.copy2(root / 'tool' / name, package_root / name)
         shutil.copy2(root / 'docs/linux-cachyos.md', package_root / 'README.md')
         with tarfile.open(archive, 'w:gz', dereference=True) as target:

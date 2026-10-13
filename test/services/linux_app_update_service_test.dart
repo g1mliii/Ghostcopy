@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/impl/linux_app_update_service.dart';
@@ -103,6 +106,102 @@ void main() {
     await service.initialize();
     await service.checkForUpdates();
     expect(download.existsSync(), isFalse);
+  });
+
+  group('automatic checks', () {
+    final start = DateTime(2026, 10, 13, 9);
+
+    LinuxAppUpdateService service(List<List<String>> commands) =>
+        LinuxAppUpdateService(
+          executableDirectory: installation.path,
+          runUpdater: (arguments) async {
+            commands.add(arguments);
+            return {'available': false, 'current': '1.0.9+25'};
+          },
+          confirmInstall: (_) async => false,
+          showMessage: (_) async {},
+          showDownloading: () {},
+          quit: () async {},
+        );
+
+    test('a launch within a day of the last check does not check', () {
+      SharedPreferences.setMockInitialValues({
+        LinuxAppUpdateService.lastCheckPreference: start
+            .subtract(const Duration(hours: 23))
+            .millisecondsSinceEpoch,
+      });
+      fakeAsync((async) {
+        withClock(async.getClock(start), () {
+          final commands = <List<String>>[];
+          final updater = service(commands);
+          unawaited(updater.initialize());
+          async.elapse(const Duration(minutes: 59));
+          expect(commands, isEmpty);
+          // Due a day after the previous launch's check, not this one's.
+          async.elapse(const Duration(minutes: 2));
+          expect(commands, [
+            ['--check'],
+          ]);
+          // And then once a day.
+          async.elapse(LinuxAppUpdateService.checkInterval);
+          expect(commands, hasLength(2));
+          updater.dispose();
+        });
+      });
+    });
+
+    test('a manual check moves the automatic one a day on', () {
+      SharedPreferences.setMockInitialValues({
+        LinuxAppUpdateService.lastCheckPreference: start
+            .subtract(const Duration(hours: 23))
+            .millisecondsSinceEpoch,
+      });
+      fakeAsync((async) {
+        withClock(async.getClock(start), () {
+          final commands = <List<String>>[];
+          final updater = service(commands);
+          unawaited(updater.initialize());
+          async.elapse(const Duration(minutes: 30));
+          unawaited(updater.checkForUpdates());
+          async.flushMicrotasks();
+          expect(commands, hasLength(1));
+          // The old deadline, an hour after launch, no longer checks.
+          async.elapse(const Duration(hours: 2));
+          expect(commands, hasLength(1));
+          // A day after the manual check, it does.
+          async.elapse(const Duration(hours: 22, minutes: 31));
+          expect(commands, hasLength(2));
+          updater.dispose();
+        });
+      });
+    });
+
+    test('a first launch checks at once and records it', () {
+      SharedPreferences.setMockInitialValues({});
+      fakeAsync((async) {
+        withClock(async.getClock(start), () {
+          final commands = <List<String>>[];
+          final updater = service(commands);
+          unawaited(updater.initialize());
+          async
+            ..flushMicrotasks()
+            ..elapse(Duration.zero);
+          expect(commands, [
+            ['--check'],
+          ]);
+          late SharedPreferences preferences;
+          unawaited(
+            SharedPreferences.getInstance().then((p) => preferences = p),
+          );
+          async.flushMicrotasks();
+          expect(
+            preferences.getInt(LinuxAppUpdateService.lastCheckPreference),
+            start.millisecondsSinceEpoch,
+          );
+          updater.dispose();
+        });
+      });
+    });
   });
 
   test('uninstalled source builds do not offer automatic updates', () async {

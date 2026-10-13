@@ -8,6 +8,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
+# The installer imports linux_integration from beside itself.
+sys.path.insert(0, str(Path(__file__).parent))
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install_linux.py'))
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
@@ -27,7 +29,7 @@ class LinuxInstallerTest(unittest.TestCase):
                 '    output.write(json.dumps(sys.argv[1:]) + "\\n")\n')
             executable.chmod(0o755)
             prefix = root / 'prefix with spaces'
-            with patch.object(installer, 'refresh_desktop'):
+            with patch.object(installer.linux_integration, 'refresh_desktop'):
                 installer.install(bundle, prefix)
             output = root / 'arguments.jsonl'
             filenames = ['/tmp/one file.txt', '/tmp/$HOME;`touch nope` %f\n"two".png']
@@ -45,12 +47,12 @@ class LinuxInstallerTest(unittest.TestCase):
             (bundle / 'ghostcopy').write_bytes(b'fake executable')
             (assets / 'app_icon.png').write_bytes(b'fake icon')
             prefix = root / 'prefix with spaces'
-            with patch.object(installer, 'refresh_desktop'):
+            with patch.object(installer.linux_integration, 'refresh_desktop'):
                 installer.install(bundle, prefix)
             menu = prefix / 'share/kio/servicemenus/com.ghostcopy.ghostcopy.send.desktop'
             self.assertIn('%F', menu.read_text())
             helper = prefix / 'bin/ghostcopy-send'
-            self.assertIn('"--send-file", filename', helper.read_text())
+            self.assertIn('--send-file "$file"', helper.read_text())
             desktop = prefix / 'share/applications/com.ghostcopy.ghostcopy.desktop'
             self.assertIn('MimeType=x-scheme-handler/ghostcopy;', desktop.read_text())
             keep = prefix / 'lib/ghostcopy/keep-me.txt'
@@ -83,13 +85,13 @@ class LinuxInstallerTest(unittest.TestCase):
             (bundle / 'lib/libold.so').write_bytes(b'old library')
             (bundle / 'ghostcopy-agent').write_bytes(b'fake agent')
             prefix = root / 'prefix'
-            with patch.object(installer, 'refresh_desktop'):
+            with patch.object(installer.linux_integration, 'refresh_desktop'):
                 installer.install(bundle, prefix)
             keep = prefix / 'lib/ghostcopy/lib/keep-me.txt'
             keep.write_text('unowned')
             (bundle / 'lib/libold.so').unlink()
             (bundle / 'ghostcopy-agent').unlink()
-            with patch.object(installer, 'refresh_desktop'):
+            with patch.object(installer.linux_integration, 'refresh_desktop'):
                 installer.install(bundle, prefix)
             self.assertFalse((prefix / 'lib/ghostcopy/lib/libold.so').exists())
             self.assertFalse((prefix / 'lib/ghostcopy/ghostcopy-agent').exists())
@@ -100,8 +102,8 @@ class LinuxInstallerTest(unittest.TestCase):
             self.assertNotIn('lib/ghostcopy/lib/libold.so', manifest)
 
     def test_desktop_argument_escaping(self):
-        self.assertEqual(installer.desktop_exec('/home/a b/100%/app'), '"/home/a b/100%%/app"')
-        self.assertEqual(installer.desktop_exec('/home/a$b/app'), '"/home/a\\\\$b/app"')
+        self.assertEqual(installer.linux_integration.desktop_exec('/home/a b/100%/app'), '"/home/a b/100%%/app"')
+        self.assertEqual(installer.linux_integration.desktop_exec('/home/a$b/app'), '"/home/a\\\\$b/app"')
 
 
 if __name__ == '__main__':

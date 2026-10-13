@@ -9,11 +9,17 @@ It repackages the published `linux-v<version>+<build>` tarball system-wide:
 | Path | What |
 |---|---|
 | `/opt/ghostcopy/` | The release bundle, minus `linux_update.py` |
-| `/usr/bin/ghostcopy-desktop` | The GUI (symlink) |
-| `/usr/bin/ghostcopy` | The CLI/MCP companion (symlink) |
+| `/usr/bin/ghostcopy-desktop` | The GUI (launcher script) |
+| `/usr/bin/ghostcopy` | The CLI/MCP companion (launcher script) |
 | `/usr/bin/ghostcopy-send` | One `--send-file` per argument, for Dolphin |
 | `/usr/share/applications/com.ghostcopy.ghostcopy.desktop` | Menu entry and the `ghostcopy://` sign-in handler |
 | `/usr/share/kio/servicemenus/com.ghostcopy.ghostcopy.send.desktop` | Send with GhostCopy in Dolphin |
+
+Everything under `/usr` except the icon and licenses is written by the
+tarball's `linux_integration.py`, the same definition `install_linux.py` and
+the in-app updater use, so the package never drifts from a per-user install.
+Change those files there, not in the PKGBUILD. Releases up to
+1.0.9+25 do not carry it, so the PKGBUILD cannot build those.
 
 ## Updates belong to pacman
 
