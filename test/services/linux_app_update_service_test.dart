@@ -176,6 +176,40 @@ void main() {
       });
     });
 
+    test('a dialog left open past the deadline does not spin', () {
+      SharedPreferences.setMockInitialValues({});
+      fakeAsync((async) {
+        withClock(async.getClock(start), () {
+          final commands = <List<String>>[];
+          final confirm = Completer<bool>();
+          final updater = LinuxAppUpdateService(
+            executableDirectory: installation.path,
+            runUpdater: (arguments) async {
+              commands.add(arguments);
+              return {'available': true, 'version': '1.0.9+26'};
+            },
+            confirmInstall: (_) => confirm.future,
+            showMessage: (_) async {},
+            showDownloading: () {},
+            quit: () async {},
+          );
+          unawaited(updater.initialize());
+          async.elapse(Duration.zero);
+          unawaited(updater.checkForUpdates());
+          async.flushMicrotasks();
+          // Overdue while busy: a zero-delay re-arm would never let this
+          // elapse finish.
+          async.elapse(const Duration(hours: 30));
+          expect(commands, hasLength(2));
+          confirm.complete(false);
+          async.elapse(Duration.zero);
+          // The skipped automatic check runs once the dialog closes.
+          expect(commands, hasLength(3));
+          updater.dispose();
+        });
+      });
+    });
+
     test('a first launch checks at once and records it', () {
       SharedPreferences.setMockInitialValues({});
       fakeAsync((async) {

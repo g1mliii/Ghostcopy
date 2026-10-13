@@ -128,10 +128,14 @@ unavailable. The build script builds the GUI and CLI and targets Linux x86-64.
 
 ## Prepare a Linux release
 
-Use a new stable version/build for every release. Build and package on Linux:
+Use a new stable version/build for every release: the one in `pubspec.yaml`,
+written below as `$version` and `$build` (for `version: 1.0.9+26`, 1.0.9 and
+26). The updater only offers a strictly higher one, so a published build is
+never reused. Build and package on Linux:
 
 ```sh
-bash tool/build_linux.sh --build-name=1.0.9 --build-number=25
+version=1.0.9 build=26   # from pubspec.yaml
+bash tool/build_linux.sh --build-name="$version" --build-number="$build"
 python3 tool/package_linux.py
 ```
 
@@ -144,7 +148,7 @@ as the `ghostcopy-linux-x64` artifact
 The packager reads the compiled Flutter version, includes the updater and CLI,
 and writes the tarball, checksum, and `latest.json` to `build/linux-package`.
 It never publishes. Publish the archive under the exact versioned tag
-`linux-v1.0.9+25`, then upload the same archive and `latest.json` to the
+`linux-v$version+$build`, then upload the same archive and `latest.json` to the
 separate `linux-updates` release, replacing the previous ones. Upload the
 versioned archive first so clients never see an unavailable payload. The
 `linux-updates` copy is what the website's `/download/linux` redirect serves;
@@ -152,7 +156,7 @@ skip it and every Download for Linux link points at the old version, or at
 nothing on a first release:
 
 ```sh
-gh release create 'linux-v1.0.9+25' --title 'GhostCopy 1.0.9-25 for Linux' \
+gh release create "linux-v$version+$build" --title "GhostCopy $version-$build for Linux" \
   build/linux-package/ghostcopy-linux-x64.tar.gz \
   build/linux-package/ghostcopy-linux-x64.tar.gz.sha256
 gh release upload linux-updates --clobber \

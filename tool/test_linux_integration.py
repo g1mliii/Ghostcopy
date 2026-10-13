@@ -30,6 +30,25 @@ class LinuxIntegrationTest(unittest.TestCase):
                 self.assertFalse(
                     (root / 'share/applications/com.ghostcopy.ghostcopy.desktop').stat().st_mode & 0o111)
 
+    def test_a_failed_write_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            linux_integration.write(root, {'bin/a': ('old a', True), 'bin/b': ('old b', True)})
+            original = Path.write_text
+            calls = []
+
+            def full_disk(path, *args, **kwargs):
+                calls.append(path)
+                if len(calls) == 2:
+                    raise OSError(28, 'No space left on device')
+                return original(path, *args, **kwargs)
+
+            with patch.object(Path, 'write_text', full_disk), self.assertRaises(OSError):
+                linux_integration.write(root, {'bin/a': ('new a', True), 'bin/b': ('new b', True)})
+            self.assertEqual((root / 'bin/a').read_text(), 'old a')
+            self.assertEqual((root / 'bin/b').read_text(), 'old b')
+            self.assertEqual(sorted(p.name for p in (root / 'bin').iterdir()), ['a', 'b'])
+
     def test_install_removes_entries_a_release_no_longer_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             prefix = Path(directory)

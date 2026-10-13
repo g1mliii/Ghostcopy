@@ -69,15 +69,33 @@ def entries(app_dir, bin_dir, icon, cli=True):
 
 
 def write(root, files):
-    """Write [files] under [root]; returns their relative paths."""
+    """Write [files] under [root], all or none; returns their relative paths.
+
+    Every file is checked and staged beside its target before any is
+    replaced, so a symlink, a permission error or a full disk leaves the
+    previous set intact rather than half rewritten.
+    """
     root = Path(root)
-    for relative, (content, executable) in files.items():
+    outputs = []
+    for relative in files:
         output = root / relative
         if output.is_symlink() or not output.resolve().is_relative_to(root.resolve()):
             raise ValueError(f'Refusing to replace a symlink: {output}')
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(content, encoding='utf-8', newline='\n')
-        output.chmod(0o755 if executable else 0o644)
+        outputs.append(output)
+    staged = []
+    try:
+        for output, (content, executable) in zip(outputs, files.values()):
+            output.parent.mkdir(parents=True, exist_ok=True)
+            temporary = output.with_name('.' + output.name + '.ghostcopy-new')
+            staged.append(temporary)
+            temporary.write_text(content, encoding='utf-8', newline='\n')
+            temporary.chmod(0o755 if executable else 0o644)
+        # Renames within one directory: atomic each, and not expected to fail.
+        for temporary, output in zip(staged, outputs):
+            os.replace(temporary, output)
+    finally:
+        for temporary in staged:
+            temporary.unlink(missing_ok=True)
     return list(files)
 
 
