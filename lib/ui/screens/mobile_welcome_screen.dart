@@ -66,7 +66,15 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   StreamSubscription<AuthState>? _authSub;
 
   // QR scanning state
-  static const int _qrTabIndex = 0;
+  //
+  // Sign In comes first and QR second. App Review (2.1(a), 1.0.8) tested on an
+  // iPad with no desktop app, landed on a live camera asking for a QR code,
+  // and rejected the build asking for a demo QR code - the screen read as if
+  // linking were the only way in. Signing in works on its own; the QR is the
+  // shortcut for someone who already has the desktop app open beside them.
+  // Opening on Sign In also keeps the camera, and its permission prompt, off
+  // the first screen until the user asks for it.
+  static const int _qrTabIndex = 1;
   bool _qrScanning = false;
   String? _qrError;
 
@@ -77,15 +85,8 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
 
-    // The controller starts on the QR tab, and a TabController listener only
-    // fires on a *change* - so nothing created the scanner on first launch and
-    // the tab sat on its "Switch to this tab to activate scanner" placeholder
-    // until the user switched away and back. Create it for the starting tab.
-    //
-    // Unconditional: the controller is built with the default initialIndex and
-    // _qrTabIndex is 0, so the guard that used to be here could not be false.
-    // Assigned directly rather than through setState: build has not run yet.
-    _scannerController = _newScannerController();
+    // No scanner yet: the controller starts on Sign In, and _onTabChanged
+    // creates one on the first switch to the QR tab.
 
     // A sign-up from here has no guest to upgrade, so it ends with no session
     // until the address is confirmed. Tapping the emailed link on this phone
@@ -130,8 +131,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   /// The scanner's configuration, in one place.
   ///
-  /// Built here and again on the first switch to the QR tab; written out twice
-  /// it was two places to change a detection setting.
+  /// Built on each switch to the QR tab.
   MobileScannerController _newScannerController() =>
       MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
 
@@ -199,7 +199,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
-                    children: [_buildQRScanTab(), _buildAuthTab()],
+                    children: [_buildAuthTab(), _buildQRScanTab()],
                   ),
                 ),
               ],
@@ -303,13 +303,13 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         labelStyle: GhostTypography.body.copyWith(fontWeight: FontWeight.w600),
         tabs: [
           Tab(
-            icon: const Icon(Icons.qr_code_scanner),
-            text: 'Scan QR',
+            icon: const Icon(Icons.login),
+            text: 'Sign In',
             height: _tabHeight(context),
           ),
           Tab(
-            icon: const Icon(Icons.login),
-            text: 'Sign In',
+            icon: const Icon(Icons.qr_code_scanner),
+            text: 'Scan QR',
             height: _tabHeight(context),
           ),
         ],
@@ -344,7 +344,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Scan QR code from desktop app to link devices anonymously',
+                    'Optional: if the GhostCopy desktop app is open on your '
+                    'computer, choose Link New Device in its settings and scan '
+                    'the code it shows. No computer nearby? Use Sign In '
+                    'instead.',
                     style: GhostTypography.caption.copyWith(
                       color: GhostColors.textSecondary,
                     ),
