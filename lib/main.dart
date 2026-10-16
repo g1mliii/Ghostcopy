@@ -68,6 +68,7 @@ import 'services/url_shortener_service.dart';
 import 'services/webhook_service.dart';
 import 'services/window_service.dart';
 import 'services/windows_package_service.dart';
+import 'ui/layout/side_safe_area.dart';
 import 'ui/platform_adaptive.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
@@ -1509,6 +1510,12 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // No overscroll stretch or glow anywhere in the app.
       scrollBehavior: Adaptive.scrollBehavior,
       debugShowCheckedModeBanner: false,
+      // Mobile only. A desktop window has no side insets, and the Spotlight
+      // and tray windows are transparent - painting a background under them
+      // would fill the empty corners around the rounded panel.
+      builder: _isDesktop()
+          ? null
+          : (context, child) => SideSafeArea(child: child!),
       home: _buildHome(),
     );
   }
