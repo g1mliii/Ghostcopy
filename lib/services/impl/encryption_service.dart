@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart' as crypto;
+import 'package:cryptography/dart.dart' as crypto_dart;
 import 'package:encrypt/encrypt.dart' as enc;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -637,7 +638,7 @@ class EncryptionService implements IEncryptionService {
     // Files are large by definition; always use an isolate to keep the UI and
     // the tray-mode event loop responsive.
     return compute(
-      _encryptBytesSync,
+      _encryptFileBytes,
       _BytesCryptoParams(data: plain, keyBytes: key),
     );
   }
@@ -651,7 +652,7 @@ class EncryptionService implements IEncryptionService {
     if (key == null) return cipher;
 
     return compute(
-      _decryptBytesSync,
+      _decryptFileBytes,
       _BytesCryptoParams(data: cipher, keyBytes: key),
     );
   }
@@ -663,42 +664,51 @@ class EncryptionService implements IEncryptionService {
   /// after base64"). Encrypting the bytes themselves costs 16 bytes of IV plus
   /// a 16-byte GCM tag - a flat 32 bytes - so a 10MB file stays a 10MB file.
   ///
-  /// Layout: [16-byte IV][ciphertext+tag]
-  static Uint8List _encryptBytesSync(_BytesCryptoParams params) {
+  /// Layout: [16-byte IV][ciphertext][16-byte tag]
+  ///
+  /// Files go through package:cryptography's AES-GCM rather than
+  /// package:encrypt's (PointyCastle) like the text path. Same algorithm, same
+  /// bytes out - the layout above is standard GCM with a 16-byte nonce, so
+  /// either library reads what the other wrote - but PointyCastle's GCM is
+  /// slow enough to be the wait behind "Preparing to share": a 5MB file took
+  /// 6.8s to decrypt there against 0.56s here (AOT, x64; a phone is slower,
+  /// by about the same ratio). Text clips stay on PointyCastle: they are a few
+  /// hundred bytes, where it does not show.
+  ///
+  /// The Dart implementation is named rather than AesGcm.with256bits(), which
+  /// a platform plugin could swap for a native one - and CryptoKit, for one,
+  /// does not take the 16-byte nonce every stored file already uses.
+  static final _fileCipher = crypto_dart.DartAesGcm(nonceLength: 16);
+
+  static Future<Uint8List> _encryptFileBytes(_BytesCryptoParams params) async {
     try {
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-      final iv = enc.IV.fromSecureRandom(16);
-
-      final encrypted = encrypter.encryptBytes(params.data, iv: iv);
-
-      final out = Uint8List(iv.bytes.length + encrypted.bytes.length)
-        ..setRange(0, iv.bytes.length, iv.bytes)
-        ..setRange(
-          iv.bytes.length,
-          iv.bytes.length + encrypted.bytes.length,
-          encrypted.bytes,
-        );
-      return out;
+      final box = await _fileCipher.encrypt(
+        params.data,
+        secretKey: crypto.SecretKey(params.keyBytes),
+      );
+      return box.concatenation();
     } on Exception catch (e) {
       throw EncryptionException('Byte encryption failed: $e');
     }
   }
 
-  static Uint8List _decryptBytesSync(_BytesCryptoParams params) {
+  static Future<Uint8List> _decryptFileBytes(_BytesCryptoParams params) async {
     try {
-      if (params.data.length <= 16) {
+      // Nonce and tag, at the least.
+      if (params.data.length < 32) {
         throw EncryptionException('Ciphertext too short to contain an IV');
       }
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-
-      final iv = enc.IV(Uint8List.sublistView(params.data, 0, 16));
-      final body = Uint8List.sublistView(params.data, 16);
-
-      return Uint8List.fromList(
-        encrypter.decryptBytes(enc.Encrypted(body), iv: iv),
+      final box = crypto.SecretBox.fromConcatenation(
+        params.data,
+        nonceLength: 16,
+        macLength: 16,
+        copy: false,
       );
+      final plain = await _fileCipher.decrypt(
+        box,
+        secretKey: crypto.SecretKey(params.keyBytes),
+      );
+      return plain is Uint8List ? plain : Uint8List.fromList(plain);
     } on EncryptionException {
       rethrow;
     } on Exception catch (e) {
