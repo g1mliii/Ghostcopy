@@ -85,6 +85,9 @@ void main() {
     when(
       () => authService.refreshIfAwaitingConfirmation(),
     ).thenAnswer((_) async {});
+    when(
+      () => deviceService.getSavedDevices(),
+    ).thenAnswer((_) async => <Device>[]);
 
     viewModel = MobileMainViewModel(
       authService: authService,
@@ -547,6 +550,82 @@ void main() {
       // second PC. The name stays available via deviceNames.
       expect(viewModel.deviceTypeTargets.single.label, 'Windows');
       expect(viewModel.deviceTypeTargets.single.deviceNames, 'Work PC');
+    });
+
+    test('draws the saved list first, then swaps in the fetched one', () async {
+      final fetch = Completer<List<Device>>();
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer((_) => fetch.future);
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      final loading = viewModel.loadDevices();
+      await Future<void>.delayed(Duration.zero);
+
+      // Chips from the last launch, with no spinner, while the fetch is out.
+      expect(viewModel.devicesLoading, isFalse);
+      expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+
+      fetch.complete([
+        device('1', 'windows', 'Work PC'),
+        device('2', 'macos', 'MacBook'),
+      ]);
+      await loading;
+
+      expect(viewModel.deviceTypeTargets.map((t) => t.deviceType), [
+        'macos',
+        'windows',
+      ]);
+      expect(viewModel.deviceError, isNull);
+    });
+
+    test('a failed fetch keeps the saved list instead of an error', () async {
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer((_) async => throw Exception('offline'));
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.deviceError, isNull);
+      expect(viewModel.devicesLoading, isFalse);
+      expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+    });
+
+    test('an empty fetch, which is how offline reads, keeps it too', () async {
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer((_) async => <Device>[]);
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+    });
+
+    test('with nothing saved, a failed fetch still shows the error', () async {
+      when(
+        () => deviceService.getUserDevices(
+          forceRefresh: any(named: 'forceRefresh'),
+        ),
+      ).thenAnswer((_) async => throw Exception('offline'));
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.deviceError, isNotNull);
+      expect(viewModel.devices, isEmpty);
     });
 
     test('platformLabel spells product names properly', () {

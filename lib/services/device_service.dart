@@ -36,6 +36,14 @@ abstract class IDeviceService {
   /// [forceRefresh] bypasses cache and fetches fresh data from server.
   Future<List<Device>> getUserDevices({bool forceRefresh = false});
 
+  /// The list the last successful fetch returned for this account, read from
+  /// disk; empty when there is none or no one is signed in.
+  ///
+  /// For drawing the devices before [getUserDevices] answers on a cold start.
+  /// It can be out of date, so show it only until that fetch returns. Push
+  /// tokens are not kept, so [Device.fcmToken] is always null here.
+  Future<List<Device>> getSavedDevices();
+
   /// A fresh fetch, or null when it failed - which [getUserDevices] reports
   /// as an empty list, the same as an account with none. For a caller that
   /// has to tell the two apart. Each call carries its own answer, so

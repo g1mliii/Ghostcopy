@@ -368,31 +368,74 @@ class MobileMainViewModel extends ChangeNotifier {
   }
 
   /// Load devices
+  ///
+  /// With nothing on screen yet - a cold start, or after an account switch -
+  /// the list saved by the last launch is shown while the fetch runs, so the
+  /// chips appear at once instead of after a network round trip. The fetched
+  /// list replaces it when it lands. See SavedDeviceList.
   Future<void> loadDevices({bool forceRefresh = false}) async {
     final revision = _accountRevision;
     _devicesLoading = true;
     _deviceError = null;
     notifyListeners();
 
-    try {
-      final devices = await _deviceService.getUserDevices(
-        forceRefresh: forceRefresh,
-      );
-      if (!_isDisposed && revision == _accountRevision) {
-        _devices = devices;
+    // Started before the disk read, so the saved list never delays the real
+    // one. Its failure is caught here and acted on below, so it is never left
+    // unhandled while the saved list is read.
+    List<Device>? fetched;
+    Exception? fetchError;
+    final fetching = _deviceService
+        .getUserDevices(forceRefresh: forceRefresh)
+        .then<void>(
+          (devices) => fetched = devices,
+          onError: (Object e, StackTrace stack) {
+            if (e is! Exception) Error.throwWithStackTrace(e, stack);
+            fetchError = e;
+          },
+        );
+
+    var showingSaved = false;
+    if (_devices.isEmpty) {
+      final saved = await _deviceService.getSavedDevices();
+      if (!_isDisposed &&
+          revision == _accountRevision &&
+          // Not over a real answer that beat the disk read. A failed or
+          // empty one is no answer: offline, saved is still the best list.
+          (fetched?.isEmpty ?? true) &&
+          saved.isNotEmpty) {
+        _devices = saved;
         _deviceTypeTargetsCache = null;
         _devicesLoading = false;
-        _deviceError = null;
-        notifyListeners();
-      }
-    } on Exception catch (e) {
-      debugPrint('[MobileMainVM] Failed to load devices: $e');
-      if (!_isDisposed && revision == _accountRevision) {
-        _devicesLoading = false;
-        _deviceError = 'Failed to load devices. Tap to retry.';
+        showingSaved = true;
         notifyListeners();
       }
     }
+
+    await fetching;
+    if (_isDisposed || revision != _accountRevision) return;
+    final error = fetchError;
+    final devices = fetched;
+    // getUserDevices reports a failed fetch as [] rather than throwing, so an
+    // empty answer cannot be told from being offline. It does not replace a
+    // saved list: this phone is on its own account's list, so a real one is
+    // never empty once it has been shown.
+    if (devices != null && devices.isEmpty && showingSaved) {
+      debugPrint('[MobileMainVM] Empty device fetch - keeping saved list');
+    } else if (error == null) {
+      _devices = devices!;
+      _deviceTypeTargetsCache = null;
+      _deviceError = null;
+    } else {
+      debugPrint('[MobileMainVM] Failed to load devices: $error');
+      // A saved list already on screen is still the best answer there is:
+      // keep it rather than swap working chips for an error. Sends route by
+      // platform, so a slightly stale list still sends where it says.
+      if (!showingSaved) {
+        _deviceError = 'Failed to load devices. Tap to retry.';
+      }
+    }
+    _devicesLoading = false;
+    notifyListeners();
   }
 
   /// The history load running now, and whether another was asked for while

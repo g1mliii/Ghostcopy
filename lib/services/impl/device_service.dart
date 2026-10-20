@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../utils/platform_label.dart';
 import '../device_service.dart';
+import '../saved_device_list.dart';
 
 /// Concrete implementation of IDeviceService
 ///
@@ -244,6 +245,13 @@ class DeviceService implements IDeviceService {
     return await _fetchDevices() ?? [];
   }
 
+  @override
+  Future<List<Device>> getSavedDevices() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return const [];
+    return SavedDeviceList.load(userId);
+  }
+
   /// The devices from the server, cached; null when the fetch failed.
   Future<List<Device>?> _fetchDevices() async {
     try {
@@ -262,6 +270,8 @@ class DeviceService implements IDeviceService {
       // Update cache
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
+      // And the copy the next launch draws first. See SavedDeviceList.
+      unawaited(SavedDeviceList.save(userId, devices));
 
       debugPrint(
         '[DeviceService] Fetched and cached ${devices.length} device(s)',

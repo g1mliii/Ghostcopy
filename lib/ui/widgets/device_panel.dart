@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../services/device_service.dart';
@@ -38,13 +40,25 @@ class _DevicePanelState extends State<DevicePanel> {
       _error = null;
     });
 
+    // First open this launch: draw the list the last launch saved while the
+    // fetch runs, rather than a spinner. The fetch replaces it. Not on a
+    // refresh, which the user asked for and expects to see happen.
+    if (_cachedDevices == null && !forceRefresh) {
+      unawaited(_showSavedDevices());
+    }
+
     try {
       final devices = await widget.deviceService.getUserDevices(
         forceRefresh: forceRefresh,
       );
       if (mounted) {
         setState(() {
-          _cachedDevices = devices;
+          // A failed fetch comes back as [], not an error, and this device is
+          // on its own list - so an empty answer over a saved list is the
+          // network, not the account. Keep what is shown.
+          if (devices.isNotEmpty || (_cachedDevices?.isEmpty ?? true)) {
+            _cachedDevices = devices;
+          }
           _isLoading = false;
         });
       }
@@ -56,6 +70,18 @@ class _DevicePanelState extends State<DevicePanel> {
         });
       }
     }
+  }
+
+  Future<void> _showSavedDevices() async {
+    final saved = await widget.deviceService.getSavedDevices();
+    // Only while the fetch is still out: a list it already returned is newer.
+    if (!mounted || !_isLoading || _cachedDevices != null || saved.isEmpty) {
+      return;
+    }
+    setState(() {
+      _cachedDevices = saved;
+      _isLoading = false;
+    });
   }
 
   Future<bool> _handleRename(String deviceId, String newName) async {
