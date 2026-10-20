@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart' as crypto;
 import 'package:cryptography/dart.dart' as crypto_dart;
-import 'package:encrypt/encrypt.dart' as enc;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -491,88 +489,6 @@ class EncryptionService implements IEncryptionService {
     return inputHash == storedHash;
   }
 
-  @override
-  Future<String?> exportPassphraseForQr() async {
-    if (!_initialized) {
-      throw StateError('EncryptionService not initialized');
-    }
-
-    // Get passphrase from secure storage
-    final passphrase = await _secureStorage.read(key: _passphraseKey);
-    if (passphrase == null || passphrase.isEmpty) {
-      return null; // Encryption not enabled
-    }
-
-    try {
-      // For QR transfer, we encrypt the passphrase with a one-time key
-      // The key is embedded in the QR data itself (first 32 bytes)
-      // This prevents plaintext passphrase in QR while still allowing transfer
-
-      // Generate random one-time key (32 bytes for AES-256)
-      final oneTimeKey = enc.Key.fromSecureRandom(32);
-
-      // Generate random IV
-      final iv = enc.IV.fromSecureRandom(16);
-
-      // Encrypt passphrase
-      final encrypter = enc.Encrypter(
-        enc.AES(oneTimeKey, mode: enc.AESMode.gcm),
-      );
-      final encrypted = encrypter.encrypt(passphrase, iv: iv);
-
-      // Combine: oneTimeKey + IV + encrypted
-      final combined = BytesBuilder()
-        ..add(oneTimeKey.bytes)
-        ..add(iv.bytes)
-        ..add(encrypted.bytes);
-
-      // Return base64-encoded
-      return base64Encode(combined.toBytes());
-    } on Exception catch (e) {
-      debugPrint('Failed to export passphrase: $e');
-      return null;
-    }
-  }
-
-  @override
-  Future<bool> importPassphraseFromQr(String encryptedData) async {
-    if (!_initialized) {
-      throw StateError('EncryptionService not initialized');
-    }
-
-    try {
-      // Decode from base64
-      final combined = base64Decode(encryptedData);
-
-      // Extract components: key (32) + IV (16) + encrypted (rest)
-      if (combined.length < 48) {
-        throw const FormatException('Invalid encrypted data length');
-      }
-
-      final oneTimeKey = enc.Key(combined.sublist(0, 32));
-      final iv = enc.IV(combined.sublist(32, 48));
-      final encryptedBytes = combined.sublist(48);
-
-      // Decrypt passphrase
-      final encrypter = enc.Encrypter(
-        enc.AES(oneTimeKey, mode: enc.AESMode.gcm),
-      );
-      final encrypted = enc.Encrypted(encryptedBytes);
-      final passphrase = encrypter.decrypt(encrypted, iv: iv);
-
-      // Store passphrase using existing method
-      final success = await setPassphrase(passphrase);
-
-      // Clear sensitive data from memory
-      combined.fillRange(0, combined.length, 0);
-
-      return success;
-    } on Exception catch (e) {
-      debugPrint('Failed to import passphrase: $e');
-      return false;
-    }
-  }
-
   /// Derives encryption key from passphrase using PBKDF2
   Future<void> _deriveKey(String passphrase) async {
     if (_userId == null) {
@@ -657,84 +573,19 @@ class EncryptionService implements IEncryptionService {
     );
   }
 
-  /// Encrypt raw bytes for R2 upload.
-  ///
-  /// Deliberately NOT the base64 string path: that inflates by ~33%, which is
-  /// why files were left unencrypted ("too large, would exceed 10MB limit
-  /// after base64"). Encrypting the bytes themselves costs 16 bytes of IV plus
-  /// a 16-byte GCM tag - a flat 32 bytes - so a 10MB file stays a 10MB file.
-  ///
-  /// Layout: [16-byte IV][ciphertext][16-byte tag]
-  ///
-  /// Files go through package:cryptography's AES-GCM rather than
-  /// package:encrypt's (PointyCastle) like the text path. Same algorithm, same
-  /// bytes out - the layout above is standard GCM with a 16-byte nonce, so
-  /// either library reads what the other wrote - but PointyCastle's GCM is
-  /// slow enough to be the wait behind "Preparing to share": a 5MB file took
-  /// 6.8s to decrypt there against 0.56s here (AOT, x64; a phone is slower,
-  /// by about the same ratio). Text clips stay on PointyCastle: they are a few
-  /// hundred bytes, where it does not show.
-  ///
-  /// The Dart implementation is named rather than AesGcm.with256bits(), which
-  /// a platform plugin could swap for a native one - and CryptoKit, for one,
-  /// does not take the 16-byte nonce every stored file already uses.
-  static final _fileCipher = crypto_dart.DartAesGcm(nonceLength: 16);
+  // compute() entry points. The work is in the top-level functions below,
+  // where the formats are described and tests can reach them.
+  static Uint8List _encryptFileBytes(_BytesCryptoParams params) =>
+      encryptFileBytesSync(params.data, params.keyBytes);
 
-  static Future<Uint8List> _encryptFileBytes(_BytesCryptoParams params) async {
-    try {
-      final box = await _fileCipher.encrypt(
-        params.data,
-        secretKey: crypto.SecretKey(params.keyBytes),
-      );
-      return box.concatenation();
-    } on Exception catch (e) {
-      throw EncryptionException('Byte encryption failed: $e');
-    }
-  }
+  static Uint8List _decryptFileBytes(_BytesCryptoParams params) =>
+      decryptFileBytesSync(params.data, params.keyBytes);
 
-  static Future<Uint8List> _decryptFileBytes(_BytesCryptoParams params) async {
-    try {
-      // Nonce and tag, at the least.
-      if (params.data.length < 32) {
-        throw EncryptionException('Ciphertext too short to contain an IV');
-      }
-      final box = crypto.SecretBox.fromConcatenation(
-        params.data,
-        nonceLength: 16,
-        macLength: 16,
-        copy: false,
-      );
-      final plain = await _fileCipher.decrypt(
-        box,
-        secretKey: crypto.SecretKey(params.keyBytes),
-      );
-      return plain is Uint8List ? plain : Uint8List.fromList(plain);
-    } on EncryptionException {
-      rethrow;
-    } on Exception catch (e) {
-      throw EncryptionException('Byte decryption failed: $e');
-    }
-  }
+  static String _encryptSync(_StringCryptoParams params) =>
+      encryptTextSync(params.data, params.keyBytes);
 
-  static String _encryptSync(_StringCryptoParams params) {
-    try {
-      // Create encrypter with AES GCM mode
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-
-      // Generate random IV for this encryption
-      final iv = enc.IV.fromSecureRandom(16);
-
-      // Encrypt the plaintext
-      final encrypted = encrypter.encrypt(params.data, iv: iv);
-
-      // Combine IV + encrypted data for storage
-      // Format: base64(IV) + ":" + base64(ciphertext)
-      return '${iv.base64}:${encrypted.base64}';
-    } on Exception catch (e) {
-      throw EncryptionException('Encryption failed: $e');
-    }
-  }
+  static String _decryptSync(_StringCryptoParams params) =>
+      decryptTextSync(params.data, params.keyBytes);
 
   @override
   Future<String> decrypt(String ciphertext) async {
@@ -767,31 +618,6 @@ class EncryptionService implements IEncryptionService {
     }
   }
 
-  /// Static decryption helper that can run in isolate
-  static String _decryptSync(_StringCryptoParams params) {
-    try {
-      // Create encrypter with AES GCM mode
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-
-      // Split IV and ciphertext
-      final parts = params.data.split(':');
-      if (parts.length != 2) {
-        throw const FormatException('Invalid encrypted data format');
-      }
-
-      final iv = enc.IV.fromBase64(parts[0]);
-      final encrypted = enc.Encrypted.fromBase64(parts[1]);
-
-      // Decrypt
-      return encrypter.decrypt(encrypted, iv: iv);
-    } on FormatException catch (e) {
-      throw EncryptionException('Invalid encrypted data format: $e');
-    } on Exception catch (e) {
-      throw EncryptionException('Decryption failed: $e');
-    }
-  }
-
   /// Dispose resources and clear sensitive data from memory
   ///
   /// ⚠️ WARNING: This is a SINGLETON service and should NEVER be disposed.
@@ -815,6 +641,125 @@ class EncryptionService implements IEncryptionService {
     debugPrint(
       '[EncryptionService] ✅ Disposed - all sensitive data cleared from memory',
     );
+  }
+}
+
+/// AES-256-GCM for clips and files, through package:cryptography.
+///
+/// Both formats below were first written by package:encrypt (PointyCastle),
+/// and every clip and file already stored is in them. They are standard GCM
+/// with a 16-byte nonce, so this reads them and writes what builds still on
+/// PointyCastle can read - encryption_formats_test.dart pins that with
+/// vectors PointyCastle produced. It replaced PointyCastle for speed: that
+/// took 6.8s to decrypt a 5MB file against 0.56s here (AOT, x64).
+///
+/// The Dart implementation is named rather than AesGcm.with256bits(), which a
+/// platform plugin could swap for a native one - and CryptoKit, for one, does
+/// not take the 16-byte nonce every stored item already uses.
+final _aesGcm = crypto_dart.DartAesGcm(nonceLength: 16);
+
+const int _nonceLength = 16;
+const int _tagLength = 16;
+
+/// Encrypt a file for R2 upload: `[16-byte IV][ciphertext][16-byte tag]`.
+///
+/// Deliberately NOT the base64 text format: that inflates by ~33%, which is
+/// why files were once left unencrypted ("too large, would exceed 10MB limit
+/// after base64"). This costs a flat 32 bytes, so a 10MB file stays 10MB.
+///
+/// [nonce] is for tests that compare against fixed vectors; leave it null.
+@visibleForTesting
+Uint8List encryptFileBytesSync(
+  Uint8List plain,
+  Uint8List keyBytes, {
+  List<int>? nonce,
+}) {
+  try {
+    return _aesGcm
+        .encryptSync(
+          plain,
+          secretKeyData: crypto.SecretKeyData(keyBytes),
+          nonce: nonce,
+        )
+        .concatenation();
+  } on Exception catch (e) {
+    throw EncryptionException('Byte encryption failed: $e');
+  }
+}
+
+/// Decrypt what [encryptFileBytesSync] wrote.
+@visibleForTesting
+Uint8List decryptFileBytesSync(Uint8List stored, Uint8List keyBytes) {
+  if (stored.length < _nonceLength + _tagLength) {
+    throw EncryptionException('Ciphertext too short to contain an IV');
+  }
+  try {
+    final plain = _aesGcm.decryptSync(
+      crypto.SecretBox.fromConcatenation(
+        stored,
+        nonceLength: _nonceLength,
+        macLength: _tagLength,
+        copy: false,
+      ),
+      secretKeyData: crypto.SecretKeyData(keyBytes),
+    );
+    return plain is Uint8List ? plain : Uint8List.fromList(plain);
+  } on Exception catch (e) {
+    throw EncryptionException('Byte decryption failed: $e');
+  }
+}
+
+/// Encrypt a text clip: `base64(IV):base64(ciphertext + tag)`, UTF-8 inside.
+///
+/// [nonce] is for tests that compare against fixed vectors; leave it null.
+@visibleForTesting
+String encryptTextSync(
+  String plaintext,
+  Uint8List keyBytes, {
+  List<int>? nonce,
+}) {
+  try {
+    final box = _aesGcm.encryptSync(
+      utf8.encode(plaintext),
+      secretKeyData: crypto.SecretKeyData(keyBytes),
+      nonce: nonce,
+    );
+    return '${base64Encode(box.nonce)}:'
+        '${base64Encode(box.concatenation(nonce: false))}';
+  } on Exception catch (e) {
+    throw EncryptionException('Encryption failed: $e');
+  }
+}
+
+/// Decrypt what [encryptTextSync] wrote.
+///
+/// Malformed UTF-8 is replaced rather than thrown on, as PointyCastle's
+/// decrypt did, so a clip that once decoded still does.
+@visibleForTesting
+String decryptTextSync(String stored, Uint8List keyBytes) {
+  try {
+    final parts = stored.split(':');
+    if (parts.length != 2) {
+      throw const FormatException('Invalid encrypted data format');
+    }
+    final nonce = base64Decode(parts[0]);
+    final body = base64Decode(parts[1]);
+    if (nonce.length != _nonceLength || body.length < _tagLength) {
+      throw const FormatException('Invalid encrypted data format');
+    }
+    final plain = _aesGcm.decryptSync(
+      crypto.SecretBox(
+        Uint8List.sublistView(body, 0, body.length - _tagLength),
+        nonce: nonce,
+        mac: crypto.Mac(Uint8List.sublistView(body, body.length - _tagLength)),
+      ),
+      secretKeyData: crypto.SecretKeyData(keyBytes),
+    );
+    return utf8.decode(plain, allowMalformed: true);
+  } on FormatException catch (e) {
+    throw EncryptionException('Invalid encrypted data format: $e');
+  } on Exception catch (e) {
+    throw EncryptionException('Decryption failed: $e');
   }
 }
 
