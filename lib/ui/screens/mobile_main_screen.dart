@@ -47,7 +47,8 @@ const double _headingGap = 6;
 /// The least height the one-column page takes with history collapsed: the
 /// chips, Send and the history heading plus a composer of a few lines. With
 /// the keyboard up on a small phone there is less room than this, and the page
-/// scrolls then rather than shrinking the composer to a sliver.
+/// scrolls then rather than shrinking the composer to a sliver. Anything
+/// else on the page adds to it: see _collapsedPageFloor.
 const double _minCollapsedPageHeight = 420;
 
 /// [child] in an [Expanded] when [expand], as is otherwise.
@@ -102,6 +103,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// to the composer. Presentation only, so it lives here and not in the
   /// ViewModel. See [_buildSingleColumnBody].
   bool _historyCollapsed = false;
+
+  /// Keeps the composer's field the same element across the collapsed and
+  /// expanded layouts, which build it under different parents. Without it a
+  /// toggle mid-typing rebuilt the field: focus, the keyboard, an IME
+  /// composition and the cursor all went, and only the text survived.
+  final GlobalKey _composerFieldKey = GlobalKey(debugLabel: 'composer');
 
   /// Past this many characters the composer stops offering Apple Pencil
   /// handwriting. See [_composerTooLongForPencil].
@@ -959,6 +966,26 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  /// [_minCollapsedPageHeight] plus room for whatever else is showing.
+  ///
+  /// The page is a fixed height, so everything in it but the composer's text
+  /// field has to fit under it, or the field is squeezed to nothing and the
+  /// column overflows. The allowances are generous on purpose: too much only
+  /// scrolls the page a little with the keyboard up, too little overflows.
+  double _collapsedPageFloor(BuildContext context) {
+    final content = _viewModel.clipboardContent;
+    var extra = 0.0;
+    // An image preview is up to ~130 with its header; a file card ~70.
+    if ((content?.hasImage ?? false) || (content?.hasFile ?? false)) {
+      extra += 160;
+    }
+    if (_viewModel.undecryptableItemCount.value > 0) extra += 90;
+    if (_viewModel.sendErrorMessage != null) extra += 50;
+    // Most of it is text, which grows with the user's text size.
+    final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    return (_minCollapsedPageHeight + extra) * scale;
+  }
+
   /// Phones and narrow windows: one column, capped so it stays readable.
   ///
   /// History can be folded away from its heading, and the composer then grows
@@ -1015,7 +1042,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       child: SizedBox(
                         height: math.max(
                           viewport.maxHeight,
-                          _minCollapsedPageHeight,
+                          _collapsedPageFloor(context),
                         ),
                         child: Padding(
                           padding: singleColumnPadding,
@@ -1028,6 +1055,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                               const SizedBox(height: 13),
                               _buildSendButton(),
                               const SizedBox(height: GhostSpacing.sectionLoose),
+                              // Kept with history folded: it is the only
+                              // prompt for a passphrase this device lacks.
+                              _buildLockedClipsBanner(),
                               _buildHistoryHeading(collapsible: true),
                             ],
                           ),
@@ -1333,62 +1363,71 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             // Its own layer: the cursor repaints this and nothing else.
             _expandedIf(
               expand,
-              RepaintBoundary(
-                // Rebuilds the field only when the text crosses the handwriting
-                // limit, not per keystroke.
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: _composerTooLongForPencil,
-                  builder: (context, tooLong, _) => TextField(
-                    stylusHandwritingEnabled: !tooLong,
-                    controller: _pasteController,
-                    focusNode: _pasteFocusNode,
-                    // Blink, don't fade. The iOS default animates the cursor's
-                    // opacity, which asks for a frame continuously - up to 120 a
-                    // second on a ProMotion screen - for as long as the field has
-                    // focus. Measured on an iPhone 15 Pro: 21% of a core with the
-                    // keyboard up and nothing typed, against ~0% once dismissed.
-                    // A plain blink repaints twice a second.
-                    cursorOpacityAnimates: false,
-                    // Phones do not unfocus on a tap elsewhere by default, so there was
-                    // no way to put the keyboard away and stay on this screen.
-                    onTapOutside: (_) => _pasteFocusNode.unfocus(),
-                    // minLines sets the empty composer's height directly. Expanded
-                    // cannot: this lives in a sliver, so incoming height is
-                    // unbounded and a flex child has nothing to expand into.
-                    // Expanded, the field is given a height and fills it.
-                    expands: expand,
-                    minLines: expand ? null : 3,
-                    maxLines: expand ? null : 5,
-                    textAlignVertical: TextAlignVertical.top,
-                    keyboardType: TextInputType.multiline,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      color: GhostColors.textPrimary,
+              // The field scrolls its own text, and those scroll events
+              // bubble. The page's keyboardDismissBehavior.onDrag does not
+              // check where a drag came from, so scrolling back up through a
+              // long clip put the keyboard away. Stop them here; the page's
+              // own scrolling and pull-to-refresh are unaffected.
+              NotificationListener<ScrollNotification>(
+                onNotification: (_) => true,
+                child: RepaintBoundary(
+                  // Rebuilds the field only when the text crosses the handwriting
+                  // limit, not per keystroke.
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _composerTooLongForPencil,
+                    builder: (context, tooLong, _) => TextField(
+                      key: _composerFieldKey,
+                      stylusHandwritingEnabled: !tooLong,
+                      controller: _pasteController,
+                      focusNode: _pasteFocusNode,
+                      // Blink, don't fade. The iOS default animates the cursor's
+                      // opacity, which asks for a frame continuously - up to 120 a
+                      // second on a ProMotion screen - for as long as the field has
+                      // focus. Measured on an iPhone 15 Pro: 21% of a core with the
+                      // keyboard up and nothing typed, against ~0% once dismissed.
+                      // A plain blink repaints twice a second.
+                      cursorOpacityAnimates: false,
+                      // Phones do not unfocus on a tap elsewhere by default, so there was
+                      // no way to put the keyboard away and stay on this screen.
+                      onTapOutside: (_) => _pasteFocusNode.unfocus(),
+                      // minLines sets the empty composer's height directly. Expanded
+                      // cannot: this lives in a sliver, so incoming height is
+                      // unbounded and a flex child has nothing to expand into.
+                      // Expanded, the field is given a height and fills it.
+                      expands: expand,
+                      minLines: expand ? null : 3,
+                      maxLines: expand ? null : 5,
+                      textAlignVertical: TextAlignVertical.top,
+                      keyboardType: TextInputType.multiline,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: GhostColors.textPrimary,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Paste or type something…',
+                        hintStyle: TextStyle(color: GhostColors.textMuted),
+                        contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                        filled: false,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                      ),
+                      onChanged: (value) {
+                        if (_viewModel.sendErrorMessage != null) {
+                          _viewModel.clearSendError();
+                        }
+                        // Nothing else needed here: _syncComposerLength is driven by
+                        // the controller, so it covers typing and the programmatic
+                        // paths (auto-paste, clear after send) alike.
+                        //
+                        // This used to be setState(), which rebuilt the entire screen
+                        // on every keystroke - and the history list is built eagerly,
+                        // so that reconstructed every _HistoryRow (each doing
+                        // decryption and content detection) per character typed.
+                      },
                     ),
-                    decoration: const InputDecoration(
-                      hintText: 'Paste or type something…',
-                      hintStyle: TextStyle(color: GhostColors.textMuted),
-                      contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
-                      filled: false,
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      errorBorder: InputBorder.none,
-                      focusedErrorBorder: InputBorder.none,
-                    ),
-                    onChanged: (value) {
-                      if (_viewModel.sendErrorMessage != null) {
-                        _viewModel.clearSendError();
-                      }
-                      // Nothing else needed here: _syncComposerLength is driven by
-                      // the controller, so it covers typing and the programmatic
-                      // paths (auto-paste, clear after send) alike.
-                      //
-                      // This used to be setState(), which rebuilt the entire screen
-                      // on every keystroke - and the history list is built eagerly,
-                      // so that reconstructed every _HistoryRow (each doing
-                      // decryption and content detection) per character typed.
-                    },
                   ),
                 ),
               ),
