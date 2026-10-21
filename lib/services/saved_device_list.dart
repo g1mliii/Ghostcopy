@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/device.dart';
+import '../utils/serial_queue.dart';
 
 /// The last device list fetched for an account, kept between launches so the
 /// send-target chips can be drawn before the network answers.
@@ -39,17 +40,12 @@ class SavedDeviceList {
 
   /// Saves and clears run one at a time, in the order asked for, so a save
   /// cannot be overtaken by the clear meant to follow it either.
-  static Future<void> _tail = Future<void>.value();
-
-  static Future<void> _serial(Future<void> Function() op) {
-    final next = _tail.then((_) => op());
-    // A failed op must not wedge every one queued behind it.
-    _tail = next.catchError((Object _) {});
-    return next;
-  }
+  static final _queue = SerialQueue();
 
   /// The list saved for [userId], or empty when there is none.
   static Future<List<Device>> load(String userId) async {
+    // Behind any save or clear already queued, as HistoryDiskCache.load is.
+    await _queue.idle;
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_key);
@@ -71,7 +67,7 @@ class SavedDeviceList {
     String userId,
     List<Device> devices, {
     required int generation,
-  }) => _serial(() async {
+  }) => _queue.run(() async {
     if (generation != _generation) return;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -92,7 +88,7 @@ class SavedDeviceList {
 
   static Future<void> clear() {
     _generation++;
-    return _serial(() async {
+    return _queue.run(() async {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove(_key);

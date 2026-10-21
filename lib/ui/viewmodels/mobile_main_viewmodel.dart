@@ -371,58 +371,33 @@ class MobileMainViewModel extends ChangeNotifier {
   ///
   /// With nothing on screen yet - a cold start, or after an account switch -
   /// the list saved by the last launch is shown while the fetch runs, so the
-  /// chips appear at once instead of after a network round trip. The fetched
-  /// list replaces it when it lands. See SavedDeviceList.
-  ///
-  /// Always a fresh fetch, through fetchUserDevices rather than
-  /// getUserDevices: that one reports a failure as [], the same as an account
-  /// with no devices, and this has to tell them apart - a failure leaves a
-  /// saved list on screen, a real empty answer replaces it.
+  /// chips appear at once instead of after a network round trip. See
+  /// fetchDevicesShowingSaved.
   Future<void> loadDevices() async {
     final revision = _accountRevision;
     _devicesLoading = true;
     _deviceError = null;
     notifyListeners();
 
-    // Started before the disk read, so the saved list never delays the real
-    // one. A thrown failure is folded into null here rather than left
-    // unhandled while the saved list is read.
-    List<Device>? fetched;
-    var fetchSettled = false;
-    final fetching = _deviceService
-        .fetchUserDevices()
-        .then<void>(
-          (devices) => fetched = devices,
-          onError: (Object e, StackTrace stack) {
-            if (e is! Exception) Error.throwWithStackTrace(e, stack);
-            debugPrint('[MobileMainVM] Failed to load devices: $e');
-          },
-        )
-        .whenComplete(() => fetchSettled = true);
+    bool current() => !_isDisposed && revision == _accountRevision;
 
     var showingSaved = false;
-    if (_devices.isEmpty) {
-      final saved = await _deviceService.getSavedDevices();
-      if (!_isDisposed &&
-          revision == _accountRevision &&
-          // Not over an answer that beat the disk read. A failure is none.
-          (!fetchSettled || fetched == null) &&
-          saved.isNotEmpty) {
+    final devices = await fetchDevicesShowingSaved(
+      _deviceService,
+      onSaved: (saved) {
+        if (!current() || _devices.isNotEmpty) return;
         _devices = saved;
         _deviceTypeTargetsCache = null;
         _devicesLoading = false;
         showingSaved = true;
         notifyListeners();
-      }
-    }
+      },
+    );
+    if (!current()) return;
 
-    await fetching;
-    if (_isDisposed || revision != _accountRevision) return;
-    final devices = fetched;
     if (devices != null) {
       _devices = devices;
       _deviceTypeTargetsCache = null;
-      _deviceError = null;
     } else if (!showingSaved) {
       _deviceError = 'Failed to load devices. Tap to retry.';
     }

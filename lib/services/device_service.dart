@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/device.dart';
 
 export '../models/device.dart';
@@ -87,4 +89,38 @@ abstract class IDeviceService {
 
   /// Dispose resources
   void dispose();
+}
+
+/// Fetch the user's devices, handing [onSaved] the list the last launch saved
+/// first, so a screen can draw it instead of a spinner. See SavedDeviceList.
+///
+/// Returns the fetched list, or null when the fetch failed. [onSaved] runs at
+/// most once, and only when its list beat a successful fetch or the fetch
+/// failed - on failure this waits for it, so by the time null comes back the
+/// caller knows whether a saved list is on screen to keep.
+///
+/// Through fetchUserDevices rather than getUserDevices: that one reports a
+/// failure as [], the same as an account with no devices, and a saved list
+/// must survive the first and be replaced by the second.
+Future<List<Device>?> fetchDevicesShowingSaved(
+  IDeviceService devices, {
+  required void Function(List<Device> saved) onSaved,
+}) async {
+  var fetched = false;
+  final showingSaved = devices.getSavedDevices().then((saved) {
+    if (!fetched && saved.isNotEmpty) onSaved(saved);
+  }, onError: (Object e) => debugPrint('[Devices] Saved list not read: $e'));
+
+  List<Device>? result;
+  try {
+    result = await devices.fetchUserDevices();
+  } on Exception catch (e) {
+    debugPrint('[Devices] Failed to load devices: $e');
+  }
+  if (result != null) {
+    fetched = true;
+  } else {
+    await showingSaved;
+  }
+  return result;
 }

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../../services/device_service.dart';
@@ -42,11 +40,7 @@ class _DevicePanelState extends State<DevicePanel> {
   }
 
   /// Fetch the devices, drawing the list the last launch saved while that
-  /// runs on first open, rather than a spinner. See SavedDeviceList.
-  ///
-  /// fetchUserDevices, not getUserDevices: that reports a failure as [], the
-  /// same as an account with no devices. Here a failure must leave a saved
-  /// list in place and a real empty answer must replace it.
+  /// runs on first open, rather than a spinner. See fetchDevicesShowingSaved.
   Future<void> _loadDevices() async {
     if (_fetching) return;
     _fetching = true;
@@ -56,16 +50,17 @@ class _DevicePanelState extends State<DevicePanel> {
       _error = null;
     });
 
-    if (_cachedDevices == null) unawaited(_showSavedDevices());
-
-    List<Device>? devices;
-    try {
-      devices = await widget.deviceService.fetchUserDevices();
-    } on Exception catch (e) {
-      debugPrint('[DevicePanel] Failed to load devices: $e');
-    } finally {
-      _fetching = false;
-    }
+    final devices = await fetchDevicesShowingSaved(
+      widget.deviceService,
+      onSaved: (saved) {
+        if (!mounted || _cachedDevices != null) return;
+        setState(() {
+          _cachedDevices = saved;
+          _isLoading = false;
+        });
+      },
+    );
+    _fetching = false;
     if (!mounted) return;
     setState(() {
       if (devices != null) {
@@ -73,18 +68,6 @@ class _DevicePanelState extends State<DevicePanel> {
       } else if (_cachedDevices == null) {
         _error = 'Failed to load devices. Check your connection.';
       }
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _showSavedDevices() async {
-    final saved = await widget.deviceService.getSavedDevices();
-    // Only while the fetch is still out: a list it already returned is newer.
-    if (!mounted || !_fetching || _cachedDevices != null || saved.isEmpty) {
-      return;
-    }
-    setState(() {
-      _cachedDevices = saved;
       _isLoading = false;
     });
   }
