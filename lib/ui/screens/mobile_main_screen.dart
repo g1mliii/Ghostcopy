@@ -865,9 +865,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         ),
         toolbarHeight: 62,
         titleSpacing: GhostSpacing.gutter,
-        // The wordmark alone. The mark in an accent tile beside it was two
-        // brand elements saying one thing, and the header reads cleaner with
-        // one; the app icon on the home screen is where the mark lives.
         title: Text(
           'GhostCopy',
           style: GhostTypography.headline.copyWith(
@@ -1002,6 +999,26 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       GhostSpacing.gutter,
       24 + MediaQuery.viewPaddingOf(context).bottom,
     );
+    // The same page either way; collapsed, the composer takes the spare
+    // height and history is only its heading.
+    final page = [
+      _expandedIf(
+        _historyCollapsed,
+        _buildPasteArea(expand: _historyCollapsed),
+      ),
+      const SizedBox(height: 15),
+      _buildDeviceSelector(),
+      const SizedBox(height: 13),
+      _buildSendButton(),
+      const SizedBox(height: GhostSpacing.sectionLoose),
+      // Kept with history folded too: it is the only prompt for a
+      // passphrase this device lacks.
+      _buildLockedClipsBanner(),
+      if (_historyCollapsed)
+        _buildHistoryHeading(collapsible: true)
+      else
+        _buildHistorySection(collapsible: true),
+    ];
     return Center(
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -1048,18 +1065,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                           padding: singleColumnPadding,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: _buildPasteArea(expand: true)),
-                              const SizedBox(height: 15),
-                              _buildDeviceSelector(),
-                              const SizedBox(height: 13),
-                              _buildSendButton(),
-                              const SizedBox(height: GhostSpacing.sectionLoose),
-                              // Kept with history folded: it is the only
-                              // prompt for a passphrase this device lacks.
-                              _buildLockedClipsBanner(),
-                              _buildHistoryHeading(collapsible: true),
-                            ],
+                            children: page,
                           ),
                         ),
                       ),
@@ -1067,18 +1073,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   else
                     SliverPadding(
                       padding: singleColumnPadding,
-                      sliver: SliverList.list(
-                        children: [
-                          _buildPasteArea(),
-                          const SizedBox(height: 15),
-                          _buildDeviceSelector(),
-                          const SizedBox(height: 13),
-                          _buildSendButton(),
-                          const SizedBox(height: GhostSpacing.sectionLoose),
-                          _buildLockedClipsBanner(),
-                          _buildHistorySection(collapsible: true),
-                        ],
-                      ),
+                      sliver: SliverList.list(children: page),
                     ),
                 ],
               ),
@@ -1390,10 +1385,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       // Phones do not unfocus on a tap elsewhere by default, so there was
                       // no way to put the keyboard away and stay on this screen.
                       onTapOutside: (_) => _pasteFocusNode.unfocus(),
-                      // minLines sets the empty composer's height directly. Expanded
-                      // cannot: this lives in a sliver, so incoming height is
-                      // unbounded and a flex child has nothing to expand into.
-                      // Expanded, the field is given a height and fills it.
+                      // In the scrolling page the height is unbounded, so
+                      // minLines sizes the empty field. With history
+                      // collapsed it is given a height and fills it.
                       expands: expand,
                       minLines: expand ? null : 3,
                       maxLines: expand ? null : 5,
@@ -1481,30 +1475,26 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       // the text above it and the history rows below. Measured from rendered
       // pixels rather than derived, because the button's internal geometry is
       // not obvious from its API.
-      padding: const EdgeInsets.fromLTRB(14, 4, GhostSpacing.gutter, 5),
-      child: Row(
-        children: [
-          TextButton.icon(
-            onPressed: _showAttachSheet,
-            icon: const Icon(Icons.attach_file_rounded, size: 17),
-            label: const Text('Attach'),
-            style: TextButton.styleFrom(
-              minimumSize: const Size(GhostSpacing.minTouchTarget, 40),
-              padding: EdgeInsets.zero,
-              foregroundColor: GhostColors.textMuted,
-              textStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(GhostSpacing.thumbRadius),
-              ),
+      padding: const EdgeInsets.fromLTRB(14, 4, 0, 5),
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: TextButton.icon(
+          onPressed: _showAttachSheet,
+          icon: const Icon(Icons.attach_file_rounded, size: 17),
+          label: const Text('Attach'),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(GhostSpacing.minTouchTarget, 40),
+            padding: EdgeInsets.zero,
+            foregroundColor: GhostColors.textMuted,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(GhostSpacing.thumbRadius),
             ),
           ),
-          // No "Ready to send" / "Nothing to send yet" status opposite it. It
-          // restated what the field and the Send button already show - text in
-          // the box, and a button that is enabled or not.
-        ],
+        ),
       ),
     );
   }
