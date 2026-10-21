@@ -21,7 +21,10 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('round-trips for the account that saved it', () async {
-    await SavedDeviceList.save('u1', [device('1'), device('2')]);
+    await SavedDeviceList.save('u1', [
+      device('1'),
+      device('2'),
+    ], generation: SavedDeviceList.generation);
 
     final loaded = await SavedDeviceList.load('u1');
 
@@ -30,13 +33,17 @@ void main() {
   });
 
   test('another account reads nothing', () async {
-    await SavedDeviceList.save('u1', [device('1')]);
+    await SavedDeviceList.save('u1', [
+      device('1'),
+    ], generation: SavedDeviceList.generation);
 
     expect(await SavedDeviceList.load('u2'), isEmpty);
   });
 
   test('push tokens are not written to disk', () async {
-    await SavedDeviceList.save('u1', [device('1', fcmToken: 'secret-token')]);
+    await SavedDeviceList.save('u1', [
+      device('1', fcmToken: 'secret-token'),
+    ], generation: SavedDeviceList.generation);
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('saved_device_list'), isNot(contains('secret')));
@@ -44,8 +51,31 @@ void main() {
   });
 
   test('clear removes it', () async {
-    await SavedDeviceList.save('u1', [device('1')]);
+    await SavedDeviceList.save('u1', [
+      device('1'),
+    ], generation: SavedDeviceList.generation);
     await SavedDeviceList.clear();
+
+    expect(await SavedDeviceList.load('u1'), isEmpty);
+  });
+
+  test('a save from a fetch that began before a clear is dropped', () async {
+    // The fetch went out signed in as u1...
+    final before = SavedDeviceList.generation;
+    // ...the user signed out while it was in flight...
+    await SavedDeviceList.clear();
+    // ...and it came back afterwards.
+    await SavedDeviceList.save('u1', [device('1')], generation: before);
+
+    expect(await SavedDeviceList.load('u1'), isEmpty);
+  });
+
+  test('a clear asked for after a save lands after it', () async {
+    final saving = SavedDeviceList.save('u1', [
+      device('1'),
+    ], generation: SavedDeviceList.generation);
+    final clearing = SavedDeviceList.clear();
+    await Future.wait([saving, clearing]);
 
     expect(await SavedDeviceList.load('u1'), isEmpty);
   });

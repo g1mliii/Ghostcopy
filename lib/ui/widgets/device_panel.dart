@@ -23,7 +23,16 @@ class DevicePanel extends StatefulWidget {
 
 class _DevicePanelState extends State<DevicePanel> {
   List<Device>? _cachedDevices;
+
+  /// Whether the spinner shows: a fetch is out and there is nothing to show
+  /// in the meantime.
   bool _isLoading = false;
+
+  /// Whether a fetch is out at all. Separate from [_isLoading], which goes
+  /// false as soon as a saved list is drawn - guarding on that let a refresh
+  /// tapped meanwhile start a second fetch, and the slower of the two won.
+  bool _fetching = false;
+
   String? _error;
 
   @override
@@ -32,50 +41,46 @@ class _DevicePanelState extends State<DevicePanel> {
     _loadDevices();
   }
 
-  Future<void> _loadDevices({bool forceRefresh = false}) async {
-    if (_isLoading) return;
+  /// Fetch the devices, drawing the list the last launch saved while that
+  /// runs on first open, rather than a spinner. See SavedDeviceList.
+  ///
+  /// fetchUserDevices, not getUserDevices: that reports a failure as [], the
+  /// same as an account with no devices. Here a failure must leave a saved
+  /// list in place and a real empty answer must replace it.
+  Future<void> _loadDevices() async {
+    if (_fetching) return;
+    _fetching = true;
 
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
-    // First open this launch: draw the list the last launch saved while the
-    // fetch runs, rather than a spinner. The fetch replaces it. Not on a
-    // refresh, which the user asked for and expects to see happen.
-    if (_cachedDevices == null && !forceRefresh) {
-      unawaited(_showSavedDevices());
-    }
+    if (_cachedDevices == null) unawaited(_showSavedDevices());
 
+    List<Device>? devices;
     try {
-      final devices = await widget.deviceService.getUserDevices(
-        forceRefresh: forceRefresh,
-      );
-      if (mounted) {
-        setState(() {
-          // A failed fetch comes back as [], not an error, and this device is
-          // on its own list - so an empty answer over a saved list is the
-          // network, not the account. Keep what is shown.
-          if (devices.isNotEmpty || (_cachedDevices?.isEmpty ?? true)) {
-            _cachedDevices = devices;
-          }
-          _isLoading = false;
-        });
-      }
+      devices = await widget.deviceService.fetchUserDevices();
     } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to load devices: $e';
-          _isLoading = false;
-        });
-      }
+      debugPrint('[DevicePanel] Failed to load devices: $e');
+    } finally {
+      _fetching = false;
     }
+    if (!mounted) return;
+    setState(() {
+      if (devices != null) {
+        _cachedDevices = devices;
+      } else if (_cachedDevices == null) {
+        _error = 'Failed to load devices. Check your connection.';
+      }
+      _isLoading = false;
+    });
   }
 
   Future<void> _showSavedDevices() async {
     final saved = await widget.deviceService.getSavedDevices();
     // Only while the fetch is still out: a list it already returned is newer.
-    if (!mounted || !_isLoading || _cachedDevices != null || saved.isEmpty) {
+    if (!mounted || !_fetching || _cachedDevices != null || saved.isEmpty) {
       return;
     }
     setState(() {
@@ -141,7 +146,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 16),
                   color: GhostColors.textMuted,
-                  onPressed: () => _loadDevices(forceRefresh: true),
+                  onPressed: _loadDevices,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
                     minWidth: 24,

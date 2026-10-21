@@ -373,35 +373,40 @@ class MobileMainViewModel extends ChangeNotifier {
   /// the list saved by the last launch is shown while the fetch runs, so the
   /// chips appear at once instead of after a network round trip. The fetched
   /// list replaces it when it lands. See SavedDeviceList.
-  Future<void> loadDevices({bool forceRefresh = false}) async {
+  ///
+  /// Always a fresh fetch, through fetchUserDevices rather than
+  /// getUserDevices: that one reports a failure as [], the same as an account
+  /// with no devices, and this has to tell them apart - a failure leaves a
+  /// saved list on screen, a real empty answer replaces it.
+  Future<void> loadDevices() async {
     final revision = _accountRevision;
     _devicesLoading = true;
     _deviceError = null;
     notifyListeners();
 
     // Started before the disk read, so the saved list never delays the real
-    // one. Its failure is caught here and acted on below, so it is never left
+    // one. A thrown failure is folded into null here rather than left
     // unhandled while the saved list is read.
     List<Device>? fetched;
-    Exception? fetchError;
+    var fetchSettled = false;
     final fetching = _deviceService
-        .getUserDevices(forceRefresh: forceRefresh)
+        .fetchUserDevices()
         .then<void>(
           (devices) => fetched = devices,
           onError: (Object e, StackTrace stack) {
             if (e is! Exception) Error.throwWithStackTrace(e, stack);
-            fetchError = e;
+            debugPrint('[MobileMainVM] Failed to load devices: $e');
           },
-        );
+        )
+        .whenComplete(() => fetchSettled = true);
 
     var showingSaved = false;
     if (_devices.isEmpty) {
       final saved = await _deviceService.getSavedDevices();
       if (!_isDisposed &&
           revision == _accountRevision &&
-          // Not over a real answer that beat the disk read. A failed or
-          // empty one is no answer: offline, saved is still the best list.
-          (fetched?.isEmpty ?? true) &&
+          // Not over an answer that beat the disk read. A failure is none.
+          (!fetchSettled || fetched == null) &&
           saved.isNotEmpty) {
         _devices = saved;
         _deviceTypeTargetsCache = null;
@@ -413,27 +418,18 @@ class MobileMainViewModel extends ChangeNotifier {
 
     await fetching;
     if (_isDisposed || revision != _accountRevision) return;
-    final error = fetchError;
     final devices = fetched;
-    // getUserDevices reports a failed fetch as [] rather than throwing, so an
-    // empty answer cannot be told from being offline. It does not replace a
-    // saved list: this phone is on its own account's list, so a real one is
-    // never empty once it has been shown.
-    if (devices != null && devices.isEmpty && showingSaved) {
-      debugPrint('[MobileMainVM] Empty device fetch - keeping saved list');
-    } else if (error == null) {
-      _devices = devices!;
+    if (devices != null) {
+      _devices = devices;
       _deviceTypeTargetsCache = null;
       _deviceError = null;
-    } else {
-      debugPrint('[MobileMainVM] Failed to load devices: $error');
-      // A saved list already on screen is still the best answer there is:
-      // keep it rather than swap working chips for an error. Sends route by
-      // platform, so a slightly stale list still sends where it says.
-      if (!showingSaved) {
-        _deviceError = 'Failed to load devices. Tap to retry.';
-      }
+    } else if (!showingSaved) {
+      _deviceError = 'Failed to load devices. Tap to retry.';
     }
+    // else: offline with a saved list on screen. It is still the best answer
+    // there is, so it stays rather than working chips turning into an error.
+    // Sends route by platform, so a slightly stale list still sends where it
+    // says.
     _devicesLoading = false;
     notifyListeners();
   }
@@ -1253,7 +1249,7 @@ class MobileMainViewModel extends ChangeNotifier {
     _isRefreshing = true;
     notifyListeners();
     try {
-      await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
+      await Future.wait([loadDevices(), loadHistory()]);
     } finally {
       _isRefreshing = false;
       notifyListeners();
@@ -1821,7 +1817,7 @@ class MobileMainViewModel extends ChangeNotifier {
     _historySubscription = null;
     if (_isDisposed) return;
     subscribeToRealtimeUpdates();
-    await Future.wait([loadHistory(), loadDevices(forceRefresh: true)]);
+    await Future.wait([loadHistory(), loadDevices()]);
   }
 
   // ========== CACHE MANAGEMENT ==========

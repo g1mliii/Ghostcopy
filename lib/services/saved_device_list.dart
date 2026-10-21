@@ -31,6 +31,23 @@ class SavedDeviceList {
   /// Bumped if the stored shape changes; an unknown version reads as empty.
   static const int _version = 1;
 
+  /// Bumped by every [clear]. A fetch captures it before going out and hands
+  /// it to [save], so a fetch still in flight at sign-out cannot write the
+  /// signed-out account's list back after the clear.
+  static int get generation => _generation;
+  static int _generation = 0;
+
+  /// Saves and clears run one at a time, in the order asked for, so a save
+  /// cannot be overtaken by the clear meant to follow it either.
+  static Future<void> _tail = Future<void>.value();
+
+  static Future<void> _serial(Future<void> Function() op) {
+    final next = _tail.then((_) => op());
+    // A failed op must not wedge every one queued behind it.
+    _tail = next.catchError((Object _) {});
+    return next;
+  }
+
   /// The list saved for [userId], or empty when there is none.
   static Future<List<Device>> load(String userId) async {
     try {
@@ -48,8 +65,14 @@ class SavedDeviceList {
     }
   }
 
-  /// Replace the list saved for [userId] with [devices].
-  static Future<void> save(String userId, List<Device> devices) async {
+  /// Replace the list saved for [userId] with [devices], unless the list
+  /// has been cleared since [generation] was read.
+  static Future<void> save(
+    String userId,
+    List<Device> devices, {
+    required int generation,
+  }) => _serial(() async {
+    if (generation != _generation) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
@@ -65,14 +88,17 @@ class SavedDeviceList {
     } on Object catch (e) {
       debugPrint('[SavedDeviceList] Not saved: $e');
     }
-  }
+  });
 
-  static Future<void> clear() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_key);
-    } on Object catch (e) {
-      debugPrint('[SavedDeviceList] Not cleared: $e');
-    }
+  static Future<void> clear() {
+    _generation++;
+    return _serial(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_key);
+      } on Object catch (e) {
+        debugPrint('[SavedDeviceList] Not cleared: $e');
+      }
+    });
   }
 }

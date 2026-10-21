@@ -254,6 +254,9 @@ class DeviceService implements IDeviceService {
 
   /// The devices from the server, cached; null when the fetch failed.
   Future<List<Device>?> _fetchDevices() async {
+    // Read before the request: a sign-out while it is out clears the saved
+    // list, and this fetch must not write it back afterwards.
+    final savedGeneration = SavedDeviceList.generation;
     try {
       final userId = _supabase.auth.currentUser!.id;
 
@@ -271,7 +274,9 @@ class DeviceService implements IDeviceService {
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
       // And the copy the next launch draws first. See SavedDeviceList.
-      unawaited(SavedDeviceList.save(userId, devices));
+      unawaited(
+        SavedDeviceList.save(userId, devices, generation: savedGeneration),
+      );
 
       debugPrint(
         '[DeviceService] Fetched and cached ${devices.length} device(s)',
