@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart' as crypto;
-import 'package:encrypt/encrypt.dart' as enc;
+import 'package:cryptography/dart.dart' as crypto_dart;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -15,28 +14,9 @@ import '../passphrase_sync_service.dart';
 import 'keychain_accessibility.dart';
 import 'passphrase_sync_service.dart';
 
-/// Payload for a crypto operation running on a background isolate.
-///
-/// `compute` takes a single argument, which is the only reason these exist.
-/// There were four of them - encrypt, decrypt, encrypt-bytes, decrypt-bytes -
-/// structurally identical in pairs and differing only in what the field
-/// happened to be called.
-class _StringCryptoParams {
-  const _StringCryptoParams({required this.data, required this.keyBytes});
-
-  /// Plaintext when encrypting, `iv:ciphertext` when decrypting.
-  final String data;
-  final Uint8List keyBytes;
-}
-
-/// The byte-payload counterpart of [_StringCryptoParams], for files and images.
-class _BytesCryptoParams {
-  const _BytesCryptoParams({required this.data, required this.keyBytes});
-
-  /// Plain bytes when encrypting, `iv + ciphertext` when decrypting.
-  final Uint8List data;
-  final Uint8List keyBytes;
-}
+/// What a background isolate needs for one encrypt or decrypt: the payload
+/// and the key. `compute` takes a single argument.
+typedef _CryptoJob<T> = (T data, Uint8List key);
 
 /// Concrete implementation of IEncryptionService using optional user passphrase
 ///
@@ -490,88 +470,6 @@ class EncryptionService implements IEncryptionService {
     return inputHash == storedHash;
   }
 
-  @override
-  Future<String?> exportPassphraseForQr() async {
-    if (!_initialized) {
-      throw StateError('EncryptionService not initialized');
-    }
-
-    // Get passphrase from secure storage
-    final passphrase = await _secureStorage.read(key: _passphraseKey);
-    if (passphrase == null || passphrase.isEmpty) {
-      return null; // Encryption not enabled
-    }
-
-    try {
-      // For QR transfer, we encrypt the passphrase with a one-time key
-      // The key is embedded in the QR data itself (first 32 bytes)
-      // This prevents plaintext passphrase in QR while still allowing transfer
-
-      // Generate random one-time key (32 bytes for AES-256)
-      final oneTimeKey = enc.Key.fromSecureRandom(32);
-
-      // Generate random IV
-      final iv = enc.IV.fromSecureRandom(16);
-
-      // Encrypt passphrase
-      final encrypter = enc.Encrypter(
-        enc.AES(oneTimeKey, mode: enc.AESMode.gcm),
-      );
-      final encrypted = encrypter.encrypt(passphrase, iv: iv);
-
-      // Combine: oneTimeKey + IV + encrypted
-      final combined = BytesBuilder()
-        ..add(oneTimeKey.bytes)
-        ..add(iv.bytes)
-        ..add(encrypted.bytes);
-
-      // Return base64-encoded
-      return base64Encode(combined.toBytes());
-    } on Exception catch (e) {
-      debugPrint('Failed to export passphrase: $e');
-      return null;
-    }
-  }
-
-  @override
-  Future<bool> importPassphraseFromQr(String encryptedData) async {
-    if (!_initialized) {
-      throw StateError('EncryptionService not initialized');
-    }
-
-    try {
-      // Decode from base64
-      final combined = base64Decode(encryptedData);
-
-      // Extract components: key (32) + IV (16) + encrypted (rest)
-      if (combined.length < 48) {
-        throw const FormatException('Invalid encrypted data length');
-      }
-
-      final oneTimeKey = enc.Key(combined.sublist(0, 32));
-      final iv = enc.IV(combined.sublist(32, 48));
-      final encryptedBytes = combined.sublist(48);
-
-      // Decrypt passphrase
-      final encrypter = enc.Encrypter(
-        enc.AES(oneTimeKey, mode: enc.AESMode.gcm),
-      );
-      final encrypted = enc.Encrypted(encryptedBytes);
-      final passphrase = encrypter.decrypt(encrypted, iv: iv);
-
-      // Store passphrase using existing method
-      final success = await setPassphrase(passphrase);
-
-      // Clear sensitive data from memory
-      combined.fillRange(0, combined.length, 0);
-
-      return success;
-    } on Exception catch (e) {
-      debugPrint('Failed to import passphrase: $e');
-      return false;
-    }
-  }
-
   /// Derives encryption key from passphrase using PBKDF2
   Future<void> _deriveKey(String passphrase) async {
     if (_userId == null) {
@@ -601,23 +499,15 @@ class EncryptionService implements IEncryptionService {
     }
 
     // If encryption not enabled, return plaintext
-    if (_keyBytes == null) {
-      return plaintext;
-    }
+    final key = _keyBytes;
+    if (key == null) return plaintext;
 
     try {
       // For small content (<5KB), encrypt directly to avoid isolate overhead
-      if (plaintext.length < 5000) {
-        return _encryptSync(
-          _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
-        );
-      }
+      if (plaintext.length < 5000) return encryptTextSync(plaintext, key);
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(
-        _encryptSync,
-        _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
-      );
+      return await compute(_encryptText, (plaintext, key));
     } on Exception catch (e) {
       debugPrint('Encryption failed: $e');
       throw EncryptionException('Failed to encrypt content: $e');
@@ -636,10 +526,7 @@ class EncryptionService implements IEncryptionService {
 
     // Files are large by definition; always use an isolate to keep the UI and
     // the tray-mode event loop responsive.
-    return compute(
-      _encryptBytesSync,
-      _BytesCryptoParams(data: plain, keyBytes: key),
-    );
+    return compute(_encryptFileBytes, (plain, key));
   }
 
   @override
@@ -650,81 +537,22 @@ class EncryptionService implements IEncryptionService {
     final key = _keyBytes;
     if (key == null) return cipher;
 
-    return compute(
-      _decryptBytesSync,
-      _BytesCryptoParams(data: cipher, keyBytes: key),
-    );
+    return compute(_decryptFileBytes, (cipher, key));
   }
 
-  /// Encrypt raw bytes for R2 upload.
-  ///
-  /// Deliberately NOT the base64 string path: that inflates by ~33%, which is
-  /// why files were left unencrypted ("too large, would exceed 10MB limit
-  /// after base64"). Encrypting the bytes themselves costs 16 bytes of IV plus
-  /// a 16-byte GCM tag - a flat 32 bytes - so a 10MB file stays a 10MB file.
-  ///
-  /// Layout: [16-byte IV][ciphertext+tag]
-  static Uint8List _encryptBytesSync(_BytesCryptoParams params) {
-    try {
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-      final iv = enc.IV.fromSecureRandom(16);
+  // compute() entry points. The work is in the top-level functions below,
+  // where the formats are described and tests can reach them.
+  static Uint8List _encryptFileBytes(_CryptoJob<Uint8List> job) =>
+      encryptFileBytesSync(job.$1, job.$2);
 
-      final encrypted = encrypter.encryptBytes(params.data, iv: iv);
+  static Uint8List _decryptFileBytes(_CryptoJob<Uint8List> job) =>
+      decryptFileBytesSync(job.$1, job.$2);
 
-      final out = Uint8List(iv.bytes.length + encrypted.bytes.length)
-        ..setRange(0, iv.bytes.length, iv.bytes)
-        ..setRange(
-          iv.bytes.length,
-          iv.bytes.length + encrypted.bytes.length,
-          encrypted.bytes,
-        );
-      return out;
-    } on Exception catch (e) {
-      throw EncryptionException('Byte encryption failed: $e');
-    }
-  }
+  static String _encryptText(_CryptoJob<String> job) =>
+      encryptTextSync(job.$1, job.$2);
 
-  static Uint8List _decryptBytesSync(_BytesCryptoParams params) {
-    try {
-      if (params.data.length <= 16) {
-        throw EncryptionException('Ciphertext too short to contain an IV');
-      }
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-
-      final iv = enc.IV(Uint8List.sublistView(params.data, 0, 16));
-      final body = Uint8List.sublistView(params.data, 16);
-
-      return Uint8List.fromList(
-        encrypter.decryptBytes(enc.Encrypted(body), iv: iv),
-      );
-    } on EncryptionException {
-      rethrow;
-    } on Exception catch (e) {
-      throw EncryptionException('Byte decryption failed: $e');
-    }
-  }
-
-  static String _encryptSync(_StringCryptoParams params) {
-    try {
-      // Create encrypter with AES GCM mode
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-
-      // Generate random IV for this encryption
-      final iv = enc.IV.fromSecureRandom(16);
-
-      // Encrypt the plaintext
-      final encrypted = encrypter.encrypt(params.data, iv: iv);
-
-      // Combine IV + encrypted data for storage
-      // Format: base64(IV) + ":" + base64(ciphertext)
-      return '${iv.base64}:${encrypted.base64}';
-    } on Exception catch (e) {
-      throw EncryptionException('Encryption failed: $e');
-    }
-  }
+  static String _decryptText(_CryptoJob<String> job) =>
+      decryptTextSync(job.$1, job.$2);
 
   @override
   Future<String> decrypt(String ciphertext) async {
@@ -733,52 +561,19 @@ class EncryptionService implements IEncryptionService {
     }
 
     // If encryption not enabled, return ciphertext unchanged
-    if (_keyBytes == null) {
-      return ciphertext;
-    }
+    final key = _keyBytes;
+    if (key == null) return ciphertext;
 
     try {
-      // For small content (estimate based on ciphertext length), decrypt directly
-      if (ciphertext.length < 7000) {
-        // ~5KB plaintext = ~7KB base64
-        return _decryptSync(
-          _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
-        );
-      }
+      // For small content (estimate based on ciphertext length), decrypt
+      // directly: ~5KB plaintext = ~7KB base64.
+      if (ciphertext.length < 7000) return decryptTextSync(ciphertext, key);
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(
-        _decryptSync,
-        _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
-      );
+      return await compute(_decryptText, (ciphertext, key));
     } on Exception catch (e) {
       debugPrint('Decryption failed: $e');
       throw EncryptionException('Failed to decrypt content: $e');
-    }
-  }
-
-  /// Static decryption helper that can run in isolate
-  static String _decryptSync(_StringCryptoParams params) {
-    try {
-      // Create encrypter with AES GCM mode
-      final key = enc.Key(params.keyBytes);
-      final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.gcm));
-
-      // Split IV and ciphertext
-      final parts = params.data.split(':');
-      if (parts.length != 2) {
-        throw const FormatException('Invalid encrypted data format');
-      }
-
-      final iv = enc.IV.fromBase64(parts[0]);
-      final encrypted = enc.Encrypted.fromBase64(parts[1]);
-
-      // Decrypt
-      return encrypter.decrypt(encrypted, iv: iv);
-    } on FormatException catch (e) {
-      throw EncryptionException('Invalid encrypted data format: $e');
-    } on Exception catch (e) {
-      throw EncryptionException('Decryption failed: $e');
     }
   }
 
@@ -805,6 +600,262 @@ class EncryptionService implements IEncryptionService {
     debugPrint(
       '[EncryptionService] ✅ Disposed - all sensitive data cleared from memory',
     );
+  }
+}
+
+/// AES-256-GCM for clips and files, through package:cryptography.
+///
+/// Both formats below were first written by package:encrypt (PointyCastle),
+/// and every clip and file already stored is in them. They are standard GCM
+/// with a 16-byte nonce, so this reads them and writes what builds still on
+/// PointyCastle can read - encryption_formats_test.dart pins that with
+/// vectors PointyCastle produced. It replaced PointyCastle for speed: that
+/// took 6.8s to decrypt a 5MB file against 0.56s here (AOT, x64).
+///
+/// The Dart implementation is named rather than AesGcm.with256bits(), which a
+/// platform plugin could swap for a native one - and CryptoKit, for one, does
+/// not take the 16-byte nonce every stored item already uses.
+///
+/// ## The counter wrap
+///
+/// DartAesGcm is not quite GCM with a nonce of other than 12 bytes. GCM steps
+/// its CTR counter with inc32 - the low 32 bits only, wrapping - but
+/// DartAesGcm carries into all 128 (bytesIncrementBigEndian). With a 12-byte
+/// nonce the counter starts at 2 and the two never differ. With 16 bytes the
+/// starting counter J0 is a hash of the nonce, so its low word is anywhere,
+/// and an item long enough to carry it past 2^32 is keyed differently from
+/// that block on: ~1 in 6,500 files at the 10MB limit. The tag only covers
+/// the ciphertext, so it still verifies, and the tail decrypts to noise.
+///
+/// So [_gcmSeal] never picks a nonce whose counter wraps inside the item -
+/// what it writes is then plain GCM, readable anywhere - and [_gcmOpen]
+/// redoes the blocks past the wrap with the right counter for anything
+/// PointyCastle wrote that does.
+final _aesGcm = crypto_dart.DartAesGcm(nonceLength: 16);
+
+/// AES-CTR whose counter starts at a whole block given as the nonce. Used
+/// only from a counter whose low word is 0, where its 128-bit increment and
+/// GCM's inc32 agree for the next 2^32 blocks.
+final _aesCtr = crypto_dart.DartAesCtr(macAlgorithm: crypto.MacAlgorithm.empty);
+
+const int _nonceLength = 16;
+const int _tagLength = 16;
+const int _blockLength = 16;
+
+/// How many CTR blocks [blockCount] of data take before GCM's 32-bit counter
+/// wraps under [nonce], or null if it does not wrap within them.
+@visibleForTesting
+int? gcmBlocksBeforeCounterWrap(
+  Uint8List keyBytes,
+  List<int> nonce,
+  int blockCount,
+) => _blocksBeforeWrap(_gcmJ0(keyBytes, nonce), blockCount);
+
+int? _blocksBeforeWrap(List<int> j0, int blockCount) {
+  // Data block i is keyed with J0's low word + 1 + i.
+  final beforeWrap = 0x100000000 - (j0[3] + 1);
+  return blockCount > beforeWrap ? beforeWrap : null;
+}
+
+/// GCM's pre-counter block J0 for a 16-byte [nonce], as four big-endian
+/// words: GHASH_H(nonce || 0^64 || [128]_64), with H = AES_K(0^128).
+List<int> _gcmJ0(Uint8List keyBytes, List<int> nonce) {
+  assert(nonce.length == _nonceLength);
+  final hBytes = _aesCtr
+      .encryptSync(
+        Uint8List(_blockLength),
+        secretKey: crypto.SecretKeyData(keyBytes),
+        nonce: Uint8List(_blockLength),
+      )
+      .cipherText;
+  final h = _words(hBytes);
+  final y = _gfMul(_words(nonce), h);
+  y[3] ^= _nonceLength * 8;
+  return _gfMul(y, h);
+}
+
+List<int> _words(List<int> bytes) => [
+  for (var i = 0; i < 16; i += 4)
+    (bytes[i] << 24) |
+        (bytes[i + 1] << 16) |
+        (bytes[i + 2] << 8) |
+        bytes[i + 3],
+];
+
+/// Multiplication in GF(2^128), NIST SP 800-38D Algorithm 1. Bit by bit, so
+/// slow, but it runs twice per item.
+List<int> _gfMul(List<int> x, List<int> y) {
+  var z0 = 0;
+  var z1 = 0;
+  var z2 = 0;
+  var z3 = 0;
+  var v0 = y[0];
+  var v1 = y[1];
+  var v2 = y[2];
+  var v3 = y[3];
+  for (var i = 0; i < 128; i++) {
+    if ((x[i >> 5] >> (31 - (i & 31))) & 1 == 1) {
+      z0 ^= v0;
+      z1 ^= v1;
+      z2 ^= v2;
+      z3 ^= v3;
+    }
+    final carry = v3 & 1;
+    v3 = ((v3 >> 1) | ((v2 & 1) << 31)) & 0xffffffff;
+    v2 = ((v2 >> 1) | ((v1 & 1) << 31)) & 0xffffffff;
+    v1 = ((v1 >> 1) | ((v0 & 1) << 31)) & 0xffffffff;
+    v0 >>= 1;
+    if (carry == 1) v0 ^= 0xe1000000;
+  }
+  return [z0, z1, z2, z3];
+}
+
+int _blocksOf(int length) => (length + _blockLength - 1) ~/ _blockLength;
+
+/// Encrypt [plain] under a fresh nonce whose counter does not wrap inside it.
+/// A given [nonce] (tests) is used as is, and must not wrap either.
+crypto.SecretBox _gcmSeal(
+  Uint8List plain,
+  Uint8List keyBytes,
+  List<int>? nonce,
+) {
+  final blocks = _blocksOf(plain.length);
+  var chosen = nonce ?? _aesGcm.newNonce();
+  while (gcmBlocksBeforeCounterWrap(keyBytes, chosen, blocks) != null) {
+    if (nonce != null) {
+      throw ArgumentError.value(nonce, 'nonce', 'GCM counter wraps');
+    }
+    chosen = _aesGcm.newNonce();
+  }
+  return _aesGcm.encryptSync(
+    plain,
+    secretKeyData: crypto.SecretKeyData(keyBytes),
+    nonce: chosen,
+  );
+}
+
+/// Decrypt and verify [box], correct even where its counter wraps.
+Uint8List _gcmOpen(crypto.SecretBox box, Uint8List keyBytes) {
+  final key = crypto.SecretKeyData(keyBytes);
+  // Throws on a bad tag, which is right whether or not the counter wraps.
+  final opened = _aesGcm.decryptSync(box, secretKeyData: key);
+  final plain = opened is Uint8List ? opened : Uint8List.fromList(opened);
+
+  final cipherText = box.cipherText;
+  final j0 = _gcmJ0(keyBytes, box.nonce);
+  final beforeWrap = _blocksBeforeWrap(j0, _blocksOf(cipherText.length));
+  if (beforeWrap == null) return plain;
+
+  // Past the wrap GCM's counter is J0's top 96 bits with a low word of 0, 1,
+  // 2...; DartAesGcm used the top 96 plus one. Redo that tail.
+  final counter = ByteData(_blockLength)
+    ..setUint32(0, j0[0])
+    ..setUint32(4, j0[1])
+    ..setUint32(8, j0[2]);
+  final start = beforeWrap * _blockLength;
+  final tail = _aesCtr.decryptSync(
+    crypto.SecretBox(
+      // A view, not a copy, of a tail that can be most of a 10MB file.
+      cipherText is Uint8List
+          ? Uint8List.sublistView(cipherText, start)
+          : cipherText.sublist(start),
+      nonce: counter.buffer.asUint8List(),
+      mac: crypto.Mac.empty,
+    ),
+    secretKey: key,
+  );
+  plain.setRange(start, plain.length, tail);
+  return plain;
+}
+
+/// Encrypt a file for R2 upload: `[16-byte IV][ciphertext][16-byte tag]`.
+///
+/// Deliberately NOT the base64 text format: that inflates by ~33%, which is
+/// why files were once left unencrypted ("too large, would exceed 10MB limit
+/// after base64"). This costs a flat 32 bytes, so a 10MB file stays 10MB.
+///
+/// [nonce] is for tests that compare against fixed vectors; leave it null.
+@visibleForTesting
+Uint8List encryptFileBytesSync(
+  Uint8List plain,
+  Uint8List keyBytes, {
+  List<int>? nonce,
+}) {
+  try {
+    return _gcmSeal(plain, keyBytes, nonce).concatenation();
+  } on Exception catch (e) {
+    throw EncryptionException('Byte encryption failed: $e');
+  }
+}
+
+/// Decrypt what [encryptFileBytesSync] wrote.
+@visibleForTesting
+Uint8List decryptFileBytesSync(Uint8List stored, Uint8List keyBytes) {
+  if (stored.length < _nonceLength + _tagLength) {
+    throw EncryptionException('Ciphertext too short to contain an IV');
+  }
+  try {
+    return _gcmOpen(
+      crypto.SecretBox.fromConcatenation(
+        stored,
+        nonceLength: _nonceLength,
+        macLength: _tagLength,
+        copy: false,
+      ),
+      keyBytes,
+    );
+  } on Exception catch (e) {
+    throw EncryptionException('Byte decryption failed: $e');
+  }
+}
+
+/// Encrypt a text clip: `base64(IV):base64(ciphertext + tag)`, UTF-8 inside.
+///
+/// [nonce] is for tests that compare against fixed vectors; leave it null.
+@visibleForTesting
+String encryptTextSync(
+  String plaintext,
+  Uint8List keyBytes, {
+  List<int>? nonce,
+}) {
+  try {
+    final box = _gcmSeal(utf8.encode(plaintext), keyBytes, nonce);
+    return '${base64Encode(box.nonce)}:'
+        '${base64Encode(box.concatenation(nonce: false))}';
+  } on Exception catch (e) {
+    throw EncryptionException('Encryption failed: $e');
+  }
+}
+
+/// Decrypt what [encryptTextSync] wrote.
+///
+/// Malformed UTF-8 is replaced rather than thrown on, as PointyCastle's
+/// decrypt did, so a clip that once decoded still does.
+@visibleForTesting
+String decryptTextSync(String stored, Uint8List keyBytes) {
+  try {
+    final parts = stored.split(':');
+    if (parts.length != 2) {
+      throw const FormatException('Invalid encrypted data format');
+    }
+    final nonce = base64Decode(parts[0]);
+    final body = base64Decode(parts[1]);
+    if (nonce.length != _nonceLength || body.length < _tagLength) {
+      throw const FormatException('Invalid encrypted data format');
+    }
+    final plain = _gcmOpen(
+      crypto.SecretBox(
+        Uint8List.sublistView(body, 0, body.length - _tagLength),
+        nonce: nonce,
+        mac: crypto.Mac(Uint8List.sublistView(body, body.length - _tagLength)),
+      ),
+      keyBytes,
+    );
+    return utf8.decode(plain, allowMalformed: true);
+  } on FormatException catch (e) {
+    throw EncryptionException('Invalid encrypted data format: $e');
+  } on Exception catch (e) {
+    throw EncryptionException('Decryption failed: $e');
   }
 }
 

@@ -1073,9 +1073,14 @@ class MobileMainViewModel extends ChangeNotifier {
   }) async {
     _isPreparingShare = true;
     notifyListeners();
+    // Timed in stages so a slow "Preparing to share" says where it went: the
+    // repository logs the fetch and the decrypt inside downloadFile, and this
+    // line totals them with the work done here.
+    final timer = Stopwatch()..start();
     try {
       final fileBytes = await _clipboardRepo.downloadFile(item);
       if (fileBytes == null) return false;
+      final fetchedMs = timer.elapsedMilliseconds;
 
       final resolved = FileTypeService.instance.resolveFilename(
         fileBytes,
@@ -1086,6 +1091,11 @@ class MobileMainViewModel extends ChangeNotifier {
       final tempFile = await ClipboardService.instance.writeTempFile(
         fileBytes,
         resolved.name,
+      );
+      debugPrint(
+        '[MobileMainVM] ⏱ Share prepared in ${timer.elapsedMilliseconds}ms '
+        '(${fileBytes.length} bytes: file ${fetchedMs}ms, '
+        'type + temp file ${timer.elapsedMilliseconds - fetchedMs}ms)',
       );
 
       // Cleared before the sheet is presented, not after: share() does not
