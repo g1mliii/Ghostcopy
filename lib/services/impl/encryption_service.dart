@@ -14,28 +14,9 @@ import '../passphrase_sync_service.dart';
 import 'keychain_accessibility.dart';
 import 'passphrase_sync_service.dart';
 
-/// Payload for a crypto operation running on a background isolate.
-///
-/// `compute` takes a single argument, which is the only reason these exist.
-/// There were four of them - encrypt, decrypt, encrypt-bytes, decrypt-bytes -
-/// structurally identical in pairs and differing only in what the field
-/// happened to be called.
-class _StringCryptoParams {
-  const _StringCryptoParams({required this.data, required this.keyBytes});
-
-  /// Plaintext when encrypting, `iv:ciphertext` when decrypting.
-  final String data;
-  final Uint8List keyBytes;
-}
-
-/// The byte-payload counterpart of [_StringCryptoParams], for files and images.
-class _BytesCryptoParams {
-  const _BytesCryptoParams({required this.data, required this.keyBytes});
-
-  /// Plain bytes when encrypting, `iv + ciphertext` when decrypting.
-  final Uint8List data;
-  final Uint8List keyBytes;
-}
+/// What a background isolate needs for one encrypt or decrypt: the payload
+/// and the key. `compute` takes a single argument.
+typedef _CryptoJob<T> = (T data, Uint8List key);
 
 /// Concrete implementation of IEncryptionService using optional user passphrase
 ///
@@ -518,23 +499,15 @@ class EncryptionService implements IEncryptionService {
     }
 
     // If encryption not enabled, return plaintext
-    if (_keyBytes == null) {
-      return plaintext;
-    }
+    final key = _keyBytes;
+    if (key == null) return plaintext;
 
     try {
       // For small content (<5KB), encrypt directly to avoid isolate overhead
-      if (plaintext.length < 5000) {
-        return _encryptSync(
-          _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
-        );
-      }
+      if (plaintext.length < 5000) return encryptTextSync(plaintext, key);
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(
-        _encryptSync,
-        _StringCryptoParams(data: plaintext, keyBytes: _keyBytes!),
-      );
+      return await compute(_encryptText, (plaintext, key));
     } on Exception catch (e) {
       debugPrint('Encryption failed: $e');
       throw EncryptionException('Failed to encrypt content: $e');
@@ -553,10 +526,7 @@ class EncryptionService implements IEncryptionService {
 
     // Files are large by definition; always use an isolate to keep the UI and
     // the tray-mode event loop responsive.
-    return compute(
-      _encryptFileBytes,
-      _BytesCryptoParams(data: plain, keyBytes: key),
-    );
+    return compute(_encryptFileBytes, (plain, key));
   }
 
   @override
@@ -567,25 +537,22 @@ class EncryptionService implements IEncryptionService {
     final key = _keyBytes;
     if (key == null) return cipher;
 
-    return compute(
-      _decryptFileBytes,
-      _BytesCryptoParams(data: cipher, keyBytes: key),
-    );
+    return compute(_decryptFileBytes, (cipher, key));
   }
 
   // compute() entry points. The work is in the top-level functions below,
   // where the formats are described and tests can reach them.
-  static Uint8List _encryptFileBytes(_BytesCryptoParams params) =>
-      encryptFileBytesSync(params.data, params.keyBytes);
+  static Uint8List _encryptFileBytes(_CryptoJob<Uint8List> job) =>
+      encryptFileBytesSync(job.$1, job.$2);
 
-  static Uint8List _decryptFileBytes(_BytesCryptoParams params) =>
-      decryptFileBytesSync(params.data, params.keyBytes);
+  static Uint8List _decryptFileBytes(_CryptoJob<Uint8List> job) =>
+      decryptFileBytesSync(job.$1, job.$2);
 
-  static String _encryptSync(_StringCryptoParams params) =>
-      encryptTextSync(params.data, params.keyBytes);
+  static String _encryptText(_CryptoJob<String> job) =>
+      encryptTextSync(job.$1, job.$2);
 
-  static String _decryptSync(_StringCryptoParams params) =>
-      decryptTextSync(params.data, params.keyBytes);
+  static String _decryptText(_CryptoJob<String> job) =>
+      decryptTextSync(job.$1, job.$2);
 
   @override
   Future<String> decrypt(String ciphertext) async {
@@ -594,24 +561,16 @@ class EncryptionService implements IEncryptionService {
     }
 
     // If encryption not enabled, return ciphertext unchanged
-    if (_keyBytes == null) {
-      return ciphertext;
-    }
+    final key = _keyBytes;
+    if (key == null) return ciphertext;
 
     try {
-      // For small content (estimate based on ciphertext length), decrypt directly
-      if (ciphertext.length < 7000) {
-        // ~5KB plaintext = ~7KB base64
-        return _decryptSync(
-          _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
-        );
-      }
+      // For small content (estimate based on ciphertext length), decrypt
+      // directly: ~5KB plaintext = ~7KB base64.
+      if (ciphertext.length < 7000) return decryptTextSync(ciphertext, key);
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(
-        _decryptSync,
-        _StringCryptoParams(data: ciphertext, keyBytes: _keyBytes!),
-      );
+      return await compute(_decryptText, (ciphertext, key));
     } on Exception catch (e) {
       debugPrint('Decryption failed: $e');
       throw EncryptionException('Failed to decrypt content: $e');
@@ -690,10 +649,11 @@ int? gcmBlocksBeforeCounterWrap(
   Uint8List keyBytes,
   List<int> nonce,
   int blockCount,
-) {
-  final low = _gcmJ0(keyBytes, nonce)[3];
-  // Data block i is keyed with low + 1 + i.
-  final beforeWrap = 0x100000000 - (low + 1);
+) => _blocksBeforeWrap(_gcmJ0(keyBytes, nonce), blockCount);
+
+int? _blocksBeforeWrap(List<int> j0, int blockCount) {
+  // Data block i is keyed with J0's low word + 1 + i.
+  final beforeWrap = 0x100000000 - (j0[3] + 1);
   return blockCount > beforeWrap ? beforeWrap : null;
 }
 
@@ -782,16 +742,12 @@ Uint8List _gcmOpen(crypto.SecretBox box, Uint8List keyBytes) {
   final plain = opened is Uint8List ? opened : Uint8List.fromList(opened);
 
   final cipherText = box.cipherText;
-  final beforeWrap = gcmBlocksBeforeCounterWrap(
-    keyBytes,
-    box.nonce,
-    _blocksOf(cipherText.length),
-  );
+  final j0 = _gcmJ0(keyBytes, box.nonce);
+  final beforeWrap = _blocksBeforeWrap(j0, _blocksOf(cipherText.length));
   if (beforeWrap == null) return plain;
 
   // Past the wrap GCM's counter is J0's top 96 bits with a low word of 0, 1,
   // 2...; DartAesGcm used the top 96 plus one. Redo that tail.
-  final j0 = _gcmJ0(keyBytes, box.nonce);
   final counter = ByteData(_blockLength)
     ..setUint32(0, j0[0])
     ..setUint32(4, j0[1])
@@ -799,7 +755,10 @@ Uint8List _gcmOpen(crypto.SecretBox box, Uint8List keyBytes) {
   final start = beforeWrap * _blockLength;
   final tail = _aesCtr.decryptSync(
     crypto.SecretBox(
-      cipherText.sublist(start),
+      // A view, not a copy, of a tail that can be most of a 10MB file.
+      cipherText is Uint8List
+          ? Uint8List.sublistView(cipherText, start)
+          : cipherText.sublist(start),
       nonce: counter.buffer.asUint8List(),
       mac: crypto.Mac.empty,
     ),
