@@ -85,9 +85,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
 
-    // No scanner yet: the controller starts on Sign In, and _onTabChanged
-    // creates one on the first switch to the QR tab.
-
     // A sign-up from here has no guest to upgrade, so it ends with no session
     // until the address is confirmed. Tapping the emailed link on this phone
     // redeems it (main.dart) and signs in behind this screen - including on a
@@ -129,12 +126,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     widget.onAuthComplete();
   }
 
-  /// The scanner's configuration, in one place.
-  ///
-  /// Built on each switch to the QR tab.
-  MobileScannerController _newScannerController() =>
-      MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
-
   @override
   void dispose() {
     // Dispose all resources to prevent memory leaks
@@ -157,7 +148,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // QR tab - initialize scanner if not already initialized (Fix #18)
       // Create controller OUTSIDE setState, then trigger rebuild
       if (_scannerController == null) {
-        final controller = _newScannerController();
+        final controller = MobileScannerController(
+          detectionSpeed: DetectionSpeed.noDuplicates,
+        );
         setState(() {
           _scannerController = controller;
         });
