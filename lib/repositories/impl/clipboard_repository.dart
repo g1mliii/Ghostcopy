@@ -1618,10 +1618,15 @@ class ClipboardRepository implements IClipboardRepository {
         }
       } else if (Platform.isIOS) {
         final ios = await info.iosInfo;
-        // Since iOS 16 `name` returns the model, not what the user called the
-        // phone - that needs an Apple-granted entitlement. So "iPhone 15 Pro"
-        // rather than "Subai's iPhone". Still enough to tell a phone from an
-        // iPad or a simulator, which is what the unique index needs.
+        // What the user called the phone - "Subaig's iPhone" - through the
+        // user-assigned-device-name entitlement (Runner.entitlements). Without
+        // it iOS 16+ returns only the model ("iPhone"), which is what a build
+        // signed without the entitlement still shows. The suffix stays either
+        // way: the unique index is on the name, and two phones can share one
+        // ("iPhone", or two both set up as "Subaig's iPhone"); one would
+        // overwrite the other's row and push token. Device.displayName hides
+        // it. A change of name registers a new row, and the old one's token
+        // is released by _releaseTokenFromStaleRows.
         final model = ios.utsname.machine.trim();
         final readable = ios.name.trim();
         final stableId =

@@ -16,5 +16,13 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<!-- The name the user gave the phone ("Subaig's iPhone") rather than
+	     its model. Since iOS 16 UIDevice.name returns only the model
+	     without this, which Apple grants on request; granted for
+	     com.ghostcopy.ghostcopy. Shown to the user in their own device list
+	     and on the chips, and nowhere else - crash reports carry no device
+	     name (sendDefaultPii is off). -->
+	<key>com.apple.developer.device-information.user-assigned-device-name</key>
+	<true/>
 </dict>
 </plist>
