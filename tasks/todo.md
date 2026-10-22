@@ -72,12 +72,16 @@ flutter_secure_storage's key for a data file that is deleted with the package.
       on a phone holding a passphrase written by an older build - a fresh
       install cannot show it. Simulator Keychain items survive uninstalls,
       which disguised this last time
-- [ ] **Device-name entitlement - requested, awaiting Apple's approval.**
-      `com.apple.developer.device-information.user-assigned-device-name`.
-      Cosmetic: device rows already stay unique via the `identifierForVendor`
-      suffix ("iPhone 15 Pro - a1b2c3d4"). Once granted, add the key to
-      `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
-      prefers `ios.name`
+- [ ] **Device-name entitlement - granted, in `Runner.entitlements`.**
+      `com.apple.developer.device-information.user-assigned-device-name`, for
+      `com.ghostcopy.ghostcopy`. Enable it on that App ID under Certificates,
+      Identifiers & Profiles (or let Xcode's automatic signing add it) so the
+      provisioning profile carries it, or signing fails. Then on a phone:
+      the device list and chips should read "Subaig's iPhone", not "iPhone";
+      the `· 1A2B3C4D` uniqueness suffix is still stored but hidden by
+      `Device.displayName`. The first launch registers a new row under the
+      new name and `_releaseTokenFromStaleRows` drops the old one, so only
+      one entry should be left for the phone
 - [ ] `flutter logs` returns nothing from a profile build on device. The
       background isolate is only observable by writing files to the app
       container and reading them with `devicectl device info files`
