@@ -26,6 +26,16 @@ BRAND = os.path.join(ROOT, "assets", "brand")
 BACKGROUND = (0x0F, 0x0F, 0x13)
 PRIMARY = (0x66, 0x70, 0xFF)
 SURFACE = (0x19, 0x19, 0x1F)  # card colour the email templates sit the logo on
+WHITE = (0xFF, 0xFF, 0xFF)
+
+# The icon in its two appearances. Always an indigo ghost; the tile behind it
+# is white in light mode and near-black in dark, and the eyes are cut out, so
+# they show the tile - white eyes on white, black on black.
+#
+# It used to be a white ghost on an indigo tile, which next to Discord's white
+# mark on a blurple tile was the same icon at a glance.
+LIGHT_TILE = WHITE
+DARK_TILE = BACKGROUND
 
 # The corner radius for every platform that does not mask icons itself -
 # macOS, Windows, and the website's touch icon. iOS is masked by the OS and
@@ -63,8 +73,20 @@ def save(img: Image.Image, *parts: str) -> None:
     written.append(os.path.relpath(path, ROOT))
 
 
+def mark(px: int, color=PRIMARY) -> Image.Image:
+    """The ghost at px, filled with color, on transparency.
+
+    Only the master's alpha is kept, so the eyes - holes in the path - stay
+    holes and show whatever the mark is drawn over.
+    """
+    alpha = render("logo-white.svg", px).getchannel("A")
+    out = Image.new("RGBA", (px, px), color + (255,))
+    out.putalpha(alpha)
+    return out
+
+
 def tile(px: int, *, inset: float = 0.92, radius: float | None = None,
-         bg=PRIMARY, opaque: bool = True) -> Image.Image:
+         bg=LIGHT_TILE, fg=PRIMARY, opaque: bool = True) -> Image.Image:
     """The mark centred on a filled tile - what an app icon looks like.
 
     `inset` is the share of the tile given to the master's square viewBox,
@@ -94,8 +116,7 @@ def tile(px: int, *, inset: float = 0.92, radius: float | None = None,
     if (px - mark_px) % 2:
         mark_px = mark_px + 1 if mark_px < px else mark_px - 1
     offset = (px - mark_px) // 2
-    mark = render("logo-white.svg", mark_px)
-    canvas.alpha_composite(mark, (offset, offset))
+    canvas.alpha_composite(mark(mark_px, fg), (offset, offset))
     return canvas.convert("RGB") if opaque else canvas
 
 
@@ -229,26 +250,57 @@ def bare_mark(px: int, *, color=PRIMARY, fill: float = 0.94) -> Image.Image:
     return canvas
 
 
+IOS_ICONSET = ("ios", "Runner", "Assets.xcassets", "AppIcon.appiconset")
+
+
 def ios_app_icon() -> None:
-    """iOS: opaque, square, no rounded corners - the OS masks them itself."""
-    for name, px in [
-        ("Icon-App-20x20@1x", 20), ("Icon-App-20x20@2x", 40), ("Icon-App-20x20@3x", 60),
-        ("Icon-App-29x29@1x", 29), ("Icon-App-29x29@2x", 58), ("Icon-App-29x29@3x", 87),
-        ("Icon-App-40x40@1x", 40), ("Icon-App-40x40@2x", 80), ("Icon-App-40x40@3x", 120),
-        ("Icon-App-60x60@2x", 120), ("Icon-App-60x60@3x", 180),
-        ("Icon-App-76x76@1x", 76), ("Icon-App-76x76@2x", 152),
-        ("Icon-App-83.5x83.5@2x", 167),
-        ("Icon-App-1024x1024@1x", 1024),
-    ]:
-        save(tile(px), "ios", "Runner", "Assets.xcassets", "AppIcon.appiconset",
-             f"{name}.png")
+    """iOS: one 1024px icon per appearance; Xcode derives every size.
+
+    Light and dark are opaque and square - the OS masks the corners, and an
+    app icon with any alpha is rejected at upload. Tinted (iOS 18+) is the
+    mark alone in white on transparency: the system washes it in the user's
+    tint over a dark backing of its own, so a tile of ours would come out as
+    a solid block.
+    """
+    save(tile(1024), *IOS_ICONSET, "Icon-App-1024x1024@1x.png")
+    save(tile(1024, bg=DARK_TILE), *IOS_ICONSET,
+         "Icon-App-Dark-1024x1024@1x.png")
+    tinted = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+    mark_px = int(1024 * 0.92)
+    off = (1024 - mark_px) // 2
+    tinted.alpha_composite(mark(mark_px, WHITE), (off, off))
+    save(tinted, *IOS_ICONSET, "Icon-App-Tinted-1024x1024@1x.png")
+
+    def entry(filename, appearance=None):
+        image = {"filename": filename, "idiom": "universal",
+                 "platform": "ios", "size": "1024x1024"}
+        if appearance:
+            image["appearances"] = [{"appearance": "luminosity",
+                                     "value": appearance}]
+        return image
+
+    contents = {
+        "images": [
+            entry("Icon-App-1024x1024@1x.png"),
+            entry("Icon-App-Dark-1024x1024@1x.png", "dark"),
+            entry("Icon-App-Tinted-1024x1024@1x.png", "tinted"),
+        ],
+        "info": {"author": "xcode", "version": 1},
+    }
+    import json
+    path = os.path.join(ROOT, *IOS_ICONSET, "Contents.json")
+    with open(path, "w") as fh:
+        json.dump(contents, fh, indent=2)
+        fh.write("\n")
+    written.append(os.path.relpath(path, ROOT))
 
 
 def ios_launch() -> None:
-    """Launch screen: the mark alone on transparent, over the dark storyboard."""
+    """Launch screen: the indigo mark alone, over the dark storyboard - the
+    dark icon without its tile, so its eyes show the storyboard's black."""
     for name, px in (("LaunchImage", 120), ("LaunchImage@2x", 240),
                      ("LaunchImage@3x", 360)):
-        save(on_transparent(px), "ios", "Runner", "Assets.xcassets",
+        save(mark(px), "ios", "Runner", "Assets.xcassets",
              "LaunchImage.imageset", f"{name}.png")
 
 
@@ -266,7 +318,8 @@ def android_icons() -> None:
     for suffix, scale in densities:
         save(tile(int(48 * scale)), "android", "app", "src", "main", "res",
              f"mipmap-{suffix}", "ic_launcher.png")
-        save(on_transparent(int(120 * scale)), "android", "app", "src", "main",
+        # The splash: the mark alone over the dark launch background.
+        save(mark(int(120 * scale)), "android", "app", "src", "main",
              "res", f"mipmap-{suffix}", "launch_image.png")
         # Notification icon: Android masks this to a single colour, so it has
         # to be a flat white silhouette on transparent. Anything with colour
@@ -289,19 +342,24 @@ def android_adaptive_icon() -> None:
     The monochrome layer is what Android 13's themed icons tint, and it must
     be the silhouette alone: the system paints it a single colour drawn from
     the wallpaper, so any tile or colour baked in comes out as a solid blob.
+
+    The foreground is the indigo ghost; the background is
+    @color/ghost_icon_background, white in values/ and near-black in
+    values-night/, which launchers that follow the system theme pick up.
     """
     for suffix, scale in (("mdpi", 1), ("hdpi", 1.5), ("xhdpi", 2),
                           ("xxhdpi", 3), ("xxxhdpi", 4)):
         px = int(108 * scale)
         # 0.50 of 108dp = 54dp, comfortably inside the 66dp safe zone.
-        layer = Image.new("RGBA", (px, px), (0, 0, 0, 0))
         mark_px = max(1, int(px * 0.50))
-        mark = render("logo-white.svg", mark_px)
-        layer.alpha_composite(mark, ((px - mark_px) // 2, (px - mark_px) // 2))
-        save(layer, "android", "app", "src", "main", "res",
-             f"mipmap-{suffix}", "ic_launcher_foreground.png")
-        save(layer, "android", "app", "src", "main", "res",
-             f"drawable-{suffix}", "ic_launcher_monochrome.png")
+        at = ((px - mark_px) // 2, (px - mark_px) // 2)
+        for color, folder, name in (
+                (PRIMARY, "mipmap", "ic_launcher_foreground.png"),
+                (WHITE, "drawable", "ic_launcher_monochrome.png")):
+            layer = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+            layer.alpha_composite(mark(mark_px, color), at)
+            save(layer, "android", "app", "src", "main", "res",
+                 f"{folder}-{suffix}", name)
 
     xml = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -349,6 +407,9 @@ def tray_icons() -> None:
 def flutter_assets() -> None:
     """The in-app header tints this white at runtime, so ship it white."""
     save(on_transparent(1024), "assets", "icons", "logo_white.png")
+    # The app is dark, so in-app it shows the dark icon's mark: indigo, eyes
+    # cut out to the dark behind it. The splash and the welcome screen.
+    save(mark(1024), "assets", "icons", "logo_purple.png")
     save(on_transparent(1024, "logo-black.svg"), "assets", "icons",
          "logo_dark.png")
     # msix_config's logo_path: Windows derives every tile and taskbar
@@ -375,18 +436,27 @@ def website() -> None:
         save(tile(32), base, "icons", "favicon-32.png")
         save(tile(16), base, "icons", "favicon-16.png")
         # The site's primary favicon: <link rel="icon" href="/icons/ghost.svg">
+        # An SVG favicon can follow the browser's theme, which no PNG can: the
+        # light tile by default, the dark one under prefers-color-scheme.
         with open(os.path.join(BRAND, "logo-white.svg")) as fh:
             svg = fh.read()
         tinted = svg.replace(
             "<path",
-            f'<rect x="210.9" y="101.3" width="1655.9" height="1655.9" rx="240" '
-            f'fill="#{PRIMARY[0]:02X}{PRIMARY[1]:02X}{PRIMARY[2]:02X}"/>\n<path',
+            "<style>.tile{fill:" + _hex(LIGHT_TILE) + "}"
+            "@media (prefers-color-scheme:dark){.tile{fill:"
+            + _hex(DARK_TILE) + "}}</style>\n"
+            '<rect class="tile" x="210.9" y="101.3" width="1655.9" '
+            'height="1655.9" rx="240"/>\n<path',
             1,
-        )
+        ).replace('fill="#FFFFFF"', f'fill="{_hex(PRIMARY)}"', 1)
         path = os.path.join(ROOT, base, "icons", "ghost.svg")
         with open(path, "w") as fh:
             fh.write(tinted)
         written.append(os.path.relpath(path, ROOT))
+
+
+def _hex(rgb) -> str:
+    return "#" + "".join(f"{c:02X}" for c in rgb)
 
 
 def email_logo() -> None:
@@ -405,7 +475,8 @@ def email_logo() -> None:
     disappear against it in every client instead.
     """
     card = Image.new("RGBA", (128, 128), SURFACE + (255,))
-    card.alpha_composite(tile(128, radius=0.22, opaque=False))
+    # The emails are dark, so the dark icon.
+    card.alpha_composite(tile(128, radius=0.22, bg=DARK_TILE, opaque=False))
     for base in ("website", os.path.join("website", "dist")):
         save(card.convert("RGB"), base, "icons", "email-logo.png")
 

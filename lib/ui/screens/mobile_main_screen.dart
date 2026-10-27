@@ -168,23 +168,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Same mark and accent tile as the header, so the splash resolves
-            // into the real UI instead of cutting to something unrelated.
-            Container(
+            // The indigo mark alone, as on the native launch screen, so
+            // launch hands over to the splash without a change of look.
+            SizedBox(
               width: 64,
               height: 64,
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: GhostColors.primary,
-                borderRadius: BorderRadius.circular(19),
-              ),
               child: Image.asset(
-                'assets/icons/logo_white.png',
-                color: Colors.white,
+                'assets/icons/logo_purple.png',
                 errorBuilder: (context, error, stack) => const Icon(
                   Icons.content_copy_rounded,
                   size: 36,
-                  color: Colors.white,
+                  color: GhostColors.primary,
                 ),
               ),
             ),

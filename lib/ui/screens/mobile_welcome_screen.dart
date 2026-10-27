@@ -226,11 +226,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                 side: BorderSide(color: GhostColors.glassBorder),
               ),
             ),
-            // The real mark, not a generic Material copy glyph. White variant:
-            // this sits on GhostColors.surface, which is near-black.
+            // The real mark, not a generic Material copy glyph: the dark
+            // icon's indigo ghost, eyes cut out to the near-black surface.
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Image.asset('assets/icons/logo_white.png'),
+              child: Image.asset('assets/icons/logo_purple.png'),
             ),
           ),
           const SizedBox(height: 16),
