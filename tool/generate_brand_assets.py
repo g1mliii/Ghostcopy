@@ -16,7 +16,7 @@ import os
 import struct
 import sys
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRAND = os.path.join(ROOT, "assets", "brand")
@@ -304,12 +304,37 @@ def ios_launch() -> None:
              "LaunchImage.imageset", f"{name}.png")
 
 
+# Apple's macOS icon grid: an 824px body centred on the 1024px canvas, with a
+# soft shadow under it. Every other Mac icon follows it, so a full-bleed tile
+# reads a size larger than its neighbours in Finder and Launchpad - and now
+# the tile is white, it also needs the shadow to have any edge at all on a
+# white Finder window.
+MACOS_BODY = 824 / 1024
+MACOS_SHADOW_BLUR = 10 / 1024
+MACOS_SHADOW_DROP = 12 / 1024
+MACOS_SHADOW_ALPHA = 0.3
+
+
 def macos_app_icon() -> None:
     """macOS draws its own icons unmasked, so the rounded corner is ours."""
     for px in (16, 32, 64, 128, 256, 512, 1024):
-        save(tile(px, radius=MASK_RADIUS, opaque=False),
-             "macos", "Runner", "Assets.xcassets", "AppIcon.appiconset",
-             f"app_icon_{px}.png")
+        body_px = round(px * MACOS_BODY)
+        body_px += (px - body_px) % 2  # even margins, as in tile()
+        body = tile(body_px, radius=MASK_RADIUS, opaque=False)
+        at = (px - body_px) // 2
+
+        shadow = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+        drop = round(px * MACOS_SHADOW_DROP)
+        alpha = body.getchannel("A").point(
+            lambda a: int(a * MACOS_SHADOW_ALPHA))
+        shadow.paste((0, 0, 0, 255), (at, at + drop), alpha)
+        blur = px * MACOS_SHADOW_BLUR
+        if blur >= 0.5:
+            shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
+
+        shadow.alpha_composite(body, (at, at))
+        save(shadow, "macos", "Runner", "Assets.xcassets",
+             "AppIcon.appiconset", f"app_icon_{px}.png")
 
 
 def android_icons() -> None:
