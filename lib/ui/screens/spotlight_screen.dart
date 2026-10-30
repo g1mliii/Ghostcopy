@@ -2796,8 +2796,8 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   Expanded(child: _buildContentPreview()),
                   if (_link case final link? when canOpenClipLink(link)) ...[
                     const SizedBox(width: 8),
-                    Tooltip(
-                      message: clipLinkActionLabel(link),
+                    ClipLinkTooltip(
+                      link: link,
                       child: InkResponse(
                         onTap: () => _openLink(link),
                         radius: 14,
