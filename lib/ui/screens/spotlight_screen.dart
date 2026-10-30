@@ -2500,10 +2500,10 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   }
 
   Future<void> _openLink(ClipLink link, {bool alternate = false}) async {
-    final opened = await openClipLink(link, alternate: alternate);
-    if (!opened) {
+    final failed = await openClipLink(link, alternate: alternate);
+    if (failed != null) {
       widget.notificationService?.showToast(
-        message: clipLinkOpenFailedMessage(link, alternate: alternate),
+        message: failed,
         type: NotificationType.error,
       );
     }
@@ -2684,18 +2684,18 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
               children: [
                 const Icon(Icons.open_in_new, size: 16),
                 const SizedBox(width: 12),
-                Text(clipLinkActionLabel(link)),
+                ClipLinkActionText(link: link),
               ],
             ),
           ),
-        if (_link case final link? when canAlternateClipLink(link))
+        if (clipLinkAlternate(_link) case final alternate?)
           PopupMenuItem<String>(
             value: 'alternate',
             child: Row(
               children: [
-                Icon(clipLinkAlternateIcon(link), size: 16),
+                Icon(clipLinkAlternateIcon(alternate), size: 16),
                 const SizedBox(width: 12),
-                Text(link.alternate!.label),
+                Text(alternate.label),
               ],
             ),
           ),

@@ -1,8 +1,8 @@
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:image/image.dart' as img;
 
@@ -23,29 +23,52 @@ import 'link_handler_service.dart';
 ///
 /// Pure FFI over shlwapi, shell32, user32 and gdi32, in the same style as
 /// PackagedAppData's lookup, rather than a method channel in the C++ runner.
+/// It runs in a background isolate: a packaged app's resource lookup, the icon
+/// extraction and the PNG encode would otherwise land in the frame Spotlight
+/// opens in.
 class WindowsLinkHandlerService extends CachingLinkHandlerService {
   WindowsLinkHandlerService() : super(platform: 'windows');
 
+  /// The shell associates a whole scheme with one app.
+  @override
+  String cacheKeyFor(Uri uri) => uri.scheme;
+
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {
-    _ensureCom();
-    final scheme = uri.scheme;
-    final name = _resolveIndirect(
-      _assocQuery(scheme, _assocStrFriendlyAppName),
+    final found = await compute(_handlerForScheme, uri.scheme);
+    if (found == null) return null;
+    final (:name, :png, :pngFile) = found;
+    return LinkHandler(
+      name: name,
+      icon: png != null
+          ? MemoryImage(png)
+          : pngFile != null
+          ? FileImage(File(pngFile))
+          : null,
     );
-    if (name == null || name.isEmpty) return null;
-    final icon =
-        _iconFromReference(_assocQuery(scheme, _assocStrAppIconReference)) ??
-        _iconFromReference(_assocQuery(scheme, _assocStrDefaultIcon));
-    return LinkHandler(name: name, icon: icon);
   }
 }
 
+typedef _FoundHandler = ({String name, Uint8List? png, String? pngFile});
+typedef _FoundIcon = ({Uint8List? png, String? pngFile});
+
+/// The whole lookup, on whichever isolate runs it: only plain data comes
+/// back, and the ImageProvider is made on the caller's.
+_FoundHandler? _handlerForScheme(String scheme) {
+  _ensureCom();
+  final name = _resolveIndirect(_assocQuery(scheme, _assocStrFriendlyAppName));
+  if (name == null || name.isEmpty) return null;
+  final icon =
+      _iconFromReference(_assocQuery(scheme, _assocStrAppIconReference)) ??
+      _iconFromReference(_assocQuery(scheme, _assocStrDefaultIcon));
+  return (name: name, png: icon?.png, pngFile: icon?.pngFile);
+}
+
 /// SHLoadIndirectString needs COM on the calling thread to resolve a
-/// packaged app's ms-resource reference. The runner initialises it on the
-/// platform thread, which is also Dart's on current engines; on an engine
-/// where Dart has a thread of its own this does it there. A second call, or a
-/// thread already in COM, is a harmless S_FALSE or RPC_E_CHANGED_MODE.
+/// packaged app's ms-resource reference, and the lookup runs on a background
+/// isolate's thread, which nothing else has put in COM. Per isolate, as
+/// globals are. A thread already in COM answers a harmless S_FALSE or
+/// RPC_E_CHANGED_MODE.
 bool _comReady = false;
 void _ensureCom() {
   if (_comReady) return;
@@ -277,13 +300,13 @@ String? _resolveIndirect(String? value) {
 }
 
 /// An icon reference - `path,index`, a bare path, or an indirect string that
-/// resolves to a PNG - as an image.
-ImageProvider? _iconFromReference(String? reference) {
+/// resolves to a PNG - as PNG bytes or the PNG file.
+_FoundIcon? _iconFromReference(String? reference) {
   if (reference == null) return null;
   if (reference.startsWith('@')) {
     final file = _resolveIndirect(reference);
     if (file == null || !file.toLowerCase().endsWith('.png')) return null;
-    return FileImage(File(file));
+    return (png: null, pngFile: file);
   }
   // "C:\Program Files\App\app.exe",0 - quotes optional, index optional.
   var location = reference;
@@ -299,7 +322,7 @@ ImageProvider? _iconFromReference(String? reference) {
   location = location.trim().replaceAll('"', '');
   if (location.isEmpty) return null;
   final png = _extractIconPng(location, index);
-  return png == null ? null : MemoryImage(png);
+  return png == null ? null : (png: png, pngFile: null);
 }
 
 /// The icon at [index] in [file], at 64px, as PNG bytes.

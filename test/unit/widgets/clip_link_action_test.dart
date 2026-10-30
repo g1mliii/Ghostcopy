@@ -50,9 +50,9 @@ void main() {
     )!;
 
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    expect(await openClipLink(link), isTrue);
+    expect(await openClipLink(link), isNull);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    expect(await openClipLink(link), isTrue);
+    expect(await openClipLink(link), isNull);
 
     expect(launcher.launched, [
       (
@@ -63,14 +63,14 @@ void main() {
     ]);
   });
 
-  test('reports a link nothing would open', () async {
+  test('says what went wrong when nothing would open it', () async {
     final link = ClipLink.detect('someone@example.com')!;
 
     launcher.result = false;
-    expect(await openClipLink(link), isFalse);
+    expect(await openClipLink(link), 'No email app is set up on this device');
 
     launcher.failWith = Exception('no handler');
-    expect(await openClipLink(link), isFalse);
+    expect(await openClipLink(link), 'No email app is set up on this device');
   });
 
   test('no Call button on Linux', () {
@@ -97,8 +97,8 @@ void main() {
   test('the second action texts the number or finds the song', () async {
     final phone = ClipLink.detect('+1 416 555 0199')!;
     final song = ClipLink.detect('https://music.apple.com/ca/album/x/1')!;
-    expect(await openClipLink(phone, alternate: true), isTrue);
-    expect(await openClipLink(song, alternate: true), isTrue);
+    expect(await openClipLink(phone, alternate: true), isNull);
+    expect(await openClipLink(song, alternate: true), isNull);
     expect(launcher.launched.map((l) => l.$1), [
       'sms:+14165550199',
       'https://song.link/https://music.apple.com/ca/album/x/1',
@@ -107,11 +107,16 @@ void main() {
     // Nothing second to do with a web link.
     expect(
       await openClipLink(ClipLink.detect('https://a.com')!, alternate: true),
-      isFalse,
+      isNotNull,
     );
 
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-    expect(canAlternateClipLink(phone), isFalse);
-    expect(canAlternateClipLink(song), isTrue);
+    expect(clipLinkAlternate(phone), isNull);
+    expect(clipLinkAlternate(song), isNotNull);
+    launcher.result = false;
+    expect(
+      await openClipLink(song, alternate: true),
+      'No browser could open this link',
+    );
   });
 }

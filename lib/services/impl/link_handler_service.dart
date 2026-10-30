@@ -11,9 +11,10 @@ import '../../utils/xdg.dart';
 import '../link_handler_service.dart';
 import 'command_line_tool_service.dart' show ProcessRunner;
 
-/// The caching every platform shares: one lookup per [linkHandlerCacheKey],
-/// refreshed after [maxAge] so a default app changed while GhostCopy sits in
-/// the tray for a week is picked up.
+/// The caching every platform shares: one lookup per [cacheKeyFor], refreshed
+/// after [maxAge] so a default app changed while GhostCopy sits in the tray
+/// for a week is picked up, and one [LinkHandler] per app, so fifty links that
+/// open in Chrome share one decoded icon.
 abstract class CachingLinkHandlerService implements ILinkHandlerService {
   CachingLinkHandlerService({required this.platform});
 
@@ -22,40 +23,48 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
 
   static const maxAge = Duration(minutes: 10);
 
-  final _pending = <String, Future<LinkHandler?>>{};
+  final _lookups = <String, ({DateTime at, Future<LinkHandler?> handler})>{};
   final _resolved = <String, LinkHandler?>{};
-  final _askedAt = <String, DateTime>{};
+  final _byName = <String, LinkHandler>{};
 
   /// Which app opens [uri], or null if none, or none in particular.
   @protected
   Future<LinkHandler?> lookUp(Uri uri);
 
+  /// The part of [uri] this platform's answer depends on - never the whole
+  /// URI, or every web link would be a lookup of its own.
+  String cacheKeyFor(Uri uri);
+
   @override
   Future<LinkHandler?> handlerFor(ClipLink link) {
-    final key = linkHandlerCacheKey(link, platform);
-    final askedAt = _askedAt[key];
-    if (askedAt != null && DateTime.now().difference(askedAt) > maxAge) {
-      unawaited(_pending.remove(key));
+    final uri = link.openUri(platform);
+    final key = cacheKeyFor(uri);
+    final now = DateTime.now();
+    if (_lookups[key] case final lookup?
+        when now.difference(lookup.at) <= maxAge) {
+      return lookup.handler;
     }
-    return _pending[key] ??= () {
-      _askedAt[key] = DateTime.now();
-      return _lookUpSafely(link.openUri(platform)).then((handler) {
-        _resolved[key] = handler;
-        return handler;
-      });
-    }();
+    final handler = _lookUpSafely(uri).then((found) {
+      final shared = found == null
+          ? null
+          : _byName.putIfAbsent(found.name, () => found);
+      _resolved[key] = shared;
+      return shared;
+    });
+    _lookups[key] = (at: now, handler: handler);
+    return handler;
   }
 
   @override
   LinkHandler? cachedHandlerFor(ClipLink link) =>
-      _resolved[linkHandlerCacheKey(link, platform)];
+      _resolved[cacheKeyFor(link.openUri(platform))];
 
   /// An icon is decoration: anything that goes wrong finding it leaves the
   /// generic glyph, never an error the user sees.
   ///
   /// Object, not Exception: the Windows lookup is FFI and image encoding, and
   /// what those throw (ArgumentError, RangeError) are Errors. One escaping
-  /// would be cached in `_pending` and rethrown, unhandled, to every row.
+  /// would be cached in `_lookups` and rethrown, unhandled, to every row.
   Future<LinkHandler?> _lookUpSafely(Uri uri) async {
     try {
       return await lookUp(uri);
@@ -85,6 +94,21 @@ class ChannelLinkHandlerService extends CachingLinkHandlerService {
     : _channel = channel ?? const MethodChannel('com.ghostcopy/link_handler');
 
   final MethodChannel _channel;
+
+  /// Android routes web links by host and path - google.com/maps opens Google
+  /// Maps and google.com/search the browser, docs.google.com/document opens
+  /// Docs and /spreadsheets Sheets - so a web link keys on its host and first
+  /// path segment there. A `geo:` or `tel:` path is the place or number
+  /// itself, so other schemes key on the scheme. macOS answers by host at
+  /// most.
+  @override
+  String cacheKeyFor(Uri uri) {
+    final web = uri.isScheme('https') || uri.isScheme('http');
+    if (!web) return uri.scheme;
+    if (platform != 'android') return '${uri.scheme}:${uri.host}';
+    final segments = uri.pathSegments;
+    return '${uri.scheme}:${uri.host}/${segments.isEmpty ? '' : segments.first}';
+  }
 
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {
@@ -120,6 +144,10 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
   /// when null.
   final Map<String, String>? environment;
 
+  /// xdg-mime associates a whole scheme with one app.
+  @override
+  String cacheKeyFor(Uri uri) => uri.scheme;
+
   static const _iconSizes = ['256x256', '128x128', '96x96', '64x64', '48x48'];
 
   @override
@@ -134,14 +162,10 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
     if (!desktopId.endsWith('.desktop')) return null;
 
     final dataDirs = xdgDataDirs(environment);
-    File? entry;
-    for (final dir in dataDirs) {
-      final candidate = File(path.join(dir, 'applications', desktopId));
-      if (candidate.existsSync()) {
-        entry = candidate;
-        break;
-      }
-    }
+    final entry = dataDirs
+        .map((dir) => File(path.join(dir, 'applications', desktopId)))
+        .where((file) => file.existsSync())
+        .firstOrNull;
     if (entry == null) return null;
 
     final keys = parseDesktopEntry(await entry.readAsString());
@@ -171,26 +195,4 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
     }
     return null;
   }
-}
-
-/// The unlocalised keys of a desktop entry's `[Desktop Entry]` group.
-@visibleForTesting
-Map<String, String> parseDesktopEntry(String contents) {
-  final keys = <String, String>{};
-  var inEntry = false;
-  for (final raw in contents.split('\n')) {
-    final line = raw.trim();
-    if (line.startsWith('[')) {
-      inEntry = line == '[Desktop Entry]';
-      continue;
-    }
-    if (!inEntry || line.startsWith('#')) continue;
-    final equals = line.indexOf('=');
-    if (equals <= 0) continue;
-    final key = line.substring(0, equals).trim();
-    // Name[fr] and the like: the plain key is what every entry has.
-    if (key.contains('[')) continue;
-    keys.putIfAbsent(key, () => line.substring(equals + 1).trim());
-  }
-  return keys;
 }

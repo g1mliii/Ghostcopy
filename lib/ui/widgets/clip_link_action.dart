@@ -8,6 +8,7 @@ import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/impl/crash_reporting_service.dart';
 import '../../services/link_handler_service.dart';
+import '../../utils/target_device_type.dart';
 
 /// The icon for a kind of link, before anything is known about which app on
 /// this device would open it.
@@ -24,10 +25,11 @@ IconData clipLinkIcon(ClipLinkKind kind) => switch (kind) {
 };
 
 /// The icon for [link]'s second action.
-IconData clipLinkAlternateIcon(ClipLink link) => switch (link.kind) {
-  ClipLinkKind.phone => Icons.sms_outlined,
-  _ => Icons.queue_music,
-};
+IconData clipLinkAlternateIcon(ClipLinkAlternate alternate) =>
+    switch (alternate.kind) {
+      ClipLinkAlternateKind.text => Icons.sms_outlined,
+      ClipLinkAlternateKind.findElsewhere => Icons.queue_music,
+    };
 
 /// The link [item] is, when it is a plain-text clip that is one.
 ///
@@ -40,100 +42,91 @@ ClipLink? clipLinkFor(ClipboardItem item) =>
 ///
 /// From defaultTargetPlatform rather than dart:io's Platform so a widget test
 /// can stand in for any platform.
-String get currentLinkPlatform => switch (defaultTargetPlatform) {
-  TargetPlatform.android => 'android',
-  TargetPlatform.iOS => 'ios',
-  TargetPlatform.macOS => 'macos',
-  TargetPlatform.windows => 'windows',
-  TargetPlatform.linux || TargetPlatform.fuchsia => 'linux',
-};
+String get currentLinkPlatform => deviceTypeFor(defaultTargetPlatform);
 
 /// Whether this device can open [link] at all - no Call button on Linux.
 bool canOpenClipLink(ClipLink link) => link.canOpenOn(currentLinkPlatform);
 
-/// Whether this device can do [link]'s second action.
-bool canAlternateClipLink(ClipLink link) =>
-    link.canAlternateOn(currentLinkPlatform);
+/// [link]'s second action on this device, if it has one.
+ClipLinkAlternate? clipLinkAlternate(ClipLink? link) =>
+    link?.alternateOn(currentLinkPlatform);
 
 /// Hands [link] to whatever this device opens that kind of link with.
 ///
-/// Returns false when nothing took it, so the caller can say so. Always an
-/// external application: a link opened inside GhostCopy's own window would
-/// leave the user in a browser with no address bar, inside a clipboard app.
+/// Returns null when something took it, and otherwise what to tell the user,
+/// so a caller only has to show it. Always an external application: a link
+/// opened inside GhostCopy's own window would leave the user in a browser
+/// with no address bar, inside a clipboard app.
 ///
-/// With [alternate], does [ClipLink.alternate] instead: texts the number, or
-/// finds the song elsewhere.
-Future<bool> openClipLink(ClipLink link, {bool alternate = false}) async {
-  final target = alternate
-      ? link.alternate?.uri
-      : link.openUri(currentLinkPlatform);
-  if (target == null) return false;
+/// With [alternate], does [ClipLink.alternateOn] instead: texts the number,
+/// or finds the song elsewhere.
+Future<String?> openClipLink(ClipLink link, {bool alternate = false}) async {
+  final platform = currentLinkPlatform;
+  final second = alternate ? link.alternateOn(platform) : null;
+  final target = alternate ? second?.uri : link.openUri(platform);
   recordDiagnostic(
     'ui',
     '${link.kindLabel} link ${alternate ? 'alternate ' : ''}opened',
   );
   try {
-    return await launchUrl(target, mode: LaunchMode.externalApplication);
+    if (target != null &&
+        await launchUrl(target, mode: LaunchMode.externalApplication)) {
+      return null;
+    }
   } on Exception catch (e) {
     debugPrint('[ClipLink] Could not open ${link.kind.name} link: $e');
-    return false;
   }
+  return _openFailedMessage(link, second);
 }
 
-/// What to say when [openClipLink] returns false.
-String clipLinkOpenFailedMessage(ClipLink link, {bool alternate = false}) {
-  if (alternate) {
-    return link.kind == ClipLinkKind.phone
-        ? 'This device cannot send texts'
-        : 'No browser could open this link';
-  }
-  return switch (link.kind) {
-    ClipLinkKind.web ||
-    ClipLinkKind.video ||
-    ClipLinkKind.tracking => 'No browser could open this link',
-    ClipLinkKind.map => 'No maps app could open this place',
-    ClipLinkKind.email => 'No email app is set up on this device',
-    ClipLinkKind.phone => 'This device cannot place calls',
-    ClipLinkKind.meeting => 'No app on this device can join this meeting',
-    ClipLinkKind.music ||
-    ClipLinkKind.app => 'No app on this device opens ${link.service} links',
-  };
-}
+String _openFailedMessage(ClipLink link, ClipLinkAlternate? alternate) =>
+    switch (alternate?.kind) {
+      ClipLinkAlternateKind.text => 'This device cannot send texts',
+      ClipLinkAlternateKind.findElsewhere => 'No browser could open this link',
+      null => switch (link.kind) {
+        ClipLinkKind.web ||
+        ClipLinkKind.video ||
+        ClipLinkKind.tracking => 'No browser could open this link',
+        ClipLinkKind.map => 'No maps app could open this place',
+        ClipLinkKind.email => 'No email app is set up on this device',
+        ClipLinkKind.phone => 'This device cannot place calls',
+        ClipLinkKind.meeting => 'No app on this device can join this meeting',
+        ClipLinkKind.music ||
+        ClipLinkKind.app => 'No app on this device opens ${link.service} links',
+      },
+    };
 
 /// What the Open control says: "Open in Google Maps" once this device's
-/// handler is known, the kind's own wording ("Open in Maps") until then.
-///
-/// Calls, meetings and parcels keep their own wording even then: "Join
-/// meeting" and "Track package" say more than "Open in Zoom" or "Open in
-/// Safari" would.
-String clipLinkActionLabel(ClipLink link) {
-  switch (link.kind) {
-    case ClipLinkKind.phone || ClipLinkKind.meeting || ClipLinkKind.tracking:
-      return link.actionLabel;
-    case _:
-      final handler = LinkHandlerService.instance.cachedHandlerFor(link);
-      return handler == null ? link.actionLabel : 'Open in ${handler.name}';
-  }
-}
+/// [handler] is known, the kind's own wording ("Open in Maps") until then -
+/// and always, for the kinds whose verb says more than an app's name
+/// ([ClipLink.namesHandler]).
+String clipLinkActionLabel(ClipLink link, LinkHandler? handler) =>
+    handler == null || !link.namesHandler
+    ? link.actionLabel
+    : 'Open in ${handler.name}';
 
-/// A [Tooltip] saying [clipLinkActionLabel], which rebuilds once this
-/// device's handler is known.
+/// Builds with this device's handler for [link] - null until the lookup
+/// answers, and for good where it finds nothing - and again when it answers.
 ///
-/// The label is read from the handler cache, and the row that holds the Open
-/// button builds before the lookup [ClipLinkGlyph] starts has answered; only
-/// the glyph rebuilds when it does, so a plain Tooltip would keep "Open link"
-/// where the row's own glyph already shows Chrome.
-class ClipLinkTooltip extends StatefulWidget {
-  const ClipLinkTooltip({required this.link, required this.child, super.key});
+/// The one place a widget learns the handler, so the glyph, the Open
+/// tooltip and the Open labels all change together when it arrives.
+class ClipLinkHandlerBuilder extends StatefulWidget {
+  const ClipLinkHandlerBuilder({
+    required this.link,
+    required this.builder,
+    super.key,
+  });
 
   final ClipLink link;
-  final Widget child;
+  final Widget Function(BuildContext context, LinkHandler? handler) builder;
 
   @override
-  State<ClipLinkTooltip> createState() => _ClipLinkTooltipState();
+  State<ClipLinkHandlerBuilder> createState() => _ClipLinkHandlerBuilderState();
 }
 
-class _ClipLinkTooltipState extends State<ClipLinkTooltip> {
+class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
+  LinkHandler? _handler;
+
   @override
   void initState() {
     super.initState();
@@ -141,7 +134,7 @@ class _ClipLinkTooltipState extends State<ClipLinkTooltip> {
   }
 
   @override
-  void didUpdateWidget(ClipLinkTooltip oldWidget) {
+  void didUpdateWidget(ClipLinkHandlerBuilder oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.link.uri != widget.link.uri) _resolve();
   }
@@ -149,25 +142,56 @@ class _ClipLinkTooltipState extends State<ClipLinkTooltip> {
   void _resolve() {
     final service = LinkHandlerService.instance;
     final link = widget.link;
-    if (service.cachedHandlerFor(link) != null) return;
+    _handler = service.cachedHandlerFor(link);
     unawaited(
       service.handlerFor(link).then((handler) {
-        if (handler == null || !mounted || widget.link.uri != link.uri) return;
-        setState(() {});
+        // The service hands back one instance per app, so an unchanged
+        // answer - a refresh after maxAge - rebuilds nothing.
+        if (!mounted || widget.link.uri != link.uri || handler == _handler) {
+          return;
+        }
+        setState(() => _handler = handler);
       }),
     );
   }
 
   @override
-  Widget build(BuildContext context) =>
-      Tooltip(message: clipLinkActionLabel(widget.link), child: widget.child);
+  Widget build(BuildContext context) => widget.builder(context, _handler);
+}
+
+/// A [Tooltip] saying [clipLinkActionLabel] for this device's handler.
+class ClipLinkTooltip extends StatelessWidget {
+  const ClipLinkTooltip({required this.link, required this.child, super.key});
+
+  final ClipLink link;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => ClipLinkHandlerBuilder(
+    link: link,
+    builder: (context, handler) =>
+        Tooltip(message: clipLinkActionLabel(link, handler), child: child),
+  );
+}
+
+/// [clipLinkActionLabel] as a Text, for this device's handler.
+class ClipLinkActionText extends StatelessWidget {
+  const ClipLinkActionText({required this.link, super.key});
+
+  final ClipLink link;
+
+  @override
+  Widget build(BuildContext context) => ClipLinkHandlerBuilder(
+    link: link,
+    builder: (context, handler) => Text(clipLinkActionLabel(link, handler)),
+  );
 }
 
 /// The glyph a link clip shows in place of a thumbnail: the icon of the app
 /// on this device that Open launches, or the kind's generic icon where that
 /// is not known (iOS, which cannot ask; an app with no readable icon; the
 /// first frame of a lookup still in flight).
-class ClipLinkGlyph extends StatefulWidget {
+class ClipLinkGlyph extends StatelessWidget {
   const ClipLinkGlyph({
     required this.link,
     required this.size,
@@ -188,63 +212,32 @@ class ClipLinkGlyph extends StatefulWidget {
   final double? appIconSize;
 
   @override
-  State<ClipLinkGlyph> createState() => _ClipLinkGlyphState();
-}
-
-class _ClipLinkGlyphState extends State<ClipLinkGlyph> {
-  LinkHandler? _handler;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolve();
-  }
-
-  @override
-  void didUpdateWidget(ClipLinkGlyph oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.link.uri != widget.link.uri) _resolve();
-  }
-
-  void _resolve() {
-    final service = LinkHandlerService.instance;
-    final link = widget.link;
-    _handler = service.cachedHandlerFor(link);
-    unawaited(
-      service.handlerFor(link).then((handler) {
-        if (!mounted || widget.link.uri != link.uri || handler == _handler) {
-          return;
-        }
-        setState(() => _handler = handler);
-      }),
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final handler = _handler;
-    final icon = handler?.icon;
-    if (handler == null || icon == null) {
-      return Icon(
-        clipLinkIcon(widget.link.kind),
-        size: widget.size,
-        color: widget.color,
-        semanticLabel: widget.link.kindLabel,
-      );
-    }
-    final side = widget.appIconSize ?? widget.size;
-    return Image(
-      image: icon,
-      width: side,
-      height: side,
-      semanticLabel: '${widget.link.kindLabel}, opens in ${handler.name}',
-      // A file that has gone since it was found (an app uninstalled while
-      // the history is open) falls back rather than drawing a broken image.
-      errorBuilder: (context, error, stackTrace) => Icon(
-        clipLinkIcon(widget.link.kind),
-        size: widget.size,
-        color: widget.color,
-      ),
+    Widget generic({String? semanticLabel}) => Icon(
+      clipLinkIcon(link.kind),
+      size: size,
+      color: color,
+      semanticLabel: semanticLabel,
+    );
+
+    return ClipLinkHandlerBuilder(
+      link: link,
+      builder: (context, handler) {
+        if (handler case LinkHandler(:final name, icon: final icon?)) {
+          final side = appIconSize ?? size;
+          return Image(
+            image: icon,
+            width: side,
+            height: side,
+            semanticLabel: '${link.kindLabel}, opens in $name',
+            // A file that has gone since it was found (an app uninstalled
+            // while the history is open) falls back rather than drawing a
+            // broken image.
+            errorBuilder: (context, error, stackTrace) => generic(),
+          );
+        }
+        return generic(semanticLabel: link.kindLabel);
+      },
     );
   }
 }

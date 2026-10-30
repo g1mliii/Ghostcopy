@@ -311,11 +311,15 @@ void main() {
 
     test('phone numbers can be texted too', () {
       final phone = ClipLink.detect('+1 416 555 0199')!;
-      expect(phone.alternate!.label, 'Text');
-      expect(phone.alternate!.uri.toString(), 'sms:+14165550199');
-      expect(phone.canAlternateOn('macos'), isTrue);
-      expect(phone.canAlternateOn('linux'), isFalse);
-      expect(ClipLink.detect('https://example.com')!.alternate, isNull);
+      final text = phone.alternateOn('macos')!;
+      expect(text.kind, ClipLinkAlternateKind.text);
+      expect(text.label, 'Text');
+      expect(text.uri.toString(), 'sms:+14165550199');
+      expect(phone.alternateOn('linux'), isNull);
+      expect(
+        ClipLink.detect('https://example.com')!.alternateOn('macos'),
+        isNull,
+      );
     });
 
     test('meeting links', () {
@@ -366,7 +370,7 @@ void main() {
         expect(link!.service, service, reason: url);
         expect(link.actionLabel, 'Open in $service');
         expect(
-          link.alternate!.uri.toString(),
+          link.alternateOn('android')!.uri.toString(),
           'https://song.link/$url',
           reason: url,
         );

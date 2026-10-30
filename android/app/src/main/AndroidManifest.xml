@@ -228,10 +228,6 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW"/>
-            <data android:scheme="steam"/>
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="tg"/>
         </intent>
         <intent>

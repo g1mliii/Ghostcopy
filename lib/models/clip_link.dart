@@ -1,3 +1,5 @@
+import '../utils/ip_address.dart';
+
 /// What kind of openable thing a clip is.
 enum ClipLinkKind {
   web,
@@ -11,11 +13,15 @@ enum ClipLinkKind {
   app,
 }
 
+/// Which second thing a [ClipLinkAlternate] does.
+enum ClipLinkAlternateKind { text, findElsewhere }
+
 /// A second thing to do with a link, beside opening it: text a phone number,
 /// find a song on another service.
 class ClipLinkAlternate {
-  const ClipLinkAlternate(this.label, this.uri);
+  const ClipLinkAlternate(this.kind, this.label, this.uri);
 
+  final ClipLinkAlternateKind kind;
   final String label;
   final Uri uri;
 }
@@ -36,9 +42,6 @@ class ClipLinkAlternate {
 /// first.
 class ClipLink {
   const ClipLink._(this.kind, this.uri, this.label, {this.service});
-
-  ClipLink._parcel(String carrier, Uri page, String number)
-    : this._(ClipLinkKind.tracking, page, number, service: carrier);
 
   final ClipLinkKind kind;
 
@@ -127,12 +130,8 @@ class ClipLink {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
     }
     final site = host.startsWith('www.') ? host.substring(4) : host;
-    for (final (kind, services) in _webServices) {
-      for (final (name, matches) in services) {
-        if (matches(site, uri)) {
-          return ClipLink._(kind, uri, name, service: name);
-        }
-      }
+    for (final (kind, name, matches) in _webServices) {
+      if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
     }
     return ClipLink._(ClipLinkKind.web, uri, site);
   }
@@ -146,78 +145,77 @@ class ClipLink {
   static bool _pathStarts(Uri uri, String prefix) =>
       uri.path.toLowerCase().startsWith(prefix);
 
-  /// Web links that belong to a service with an app of its own, by kind.
-  /// Checked in order, so YouTube Music is music before YouTube is video.
-  static final List<
-    (ClipLinkKind, List<(String, bool Function(String host, Uri uri))>)
-  >
+  /// Web links that belong to a service with an app of its own. Checked in
+  /// order, so YouTube Music is music before YouTube is video.
+  static final List<(ClipLinkKind, String, bool Function(String host, Uri uri))>
   _webServices = [
     (
       ClipLinkKind.meeting,
-      [
-        (
-          'Zoom',
-          (h, u) =>
-              _hostIs(h, 'zoom.us') &&
-              (_pathStarts(u, '/j/') ||
-                  _pathStarts(u, '/my/') ||
-                  _pathStarts(u, '/w/') ||
-                  _pathStarts(u, '/s/')),
-        ),
-        (
-          'Google Meet',
-          (h, u) => h == 'meet.google.com' && _meetCode.hasMatch(u.path),
-        ),
-        (
-          'Microsoft Teams',
-          (h, u) =>
-              (h == 'teams.microsoft.com' &&
-                  u.path.contains('/l/meetup-join')) ||
-              (h == 'teams.live.com' && _pathStarts(u, '/meet')),
-        ),
-        (
-          'Webex',
-          (h, u) =>
-              _hostIs(h, 'webex.com') &&
-              (u.path.contains('/meet/') ||
-                  u.path.contains('/join/') ||
-                  u.path.contains('j.php')),
-        ),
-        ('FaceTime', (h, u) => h == 'facetime.apple.com'),
-        ('Whereby', (h, u) => h == 'whereby.com' && u.path.length > 1),
-      ],
+      'Zoom',
+      (h, u) =>
+          _hostIs(h, 'zoom.us') &&
+          (_pathStarts(u, '/j/') ||
+              _pathStarts(u, '/my/') ||
+              _pathStarts(u, '/w/') ||
+              _pathStarts(u, '/s/')),
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Google Meet',
+      (h, u) => h == 'meet.google.com' && _meetCode.hasMatch(u.path),
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Microsoft Teams',
+      (h, u) =>
+          (h == 'teams.microsoft.com' && u.path.contains('/l/meetup-join')) ||
+          (h == 'teams.live.com' && _pathStarts(u, '/meet')),
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Webex',
+      (h, u) =>
+          _hostIs(h, 'webex.com') &&
+          (u.path.contains('/meet/') ||
+              u.path.contains('/join/') ||
+              u.path.contains('j.php')),
+    ),
+    (ClipLinkKind.meeting, 'FaceTime', (h, u) => h == 'facetime.apple.com'),
+    (
+      ClipLinkKind.meeting,
+      'Whereby',
+      (h, u) => h == 'whereby.com' && u.path.length > 1,
     ),
     (
       ClipLinkKind.music,
-      [
-        ('Spotify', (h, u) => h == 'open.spotify.com' || h == 'spotify.link'),
-        ('Apple Music', (h, u) => h == 'music.apple.com'),
-        ('Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
-        ('YouTube Music', (h, u) => h == 'music.youtube.com'),
-        ('SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
-        ('TIDAL', (h, u) => h == 'tidal.com' || h == 'listen.tidal.com'),
-        (
-          'Deezer',
-          (h, u) => _hostIs(h, 'deezer.com') || h == 'deezer.page.link',
-        ),
-        ('Amazon Music', (h, u) => _amazonMusic.hasMatch(h)),
-        ('Bandcamp', (h, u) => _hostIs(h, 'bandcamp.com')),
-        ('Pandora', (h, u) => _hostIs(h, 'pandora.com')),
-      ],
+      'Spotify',
+      (h, u) => h == 'open.spotify.com' || h == 'spotify.link',
+    ),
+    (ClipLinkKind.music, 'Apple Music', (h, u) => h == 'music.apple.com'),
+    (ClipLinkKind.music, 'Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
+    (ClipLinkKind.music, 'YouTube Music', (h, u) => h == 'music.youtube.com'),
+    (ClipLinkKind.music, 'SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
+    (
+      ClipLinkKind.music,
+      'TIDAL',
+      (h, u) => h == 'tidal.com' || h == 'listen.tidal.com',
     ),
     (
-      ClipLinkKind.video,
-      [
-        (
-          'YouTube',
-          (h, u) =>
-              h == 'youtube.com' || h == 'm.youtube.com' || h == 'youtu.be',
-        ),
-        ('Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
-        ('Twitch', (h, u) => _hostIs(h, 'twitch.tv')),
-        ('TikTok', (h, u) => _hostIs(h, 'tiktok.com')),
-      ],
+      ClipLinkKind.music,
+      'Deezer',
+      (h, u) => _hostIs(h, 'deezer.com') || h == 'deezer.page.link',
     ),
+    (ClipLinkKind.music, 'Amazon Music', (h, u) => _amazonMusic.hasMatch(h)),
+    (ClipLinkKind.music, 'Bandcamp', (h, u) => _hostIs(h, 'bandcamp.com')),
+    (ClipLinkKind.music, 'Pandora', (h, u) => _hostIs(h, 'pandora.com')),
+    (
+      ClipLinkKind.video,
+      'YouTube',
+      (h, u) => h == 'youtube.com' || h == 'm.youtube.com' || h == 'youtu.be',
+    ),
+    (ClipLinkKind.video, 'Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
+    (ClipLinkKind.video, 'Twitch', (h, u) => _hostIs(h, 'twitch.tv')),
+    (ClipLinkKind.video, 'TikTok', (h, u) => _hostIs(h, 'tiktok.com')),
   ];
 
   /// Custom-scheme links into apps, by scheme.
@@ -270,20 +268,16 @@ class ClipLink {
     if (uri == null || text.length == colon + 1) return null;
     if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
     final (kind, name) = app;
+    var target = uri;
     // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
     // opens the app where it is installed and the web player where it is not.
     if (scheme == 'spotify') {
       final parts = uri.path.split(':');
       if (parts.length == 2 && parts.every((p) => p.isNotEmpty)) {
-        return ClipLink._(
-          kind,
-          Uri.https('open.spotify.com', '/${parts[0]}/${parts[1]}'),
-          name,
-          service: name,
-        );
+        target = Uri.https('open.spotify.com', '/${parts[0]}/${parts[1]}');
       }
     }
-    return ClipLink._(kind, uri, name, service: name);
+    return ClipLink._(kind, target, name, service: name);
   }
 
   static final _localHost = RegExp(
@@ -323,23 +317,14 @@ class ClipLink {
       final octets = address.split('.').map(int.parse).toList();
       if (octets.any((o) => o > 255)) return null;
       final bare = address.length == text.length;
-      if (bare && !_isPrivate(octets)) return null;
+      if (bare && !isNonPublicIPv4(octets)) return null;
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
     return ClipLink._(ClipLinkKind.web, uri, uri.host);
   }
 
-  /// 10/8, 172.16/12, 192.168/16, loopback, link-local and the carrier-grade
-  /// NAT range Tailscale hands out.
-  static bool _isPrivate(List<int> o) =>
-      o[0] == 10 ||
-      o[0] == 127 ||
-      (o[0] == 172 && o[1] >= 16 && o[1] <= 31) ||
-      (o[0] == 192 && o[1] == 168) ||
-      (o[0] == 169 && o[1] == 254) ||
-      (o[0] == 100 && o[1] >= 64 && o[1] <= 127);
-
+  static final _trailingZeros = RegExp(r'\.?0+$');
   static final _decimalCoordinates = RegExp(
     r'^(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})$',
   );
@@ -370,7 +355,7 @@ class ClipLink {
       return null;
     }
     String fixed(double v) =>
-        v.toStringAsFixed(6).replaceFirst(RegExp(r'\.?0+$'), '');
+        v.toStringAsFixed(6).replaceFirst(_trailingZeros, '');
     return ClipLink._(
       ClipLinkKind.map,
       Uri.parse('geo:${fixed(lat)},${fixed(lng)}'),
@@ -452,48 +437,44 @@ class ClipLink {
   /// start 92-95. FedEx and DHL numbers are plain runs of 10-15 digits, the
   /// same as order numbers and codes, so they stay text.
   static ClipLink? _tracking(String text) {
+    // Every format below is 13-22 characters: skip upper-casing the rest.
+    if (text.length < 13 || text.length > 22) return null;
     final number = text.toUpperCase();
+    final (String, Uri)? parcel;
     if (_ups.hasMatch(number) && _upsCheckDigitOk(number)) {
-      return ClipLink._parcel(
+      parcel = (
         'UPS',
         Uri.https('www.ups.com', '/track', {'tracknum': number}),
-        number,
       );
-    }
-    if (_usps.hasMatch(number)) {
-      return ClipLink._parcel('USPS', _uspsPage(number), number);
-    }
-    if (_s10.hasMatch(number) && _s10CheckDigitOk(number)) {
-      return switch (number.substring(11)) {
-        'CA' => ClipLink._parcel(
+    } else if (_usps.hasMatch(number)) {
+      parcel = ('USPS', _uspsPage(number));
+    } else if (_s10.hasMatch(number) && _s10CheckDigitOk(number)) {
+      parcel = switch (number.substring(11)) {
+        'CA' => (
           'Canada Post',
           Uri.parse(
             'https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor=$number',
           ),
-          number,
         ),
-        'US' => ClipLink._parcel('USPS', _uspsPage(number), number),
-        'GB' => ClipLink._parcel(
+        'US' => ('USPS', _uspsPage(number)),
+        'GB' => (
           'Royal Mail',
           Uri.parse(
             'https://www.royalmail.com/track-your-item#/tracking-results/$number',
           ),
-          number,
         ),
-        'AU' => ClipLink._parcel(
+        'AU' => (
           'Australia Post',
           Uri.https('auspost.com.au', '/mypost/track/details/$number'),
-          number,
         ),
         // Every other postal service: a tracker that knows them all.
-        _ => ClipLink._parcel(
-          'Post',
-          Uri.parse('https://t.17track.net/en#nums=$number'),
-          number,
-        ),
+        _ => ('Post', Uri.parse('https://t.17track.net/en#nums=$number')),
       };
+    } else {
+      return null;
     }
-    return null;
+    final (carrier, page) = parcel;
+    return ClipLink._(ClipLinkKind.tracking, page, number, service: carrier);
   }
 
   static Uri _uspsPage(String number) => Uri.https(
@@ -621,9 +602,9 @@ class ClipLink {
             (uri.path.isEmpty || uri.path == '/')) {
           return Uri.parse('maps://?${uri.query}');
         }
-        if (geo) return place.toAppleMaps(scheme: 'maps');
+        if (geo) return place.toAppleMaps(web: false);
       case 'ios':
-        if (geo) return place.toAppleMaps(scheme: 'https');
+        if (geo) return place.toAppleMaps(web: true);
       case 'windows':
       case 'linux':
         if (geo) return place.toGoogleMaps();
@@ -639,28 +620,42 @@ class ClipLink {
   bool canOpenOn(String platform) =>
       !(kind == ClipLinkKind.phone && platform == 'linux');
 
-  /// The second thing to do with it, if there is one:
+  /// The second thing to do with it on [platform], or null where there is
+  /// none:
   ///
   /// - A phone number can be texted as well as called (`sms:`; Messages on
-  ///   a Mac, Phone Link on Windows).
+  ///   a Mac, Phone Link on Windows) - wherever it can be called, so not on
+  ///   Linux, which has nothing for `sms:` either.
   /// - A song or album can be found on the other services through song.link,
   ///   which is what makes an Apple Music link useful on a phone with only
   ///   Spotify, and the other way round.
-  ClipLinkAlternate? get alternate => switch (kind) {
-    ClipLinkKind.phone => ClipLinkAlternate(
-      'Text',
-      Uri(scheme: 'sms', path: uri.path),
-    ),
-    ClipLinkKind.music => ClipLinkAlternate(
-      'Find on other services',
-      Uri.parse('https://song.link/$uri'),
-    ),
-    _ => null,
-  };
+  ClipLinkAlternate? alternateOn(String platform) {
+    if (!canOpenOn(platform)) return null;
+    return switch (kind) {
+      ClipLinkKind.phone => ClipLinkAlternate(
+        ClipLinkAlternateKind.text,
+        'Text',
+        Uri(scheme: 'sms', path: uri.path),
+      ),
+      ClipLinkKind.music => ClipLinkAlternate(
+        ClipLinkAlternateKind.findElsewhere,
+        'Find on other services',
+        Uri.parse('https://song.link/$uri'),
+      ),
+      _ => null,
+    };
+  }
 
-  /// Whether [platform] can do [alternate]: no texting from Linux either.
-  bool canAlternateOn(String platform) =>
-      alternate != null && !(kind == ClipLinkKind.phone && platform == 'linux');
+  /// Whether Open names the app that will open it, once that is known
+  /// ("Open in Google Maps"). Calls, meetings and parcels keep their own
+  /// verb: "Join meeting" and "Track package" say more than "Open in Zoom" or
+  /// "Open in Safari" would.
+  bool get namesHandler => switch (kind) {
+    ClipLinkKind.phone ||
+    ClipLinkKind.meeting ||
+    ClipLinkKind.tracking => false,
+    _ => true,
+  };
 
   /// What the button that opens it says.
   String get actionLabel => switch (kind) {
@@ -726,9 +721,10 @@ class _MapPlace {
 
   static _MapPlace? fromWeb(Uri uri) {
     final host = uri.host.toLowerCase();
-    final params = uri.queryParameters;
-
+    // Query parameters are read only once the host is a maps one: every web
+    // link passes through here.
     if (host == 'maps.apple.com') {
+      final params = uri.queryParameters;
       return _MapPlace(
         _MapSource.apple,
         // The classic parameters and the 2024 /place, /search and
@@ -766,7 +762,11 @@ class _MapPlace {
     }
 
     // /maps/place/<name>/@lat,lng,zoom and /maps/search/<query>
-    var query = _first(params, const ['q', 'query', 'destination']);
+    var query = _first(uri.queryParameters, const [
+      'q',
+      'query',
+      'destination',
+    ]);
     String? latLng;
     for (var i = 0; i < segments.length; i++) {
       final segment = segments[i];
@@ -781,9 +781,11 @@ class _MapPlace {
         }
       }
     }
-    if (query != null && _latLngOrNull(query) != null) {
-      latLng ??= _latLngOrNull(query);
-      query = null;
+    if (query != null) {
+      if (_latLngOrNull(query) case final coordinates?) {
+        latLng ??= coordinates;
+        query = null;
+      }
     }
     return _MapPlace(_MapSource.google, query: query, latLng: latLng);
   }
@@ -823,7 +825,9 @@ class _MapPlace {
     '${query != null ? '?q=${Uri.encodeQueryComponent(query!)}' : ''}',
   );
 
-  Uri toAppleMaps({required String scheme}) {
+  /// On maps.apple.com when [web], which every Apple device answers; on
+  /// `maps:` otherwise, which only the Maps app does.
+  Uri toAppleMaps({required bool web}) {
     final params = Uri(
       queryParameters: {
         if (query != null) 'q': query,
@@ -831,7 +835,7 @@ class _MapPlace {
       },
     ).query;
     return Uri.parse(
-      scheme == 'https' ? 'https://maps.apple.com/?$params' : 'maps://?$params',
+      web ? 'https://maps.apple.com/?$params' : 'maps://?$params',
     );
   }
 

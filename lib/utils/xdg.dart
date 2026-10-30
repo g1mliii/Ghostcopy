@@ -28,3 +28,24 @@ List<String> xdgDataDirs([Map<String, String>? environment]) {
         .where(path.isAbsolute),
   ];
 }
+
+/// The unlocalised keys of a desktop entry's `[Desktop Entry]` group.
+Map<String, String> parseDesktopEntry(String contents) {
+  final keys = <String, String>{};
+  var inEntry = false;
+  for (final raw in contents.split('\n')) {
+    final line = raw.trim();
+    if (line.startsWith('[')) {
+      inEntry = line == '[Desktop Entry]';
+      continue;
+    }
+    if (!inEntry || line.startsWith('#')) continue;
+    final equals = line.indexOf('=');
+    if (equals <= 0) continue;
+    final key = line.substring(0, equals).trim();
+    // Name[fr] and the like: the plain key is what every entry has.
+    if (key.contains('[')) continue;
+    keys.putIfAbsent(key, () => line.substring(equals + 1).trim());
+  }
+  return keys;
+}

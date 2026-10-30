@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
 import '../models/clip_link.dart';
+import '../utils/target_device_type.dart';
 import 'impl/link_handler_service.dart';
 import 'impl/windows_link_handler.dart';
 
@@ -33,8 +32,9 @@ class LinkHandler {
 /// read another app's icon - so there it answers null and the clip keeps the
 /// generic glyph.
 abstract class ILinkHandlerService {
-  /// Answered and cached per [cacheKey], so a history of fifty web links asks
-  /// the system once.
+  /// Answered and cached per what the platform decides by (see
+  /// CachingLinkHandlerService.cacheKeyFor), so a history of fifty web links
+  /// asks the system once.
   Future<LinkHandler?> handlerFor(ClipLink link);
 
   /// What [handlerFor] already answered for [link], or null if it has not
@@ -58,41 +58,17 @@ class LinkHandlerService {
   @visibleForTesting
   static set instance(ILinkHandlerService? service) => _instance = service;
 
+  /// By defaultTargetPlatform, like the Open action, so the icon is looked
+  /// up for the same platform [ClipLink.openUri] opens for.
   static ILinkHandlerService _forPlatform() {
     if (kIsWeb) return const NoLinkHandlerService();
-    if (Platform.isMacOS) return ChannelLinkHandlerService(platform: 'macos');
-    if (Platform.isAndroid) {
-      return ChannelLinkHandlerService(platform: 'android');
-    }
-    if (Platform.isWindows) return WindowsLinkHandlerService();
-    if (Platform.isLinux) return LinuxLinkHandlerService();
-    return const NoLinkHandlerService();
+    return switch (deviceTypeFor(defaultTargetPlatform)) {
+      final platform && ('macos' || 'android') => ChannelLinkHandlerService(
+        platform: platform,
+      ),
+      'windows' => WindowsLinkHandlerService(),
+      'linux' => LinuxLinkHandlerService(),
+      _ => const NoLinkHandlerService(),
+    };
   }
-}
-
-/// The cache key for [link]'s handler on [platform].
-///
-/// Kind and scheme, never the full URI, or every web link would be a lookup
-/// of its own. Beyond that it holds what the platform routes by:
-///
-/// - Android routes by host and path - a google.com/maps link opens Google
-///   Maps and google.com/search the browser; docs.google.com/document opens
-///   Docs and docs.google.com/spreadsheets opens Sheets - so for a web link
-///   the host and the first path segment are in. The kind is in for the
-///   first pair, which share a host. A `geo:` or `tel:` path is the place or
-///   number itself, so those go by scheme.
-/// - macOS answers by host at most, so the host is in.
-/// - Windows and Linux associate a whole scheme with one app and their
-///   lookups read nothing else, so more would only repeat the same lookup -
-///   icon extraction included - for every site in the history.
-String linkHandlerCacheKey(ClipLink link, String platform) {
-  final uri = link.openUri(platform);
-  final key = '${link.kind.name}:${uri.scheme}';
-  return switch (platform) {
-    'windows' || 'linux' => key,
-    'android' when uri.isScheme('https') || uri.isScheme('http') =>
-      '$key:${uri.host}/${uri.pathSegments.isEmpty ? '' : uri.pathSegments.first}',
-    'android' => key,
-    _ => '$key:${uri.host}',
-  };
 }

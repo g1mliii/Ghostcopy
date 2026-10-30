@@ -2132,13 +2132,12 @@ class _HistoryRowState extends State<_HistoryRow> {
   @override
   void didUpdateWidget(_HistoryRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.item.content != oldWidget.item.content ||
+    final contentChanged = widget.item.content != oldWidget.item.content;
+    if (contentChanged ||
         widget.item.contentType != oldWidget.item.contentType) {
       _link = clipLinkFor(widget.item);
     }
-    if (widget.item.content != oldWidget.item.content) {
-      unawaited(_detectContentType());
-    }
+    if (contentChanged) unawaited(_detectContentType());
   }
 
   Future<void> _openLink(
@@ -2147,13 +2146,9 @@ class _HistoryRowState extends State<_HistoryRow> {
     bool alternate = false,
   }) async {
     Adaptive.successFeedback();
-    final opened = await openClipLink(link, alternate: alternate);
-    if (!opened && context.mounted) {
-      showGhostToast(
-        context,
-        clipLinkOpenFailedMessage(link, alternate: alternate),
-        type: GhostToastType.error,
-      );
+    final failed = await openClipLink(link, alternate: alternate);
+    if (failed != null && context.mounted) {
+      showGhostToast(context, failed, type: GhostToastType.error);
     }
   }
 
@@ -2409,7 +2404,7 @@ class _HistoryRowState extends State<_HistoryRow> {
   /// a link clip or for its second action (Text, Find on other services).
   static Widget _sheetLinkButton({
     required Widget icon,
-    required String label,
+    required Widget label,
     required VoidCallback onPressed,
   }) {
     return Padding(
@@ -2420,7 +2415,7 @@ class _HistoryRowState extends State<_HistoryRow> {
         child: OutlinedButton.icon(
           onPressed: onPressed,
           icon: icon,
-          label: Text(label),
+          label: label,
           style: OutlinedButton.styleFrom(
             foregroundColor: GhostColors.textPrimary,
             side: const BorderSide(color: GhostColors.glassBorder),
@@ -2512,24 +2507,23 @@ class _HistoryRowState extends State<_HistoryRow> {
                       size: 18,
                       color: GhostColors.accentText,
                     ),
-                    label: clipLinkActionLabel(link),
+                    label: ClipLinkActionText(link: link),
                     onPressed: () {
                       Navigator.of(sheetContext).pop();
                       unawaited(_openLink(context, link));
                     },
                   ),
-                if (link?.alternate case final alternate?
-                    when canAlternateClipLink(link!))
+                if (clipLinkAlternate(link) case final alternate?)
                   _sheetLinkButton(
                     icon: Icon(
-                      clipLinkAlternateIcon(link),
+                      clipLinkAlternateIcon(alternate),
                       size: 18,
                       color: GhostColors.accentText,
                     ),
-                    label: alternate.label,
+                    label: Text(alternate.label),
                     onPressed: () {
                       Navigator.of(sheetContext).pop();
-                      unawaited(_openLink(context, link, alternate: true));
+                      unawaited(_openLink(context, link!, alternate: true));
                     },
                   ),
                 const SizedBox(height: GhostSpacing.sectionTight),
