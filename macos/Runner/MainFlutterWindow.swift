@@ -9,6 +9,7 @@ class MainFlutterWindow: NSWindow {
   private var clipboardChangeCount: ClipboardChangeCount?
   private var launchAtStartup: LaunchAtStartup?
   private var appPresence: AppPresence?
+  private var linkHandler: LinkHandlerChannel?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -37,6 +38,9 @@ class MainFlutterWindow: NSWindow {
 
     // Answers the launch_at_startup package, which has no macOS code of its own
     launchAtStartup = LaunchAtStartup(messenger: flutterViewController.engine.binaryMessenger)
+
+    // Which app opens a link clip, so history can show its icon
+    linkHandler = LinkHandlerChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     // Dock and Cmd-Tab while an ordinary pin holds the Spotlight up
     appPresence = AppPresence(
@@ -138,4 +142,76 @@ class AppPresence {
     deinit {
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
     }
+}
+
+/// Which app opens a link, for lib/services/impl/link_handler_service.dart:
+/// `{name, icon}` with the icon as 64px PNG bytes, or nil.
+///
+/// LaunchServices answers with the user's default for the URL, so a `maps:`
+/// link names Maps and an `https:` link names whichever browser is set in
+/// System Settings. Mirrors LinkHandler.kt on Android.
+final class LinkHandlerChannel {
+  private let channel: FlutterMethodChannel
+  private static let iconPixels = 64
+
+  init(messenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(
+      name: "com.ghostcopy/link_handler",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "handlerFor" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let args = call.arguments as? [String: Any],
+            let string = args["url"] as? String,
+            let url = URL(string: string) else {
+        result(FlutterError(code: "INVALID_ARGS", message: "url is required", details: nil))
+        return
+      }
+      result(LinkHandlerChannel.handler(for: url))
+    }
+  }
+
+  private static func handler(for url: URL) -> [String: Any]? {
+    guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else { return nil }
+    var name = FileManager.default.displayName(atPath: app.path)
+    if name.hasSuffix(".app") { name = String(name.dropLast(4)) }
+    var handler: [String: Any] = ["name": name]
+    if let png = png(NSWorkspace.shared.icon(forFile: app.path)) {
+      handler["icon"] = FlutterStandardTypedData(bytes: png)
+    }
+    return handler
+  }
+
+  /// The icon drawn into a bitmap of exactly iconPixels square, so the best
+  /// representation is picked for that size rather than the 1024px one.
+  private static func png(_ image: NSImage) -> Data? {
+    guard let rep = NSBitmapImageRep(
+      bitmapDataPlanes: nil,
+      pixelsWide: iconPixels,
+      pixelsHigh: iconPixels,
+      bitsPerSample: 8,
+      samplesPerPixel: 4,
+      hasAlpha: true,
+      isPlanar: false,
+      colorSpaceName: .deviceRGB,
+      bytesPerRow: 0,
+      bitsPerPixel: 0
+    ) else { return nil }
+    rep.size = NSSize(width: iconPixels, height: iconPixels)
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+    NSGraphicsContext.current = context
+    image.draw(
+      in: NSRect(x: 0, y: 0, width: iconPixels, height: iconPixels),
+      from: .zero,
+      operation: .copy,
+      fraction: 1
+    )
+    context.flushGraphics()
+    return rep.representation(using: .png, properties: [:])
+  }
 }
