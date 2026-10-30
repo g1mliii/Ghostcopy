@@ -2688,8 +2688,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
               ],
             ),
           ),
-        if (_link case final link?
-            when canAlternateClipLink(link) && link.alternate != null)
+        if (_link case final link? when canAlternateClipLink(link))
           PopupMenuItem<String>(
             value: 'alternate',
             child: Row(

@@ -227,6 +227,12 @@ class ClipLink {
   /// Android's `intent:`, and Windows protocol handlers like `ms-msdt:` that
   /// have been the way into remote-code exploits. These are apps that only
   /// navigate to something inside themselves.
+  ///
+  /// Left out for doing more than that in one tap: `shortcuts:` runs a
+  /// shortcut, `steam:` installs and launches games, `raycast:` runs
+  /// commands. VS Code and Cursor are in for `file` links only - opening a
+  /// file at a line - since their other links hand the URI to extensions,
+  /// which clone repositories and more ([_editorSchemes]).
   static const _appSchemes = <String, (ClipLinkKind, String)>{
     'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
     'zoomus': (ClipLinkKind.meeting, 'Zoom'),
@@ -242,7 +248,6 @@ class ClipLink {
     'vscode-insiders': (ClipLinkKind.app, 'VS Code Insiders'),
     'cursor': (ClipLinkKind.app, 'Cursor'),
     'linear': (ClipLinkKind.app, 'Linear'),
-    'steam': (ClipLinkKind.app, 'Steam'),
     'tg': (ClipLinkKind.app, 'Telegram'),
     'whatsapp': (ClipLinkKind.app, 'WhatsApp'),
     'sgnl': (ClipLinkKind.app, 'Signal'),
@@ -251,9 +256,9 @@ class ClipLink {
     'bear': (ClipLinkKind.app, 'Bear'),
     'craftdocs': (ClipLinkKind.app, 'Craft'),
     'drafts': (ClipLinkKind.app, 'Drafts'),
-    'raycast': (ClipLinkKind.app, 'Raycast'),
-    'shortcuts': (ClipLinkKind.app, 'Shortcuts'),
   };
+
+  static const _editorSchemes = {'vscode', 'vscode-insiders', 'cursor'};
 
   static ClipLink? _appLink(String text) {
     final colon = text.indexOf(':');
@@ -263,6 +268,7 @@ class ClipLink {
     if (app == null) return null;
     final uri = Uri.tryParse(text);
     if (uri == null || text.length == colon + 1) return null;
+    if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
     final (kind, name) = app;
     // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
     // opens the app where it is installed and the web player where it is not.
@@ -289,21 +295,50 @@ class ClipLink {
     caseSensitive: false,
   );
 
+  /// `main.dart:120`, `app.py:42`: a file and line, as compilers and stack
+  /// traces write them, has the same shape as a host and port.
+  static final _fileAndLine = RegExp(
+    r'\.(dart|py|js|jsx|ts|tsx|mjs|cjs|kt|kts|java|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|cs|go|rs|rb|php|lua|sh|zig|scala|ex|exs|json|ya?ml|toml|xml|html?|css|scss|txt|md|log):\d',
+    caseSensitive: false,
+  );
+  static final _addressEnd = RegExp('[:/]');
+
   /// A machine on the network, written without `http://`: `localhost:3000`,
   /// `192.168.1.1`, `printer.local`, `nas.lan:5000/admin`. Router pages and
   /// dev servers are copied like this, and only a browser opens them.
+  ///
+  /// A bare IPv4 address, with no port or path, only when it is a private
+  /// one (a router, a NAS, this machine): `1.0.10.27` is as likely to be a
+  /// four-part version number as an address, and a public server is not
+  /// usually reached by typing its address into a browser.
   static ClipLink? _localAddress(String text) {
     final match = _localHost.firstMatch(text);
-    if (match == null && !_hostWithPort.hasMatch(text)) return null;
+    if (match == null &&
+        (!_hostWithPort.hasMatch(text) || _fileAndLine.hasMatch(text))) {
+      return null;
+    }
     if (match?.group(2) != null) {
       // An IPv4 address: four octets, each a byte.
-      final octets = text.split(RegExp('[:/]')).first.split('.');
-      if (octets.any((o) => int.parse(o) > 255)) return null;
+      final address = text.split(_addressEnd).first;
+      final octets = address.split('.').map(int.parse).toList();
+      if (octets.any((o) => o > 255)) return null;
+      final bare = address.length == text.length;
+      if (bare && !_isPrivate(octets)) return null;
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
     return ClipLink._(ClipLinkKind.web, uri, uri.host);
   }
+
+  /// 10/8, 172.16/12, 192.168/16, loopback, link-local and the carrier-grade
+  /// NAT range Tailscale hands out.
+  static bool _isPrivate(List<int> o) =>
+      o[0] == 10 ||
+      o[0] == 127 ||
+      (o[0] == 172 && o[1] >= 16 && o[1] <= 31) ||
+      (o[0] == 192 && o[1] == 168) ||
+      (o[0] == 169 && o[1] == 254) ||
+      (o[0] == 100 && o[1] >= 64 && o[1] <= 127);
 
   static final _decimalCoordinates = RegExp(
     r'^(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})$',
@@ -364,6 +399,7 @@ class ClipLink {
     r"^[\wÀ-ÿ'.-]+(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])",
     caseSensitive: false,
   );
+  static final _houseNumber = RegExp(r'^\d+[a-z]?\b', caseSensitive: false);
   static final _postalCode = RegExp(
     // Canada, UK, then a US state and ZIP.
     r'\b([A-Z]\d[A-Z] ?\d[A-Z]\d|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}|[A-Z]{2},? \d{5}(?:-\d{4})?)\b',
@@ -395,8 +431,7 @@ class ClipLink {
         _frenchStreet.hasMatch(first) ||
         _continentalStreet.hasMatch(joined);
     final numbered =
-        RegExp(r'^\d+[a-z]?\b', caseSensitive: false).hasMatch(first) &&
-        _postalCode.hasMatch(joined);
+        _houseNumber.hasMatch(first) && _postalCode.hasMatch(joined);
     if (!street && !numbered) return null;
     return ClipLink._(
       ClipLinkKind.map,

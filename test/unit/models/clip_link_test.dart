@@ -441,6 +441,11 @@ void main() {
         'search-ms:query=x',
         'obsidian:',
         'notascheme://x',
+        'shortcuts://run-shortcut?name=Wipe',
+        'steam://install/570',
+        'raycast://extensions/x/y',
+        'vscode://vscode.git/clone?url=https://evil.example/r.git',
+        'cursor://anysphere.cursor-retrieval/x',
       ]) {
         expect(ClipLink.detect(text), isNull, reason: text);
       }
@@ -461,6 +466,24 @@ void main() {
       }
       expect(ClipLink.detect('999.1.1.1'), isNull);
       expect(ClipLink.detect('1.2.3.4.5'), isNull);
+      // A file and line, and a four-part version or public address.
+      expect(ClipLink.detect('main.dart:123'), isNull);
+      expect(ClipLink.detect('app.py:42'), isNull);
+      expect(ClipLink.detect('1.0.10.27'), isNull);
+      expect(ClipLink.detect('8.8.8.8'), isNull);
+      expect(ClipLink.detect('8.8.8.8:53')!.kind, ClipLinkKind.web);
+      for (final private in [
+        '10.0.0.1',
+        '172.20.1.1',
+        '127.0.0.1',
+        '100.101.102.103',
+      ]) {
+        expect(
+          ClipLink.detect(private)?.kind,
+          ClipLinkKind.web,
+          reason: private,
+        );
+      }
     });
   });
 }
