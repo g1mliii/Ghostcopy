@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clip_link.dart';
 import 'package:ghostcopy/services/impl/link_handler_service.dart';
+import 'package:ghostcopy/services/impl/windows_link_handler.dart';
 import 'package:ghostcopy/services/link_handler_service.dart';
 import 'package:ghostcopy/utils/xdg.dart';
 
@@ -75,6 +76,21 @@ void main() {
       expect(maps!.name, 'Google Maps');
       expect(search!.name, 'Chrome');
       expect(search.icon, isNull);
+    });
+
+    test('one app is one LinkHandler, however many sites it opens', () async {
+      answer = (_) => {
+        'name': 'Safari',
+        'icon': Uint8List.fromList([1]),
+      };
+      final service = ChannelLinkHandlerService(
+        platform: 'macos',
+        channel: channel,
+      );
+      final a = await service.handlerFor(ClipLink.detect('https://a.com')!);
+      final b = await service.handlerFor(ClipLink.detect('https://b.org')!);
+      expect(asked, hasLength(2));
+      expect(identical(a, b), isTrue);
     });
 
     test(
@@ -256,30 +272,40 @@ Name=New Window
   );
 
   test('the cache key holds what each platform routes by', () {
-    String key(String url, String platform) =>
-        linkHandlerCacheKey(ClipLink.detect(url)!, platform);
+    String key(CachingLinkHandlerService service, String url) =>
+        service.cacheKeyFor(ClipLink.detect(url)!.openUri(service.platform));
+    final windows = WindowsLinkHandlerService();
+    final linux = LinuxLinkHandlerService();
+    final macos = ChannelLinkHandlerService(platform: 'macos');
+    final android = ChannelLinkHandlerService(platform: 'android');
 
-    // Windows and Linux: the scheme decides.
-    expect(
-      key('https://a.com/x', 'windows'),
-      key('https://b.org/y', 'windows'),
-    );
-    expect(key('https://a.com/x', 'linux'), key('https://b.org/y', 'linux'));
+    // Windows and Linux: the scheme decides, whatever the kind of link.
+    for (final service in [windows, linux]) {
+      expect(key(service, 'https://a.com/x'), key(service, 'https://b.org/y'));
+      expect(
+        key(service, 'https://a.com/x'),
+        key(service, 'https://www.google.com/maps/place/x'),
+      );
+    }
     // macOS: per host.
+    expect(key(macos, 'https://a.com/x'), isNot(key(macos, 'https://b.org/x')));
+    expect(key(macos, 'https://a.com/x'), key(macos, 'https://a.com/y'));
+    // Android: per host and first path segment - Docs and Sheets apart, and
+    // Google Maps apart from Google search.
     expect(
-      key('https://a.com/x', 'macos'),
-      isNot(key('https://b.org/x', 'macos')),
-    );
-    expect(key('https://a.com/x', 'macos'), key('https://a.com/y', 'macos'));
-    // Android: per host and first path segment - Docs and Sheets apart.
-    expect(
-      key('https://docs.google.com/document/d/1', 'android'),
-      isNot(key('https://docs.google.com/spreadsheets/d/1', 'android')),
+      key(android, 'https://docs.google.com/document/d/1'),
+      isNot(key(android, 'https://docs.google.com/spreadsheets/d/1')),
     );
     expect(
-      key('https://docs.google.com/document/d/1', 'android'),
-      key('https://docs.google.com/document/d/2', 'android'),
+      key(android, 'https://docs.google.com/document/d/1'),
+      key(android, 'https://docs.google.com/document/d/2'),
     );
+    expect(
+      key(android, 'https://www.google.com/maps/place/x'),
+      isNot(key(android, 'https://www.google.com/search?q=x')),
+    );
+    // A geo: or tel: path is the place or number itself.
+    expect(key(android, 'geo:1.0,2.0'), key(android, 'geo:3.0,4.0'));
   });
 }
 
@@ -287,6 +313,9 @@ class _ThrowingService extends CachingLinkHandlerService {
   _ThrowingService() : super(platform: 'windows');
 
   int calls = 0;
+
+  @override
+  String cacheKeyFor(Uri uri) => uri.scheme;
 
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {

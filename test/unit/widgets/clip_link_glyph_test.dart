@@ -24,6 +24,11 @@ class _FakeHandlers implements ILinkHandlerService {
   }
 }
 
+String _label(ClipLink link) => clipLinkActionLabel(
+  link,
+  LinkHandlerService.instance.cachedHandlerFor(link),
+);
+
 Widget _glyph(ClipLink link) => MaterialApp(
   home: Center(
     child: ClipLinkGlyph(
@@ -45,7 +50,7 @@ void main() {
     LinkHandlerService.instance = _FakeHandlers(
       LinkHandler(name: 'Google Maps', icon: MemoryImage(png)),
     );
-    expect(clipLinkActionLabel(link), 'Open in Maps');
+    expect(_label(link), 'Open in Maps');
 
     await tester.pumpWidget(_glyph(link));
     await tester.pump();
@@ -54,7 +59,7 @@ void main() {
     expect(image.width, 28);
     expect(image.semanticLabel, 'Map, opens in Google Maps');
     expect(find.byIcon(Icons.map_outlined), findsNothing);
-    expect(clipLinkActionLabel(link), 'Open in Google Maps');
+    expect(_label(link), 'Open in Google Maps');
   });
 
   testWidgets('keeps the generic icon when nothing is known', (tester) async {
@@ -63,7 +68,7 @@ void main() {
     await tester.pump();
     expect(find.byType(Image), findsNothing);
     expect(find.byIcon(Icons.map_outlined), findsOneWidget);
-    expect(clipLinkActionLabel(link), 'Open in Maps');
+    expect(_label(link), 'Open in Maps');
   });
 
   testWidgets('a known app without a readable icon keeps the generic one', (
@@ -75,7 +80,7 @@ void main() {
     await tester.pumpWidget(_glyph(link));
     await tester.pump();
     expect(find.byIcon(Icons.map_outlined), findsOneWidget);
-    expect(clipLinkActionLabel(link), 'Open in Waze');
+    expect(_label(link), 'Open in Waze');
   });
 
   testWidgets('the Open tooltip names the app once it is known', (

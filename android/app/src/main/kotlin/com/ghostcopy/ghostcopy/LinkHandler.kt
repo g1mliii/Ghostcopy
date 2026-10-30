@@ -5,11 +5,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.graphics.drawable.toBitmap
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
@@ -109,15 +109,14 @@ object LinkHandler {
             pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
         }
 
-    /** Draws any drawable, adaptive icons included, at [ICON_PX] square. */
+    /**
+     * Any drawable, adaptive icons included, at [ICON_PX] square. toBitmap
+     * can hand back a BitmapDrawable's own bitmap, so this one is never
+     * recycled.
+     */
     private fun png(drawable: android.graphics.drawable.Drawable): ByteArray {
-        val bitmap = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        drawable.setBounds(0, 0, ICON_PX, ICON_PX)
-        drawable.draw(canvas)
         val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-        bitmap.recycle()
+        drawable.toBitmap(ICON_PX, ICON_PX).compress(Bitmap.CompressFormat.PNG, 100, out)
         return out.toByteArray()
     }
 }

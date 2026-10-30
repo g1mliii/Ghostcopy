@@ -2483,7 +2483,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                         size: 18,
                         color: GhostColors.accentText,
                       ),
-                      label: Text(clipLinkActionLabel(link)),
+                      label: ClipLinkActionText(link: link),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: GhostColors.textPrimary,
                         side: const BorderSide(color: GhostColors.glassBorder),

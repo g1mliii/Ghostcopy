@@ -2684,7 +2684,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
               children: [
                 const Icon(Icons.open_in_new, size: 16),
                 const SizedBox(width: 12),
-                Text(clipLinkActionLabel(link)),
+                ClipLinkActionText(link: link),
               ],
             ),
           ),
