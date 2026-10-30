@@ -8,6 +8,7 @@ import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/impl/crash_reporting_service.dart';
 import '../../services/link_handler_service.dart';
+import '../../utils/target_device_type.dart';
 
 /// The icon for a kind of link, before anything is known about which app on
 /// this device would open it.
@@ -29,37 +30,32 @@ ClipLink? clipLinkFor(ClipboardItem item) =>
 ///
 /// From defaultTargetPlatform rather than dart:io's Platform so a widget test
 /// can stand in for any platform.
-String get currentLinkPlatform => switch (defaultTargetPlatform) {
-  TargetPlatform.android => 'android',
-  TargetPlatform.iOS => 'ios',
-  TargetPlatform.macOS => 'macos',
-  TargetPlatform.windows => 'windows',
-  TargetPlatform.linux || TargetPlatform.fuchsia => 'linux',
-};
+String get currentLinkPlatform => deviceTypeFor(defaultTargetPlatform);
 
 /// Whether this device can open [link] at all - no Call button on Linux.
 bool canOpenClipLink(ClipLink link) => link.canOpenOn(currentLinkPlatform);
 
 /// Hands [link] to whatever this device opens that kind of link with.
 ///
-/// Returns false when nothing took it, so the caller can say so. Always an
-/// external application: a link opened inside GhostCopy's own window would
-/// leave the user in a browser with no address bar, inside a clipboard app.
-Future<bool> openClipLink(ClipLink link) async {
+/// Returns null when something took it, and otherwise what to tell the user,
+/// so a caller only has to show it. Always an external application: a link
+/// opened inside GhostCopy's own window would leave the user in a browser
+/// with no address bar, inside a clipboard app.
+Future<String?> openClipLink(ClipLink link) async {
   recordDiagnostic('ui', '${link.kindLabel} link opened');
   try {
-    return await launchUrl(
+    final opened = await launchUrl(
       link.openUri(currentLinkPlatform),
       mode: LaunchMode.externalApplication,
     );
+    if (opened) return null;
   } on Exception catch (e) {
     debugPrint('[ClipLink] Could not open ${link.kind.name} link: $e');
-    return false;
   }
+  return _openFailedMessage(link);
 }
 
-/// What to say when [openClipLink] returns false.
-String clipLinkOpenFailedMessage(ClipLink link) => switch (link.kind) {
+String _openFailedMessage(ClipLink link) => switch (link.kind) {
   ClipLinkKind.web => 'No browser could open this link',
   ClipLinkKind.map => 'No maps app could open this place',
   ClipLinkKind.email => 'No email app is set up on this device',

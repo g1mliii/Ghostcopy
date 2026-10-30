@@ -2132,24 +2132,19 @@ class _HistoryRowState extends State<_HistoryRow> {
   @override
   void didUpdateWidget(_HistoryRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.item.content != oldWidget.item.content ||
+    final contentChanged = widget.item.content != oldWidget.item.content;
+    if (contentChanged ||
         widget.item.contentType != oldWidget.item.contentType) {
       _link = clipLinkFor(widget.item);
     }
-    if (widget.item.content != oldWidget.item.content) {
-      unawaited(_detectContentType());
-    }
+    if (contentChanged) unawaited(_detectContentType());
   }
 
   Future<void> _openLink(BuildContext context, ClipLink link) async {
     Adaptive.successFeedback();
-    final opened = await openClipLink(link);
-    if (!opened && context.mounted) {
-      showGhostToast(
-        context,
-        clipLinkOpenFailedMessage(link),
-        type: GhostToastType.error,
-      );
+    final failed = await openClipLink(link);
+    if (failed != null && context.mounted) {
+      showGhostToast(context, failed, type: GhostToastType.error);
     }
   }
 

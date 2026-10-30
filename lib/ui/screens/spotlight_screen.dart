@@ -2500,10 +2500,10 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   }
 
   Future<void> _openLink(ClipLink link) async {
-    final opened = await openClipLink(link);
-    if (!opened) {
+    final failed = await openClipLink(link);
+    if (failed != null) {
       widget.notificationService?.showToast(
-        message: clipLinkOpenFailedMessage(link),
+        message: failed,
         type: NotificationType.error,
       );
     }

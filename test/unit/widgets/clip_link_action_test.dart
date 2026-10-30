@@ -50,9 +50,9 @@ void main() {
     )!;
 
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    expect(await openClipLink(link), isTrue);
+    expect(await openClipLink(link), isNull);
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    expect(await openClipLink(link), isTrue);
+    expect(await openClipLink(link), isNull);
 
     expect(launcher.launched, [
       (
@@ -63,14 +63,14 @@ void main() {
     ]);
   });
 
-  test('reports a link nothing would open', () async {
+  test('says what went wrong when nothing would open it', () async {
     final link = ClipLink.detect('someone@example.com')!;
 
     launcher.result = false;
-    expect(await openClipLink(link), isFalse);
+    expect(await openClipLink(link), 'No email app is set up on this device');
 
     launcher.failWith = Exception('no handler');
-    expect(await openClipLink(link), isFalse);
+    expect(await openClipLink(link), 'No email app is set up on this device');
   });
 
   test('no Call button on Linux', () {
