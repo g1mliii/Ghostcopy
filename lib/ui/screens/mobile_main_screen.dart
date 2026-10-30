@@ -7,6 +7,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../locator.dart';
+import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../services/auth_service.dart';
@@ -25,6 +26,7 @@ import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
+import '../widgets/clip_link_action.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/native_toast.dart';
 import '../widgets/share_progress_overlay.dart';
@@ -2115,17 +2117,39 @@ class _HistoryRowState extends State<_HistoryRow> {
 
   ContentDetectionResult? _detectionResult;
 
+  /// The link this clip is, if it is one. Cheap and synchronous - one trimmed
+  /// string against a few patterns - so it is worked out here rather than
+  /// cached in the ViewModel like the transformer result.
+  ClipLink? _link;
+
   @override
   void initState() {
     super.initState();
+    _link = clipLinkFor(widget.item);
     unawaited(_detectContentType());
   }
 
   @override
   void didUpdateWidget(_HistoryRow oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.item.content != oldWidget.item.content ||
+        widget.item.contentType != oldWidget.item.contentType) {
+      _link = clipLinkFor(widget.item);
+    }
     if (widget.item.content != oldWidget.item.content) {
       unawaited(_detectContentType());
+    }
+  }
+
+  Future<void> _openLink(BuildContext context, ClipLink link) async {
+    Adaptive.successFeedback();
+    final opened = await openClipLink(link);
+    if (!opened && context.mounted) {
+      showGhostToast(
+        context,
+        clipLinkOpenFailedMessage(link),
+        type: GhostToastType.error,
+      );
     }
   }
 
@@ -2168,7 +2192,8 @@ class _HistoryRowState extends State<_HistoryRow> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-    final hasLeading = item.isImage || item.isFile;
+    final link = _link;
+    final hasLeading = item.isImage || item.isFile || link != null;
 
     return Material(
       color: Colors.transparent,
@@ -2219,6 +2244,17 @@ class _HistoryRowState extends State<_HistoryRow> {
                     ],
                   ),
                 ),
+                if (link != null && canOpenClipLink(link))
+                  IconButton(
+                    onPressed: () => _openLink(context, link),
+                    tooltip: link.actionLabel,
+                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                    color: GhostColors.accentText,
+                    constraints: const BoxConstraints(
+                      minWidth: GhostSpacing.minTouchTarget,
+                      minHeight: GhostSpacing.minTouchTarget,
+                    ),
+                  ),
                 IconButton(
                   onPressed: widget.onCopy,
                   tooltip: 'Copy clip',
@@ -2237,9 +2273,10 @@ class _HistoryRowState extends State<_HistoryRow> {
     );
   }
 
-  /// Thumbnail for an image, or a typed icon tile for a file.
+  /// Thumbnail for an image, or a typed icon tile for a file or a link.
   Widget _buildLeading() {
     final item = widget.item;
+    final link = _link;
 
     return Container(
       width: GhostSpacing.thumbSize,
@@ -2256,6 +2293,8 @@ class _HistoryRowState extends State<_HistoryRow> {
               width: GhostSpacing.thumbSize,
               height: GhostSpacing.thumbSize,
             )
+          : link != null
+          ? ClipLinkGlyph(link: link, size: 23, color: GhostColors.accentText)
           : Icon(_fileIcon(item), color: GhostColors.accentText, size: 23),
     );
   }
@@ -2365,6 +2404,7 @@ class _HistoryRowState extends State<_HistoryRow> {
       data: {'chars': widget.item.content.length},
     );
     final detection = _detectionResult;
+    final link = _link;
 
     unawaited(
       showModalBottomSheet<void>(
@@ -2424,6 +2464,34 @@ class _HistoryRowState extends State<_HistoryRow> {
                     content: widget.item.content,
                     detectionResult: detection,
                     transformerService: widget.transformerService,
+                  ),
+                ],
+                if (link != null && canOpenClipLink(link)) ...[
+                  const SizedBox(height: GhostSpacing.sectionTight),
+                  SizedBox(
+                    width: double.infinity,
+                    height: GhostSpacing.sendButtonHeight,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(_openLink(context, link));
+                      },
+                      icon: ClipLinkGlyph(
+                        link: link,
+                        size: 18,
+                        color: GhostColors.accentText,
+                      ),
+                      label: Text(link.actionLabel),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: GhostColors.textPrimary,
+                        side: const BorderSide(color: GhostColors.glassBorder),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            GhostSpacing.buttonRadius,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
                 const SizedBox(height: GhostSpacing.sectionTight),
