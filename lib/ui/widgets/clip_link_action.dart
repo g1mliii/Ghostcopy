@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -5,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/impl/crash_reporting_service.dart';
+import '../../services/link_handler_service.dart';
 
 /// The icon for a kind of link, before anything is known about which app on
 /// this device would open it.
@@ -63,24 +66,95 @@ String clipLinkOpenFailedMessage(ClipLink link) => switch (link.kind) {
   ClipLinkKind.phone => 'This device cannot place calls',
 };
 
-/// The glyph a link clip shows in place of a thumbnail.
-class ClipLinkGlyph extends StatelessWidget {
+/// What the Open control says: "Open in Google Maps" once this device's
+/// handler is known, the kind's own wording ("Open in Maps") until then.
+String clipLinkActionLabel(ClipLink link) {
+  final handler = LinkHandlerService.instance.cachedHandlerFor(link);
+  return handler == null ? link.actionLabel : 'Open in ${handler.name}';
+}
+
+/// The glyph a link clip shows in place of a thumbnail: the icon of the app
+/// on this device that Open launches, or the kind's generic icon where that
+/// is not known (iOS, which cannot ask; an app with no readable icon; the
+/// first frame of a lookup still in flight).
+class ClipLinkGlyph extends StatefulWidget {
   const ClipLinkGlyph({
     required this.link,
     required this.size,
     required this.color,
+    this.appIconSize,
     super.key,
   });
 
   final ClipLink link;
+
+  /// The generic icon's size.
   final double size;
   final Color color;
 
+  /// The app icon's size, when it should differ from [size]. An app icon is a
+  /// filled square that carries its own padding, so it wants a little more
+  /// room than a line glyph to look the same weight.
+  final double? appIconSize;
+
   @override
-  Widget build(BuildContext context) => Icon(
-    clipLinkIcon(link.kind),
-    size: size,
-    color: color,
-    semanticLabel: link.kindLabel,
-  );
+  State<ClipLinkGlyph> createState() => _ClipLinkGlyphState();
+}
+
+class _ClipLinkGlyphState extends State<ClipLinkGlyph> {
+  LinkHandler? _handler;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(ClipLinkGlyph oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.link.uri != widget.link.uri) _resolve();
+  }
+
+  void _resolve() {
+    final service = LinkHandlerService.instance;
+    final link = widget.link;
+    _handler = service.cachedHandlerFor(link);
+    unawaited(
+      service.handlerFor(link).then((handler) {
+        if (!mounted || widget.link.uri != link.uri || handler == _handler) {
+          return;
+        }
+        setState(() => _handler = handler);
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final handler = _handler;
+    final icon = handler?.icon;
+    if (handler == null || icon == null) {
+      return Icon(
+        clipLinkIcon(widget.link.kind),
+        size: widget.size,
+        color: widget.color,
+        semanticLabel: widget.link.kindLabel,
+      );
+    }
+    final side = widget.appIconSize ?? widget.size;
+    return Image(
+      image: icon,
+      width: side,
+      height: side,
+      semanticLabel: '${widget.link.kindLabel}, opens in ${handler.name}',
+      // A file that has gone since it was found (an app uninstalled while
+      // the history is open) falls back rather than drawing a broken image.
+      errorBuilder: (context, error, stackTrace) => Icon(
+        clipLinkIcon(widget.link.kind),
+        size: widget.size,
+        color: widget.color,
+      ),
+    );
+  }
 }
