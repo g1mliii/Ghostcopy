@@ -72,11 +72,27 @@ class LinkHandlerService {
 
 /// The cache key for [link]'s handler on [platform].
 ///
-/// Kind, scheme and host - not the full URI, or every web link would be a
-/// lookup of its own. The host stays in because Android routes by it: a
-/// google.com/maps link opens Google Maps and a google.com/search link opens
-/// the browser. The kind stays in for the same pair, which share a host.
+/// Kind and scheme, never the full URI, or every web link would be a lookup
+/// of its own. Beyond that it holds what the platform routes by:
+///
+/// - Android routes by host and path - a google.com/maps link opens Google
+///   Maps and google.com/search the browser; docs.google.com/document opens
+///   Docs and docs.google.com/spreadsheets opens Sheets - so for a web link
+///   the host and the first path segment are in. The kind is in for the
+///   first pair, which share a host. A `geo:` or `tel:` path is the place or
+///   number itself, so those go by scheme.
+/// - macOS answers by host at most, so the host is in.
+/// - Windows and Linux associate a whole scheme with one app and their
+///   lookups read nothing else, so more would only repeat the same lookup -
+///   icon extraction included - for every site in the history.
 String linkHandlerCacheKey(ClipLink link, String platform) {
   final uri = link.openUri(platform);
-  return '${link.kind.name}:${uri.scheme}:${uri.host}';
+  final key = '${link.kind.name}:${uri.scheme}';
+  return switch (platform) {
+    'windows' || 'linux' => key,
+    'android' when uri.isScheme('https') || uri.isScheme('http') =>
+      '$key:${uri.host}/${uri.pathSegments.isEmpty ? '' : uri.pathSegments.first}',
+    'android' => key,
+    _ => '$key:${uri.host}',
+  };
 }

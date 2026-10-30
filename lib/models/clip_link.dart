@@ -71,6 +71,7 @@ class ClipLink {
   static final _date = RegExp(
     r'^(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]\d{2,4})$',
   );
+  static final _range = RegExp(r'^[1-9]\d{3,}-\d{4,}$');
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.
@@ -88,7 +89,12 @@ class ClipLink {
     final lower = text.toLowerCase();
     if (lower.startsWith('mailto:')) return _mailto(text);
     if (lower.startsWith('tel:')) {
-      return _phone(Uri.decodeComponent(text.substring(4)), explicit: true);
+      // Through Uri, which turns a stray `%` into `%25`, rather than
+      // decoding the raw text: Uri.decodeComponent throws an ArgumentError on
+      // `tel:%` or `tel:%zz`, and detect runs while a history row builds.
+      final uri = Uri.tryParse(text);
+      if (uri == null || uri.hasQuery || uri.hasFragment) return null;
+      return _phone(Uri.decodeComponent(uri.path), explicit: true);
     }
     if (lower.startsWith('geo:')) return _geo(text);
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
@@ -522,8 +528,16 @@ class ClipLink {
     final digits = number.replaceAll(_nonDigit, '');
     if (digits.length < 7 || digits.length > 15) return null;
     final international = number.startsWith('+');
-    if (!explicit && !international && digits.length == number.length) {
-      return null;
+    if (!explicit && !international) {
+      if (digits.length == number.length) return null;
+      // An ISBN-13 (`978-0-306-40615-7`) is a dashed run of 13 digits too.
+      if (digits.length == 13 &&
+          (digits.startsWith('978') || digits.startsWith('979'))) {
+        return null;
+      }
+      // So is a range (`1000-2000`): two long groups and a dash. A number
+      // written that way starts with a trunk 0 (`0800-123456`).
+      if (_range.hasMatch(number)) return null;
     }
     final dialled = international ? '+$digits' : digits;
     return ClipLink._(

@@ -16,6 +16,9 @@ class _FakeHandlers implements ILinkHandlerService {
 
   @override
   Future<LinkHandler?> handlerFor(ClipLink link) async {
+    // Answers a turn later, as a real lookup does, so the first frame is
+    // drawn before it.
+    await Future<void>.value();
     resolved = true;
     return handler;
   }
@@ -86,5 +89,27 @@ void main() {
     expect(clipLinkActionLabel(meeting), 'Join meeting');
     expect(clipLinkActionLabel(parcel), 'Track package');
     expect(clipLinkActionLabel(song), 'Open in Safari');
+  });
+
+  testWidgets('the Open tooltip names the app once it is known', (
+    tester,
+  ) async {
+    LinkHandlerService.instance = _FakeHandlers(
+      const LinkHandler(name: 'Google Maps'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ClipLinkTooltip(link: link, child: const Text('open')),
+      ),
+    );
+    expect(
+      tester.widget<Tooltip>(find.byType(Tooltip)).message,
+      'Open in Maps',
+    );
+    await tester.pump();
+    expect(
+      tester.widget<Tooltip>(find.byType(Tooltip)).message,
+      'Open in Google Maps',
+    );
   });
 }

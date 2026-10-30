@@ -104,6 +104,12 @@ void main() {
         ClipLink.detect('tel:4165550199')!.uri.toString(),
         'tel:4165550199',
       );
+      expect(ClipLink.detect('0800-123456')!.kind, ClipLinkKind.phone);
+      expect(ClipLink.detect('555-1234')!.kind, ClipLinkKind.phone);
+      expect(
+        ClipLink.detect('tel:%2B14165550199')!.uri.toString(),
+        'tel:+14165550199',
+      );
     });
 
     test('things that only look like phone numbers stay text', () {
@@ -115,6 +121,10 @@ void main() {
         '1.2.3',
         '4111 1111 1111 1111', // a card number has too many digits
         '+12', // too few
+        '978-0-306-40615-7', // an ISBN
+        '1000-2000', // a range
+        'tel:%', // a stray escape must not throw while a row builds
+        'tel:%zz',
       ]) {
         expect(ClipLink.detect(text), isNull, reason: text);
       }

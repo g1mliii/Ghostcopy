@@ -116,6 +116,53 @@ String clipLinkActionLabel(ClipLink link) {
   }
 }
 
+/// A [Tooltip] saying [clipLinkActionLabel], which rebuilds once this
+/// device's handler is known.
+///
+/// The label is read from the handler cache, and the row that holds the Open
+/// button builds before the lookup [ClipLinkGlyph] starts has answered; only
+/// the glyph rebuilds when it does, so a plain Tooltip would keep "Open link"
+/// where the row's own glyph already shows Chrome.
+class ClipLinkTooltip extends StatefulWidget {
+  const ClipLinkTooltip({required this.link, required this.child, super.key});
+
+  final ClipLink link;
+  final Widget child;
+
+  @override
+  State<ClipLinkTooltip> createState() => _ClipLinkTooltipState();
+}
+
+class _ClipLinkTooltipState extends State<ClipLinkTooltip> {
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(ClipLinkTooltip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.link.uri != widget.link.uri) _resolve();
+  }
+
+  void _resolve() {
+    final service = LinkHandlerService.instance;
+    final link = widget.link;
+    if (service.cachedHandlerFor(link) != null) return;
+    unawaited(
+      service.handlerFor(link).then((handler) {
+        if (handler == null || !mounted || widget.link.uri != link.uri) return;
+        setState(() {});
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Tooltip(message: clipLinkActionLabel(widget.link), child: widget.child);
+}
+
 /// The glyph a link clip shows in place of a thumbnail: the icon of the app
 /// on this device that Open launches, or the kind's generic icon where that
 /// is not known (iOS, which cannot ask; an app with no readable icon; the

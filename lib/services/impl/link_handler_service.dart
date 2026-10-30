@@ -52,10 +52,14 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
 
   /// An icon is decoration: anything that goes wrong finding it leaves the
   /// generic glyph, never an error the user sees.
+  ///
+  /// Object, not Exception: the Windows lookup is FFI and image encoding, and
+  /// what those throw (ArgumentError, RangeError) are Errors. One escaping
+  /// would be cached in `_pending` and rethrown, unhandled, to every row.
   Future<LinkHandler?> _lookUpSafely(Uri uri) async {
     try {
       return await lookUp(uri);
-    } on Exception catch (e) {
+    } on Object catch (e) {
       debugPrint('[LinkHandler] No handler for ${uri.scheme}: $e');
       return null;
     }

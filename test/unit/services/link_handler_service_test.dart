@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clip_link.dart';
 import 'package:ghostcopy/services/impl/link_handler_service.dart';
+import 'package:ghostcopy/services/link_handler_service.dart';
 import 'package:ghostcopy/utils/xdg.dart';
 
 void main() {
@@ -242,4 +243,54 @@ Name=New Window
       '/home/u/.local/share',
     );
   });
+
+  test(
+    'an Error from a lookup is the generic glyph, not a cached throw',
+    () async {
+      final service = _ThrowingService();
+      final link = ClipLink.detect('https://example.com')!;
+      expect(await service.handlerFor(link), isNull);
+      expect(await service.handlerFor(link), isNull);
+      expect(service.calls, 1);
+    },
+  );
+
+  test('the cache key holds what each platform routes by', () {
+    String key(String url, String platform) =>
+        linkHandlerCacheKey(ClipLink.detect(url)!, platform);
+
+    // Windows and Linux: the scheme decides.
+    expect(
+      key('https://a.com/x', 'windows'),
+      key('https://b.org/y', 'windows'),
+    );
+    expect(key('https://a.com/x', 'linux'), key('https://b.org/y', 'linux'));
+    // macOS: per host.
+    expect(
+      key('https://a.com/x', 'macos'),
+      isNot(key('https://b.org/x', 'macos')),
+    );
+    expect(key('https://a.com/x', 'macos'), key('https://a.com/y', 'macos'));
+    // Android: per host and first path segment - Docs and Sheets apart.
+    expect(
+      key('https://docs.google.com/document/d/1', 'android'),
+      isNot(key('https://docs.google.com/spreadsheets/d/1', 'android')),
+    );
+    expect(
+      key('https://docs.google.com/document/d/1', 'android'),
+      key('https://docs.google.com/document/d/2', 'android'),
+    );
+  });
+}
+
+class _ThrowingService extends CachingLinkHandlerService {
+  _ThrowingService() : super(platform: 'windows');
+
+  int calls = 0;
+
+  @override
+  Future<LinkHandler?> lookUp(Uri uri) async {
+    calls++;
+    throw RangeError('odd icon');
+  }
 }
