@@ -83,6 +83,19 @@ void main() {
     expect(_label(link), 'Open in Waze');
   });
 
+  test('calls, meetings and parcels keep their own wording', () async {
+    final service = _FakeHandlers(const LinkHandler(name: 'Safari'));
+    LinkHandlerService.instance = service;
+    final meeting = ClipLink.detect('https://zoom.us/j/81234567890')!;
+    final parcel = ClipLink.detect('1Z879E930346834440')!;
+    final song = ClipLink.detect('https://open.spotify.com/track/abc')!;
+    await service.handlerFor(meeting);
+
+    expect(_label(meeting), 'Join meeting');
+    expect(_label(parcel), 'Track package');
+    expect(_label(song), 'Open in Safari');
+  });
+
   testWidgets('the Open tooltip names the app once it is known', (
     tester,
   ) async {

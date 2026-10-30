@@ -17,7 +17,19 @@ IconData clipLinkIcon(ClipLinkKind kind) => switch (kind) {
   ClipLinkKind.map => Icons.map_outlined,
   ClipLinkKind.email => Icons.mail_outline,
   ClipLinkKind.phone => Icons.phone_outlined,
+  ClipLinkKind.meeting => Icons.videocam_outlined,
+  ClipLinkKind.music => Icons.music_note_outlined,
+  ClipLinkKind.video => Icons.play_circle_outline,
+  ClipLinkKind.tracking => Icons.local_shipping_outlined,
+  ClipLinkKind.app => Icons.launch,
 };
+
+/// The icon for [link]'s second action.
+IconData clipLinkAlternateIcon(ClipLinkAlternate alternate) =>
+    switch (alternate.kind) {
+      ClipLinkAlternateKind.text => Icons.sms_outlined,
+      ClipLinkAlternateKind.findElsewhere => Icons.queue_music,
+    };
 
 /// The link [item] is, when it is a plain-text clip that is one.
 ///
@@ -35,37 +47,63 @@ String get currentLinkPlatform => deviceTypeFor(defaultTargetPlatform);
 /// Whether this device can open [link] at all - no Call button on Linux.
 bool canOpenClipLink(ClipLink link) => link.canOpenOn(currentLinkPlatform);
 
+/// [link]'s second action on this device, if it has one.
+ClipLinkAlternate? clipLinkAlternate(ClipLink? link) =>
+    link?.alternateOn(currentLinkPlatform);
+
 /// Hands [link] to whatever this device opens that kind of link with.
 ///
 /// Returns null when something took it, and otherwise what to tell the user,
 /// so a caller only has to show it. Always an external application: a link
 /// opened inside GhostCopy's own window would leave the user in a browser
 /// with no address bar, inside a clipboard app.
-Future<String?> openClipLink(ClipLink link) async {
-  recordDiagnostic('ui', '${link.kindLabel} link opened');
+///
+/// With [alternate], does [ClipLink.alternateOn] instead: texts the number,
+/// or finds the song elsewhere.
+Future<String?> openClipLink(ClipLink link, {bool alternate = false}) async {
+  final platform = currentLinkPlatform;
+  final second = alternate ? link.alternateOn(platform) : null;
+  final target = alternate ? second?.uri : link.openUri(platform);
+  recordDiagnostic(
+    'ui',
+    '${link.kindLabel} link ${alternate ? 'alternate ' : ''}opened',
+  );
   try {
-    final opened = await launchUrl(
-      link.openUri(currentLinkPlatform),
-      mode: LaunchMode.externalApplication,
-    );
-    if (opened) return null;
+    if (target != null &&
+        await launchUrl(target, mode: LaunchMode.externalApplication)) {
+      return null;
+    }
   } on Exception catch (e) {
     debugPrint('[ClipLink] Could not open ${link.kind.name} link: $e');
   }
-  return _openFailedMessage(link);
+  return _openFailedMessage(link, second);
 }
 
-String _openFailedMessage(ClipLink link) => switch (link.kind) {
-  ClipLinkKind.web => 'No browser could open this link',
-  ClipLinkKind.map => 'No maps app could open this place',
-  ClipLinkKind.email => 'No email app is set up on this device',
-  ClipLinkKind.phone => 'This device cannot place calls',
-};
+String _openFailedMessage(ClipLink link, ClipLinkAlternate? alternate) =>
+    switch (alternate?.kind) {
+      ClipLinkAlternateKind.text => 'This device cannot send texts',
+      ClipLinkAlternateKind.findElsewhere => 'No browser could open this link',
+      null => switch (link.kind) {
+        ClipLinkKind.web ||
+        ClipLinkKind.video ||
+        ClipLinkKind.tracking => 'No browser could open this link',
+        ClipLinkKind.map => 'No maps app could open this place',
+        ClipLinkKind.email => 'No email app is set up on this device',
+        ClipLinkKind.phone => 'This device cannot place calls',
+        ClipLinkKind.meeting => 'No app on this device can join this meeting',
+        ClipLinkKind.music ||
+        ClipLinkKind.app => 'No app on this device opens ${link.service} links',
+      },
+    };
 
 /// What the Open control says: "Open in Google Maps" once this device's
-/// [handler] is known, the kind's own wording ("Open in Maps") until then.
+/// [handler] is known, the kind's own wording ("Open in Maps") until then -
+/// and always, for the kinds whose verb says more than an app's name
+/// ([ClipLink.namesHandler]).
 String clipLinkActionLabel(ClipLink link, LinkHandler? handler) =>
-    handler == null ? link.actionLabel : 'Open in ${handler.name}';
+    handler == null || !link.namesHandler
+    ? link.actionLabel
+    : 'Open in ${handler.name}';
 
 /// Builds with this device's handler for [link] - null until the lookup
 /// answers, and for good where it finds nothing - and again when it answers.

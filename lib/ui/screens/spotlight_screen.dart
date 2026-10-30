@@ -2499,8 +2499,8 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     }
   }
 
-  Future<void> _openLink(ClipLink link) async {
-    final failed = await openClipLink(link);
+  Future<void> _openLink(ClipLink link, {bool alternate = false}) async {
+    final failed = await openClipLink(link, alternate: alternate);
     if (failed != null) {
       widget.notificationService?.showToast(
         message: failed,
@@ -2688,6 +2688,17 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
               ],
             ),
           ),
+        if (clipLinkAlternate(_link) case final alternate?)
+          PopupMenuItem<String>(
+            value: 'alternate',
+            child: Row(
+              children: [
+                Icon(clipLinkAlternateIcon(alternate), size: 16),
+                const SizedBox(width: 12),
+                Text(alternate.label),
+              ],
+            ),
+          ),
         const PopupMenuItem<String>(
           value: 'copy',
           child: Row(
@@ -2724,6 +2735,8 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       final link = _link;
       if (value == 'open' && link != null) {
         unawaited(_openLink(link));
+      } else if (value == 'alternate' && link != null) {
+        unawaited(_openLink(link, alternate: true));
       } else if (value == 'copy') {
         widget.onTap();
       } else if (value == 'save') {
