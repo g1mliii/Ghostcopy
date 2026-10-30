@@ -16,6 +16,17 @@ IconData clipLinkIcon(ClipLinkKind kind) => switch (kind) {
   ClipLinkKind.map => Icons.map_outlined,
   ClipLinkKind.email => Icons.mail_outline,
   ClipLinkKind.phone => Icons.phone_outlined,
+  ClipLinkKind.meeting => Icons.videocam_outlined,
+  ClipLinkKind.music => Icons.music_note_outlined,
+  ClipLinkKind.video => Icons.play_circle_outline,
+  ClipLinkKind.tracking => Icons.local_shipping_outlined,
+  ClipLinkKind.app => Icons.launch,
+};
+
+/// The icon for [link]'s second action.
+IconData clipLinkAlternateIcon(ClipLink link) => switch (link.kind) {
+  ClipLinkKind.phone => Icons.sms_outlined,
+  _ => Icons.queue_music,
 };
 
 /// The link [item] is, when it is a plain-text clip that is one.
@@ -40,18 +51,29 @@ String get currentLinkPlatform => switch (defaultTargetPlatform) {
 /// Whether this device can open [link] at all - no Call button on Linux.
 bool canOpenClipLink(ClipLink link) => link.canOpenOn(currentLinkPlatform);
 
+/// Whether this device can do [link]'s second action.
+bool canAlternateClipLink(ClipLink link) =>
+    link.canAlternateOn(currentLinkPlatform);
+
 /// Hands [link] to whatever this device opens that kind of link with.
 ///
 /// Returns false when nothing took it, so the caller can say so. Always an
 /// external application: a link opened inside GhostCopy's own window would
 /// leave the user in a browser with no address bar, inside a clipboard app.
-Future<bool> openClipLink(ClipLink link) async {
-  recordDiagnostic('ui', '${link.kindLabel} link opened');
+///
+/// With [alternate], does [ClipLink.alternate] instead: texts the number, or
+/// finds the song elsewhere.
+Future<bool> openClipLink(ClipLink link, {bool alternate = false}) async {
+  final target = alternate
+      ? link.alternate?.uri
+      : link.openUri(currentLinkPlatform);
+  if (target == null) return false;
+  recordDiagnostic(
+    'ui',
+    '${link.kindLabel} link ${alternate ? 'alternate ' : ''}opened',
+  );
   try {
-    return await launchUrl(
-      link.openUri(currentLinkPlatform),
-      mode: LaunchMode.externalApplication,
-    );
+    return await launchUrl(target, mode: LaunchMode.externalApplication);
   } on Exception catch (e) {
     debugPrint('[ClipLink] Could not open ${link.kind.name} link: $e');
     return false;
@@ -59,18 +81,39 @@ Future<bool> openClipLink(ClipLink link) async {
 }
 
 /// What to say when [openClipLink] returns false.
-String clipLinkOpenFailedMessage(ClipLink link) => switch (link.kind) {
-  ClipLinkKind.web => 'No browser could open this link',
-  ClipLinkKind.map => 'No maps app could open this place',
-  ClipLinkKind.email => 'No email app is set up on this device',
-  ClipLinkKind.phone => 'This device cannot place calls',
-};
+String clipLinkOpenFailedMessage(ClipLink link, {bool alternate = false}) {
+  if (alternate) {
+    return link.kind == ClipLinkKind.phone
+        ? 'This device cannot send texts'
+        : 'No browser could open this link';
+  }
+  return switch (link.kind) {
+    ClipLinkKind.web ||
+    ClipLinkKind.video ||
+    ClipLinkKind.tracking => 'No browser could open this link',
+    ClipLinkKind.map => 'No maps app could open this place',
+    ClipLinkKind.email => 'No email app is set up on this device',
+    ClipLinkKind.phone => 'This device cannot place calls',
+    ClipLinkKind.meeting => 'No app on this device can join this meeting',
+    ClipLinkKind.music ||
+    ClipLinkKind.app => 'No app on this device opens ${link.service} links',
+  };
+}
 
 /// What the Open control says: "Open in Google Maps" once this device's
 /// handler is known, the kind's own wording ("Open in Maps") until then.
+///
+/// Calls, meetings and parcels keep their own wording even then: "Join
+/// meeting" and "Track package" say more than "Open in Zoom" or "Open in
+/// Safari" would.
 String clipLinkActionLabel(ClipLink link) {
-  final handler = LinkHandlerService.instance.cachedHandlerFor(link);
-  return handler == null ? link.actionLabel : 'Open in ${handler.name}';
+  switch (link.kind) {
+    case ClipLinkKind.phone || ClipLinkKind.meeting || ClipLinkKind.tracking:
+      return link.actionLabel;
+    case _:
+      final handler = LinkHandlerService.instance.cachedHandlerFor(link);
+      return handler == null ? link.actionLabel : 'Open in ${handler.name}';
+  }
 }
 
 /// The glyph a link clip shows in place of a thumbnail: the icon of the app

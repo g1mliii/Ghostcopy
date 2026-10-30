@@ -112,7 +112,6 @@ void main() {
         '123456',
         '2026-10-30',
         '30/10/2026',
-        '192.168.1.10',
         '1.2.3',
         '4111 1111 1111 1111', // a card number has too many digits
         '+12', // too few
@@ -227,5 +226,231 @@ void main() {
     expect(phone.canOpenOn('linux'), isFalse);
     expect(phone.canOpenOn('windows'), isTrue);
     expect(ClipLink.detect('https://example.com')!.canOpenOn('linux'), isTrue);
+  });
+
+  group('more kinds', () {
+    test('street addresses open as a maps search', () {
+      for (final (text, label) in [
+        ('123 Main St', '123 Main St'),
+        (
+          '1600 Amphitheatre Pkwy, Mountain View, CA 94043',
+          '1600 Amphitheatre Pkwy, Mountain View, CA 94043',
+        ),
+        ('290 Bremner Blvd\nToronto, ON M5V 3L9', '290 Bremner Blvd'),
+        ('221B Baker Street\nLondon NW1 6XE', '221B Baker Street'),
+        (
+          '350 rue Sherbrooke Ouest, Montréal',
+          '350 rue Sherbrooke Ouest, Montréal',
+        ),
+        ('Friedrichstraße 43', 'Friedrichstraße 43'),
+        ('Hauptstraße 5, 10115 Berlin', 'Hauptstraße 5, 10115 Berlin'),
+        ('Unit 4, 55 Queen St E', 'Unit 4, 55 Queen St E'),
+        ('10 Downing Street', '10 Downing Street'),
+      ]) {
+        final link = ClipLink.detect(text);
+        expect(link?.kind, ClipLinkKind.map, reason: text);
+        expect(link!.label, label, reason: text);
+        expect(link.uri.scheme, 'geo');
+      }
+      final multi = ClipLink.detect('290 Bremner Blvd\nToronto, ON M5V 3L9')!;
+      expect(
+        multi.openUri('android').toString(),
+        'geo:0,0?q=290+Bremner+Blvd%2C+Toronto%2C+ON+M5V+3L9',
+      );
+      expect(
+        multi.openUri('windows').queryParameters['query'],
+        '290 Bremner Blvd, Toronto, ON M5V 3L9',
+      );
+      expect(
+        multi.openUri('ios').queryParameters['q'],
+        '290 Bremner Blvd, Toronto, ON M5V 3L9',
+      );
+    });
+
+    test('things that are not addresses stay text', () {
+      for (final text in [
+        'meet me at 5',
+        '5 people went to the big party on Main St last night',
+        'Shopping list\nmilk\neggs',
+        'line 1\nline 2\nline 3\nline 4\nline 5',
+        'Dear Sam,\nThanks for the 3 boxes.\nBest',
+        'email me at a@b.co, 12 Main St',
+      ]) {
+        expect(
+          ClipLink.detect(text)?.kind,
+          isNot(ClipLinkKind.map),
+          reason: text,
+        );
+      }
+    });
+
+    test('coordinates, decimal and degrees', () {
+      final decimal = ClipLink.detect('43.64263, -79.38712')!;
+      expect(decimal.kind, ClipLinkKind.map);
+      expect(decimal.uri.toString(), 'geo:43.64263,-79.38712');
+      expect(decimal.openUri('android').toString(), 'geo:43.64263,-79.38712');
+
+      final dms = ClipLink.detect('43°38\'33.5"N 79°23\'13.6"W')!;
+      expect(dms.kind, ClipLinkKind.map);
+      expect(dms.uri.toString(), 'geo:43.642639,-79.387111');
+
+      // Two ordinary numbers, or out of range.
+      expect(ClipLink.detect('1.5, 2.5'), isNull);
+      expect(ClipLink.detect('95.12345, 10.12345'), isNull);
+    });
+
+    test('phone numbers can be texted too', () {
+      final phone = ClipLink.detect('+1 416 555 0199')!;
+      expect(phone.alternate!.label, 'Text');
+      expect(phone.alternate!.uri.toString(), 'sms:+14165550199');
+      expect(phone.canAlternateOn('macos'), isTrue);
+      expect(phone.canAlternateOn('linux'), isFalse);
+      expect(ClipLink.detect('https://example.com')!.alternate, isNull);
+    });
+
+    test('meeting links', () {
+      for (final (url, service) in [
+        ('https://us02web.zoom.us/j/81234567890?pwd=abc', 'Zoom'),
+        ('https://zoom.us/j/81234567890', 'Zoom'),
+        ('https://meet.google.com/abc-defg-hij', 'Google Meet'),
+        (
+          'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0',
+          'Microsoft Teams',
+        ),
+        ('https://teams.live.com/meet/9876543210', 'Microsoft Teams'),
+        ('https://acme.webex.com/meet/jdoe', 'Webex'),
+        ('https://facetime.apple.com/join#v=1&p=abc', 'FaceTime'),
+        ('zoommtg://zoom.us/join?confno=81234567890', 'Zoom'),
+        ('msteams:/l/meetup-join/19%3ameeting_abc', 'Microsoft Teams'),
+      ]) {
+        final link = ClipLink.detect(url);
+        expect(link?.kind, ClipLinkKind.meeting, reason: url);
+        expect(link!.service, service, reason: url);
+        expect(link.actionLabel, 'Join meeting');
+      }
+      // A Zoom page that is not a meeting.
+      expect(
+        ClipLink.detect('https://zoom.us/pricing')!.kind,
+        ClipLinkKind.web,
+      );
+      expect(
+        ClipLink.detect('https://meet.google.com/')!.kind,
+        ClipLinkKind.web,
+      );
+    });
+
+    test('music links, with a way to find them elsewhere', () {
+      for (final (url, service) in [
+        ('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC', 'Spotify'),
+        ('https://music.apple.com/ca/album/x/123?i=456', 'Apple Music'),
+        ('https://music.youtube.com/watch?v=abc', 'YouTube Music'),
+        ('https://soundcloud.com/artist/track', 'SoundCloud'),
+        ('https://tidal.com/browse/track/123', 'TIDAL'),
+        ('https://www.deezer.com/track/123', 'Deezer'),
+        ('https://music.amazon.ca/albums/B0', 'Amazon Music'),
+        ('https://artist.bandcamp.com/album/x', 'Bandcamp'),
+        ('https://podcasts.apple.com/us/podcast/x/id1', 'Apple Podcasts'),
+      ]) {
+        final link = ClipLink.detect(url);
+        expect(link?.kind, ClipLinkKind.music, reason: url);
+        expect(link!.service, service, reason: url);
+        expect(link.actionLabel, 'Open in $service');
+        expect(
+          link.alternate!.uri.toString(),
+          'https://song.link/$url',
+          reason: url,
+        );
+      }
+
+      final uri = ClipLink.detect('spotify:track:4uLU6hMCjMI75M1A2tKUQC')!;
+      expect(uri.kind, ClipLinkKind.music);
+      expect(
+        uri.uri.toString(),
+        'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC',
+      );
+    });
+
+    test('video links', () {
+      for (final (url, service) in [
+        ('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'YouTube'),
+        ('https://youtu.be/dQw4w9WgXcQ', 'YouTube'),
+        ('https://vimeo.com/123456', 'Vimeo'),
+        ('https://www.twitch.tv/somebody', 'Twitch'),
+        ('https://www.tiktok.com/@user/video/1', 'TikTok'),
+      ]) {
+        final link = ClipLink.detect(url);
+        expect(link?.kind, ClipLinkKind.video, reason: url);
+        expect(link!.actionLabel, 'Watch on $service');
+      }
+    });
+
+    test('tracking numbers, checked against their check digit', () {
+      final ups = ClipLink.detect('1Z879E930346834440')!;
+      expect(ups.kind, ClipLinkKind.tracking);
+      expect(ups.service, 'UPS');
+      expect(ups.uri.queryParameters['tracknum'], '1Z879E930346834440');
+      expect(ups.actionLabel, 'Track package');
+      expect(ClipLink.detect('1z879e930346834440')!.service, 'UPS');
+
+      final usps = ClipLink.detect('9400111899223197428490')!;
+      expect(usps.service, 'USPS');
+
+      expect(ClipLink.detect('RR123456785CA')!.service, 'Canada Post');
+      expect(ClipLink.detect('LM473124829US')!.service, 'USPS');
+      expect(ClipLink.detect('RA123456785GB')!.service, 'Royal Mail');
+      expect(ClipLink.detect('RA123456785AU')!.service, 'Australia Post');
+      expect(ClipLink.detect('RA123456785DE')!.service, 'Post');
+
+      // Wrong check digit, or the right shape for nothing in particular.
+      expect(ClipLink.detect('1Z879E930346834441'), isNull);
+      expect(ClipLink.detect('RA123456780DE'), isNull);
+      expect(ClipLink.detect('123456789012'), isNull);
+    });
+
+    test('links into apps, and only known ones', () {
+      final obsidian = ClipLink.detect(
+        'obsidian://open?vault=Notes&file=Inbox',
+      )!;
+      expect(obsidian.kind, ClipLinkKind.app);
+      expect(obsidian.service, 'Obsidian');
+      expect(obsidian.actionLabel, 'Open in Obsidian');
+      expect(
+        ClipLink.detect('slack://channel?team=T1&id=C1')!.service,
+        'Slack',
+      );
+      expect(
+        ClipLink.detect('vscode://file/home/u/a.dart')!.service,
+        'VS Code',
+      );
+
+      for (final text in [
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+        'intent://scan/#Intent;scheme=zxing;end',
+        'ms-msdt:/id PCWDiagnostic',
+        'search-ms:query=x',
+        'obsidian:',
+        'notascheme://x',
+      ]) {
+        expect(ClipLink.detect(text), isNull, reason: text);
+      }
+    });
+
+    test('local and dev addresses open in the browser', () {
+      for (final (text, url) in [
+        ('localhost:3000', 'http://localhost:3000'),
+        ('192.168.1.1', 'http://192.168.1.1'),
+        ('10.0.0.5:8080/admin', 'http://10.0.0.5:8080/admin'),
+        ('printer.local', 'http://printer.local'),
+        ('nas.lan:5000', 'http://nas.lan:5000'),
+        ('example.com:8443', 'http://example.com:8443'),
+      ]) {
+        final link = ClipLink.detect(text);
+        expect(link?.kind, ClipLinkKind.web, reason: text);
+        expect(link!.uri.toString(), url);
+      }
+      expect(ClipLink.detect('999.1.1.1'), isNull);
+      expect(ClipLink.detect('1.2.3.4.5'), isNull);
+    });
   });
 }

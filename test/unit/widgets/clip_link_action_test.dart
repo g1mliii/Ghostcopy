@@ -93,4 +93,25 @@ void main() {
     );
     expect(clipLinkFor(_item('hello', ContentType.text)), isNull);
   });
+
+  test('the second action texts the number or finds the song', () async {
+    final phone = ClipLink.detect('+1 416 555 0199')!;
+    final song = ClipLink.detect('https://music.apple.com/ca/album/x/1')!;
+    expect(await openClipLink(phone, alternate: true), isTrue);
+    expect(await openClipLink(song, alternate: true), isTrue);
+    expect(launcher.launched.map((l) => l.$1), [
+      'sms:+14165550199',
+      'https://song.link/https://music.apple.com/ca/album/x/1',
+    ]);
+
+    // Nothing second to do with a web link.
+    expect(
+      await openClipLink(ClipLink.detect('https://a.com')!, alternate: true),
+      isFalse,
+    );
+
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    expect(canAlternateClipLink(phone), isFalse);
+    expect(canAlternateClipLink(song), isTrue);
+  });
 }

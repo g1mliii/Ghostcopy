@@ -2141,13 +2141,17 @@ class _HistoryRowState extends State<_HistoryRow> {
     }
   }
 
-  Future<void> _openLink(BuildContext context, ClipLink link) async {
+  Future<void> _openLink(
+    BuildContext context,
+    ClipLink link, {
+    bool alternate = false,
+  }) async {
     Adaptive.successFeedback();
-    final opened = await openClipLink(link);
+    final opened = await openClipLink(link, alternate: alternate);
     if (!opened && context.mounted) {
       showGhostToast(
         context,
-        clipLinkOpenFailedMessage(link),
+        clipLinkOpenFailedMessage(link, alternate: alternate),
         type: GhostToastType.error,
       );
     }
@@ -2399,6 +2403,34 @@ class _HistoryRowState extends State<_HistoryRow> {
     return '${targets.length} devices';
   }
 
+  /// A full-width outlined button above the sheet's Copy button, for opening
+  /// a link clip or for its second action (Text, Find on other services).
+  static Widget _sheetLinkButton({
+    required Widget icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(top: GhostSpacing.sectionTight),
+      child: SizedBox(
+        width: double.infinity,
+        height: GhostSpacing.sendButtonHeight,
+        child: OutlinedButton.icon(
+          onPressed: onPressed,
+          icon: icon,
+          label: Text(label),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: GhostColors.textPrimary,
+            side: const BorderSide(color: GhostColors.glassBorder),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(GhostSpacing.buttonRadius),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Full clip in a sheet: the whole content, plus the smart actions that no
   /// longer fit in a row.
   void _showDetail(BuildContext context) {
@@ -2471,34 +2503,33 @@ class _HistoryRowState extends State<_HistoryRow> {
                     transformerService: widget.transformerService,
                   ),
                 ],
-                if (link != null && canOpenClipLink(link)) ...[
-                  const SizedBox(height: GhostSpacing.sectionTight),
-                  SizedBox(
-                    width: double.infinity,
-                    height: GhostSpacing.sendButtonHeight,
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.of(sheetContext).pop();
-                        unawaited(_openLink(context, link));
-                      },
-                      icon: ClipLinkGlyph(
-                        link: link,
-                        size: 18,
-                        color: GhostColors.accentText,
-                      ),
-                      label: Text(clipLinkActionLabel(link)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: GhostColors.textPrimary,
-                        side: const BorderSide(color: GhostColors.glassBorder),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(
-                            GhostSpacing.buttonRadius,
-                          ),
-                        ),
-                      ),
+                if (link != null && canOpenClipLink(link))
+                  _sheetLinkButton(
+                    icon: ClipLinkGlyph(
+                      link: link,
+                      size: 18,
+                      color: GhostColors.accentText,
                     ),
+                    label: clipLinkActionLabel(link),
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_openLink(context, link));
+                    },
                   ),
-                ],
+                if (link?.alternate case final alternate?
+                    when canAlternateClipLink(link!))
+                  _sheetLinkButton(
+                    icon: Icon(
+                      clipLinkAlternateIcon(link),
+                      size: 18,
+                      color: GhostColors.accentText,
+                    ),
+                    label: alternate.label,
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_openLink(context, link, alternate: true));
+                    },
+                  ),
                 const SizedBox(height: GhostSpacing.sectionTight),
                 SizedBox(
                   width: double.infinity,

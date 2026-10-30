@@ -1,8 +1,29 @@
 /// What kind of openable thing a clip is.
-enum ClipLinkKind { web, map, email, phone }
+enum ClipLinkKind {
+  web,
+  map,
+  email,
+  phone,
+  meeting,
+  music,
+  video,
+  tracking,
+  app,
+}
+
+/// A second thing to do with a link, beside opening it: text a phone number,
+/// find a song on another service.
+class ClipLinkAlternate {
+  const ClipLinkAlternate(this.label, this.uri);
+
+  final String label;
+  final Uri uri;
+}
 
 /// A text clip that is, in its entirety, something the receiving device can
-/// open: a web page, a place, an email address or a phone number.
+/// open: a web page, a place or street address, an email address, a phone
+/// number, a meeting, a song or video, a parcel to track, or a link into an
+/// app.
 ///
 /// Whole-clip only. A paragraph that happens to contain a URL stays a
 /// paragraph - the row would otherwise have to pick one of several links, and
@@ -14,12 +35,21 @@ enum ClipLinkKind { web, map, email, phone }
 /// opens in a browser tab on Android unless it is turned into a `geo:` URI
 /// first.
 class ClipLink {
-  const ClipLink._(this.kind, this.uri, this.label);
+  const ClipLink._(this.kind, this.uri, this.label, {this.service});
+
+  ClipLink._parcel(String carrier, Uri page, String number)
+    : this._(ClipLinkKind.tracking, page, number, service: carrier);
 
   final ClipLinkKind kind;
 
+  /// The service or app a link belongs to, where the kind has one: "Zoom",
+  /// "Spotify", "YouTube", "UPS", "Obsidian".
+  final String? service;
+
   /// The link as sent, with a scheme added where the clip had none
-  /// (`www.example.com`, a bare address, a formatted phone number).
+  /// (`www.example.com`, a bare address, a formatted phone number), or the
+  /// link a clip that is not one stands for: `geo:` for a street address or
+  /// coordinates, the carrier's page for a tracking number.
   final Uri uri;
 
   /// Short text naming what the link points at: the site's host, the place,
@@ -46,11 +76,14 @@ class ClipLink {
   /// The link this clip is, or null when it is not one.
   static ClipLink? detect(String content) {
     final text = content.trim();
-    if (text.isEmpty || text.length > maxLength || text.contains('\n')) {
-      return null;
+    if (text.isEmpty || text.length > maxLength) return null;
+    // An address is the one kind that spans lines.
+    if (text.contains('\n')) return _address(text);
+    // Coordinates, phone numbers and addresses are the kinds written with
+    // spaces in them.
+    if (text.contains(_whitespace)) {
+      return _coordinates(text) ?? _phone(text) ?? _address(text);
     }
-    // Phone numbers are the only kind written with spaces in them.
-    if (text.contains(_whitespace)) return _phone(text);
 
     final lower = text.toLowerCase();
     if (lower.startsWith('mailto:')) return _mailto(text);
@@ -69,7 +102,11 @@ class ClipLink {
         text,
       );
     }
-    return _phone(text);
+    return _coordinates(text) ??
+        _tracking(text) ??
+        _appLink(text) ??
+        _localAddress(text) ??
+        _phone(text);
   }
 
   static ClipLink? _http(String text) {
@@ -84,7 +121,372 @@ class ClipLink {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
     }
     final site = host.startsWith('www.') ? host.substring(4) : host;
+    for (final (kind, services) in _webServices) {
+      for (final (name, matches) in services) {
+        if (matches(site, uri)) {
+          return ClipLink._(kind, uri, name, service: name);
+        }
+      }
+    }
     return ClipLink._(ClipLinkKind.web, uri, site);
+  }
+
+  static final _meetCode = RegExp('^/[a-z]{3}-[a-z]{4}-[a-z]{3}');
+  static final _amazonMusic = RegExp(r'^music\.amazon\.[a-z.]+$');
+
+  static bool _hostIs(String host, String domain) =>
+      host == domain || host.endsWith('.$domain');
+
+  static bool _pathStarts(Uri uri, String prefix) =>
+      uri.path.toLowerCase().startsWith(prefix);
+
+  /// Web links that belong to a service with an app of its own, by kind.
+  /// Checked in order, so YouTube Music is music before YouTube is video.
+  static final List<
+    (ClipLinkKind, List<(String, bool Function(String host, Uri uri))>)
+  >
+  _webServices = [
+    (
+      ClipLinkKind.meeting,
+      [
+        (
+          'Zoom',
+          (h, u) =>
+              _hostIs(h, 'zoom.us') &&
+              (_pathStarts(u, '/j/') ||
+                  _pathStarts(u, '/my/') ||
+                  _pathStarts(u, '/w/') ||
+                  _pathStarts(u, '/s/')),
+        ),
+        (
+          'Google Meet',
+          (h, u) => h == 'meet.google.com' && _meetCode.hasMatch(u.path),
+        ),
+        (
+          'Microsoft Teams',
+          (h, u) =>
+              (h == 'teams.microsoft.com' &&
+                  u.path.contains('/l/meetup-join')) ||
+              (h == 'teams.live.com' && _pathStarts(u, '/meet')),
+        ),
+        (
+          'Webex',
+          (h, u) =>
+              _hostIs(h, 'webex.com') &&
+              (u.path.contains('/meet/') ||
+                  u.path.contains('/join/') ||
+                  u.path.contains('j.php')),
+        ),
+        ('FaceTime', (h, u) => h == 'facetime.apple.com'),
+        ('Whereby', (h, u) => h == 'whereby.com' && u.path.length > 1),
+      ],
+    ),
+    (
+      ClipLinkKind.music,
+      [
+        ('Spotify', (h, u) => h == 'open.spotify.com' || h == 'spotify.link'),
+        ('Apple Music', (h, u) => h == 'music.apple.com'),
+        ('Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
+        ('YouTube Music', (h, u) => h == 'music.youtube.com'),
+        ('SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
+        ('TIDAL', (h, u) => h == 'tidal.com' || h == 'listen.tidal.com'),
+        (
+          'Deezer',
+          (h, u) => _hostIs(h, 'deezer.com') || h == 'deezer.page.link',
+        ),
+        ('Amazon Music', (h, u) => _amazonMusic.hasMatch(h)),
+        ('Bandcamp', (h, u) => _hostIs(h, 'bandcamp.com')),
+        ('Pandora', (h, u) => _hostIs(h, 'pandora.com')),
+      ],
+    ),
+    (
+      ClipLinkKind.video,
+      [
+        (
+          'YouTube',
+          (h, u) =>
+              h == 'youtube.com' || h == 'm.youtube.com' || h == 'youtu.be',
+        ),
+        ('Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
+        ('Twitch', (h, u) => _hostIs(h, 'twitch.tv')),
+        ('TikTok', (h, u) => _hostIs(h, 'tiktok.com')),
+      ],
+    ),
+  ];
+
+  /// Custom-scheme links into apps, by scheme.
+  ///
+  /// An allowlist, never "any scheme": a clip is text from anywhere, and some
+  /// schemes do far more than open an app - `javascript:`, `file:`,
+  /// Android's `intent:`, and Windows protocol handlers like `ms-msdt:` that
+  /// have been the way into remote-code exploits. These are apps that only
+  /// navigate to something inside themselves.
+  static const _appSchemes = <String, (ClipLinkKind, String)>{
+    'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
+    'zoomus': (ClipLinkKind.meeting, 'Zoom'),
+    'msteams': (ClipLinkKind.meeting, 'Microsoft Teams'),
+    'facetime': (ClipLinkKind.meeting, 'FaceTime'),
+    'spotify': (ClipLinkKind.music, 'Spotify'),
+    'obsidian': (ClipLinkKind.app, 'Obsidian'),
+    'notion': (ClipLinkKind.app, 'Notion'),
+    'slack': (ClipLinkKind.app, 'Slack'),
+    'discord': (ClipLinkKind.app, 'Discord'),
+    'figma': (ClipLinkKind.app, 'Figma'),
+    'vscode': (ClipLinkKind.app, 'VS Code'),
+    'vscode-insiders': (ClipLinkKind.app, 'VS Code Insiders'),
+    'cursor': (ClipLinkKind.app, 'Cursor'),
+    'linear': (ClipLinkKind.app, 'Linear'),
+    'steam': (ClipLinkKind.app, 'Steam'),
+    'tg': (ClipLinkKind.app, 'Telegram'),
+    'whatsapp': (ClipLinkKind.app, 'WhatsApp'),
+    'sgnl': (ClipLinkKind.app, 'Signal'),
+    'things': (ClipLinkKind.app, 'Things'),
+    'todoist': (ClipLinkKind.app, 'Todoist'),
+    'bear': (ClipLinkKind.app, 'Bear'),
+    'craftdocs': (ClipLinkKind.app, 'Craft'),
+    'drafts': (ClipLinkKind.app, 'Drafts'),
+    'raycast': (ClipLinkKind.app, 'Raycast'),
+    'shortcuts': (ClipLinkKind.app, 'Shortcuts'),
+  };
+
+  static ClipLink? _appLink(String text) {
+    final colon = text.indexOf(':');
+    if (colon <= 0) return null;
+    final scheme = text.substring(0, colon).toLowerCase();
+    final app = _appSchemes[scheme];
+    if (app == null) return null;
+    final uri = Uri.tryParse(text);
+    if (uri == null || text.length == colon + 1) return null;
+    final (kind, name) = app;
+    // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
+    // opens the app where it is installed and the web player where it is not.
+    if (scheme == 'spotify') {
+      final parts = uri.path.split(':');
+      if (parts.length == 2 && parts.every((p) => p.isNotEmpty)) {
+        return ClipLink._(
+          kind,
+          Uri.https('open.spotify.com', '/${parts[0]}/${parts[1]}'),
+          name,
+          service: name,
+        );
+      }
+    }
+    return ClipLink._(kind, uri, name, service: name);
+  }
+
+  static final _localHost = RegExp(
+    r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa))(:\d{1,5})?(/\S*)?$',
+    caseSensitive: false,
+  );
+  static final _hostWithPort = RegExp(
+    r'^[a-z0-9-]+(\.[a-z0-9-]+)+:\d{2,5}(/\S*)?$',
+    caseSensitive: false,
+  );
+
+  /// A machine on the network, written without `http://`: `localhost:3000`,
+  /// `192.168.1.1`, `printer.local`, `nas.lan:5000/admin`. Router pages and
+  /// dev servers are copied like this, and only a browser opens them.
+  static ClipLink? _localAddress(String text) {
+    final match = _localHost.firstMatch(text);
+    if (match == null && !_hostWithPort.hasMatch(text)) return null;
+    if (match?.group(2) != null) {
+      // An IPv4 address: four octets, each a byte.
+      final octets = text.split(RegExp('[:/]')).first.split('.');
+      if (octets.any((o) => int.parse(o) > 255)) return null;
+    }
+    final uri = Uri.tryParse('http://$text');
+    if (uri == null || uri.host.isEmpty) return null;
+    return ClipLink._(ClipLinkKind.web, uri, uri.host);
+  }
+
+  static final _decimalCoordinates = RegExp(
+    r'^(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})$',
+  );
+  static final _dmsCoordinates = RegExp(
+    r'''^(\d{1,2})°\s*(\d{1,2})['′]\s*(\d{1,2}(?:\.\d+)?)["″]\s*([NS])[\s,]+(\d{1,3})°\s*(\d{1,2})['′]\s*(\d{1,2}(?:\.\d+)?)["″]\s*([EW])$''',
+    caseSensitive: false,
+  );
+
+  /// Coordinates as maps apps copy them: `43.64263, -79.38712` (Google Maps'
+  /// right-click) or `43°38'33.5"N 79°23'13.6"W` (its place card). At least
+  /// three decimals each, so a pair of ordinary numbers is not a place.
+  static ClipLink? _coordinates(String text) {
+    double? lat;
+    double? lng;
+    final decimal = _decimalCoordinates.firstMatch(text);
+    if (decimal != null) {
+      lat = double.parse(decimal.group(1)!);
+      lng = double.parse(decimal.group(2)!);
+    } else if (_dmsCoordinates.firstMatch(text) case final dms?) {
+      double degrees(int at) =>
+          double.parse(dms.group(at)!) +
+          double.parse(dms.group(at + 1)!) / 60 +
+          double.parse(dms.group(at + 2)!) / 3600;
+      lat = degrees(1) * (dms.group(4)!.toUpperCase() == 'S' ? -1 : 1);
+      lng = degrees(5) * (dms.group(8)!.toUpperCase() == 'W' ? -1 : 1);
+    }
+    if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) {
+      return null;
+    }
+    String fixed(double v) =>
+        v.toStringAsFixed(6).replaceFirst(RegExp(r'\.?0+$'), '');
+    return ClipLink._(
+      ClipLinkKind.map,
+      Uri.parse('geo:${fixed(lat)},${fixed(lng)}'),
+      text,
+    );
+  }
+
+  static const _streetTypes =
+      'St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|'
+      'Ct|Court|Pl|Place|Pkwy|Parkway|Hwy|Highway|Cres|Crescent|Ter|Terrace|'
+      'Cir|Circle|Sq|Square|Trl|Trail|Row|Close|Gardens|Mews|Grove|Line|'
+      'Sideroad|Concession|Gate|Heights|Hill|Park';
+  static final _streetLine = RegExp(
+    r'^(?:(?:unit|suite|apt|#)\s*\w+[,\s]+)?\d+[a-z]?(?:-\d+)?\s+'
+    r"(?:[a-z0-9][\w'.-]*\s+){0,4}(?:"
+    '$_streetTypes'
+    r')\.?(?:\s+(?:N|S|E|W|NE|NW|SE|SW|North|South|East|West))?'
+    r'(?:$|[,\n]|\s+(?:unit|suite|apt|#))',
+    caseSensitive: false,
+  );
+  static final _frenchStreet = RegExp(
+    r'^\d+[a-z]?,?\s+(?:rue|avenue|av\.?|boulevard|boul\.?|chemin|ch\.?|route|rang|mont[ée]e|place|all[ée]e|impasse|quai|cours)\s+\S',
+    caseSensitive: false,
+  );
+  static final _continentalStreet = RegExp(
+    r"^[\wÀ-ÿ'.-]+(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])",
+    caseSensitive: false,
+  );
+  static final _postalCode = RegExp(
+    // Canada, UK, then a US state and ZIP.
+    r'\b([A-Z]\d[A-Z] ?\d[A-Z]\d|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}|[A-Z]{2},? \d{5}(?:-\d{4})?)\b',
+  );
+
+  /// A street address, on one line or up to four: `123 Main St`,
+  /// `1600 Amphitheatre Pkwy, Mountain View, CA 94043`, `350 rue Sherbrooke`,
+  /// `Unter den Linden 77`, `221B Baker Street\nLondon NW1 6XE`.
+  ///
+  /// A best guess, and deliberately one that leans towards yes: the cost of a
+  /// wrong one is an Open in Maps button on a clip that did not need it. The
+  /// first line has to read as a street - a house number and a street type
+  /// (St, Ave, rue, Straße...) - or start with a number and be followed by a
+  /// postal code. Anything with an `@` or `://` in it is something else.
+  static ClipLink? _address(String text) {
+    if (text.length > 300 || text.contains('@') || text.contains('://')) {
+      return null;
+    }
+    final lines = [
+      for (final line in text.split('\n'))
+        if (line.trim().isNotEmpty) line.trim(),
+    ];
+    if (lines.isEmpty || lines.length > 4) return null;
+    if (lines.any((line) => line.length > 120)) return null;
+    final first = lines.first;
+    final joined = lines.join(', ');
+    final street =
+        _streetLine.hasMatch(joined) ||
+        _frenchStreet.hasMatch(first) ||
+        _continentalStreet.hasMatch(joined);
+    final numbered =
+        RegExp(r'^\d+[a-z]?\b', caseSensitive: false).hasMatch(first) &&
+        _postalCode.hasMatch(joined);
+    if (!street && !numbered) return null;
+    return ClipLink._(
+      ClipLinkKind.map,
+      Uri(scheme: 'geo', path: '0,0', queryParameters: {'q': joined}),
+      first,
+    );
+  }
+
+  static final _ups = RegExp(r'^1Z[0-9A-Z]{16}$');
+  static final _usps = RegExp(r'^9[2-5]\d{18,20}$');
+  static final _s10 = RegExp(r'^[A-Z]{2}\d{9}[A-Z]{2}$');
+
+  /// A parcel tracking number, as the carrier's own tracking page.
+  ///
+  /// Only formats that cannot be mistaken for something else: UPS's `1Z`
+  /// numbers and the international postal format (`LM123456789CA`), both
+  /// checked against their check digit, and USPS's 20-22 digit numbers, which
+  /// start 92-95. FedEx and DHL numbers are plain runs of 10-15 digits, the
+  /// same as order numbers and codes, so they stay text.
+  static ClipLink? _tracking(String text) {
+    final number = text.toUpperCase();
+    if (_ups.hasMatch(number) && _upsCheckDigitOk(number)) {
+      return ClipLink._parcel(
+        'UPS',
+        Uri.https('www.ups.com', '/track', {'tracknum': number}),
+        number,
+      );
+    }
+    if (_usps.hasMatch(number)) {
+      return ClipLink._parcel('USPS', _uspsPage(number), number);
+    }
+    if (_s10.hasMatch(number) && _s10CheckDigitOk(number)) {
+      return switch (number.substring(11)) {
+        'CA' => ClipLink._parcel(
+          'Canada Post',
+          Uri.parse(
+            'https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor=$number',
+          ),
+          number,
+        ),
+        'US' => ClipLink._parcel('USPS', _uspsPage(number), number),
+        'GB' => ClipLink._parcel(
+          'Royal Mail',
+          Uri.parse(
+            'https://www.royalmail.com/track-your-item#/tracking-results/$number',
+          ),
+          number,
+        ),
+        'AU' => ClipLink._parcel(
+          'Australia Post',
+          Uri.https('auspost.com.au', '/mypost/track/details/$number'),
+          number,
+        ),
+        // Every other postal service: a tracker that knows them all.
+        _ => ClipLink._parcel(
+          'Post',
+          Uri.parse('https://t.17track.net/en#nums=$number'),
+          number,
+        ),
+      };
+    }
+    return null;
+  }
+
+  static Uri _uspsPage(String number) => Uri.https(
+    'tools.usps.com',
+    '/go/TrackConfirmAction',
+    {'tLabels': number},
+  );
+
+  /// UPS: the 15 characters after `1Z`, letters as `(code - 63) % 10`, odd
+  /// places once and even places twice; the last digit brings it to a ten.
+  static bool _upsCheckDigitOk(String number) {
+    var sum = 0;
+    for (var i = 2; i < 17; i++) {
+      final c = number.codeUnitAt(i);
+      final value = c >= 48 && c <= 57 ? c - 48 : (c - 63) % 10;
+      sum += (i - 2).isEven ? value : value * 2;
+    }
+    return (10 - sum % 10) % 10 == number.codeUnitAt(17) - 48;
+  }
+
+  /// UPU S10: weights 8 6 4 2 3 5 9 7 over the serial, eleven minus the sum
+  /// mod 11, with 10 written 0 and 11 written 5.
+  static bool _s10CheckDigitOk(String number) {
+    const weights = [8, 6, 4, 2, 3, 5, 9, 7];
+    var sum = 0;
+    for (var i = 0; i < 8; i++) {
+      sum += (number.codeUnitAt(2 + i) - 48) * weights[i];
+    }
+    final check = switch (11 - sum % 11) {
+      10 => 0,
+      11 => 5,
+      final digit => digit,
+    };
+    return check == number.codeUnitAt(10) - 48;
   }
 
   static ClipLink? _mailto(String text) {
@@ -188,12 +590,40 @@ class ClipLink {
   bool canOpenOn(String platform) =>
       !(kind == ClipLinkKind.phone && platform == 'linux');
 
+  /// The second thing to do with it, if there is one:
+  ///
+  /// - A phone number can be texted as well as called (`sms:`; Messages on
+  ///   a Mac, Phone Link on Windows).
+  /// - A song or album can be found on the other services through song.link,
+  ///   which is what makes an Apple Music link useful on a phone with only
+  ///   Spotify, and the other way round.
+  ClipLinkAlternate? get alternate => switch (kind) {
+    ClipLinkKind.phone => ClipLinkAlternate(
+      'Text',
+      Uri(scheme: 'sms', path: uri.path),
+    ),
+    ClipLinkKind.music => ClipLinkAlternate(
+      'Find on other services',
+      Uri.parse('https://song.link/$uri'),
+    ),
+    _ => null,
+  };
+
+  /// Whether [platform] can do [alternate]: no texting from Linux either.
+  bool canAlternateOn(String platform) =>
+      alternate != null && !(kind == ClipLinkKind.phone && platform == 'linux');
+
   /// What the button that opens it says.
   String get actionLabel => switch (kind) {
     ClipLinkKind.web => 'Open link',
     ClipLinkKind.map => 'Open in Maps',
     ClipLinkKind.email => 'Write email',
     ClipLinkKind.phone => 'Call',
+    ClipLinkKind.meeting => 'Join meeting',
+    ClipLinkKind.music => 'Open in $service',
+    ClipLinkKind.video => 'Watch on $service',
+    ClipLinkKind.tracking => 'Track package',
+    ClipLinkKind.app => 'Open in $service',
   };
 
   /// A short noun for the kind, for the meta line and screen readers.
@@ -202,6 +632,11 @@ class ClipLink {
     ClipLinkKind.map => 'Map',
     ClipLinkKind.email => 'Email',
     ClipLinkKind.phone => 'Phone',
+    ClipLinkKind.meeting => 'Meeting',
+    ClipLinkKind.music => 'Music',
+    ClipLinkKind.video => 'Video',
+    ClipLinkKind.tracking => 'Package',
+    ClipLinkKind.app => 'App link',
   };
 }
 

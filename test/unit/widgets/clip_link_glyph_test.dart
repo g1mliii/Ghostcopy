@@ -74,4 +74,17 @@ void main() {
     expect(find.byIcon(Icons.map_outlined), findsOneWidget);
     expect(clipLinkActionLabel(link), 'Open in Waze');
   });
+
+  test('calls, meetings and parcels keep their own wording', () async {
+    final service = _FakeHandlers(const LinkHandler(name: 'Safari'));
+    LinkHandlerService.instance = service;
+    final meeting = ClipLink.detect('https://zoom.us/j/81234567890')!;
+    final parcel = ClipLink.detect('1Z879E930346834440')!;
+    final song = ClipLink.detect('https://open.spotify.com/track/abc')!;
+    await service.handlerFor(meeting);
+
+    expect(clipLinkActionLabel(meeting), 'Join meeting');
+    expect(clipLinkActionLabel(parcel), 'Track package');
+    expect(clipLinkActionLabel(song), 'Open in Safari');
+  });
 }
