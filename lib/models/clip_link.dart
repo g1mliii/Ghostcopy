@@ -184,9 +184,9 @@ class ClipLink {
             (uri.path.isEmpty || uri.path == '/')) {
           return Uri.parse('maps://?${uri.query}');
         }
-        if (geo) return place.toAppleMaps(scheme: 'maps');
+        if (geo) return place.toAppleMaps(web: false);
       case 'ios':
-        if (geo) return place.toAppleMaps(scheme: 'https');
+        if (geo) return place.toAppleMaps(web: true);
       case 'windows':
       case 'linux':
         if (geo) return place.toGoogleMaps();
@@ -256,9 +256,10 @@ class _MapPlace {
 
   static _MapPlace? fromWeb(Uri uri) {
     final host = uri.host.toLowerCase();
-    final params = uri.queryParameters;
-
+    // Query parameters are read only once the host is a maps one: every web
+    // link passes through here.
     if (host == 'maps.apple.com') {
+      final params = uri.queryParameters;
       return _MapPlace(
         _MapSource.apple,
         // The classic parameters and the 2024 /place, /search and
@@ -296,7 +297,11 @@ class _MapPlace {
     }
 
     // /maps/place/<name>/@lat,lng,zoom and /maps/search/<query>
-    var query = _first(params, const ['q', 'query', 'destination']);
+    var query = _first(uri.queryParameters, const [
+      'q',
+      'query',
+      'destination',
+    ]);
     String? latLng;
     for (var i = 0; i < segments.length; i++) {
       final segment = segments[i];
@@ -311,9 +316,11 @@ class _MapPlace {
         }
       }
     }
-    if (query != null && _latLngOrNull(query) != null) {
-      latLng ??= _latLngOrNull(query);
-      query = null;
+    if (query != null) {
+      if (_latLngOrNull(query) case final coordinates?) {
+        latLng ??= coordinates;
+        query = null;
+      }
     }
     return _MapPlace(_MapSource.google, query: query, latLng: latLng);
   }
@@ -353,7 +360,9 @@ class _MapPlace {
     '${query != null ? '?q=${Uri.encodeQueryComponent(query!)}' : ''}',
   );
 
-  Uri toAppleMaps({required String scheme}) {
+  /// On maps.apple.com when [web], which every Apple device answers; on
+  /// `maps:` otherwise, which only the Maps app does.
+  Uri toAppleMaps({required bool web}) {
     final params = Uri(
       queryParameters: {
         if (query != null) 'q': query,
@@ -361,7 +370,7 @@ class _MapPlace {
       },
     ).query;
     return Uri.parse(
-      scheme == 'https' ? 'https://maps.apple.com/?$params' : 'maps://?$params',
+      web ? 'https://maps.apple.com/?$params' : 'maps://?$params',
     );
   }
 
