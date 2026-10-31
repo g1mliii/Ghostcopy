@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/locator.dart';
@@ -107,6 +108,50 @@ void main() {
   });
 
   tearDown(locator.reset);
+
+  testWidgets('keeps sign-in safe without blocking the iOS edge-back swipe', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(900, 600)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(left: 47, right: 47, bottom: 21);
+    addTearDown(tester.view.reset);
+
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        theme: ThemeData(platform: TargetPlatform.iOS),
+        home: const Scaffold(body: Text('Previous screen')),
+      ),
+    );
+    unawaited(
+      navigatorKey.currentState!.push<void>(
+        CupertinoPageRoute<void>(
+          builder: (_) =>
+              MobileWelcomeScreen(onAuthComplete: () => completions++),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getRect(find.byType(Scaffold)),
+      const Rect.fromLTRB(47, 0, 853, 600),
+    );
+    expect(
+      tester.getRect(find.byType(Navigator)),
+      const Rect.fromLTWH(0, 0, 900, 600),
+    );
+
+    await tester.dragFrom(const Offset(1, 300), const Offset(750, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MobileWelcomeScreen), findsNothing);
+    expect(find.text('Previous screen'), findsOneWidget);
+    expect(completions, 0);
+  });
 
   Future<void> signUp(WidgetTester tester) async {
     await tester.pumpWidget(
