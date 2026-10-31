@@ -18,6 +18,7 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/side_safe_area.dart';
 import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
@@ -805,7 +806,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SideSafeArea(child: _buildContent(context));
+
+  Widget _buildContent(BuildContext context) {
     final shareProgress = _viewModel.shareProgress;
     return Stack(
       children: [

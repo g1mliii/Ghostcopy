@@ -1509,6 +1509,8 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // No overscroll stretch or glow anywhere in the app.
       scrollBehavior: Adaptive.scrollBehavior,
       debugShowCheckedModeBanner: false,
+      // Keep the Navigator full-width for iOS edge-back gestures. Mobile
+      // screens apply horizontal safe areas inside their route content.
       home: _buildHome(),
     );
   }
