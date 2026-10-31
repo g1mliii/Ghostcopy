@@ -164,7 +164,9 @@ to show. The same account is what the screenshots are taken with.
 > the 6-digit PIN shown beside it - so a fixed demo QR code cannot be provided.
 > If you want to try it: install the desktop app (free at
 > https://ghostcopy.app/download), sign in with the same demo account, choose
-> Link New Device, then on the iPad open the Scan QR tab and type the PIN.
+> Link New Device. On the iPad, open Settings > Sign Out and confirm. Reopen
+> Settings > Sign In or Create Account, select the Scan QR tab, scan the code
+> shown on the desktop, and enter its 6-digit PIN.
 >
 > Encryption is optional and off by default. Setting a passphrase in Settings
 > encrypts clips on the device before upload.
