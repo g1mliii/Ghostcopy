@@ -8,7 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _currentName = 'Alice’s iPhone · 1A2B3C4D';
 const _oldName = 'iPhone · 1A2B3C4D';
-const _token = 'existing-push-token';
+const _token = 'existing-push-token-long-enough-for-the-claim-rpc';
 
 Map<String, Object?> _session() => {
   'access_token': 'e30.e30.signature',
@@ -48,6 +48,7 @@ void main() {
   late bool failLookup;
   late bool failRename;
   late bool failUpsert;
+  late bool claimSucceeds;
   late String deviceType;
   late String deviceName;
 
@@ -57,6 +58,7 @@ void main() {
     failLookup = false;
     failRename = false;
     failUpsert = false;
+    claimSucceeds = true;
     deviceType = 'ios';
     deviceName = _currentName;
     client = SupabaseClient(
@@ -70,6 +72,20 @@ void main() {
           headers: {'content-type': 'application/json'},
           request: request,
         );
+        if (request.url.path == '/rest/v1/rpc/claim_fcm_token') {
+          final params = jsonDecode(request.body) as Map<String, Object?>;
+          if (claimSucceeds) {
+            for (final row in rows) {
+              if (row['fcm_token'] == params['p_token']) {
+                row['fcm_token'] = null;
+              }
+            }
+            rows.singleWhere(
+              (row) => row['id'] == params['p_device_id'],
+            )['fcm_token'] = params['p_token'];
+          }
+          return respond(claimSucceeds);
+        }
         if (request.url.path != '/rest/v1/devices') return respond([]);
 
         bool matches(Map<String, Object?> row) {
@@ -115,6 +131,16 @@ void main() {
             return respond(selected);
           case 'PATCH':
             final values = jsonDecode(request.body) as Map<String, Object?>;
+            final token = values['fcm_token'];
+            if (token != null &&
+                rows.any(
+                  (row) => row['fcm_token'] == token && !selected.contains(row),
+                )) {
+              return respond({
+                'code': '23505',
+                'message': 'token already claimed',
+              }, 409);
+            }
             for (final row in selected) {
               row.addAll(values);
             }
@@ -139,7 +165,10 @@ void main() {
                 : existing.single;
             if (existing.isEmpty) rows.add(row);
             row.addAll(values);
-            return respond({'id': row['id']}, 201);
+            return respond({
+              'id': row['id'],
+              'fcm_token': row['fcm_token'],
+            }, 201);
           default:
             throw Exception('Unexpected device request: ${request.method}');
         }
@@ -182,6 +211,34 @@ void main() {
       expect(rows, hasLength(1));
       expect(rows.single['id'], 'original');
       expect(rows.single['device_name'], _currentName);
+      expect(rows.single['fcm_token'], isNull);
+    },
+  );
+
+  test(
+    'failed token transfer retains the stale token row and retries',
+    () async {
+      rows.add(_row('current', _currentName));
+      claimSucceeds = false;
+      expect(await devices.registerCurrentDevice(), isFalse);
+      expect(rows, hasLength(2));
+      expect(rows.first['fcm_token'], _token);
+      expect(rows.last['fcm_token'], isNull);
+
+      claimSucceeds = true;
+      expect(await devices.registerCurrentDevice(), isTrue);
+      expect(rows, hasLength(1));
+      expect(rows.single['fcm_token'], _token);
+    },
+  );
+
+  test(
+    'a current row token is kept instead of replaced with a stale one',
+    () async {
+      rows.add(_row('current', _currentName, token: 'current-token'));
+      expect(await devices.registerCurrentDevice(), isTrue);
+      expect(rows, hasLength(1));
+      expect(rows.single['fcm_token'], 'current-token');
     },
   );
 
@@ -215,6 +272,7 @@ void main() {
       expect(rows, hasLength(1));
       expect(devices.getCurrentDeviceId(), 'current');
       expect(rows.single['device_name'], _currentName);
+      expect(rows.single['fcm_token'], _token);
     },
   );
 

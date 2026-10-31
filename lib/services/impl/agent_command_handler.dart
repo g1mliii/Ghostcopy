@@ -174,7 +174,7 @@ class AgentCommandHandler implements IAgentCommandHandler {
       'devices': [
         for (final device in devices)
           {
-            'name': device.deviceName,
+            'name': device.displayName,
             'type': device.deviceType,
             'this_device': device.id == here,
             'last_active': device.lastActive.toUtc().toIso8601String(),

@@ -32,6 +32,15 @@ void main() {
     expect(device('ios', 'Phone · ABCDEFGH').displayName, 'Phone · ABCDEFGH');
   });
 
+  test('preserves desktop names ending in eight hex characters', () {
+    for (final type in ['windows', 'macos', 'linux']) {
+      expect(
+        device(type, 'Office · DEADBEEF').displayName,
+        'Office · DEADBEEF',
+      );
+    }
+  });
+
   test('falls back to the platform when there is no name left', () {
     expect(device('ios', null).displayName, 'iOS');
     expect(device('android', ' · 0f9e8d7c').displayName, 'Android');

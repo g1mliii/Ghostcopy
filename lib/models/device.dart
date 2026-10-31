@@ -122,10 +122,17 @@ class Device {
   /// unique on the name and two phones can share one. That suffix is for the
   /// index, not for people, so it is dropped here.
   String get displayName {
-    final name = deviceName?.replaceFirst(_uniquenessSuffix, '');
+    final name = isMobile
+        ? deviceName?.replaceFirst(_uniquenessSuffix, '')
+        : deviceName;
     if (name != null && name.isNotEmpty) return name;
     return platformLabel(deviceType);
   }
+
+  /// Generated mobile identity metadata to retain when editing the visible name.
+  String get registrationSuffix => isMobile
+      ? _uniquenessSuffix.firstMatch(deviceName ?? '')?.group(0) ?? ''
+      : '';
 
   static final _uniquenessSuffix = RegExp(r' · [0-9A-Fa-f]{8}$');
 }

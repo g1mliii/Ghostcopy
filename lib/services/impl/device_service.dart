@@ -76,8 +76,8 @@ class DeviceService implements IDeviceService {
   ///
   /// The entitlement changes the readable prefix, but keeps the stable suffix.
   /// Reusing the row preserves its id (saved destinations) and any stored token.
-  /// Returns older duplicate ids to remove only after registration succeeds.
-  Future<List<String>> _migrateIosRegistration({
+  /// Returns older duplicates and their tokens for safe cleanup after registration.
+  Future<List<({String id, String? fcmToken})>> _migrateIosRegistration({
     required String userId,
     required String deviceType,
     required String currentName,
@@ -90,7 +90,7 @@ class DeviceService implements IDeviceService {
 
     final rows = await _supabase
         .from('devices')
-        .select('id,device_name')
+        .select('id,device_name,fcm_token')
         .eq('user_id', userId)
         .eq('device_type', deviceType)
         .like('device_name', '%$suffix');
@@ -113,7 +113,12 @@ class DeviceService implements IDeviceService {
 
     // Lookup/rename failures deliberately propagate to registration's handler:
     // inserting anyway would recreate the duplicate on every tokenless launch.
-    return staleRows.map((row) => row['id'] as String).toList();
+    return staleRows
+        .map(
+          (row) =>
+              (id: row['id'] as String, fcmToken: row['fcm_token'] as String?),
+        )
+        .toList();
   }
 
   /// Free this device's push token from whatever row still holds it.
@@ -208,7 +213,7 @@ class DeviceService implements IDeviceService {
         '[DeviceService] Registering device: $deviceType ($deviceName)',
       );
 
-      final staleIosIds = await _migrateIosRegistration(
+      final staleIosRows = await _migrateIosRegistration(
         userId: userId,
         deviceType: deviceType,
         currentName: deviceName,
@@ -238,19 +243,33 @@ class DeviceService implements IDeviceService {
             if (fcmToken != null && fcmToken.isNotEmpty) 'fcm_token': fcmToken,
             'last_active': DateTime.now().toUtc().toIso8601String(),
           }, onConflict: 'user_id,device_type,device_name')
-          .select('id')
+          .select('id,fcm_token')
           .single();
 
       _currentDeviceId = response['id'] as String;
 
-      if (staleIosIds.isNotEmpty) {
+      if (staleIosRows.isNotEmpty) {
+        final storedToken = response['fcm_token'] as String?;
+        if ((storedToken == null || storedToken.isEmpty) &&
+            (fcmToken == null || fcmToken.isEmpty)) {
+          final staleToken = staleIosRows
+              .map((row) => row.fcmToken)
+              .where((token) => token != null && token.isNotEmpty)
+              .firstOrNull;
+          // claim_fcm_token transfers ownership atomically if the unique index
+          // rejects the update. Keep the old row if transfer cannot be confirmed.
+          if (staleToken != null && !await _applyFcmToken(staleToken)) {
+            _invalidateCache();
+            return false;
+          }
+        }
         try {
           await _supabase
               .from('devices')
               .delete()
               .eq('user_id', userId)
               .eq('device_type', deviceType)
-              .inFilter('id', staleIosIds);
+              .inFilter('id', staleIosRows.map((row) => row.id).toList());
         } on Exception catch (e) {
           // Registration succeeded. A later launch can retry stale-row cleanup.
           debugPrint('[DeviceService] Could not remove stale iOS rows: $e');
