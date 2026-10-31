@@ -1625,8 +1625,8 @@ class ClipboardRepository implements IClipboardRepository {
         // way: the unique index is on the name, and two phones can share one
         // ("iPhone", or two both set up as "Subaig's iPhone"); one would
         // overwrite the other's row and push token. Device.displayName hides
-        // it. A change of name registers a new row, and the old one's token
-        // is released by _releaseTokenFromStaleRows.
+        // it. DeviceService uses the stable suffix to rename the existing row
+        // in place, including when notification permission is denied.
         final model = ios.utsname.machine.trim();
         final readable = ios.name.trim();
         final stableId =

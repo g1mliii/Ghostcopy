@@ -13,11 +13,20 @@ import '../device_service.dart';
 /// Desktop devices register without FCM tokens.
 /// Mobile devices will add FCM tokens when implemented.
 class DeviceService implements IDeviceService {
-  /// Constructor with optional Supabase client for testing
-  DeviceService({SupabaseClient? supabaseClient})
-    : _supabase = supabaseClient ?? Supabase.instance.client;
+  /// Constructor with optional client and device identity providers for testing.
+  DeviceService({
+    SupabaseClient? supabaseClient,
+    String Function()? deviceTypeProvider,
+    String? Function()? deviceNameProvider,
+  }) : _supabase = supabaseClient ?? Supabase.instance.client,
+       _deviceTypeProvider =
+           deviceTypeProvider ?? ClipboardRepository.getCurrentDeviceType,
+       _deviceNameProvider =
+           deviceNameProvider ?? ClipboardRepository.getCurrentDeviceName;
 
   final SupabaseClient _supabase;
+  final String Function() _deviceTypeProvider;
+  final String? Function() _deviceNameProvider;
   bool _initialized = false;
   String? _currentDeviceId;
 
@@ -61,6 +70,50 @@ class DeviceService implements IDeviceService {
     if (_supabase.auth.currentUser == null) {
       throw StateError('User not authenticated. Cannot register device.');
     }
+  }
+
+  /// Rename this installation's existing iOS row without needing a push token.
+  ///
+  /// The entitlement changes the readable prefix, but keeps the stable suffix.
+  /// Reusing the row preserves its id (saved destinations) and any stored token.
+  /// Returns older duplicate ids to remove only after registration succeeds.
+  Future<List<String>> _migrateIosRegistration({
+    required String userId,
+    required String deviceType,
+    required String currentName,
+  }) async {
+    if (deviceType != 'ios') return const [];
+    final suffix = RegExp(
+      r' · [0-9A-Fa-f]{8}$',
+    ).firstMatch(currentName)?.group(0);
+    if (suffix == null) return const [];
+
+    final rows = await _supabase
+        .from('devices')
+        .select('id,device_name')
+        .eq('user_id', userId)
+        .eq('device_type', deviceType)
+        .like('device_name', '%$suffix');
+    final staleRows = rows
+        .where((row) => row['device_name'] != currentName)
+        .toList();
+
+    if (staleRows.isNotEmpty &&
+        !rows.any((row) => row['device_name'] == currentName)) {
+      final previous = staleRows.removeAt(0);
+      await _supabase
+          .from('devices')
+          .update({'device_name': currentName})
+          .eq('user_id', userId)
+          .eq('device_type', deviceType)
+          .eq('id', previous['id'] as String)
+          .select('id')
+          .single();
+    }
+
+    // Lookup/rename failures deliberately propagate to registration's handler:
+    // inserting anyway would recreate the duplicate on every tokenless launch.
+    return staleRows.map((row) => row['id'] as String).toList();
   }
 
   /// Free this device's push token from whatever row still holds it.
@@ -147,13 +200,18 @@ class DeviceService implements IDeviceService {
 
     try {
       final userId = _supabase.auth.currentUser!.id;
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
+      final deviceType = _deviceTypeProvider();
       final deviceName =
-          ClipboardRepository.getCurrentDeviceName() ??
-          '${platformLabel(deviceType)} Device';
+          _deviceNameProvider() ?? '${platformLabel(deviceType)} Device';
 
       debugPrint(
         '[DeviceService] Registering device: $deviceType ($deviceName)',
+      );
+
+      final staleIosIds = await _migrateIosRegistration(
+        userId: userId,
+        deviceType: deviceType,
+        currentName: deviceName,
       );
 
       await _releaseTokenFromStaleRows(
@@ -184,6 +242,20 @@ class DeviceService implements IDeviceService {
           .single();
 
       _currentDeviceId = response['id'] as String;
+
+      if (staleIosIds.isNotEmpty) {
+        try {
+          await _supabase
+              .from('devices')
+              .delete()
+              .eq('user_id', userId)
+              .eq('device_type', deviceType)
+              .inFilter('id', staleIosIds);
+        } on Exception catch (e) {
+          // Registration succeeded. A later launch can retry stale-row cleanup.
+          debugPrint('[DeviceService] Could not remove stale iOS rows: $e');
+        }
+      }
 
       debugPrint(
         '[DeviceService] ✅ Device registered successfully (ID: $_currentDeviceId)',
