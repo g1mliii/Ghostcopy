@@ -33,6 +33,12 @@ class _DevicePanelState extends State<DevicePanel> {
 
   String? _error;
 
+  /// Renames and removals that have succeeded while this panel is open, as
+  /// changes to a device list. A fetch that started before one finished
+  /// answers with the list from before it; the edits made since are applied
+  /// to that answer rather than lost under it.
+  final _edits = <List<Device> Function(List<Device> devices)>[];
+
   @override
   void initState() {
     super.initState();
@@ -50,7 +56,8 @@ class _DevicePanelState extends State<DevicePanel> {
       _error = null;
     });
 
-    final devices = await fetchDevicesShowingSaved(
+    final editsBefore = _edits.length;
+    var devices = await fetchDevicesShowingSaved(
       widget.deviceService,
       onSaved: (saved) {
         if (!mounted || _cachedDevices != null) return;
@@ -60,6 +67,13 @@ class _DevicePanelState extends State<DevicePanel> {
         });
       },
     );
+    // The saved list is drawn and usable while the fetch is out, so a rename
+    // or removal can finish before it answers. The server accepted it, so the
+    // answer plus the edit is the server's list now - and keeps whatever else
+    // the answer brought, which asking again could lose to a failed request.
+    for (final edit in _edits.skip(editsBefore)) {
+      if (devices != null) devices = edit(devices);
+    }
     _fetching = false;
     if (!mounted) return;
     setState(() {
@@ -77,33 +91,41 @@ class _DevicePanelState extends State<DevicePanel> {
       deviceId,
       newName,
     );
-    // mounted, not just success: the panel can be closed while the rename is
-    // in flight, and setState after dispose throws.
-    if (success && mounted) {
-      // Update local cache to reflect name change
-      setState(() {
-        _cachedDevices = _cachedDevices?.map((device) {
-          if (device.id == deviceId) {
-            return device.copyWith(deviceName: newName);
-          }
-          return device;
-        }).toList();
-      });
+    if (success) {
+      _applyEdit(
+        (devices) => [
+          for (final device in devices)
+            device.id == deviceId
+                ? device.copyWith(deviceName: newName)
+                : device,
+        ],
+      );
     }
     return success;
   }
 
   Future<bool> _handleRemove(String deviceId) async {
     final success = await widget.deviceService.removeDevice(deviceId);
-    if (success && mounted) {
-      // Remove from local cache
-      setState(() {
-        _cachedDevices = _cachedDevices
-            ?.where((d) => d.id != deviceId)
-            .toList();
-      });
+    if (success) {
+      _applyEdit(
+        (devices) => [
+          for (final device in devices)
+            if (device.id != deviceId) device,
+        ],
+      );
     }
     return success;
+  }
+
+  /// Draws a rename or removal the server has accepted, and keeps it for a
+  /// fetch still out to apply to its answer.
+  void _applyEdit(List<Device> Function(List<Device> devices) edit) {
+    _edits.add(edit);
+    // The panel can be closed while the request is in flight, and setState
+    // after dispose throws.
+    if (!mounted) return;
+    final devices = _cachedDevices;
+    if (devices != null) setState(() => _cachedDevices = edit(devices));
   }
 
   @override

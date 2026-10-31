@@ -46,31 +46,75 @@ class SavedDeviceList {
   static Future<List<Device>> load(String userId) async {
     // Behind any save or clear already queued, as HistoryDiskCache.load is.
     await _queue.idle;
+    return await _read(userId) ?? const [];
+  }
+
+  /// Replace the list saved for [userId] with [devices], unless the list
+  /// has been cleared since [generation] was read, or [stillOwner] says
+  /// [userId] is no longer the signed-in account.
+  ///
+  /// [stillOwner] is asked when the write is about to happen, not when it
+  /// was queued: switching straight from one account to another does not
+  /// clear the list, so without it a slow fetch for the first account could
+  /// land after the second's and overwrite it - with a list the next launch
+  /// then rejects as someone else's, leaving the second account no saved
+  /// chips at all.
+  static Future<void> save(
+    String userId,
+    List<Device> devices, {
+    required int generation,
+    bool Function()? stillOwner,
+  }) => _queue.run(() async {
+    if (generation != _generation) return;
+    await _write(userId, devices, stillOwner: stillOwner);
+  });
+
+  /// Apply [change] to the list saved for [userId], when there is one.
+  ///
+  /// For a rename or removal that has just succeeded on the server: the
+  /// saved list is otherwise rewritten only by a successful fetch, so an
+  /// offline launch afterwards showed the old name, or the removed device,
+  /// until the network came back.
+  static Future<void> update(
+    String userId,
+    List<Device> Function(List<Device> devices) change,
+  ) {
+    final generation = _generation;
+    return _queue.run(() async {
+      if (generation != _generation) return;
+      final saved = await _read(userId);
+      if (saved == null) return;
+      await _write(userId, change(saved));
+    });
+  }
+
+  /// The list saved for [userId], or null when there is none for them.
+  static Future<List<Device>?> _read(String userId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_key);
-      if (raw == null) return const [];
+      if (raw == null) return null;
       final saved = jsonDecode(raw) as Map<String, dynamic>;
-      if (saved['v'] != _version || saved['user'] != userId) return const [];
+      if (saved['v'] != _version || saved['user'] != userId) return null;
       return (saved['devices'] as List)
           .map((json) => Device.fromJson(json as Map<String, dynamic>))
           .toList();
     } on Object catch (e) {
       debugPrint('[SavedDeviceList] Not read: $e');
-      return const [];
+      return null;
     }
   }
 
-  /// Replace the list saved for [userId] with [devices], unless the list
-  /// has been cleared since [generation] was read.
-  static Future<void> save(
+  /// [stillOwner] is asked after the last await before the write, so no
+  /// account switch can fall between the check and the write being issued.
+  static Future<void> _write(
     String userId,
     List<Device> devices, {
-    required int generation,
-  }) => _queue.run(() async {
-    if (generation != _generation) return;
+    bool Function()? stillOwner,
+  }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (stillOwner != null && !stillOwner()) return;
       await prefs.setString(
         _key,
         jsonEncode({
@@ -84,7 +128,7 @@ class SavedDeviceList {
     } on Object catch (e) {
       debugPrint('[SavedDeviceList] Not saved: $e');
     }
-  });
+  }
 
   static Future<void> clear() {
     _generation++;
