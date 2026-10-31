@@ -10,6 +10,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import 'package:window_manager/window_manager.dart';
 
 import '../../locator.dart';
+import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../models/spotlight_pin.dart';
@@ -41,6 +42,7 @@ import '../theme/typography.dart';
 import '../viewmodels/spotlight_viewmodel.dart';
 import '../widgets/auth_panel.dart';
 import '../widgets/cached_clipboard_image.dart';
+import '../widgets/clip_link_action.dart';
 import '../widgets/file_preview_widget.dart';
 import '../widgets/settings_panel.dart';
 
@@ -2483,12 +2485,27 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   bool _isExpanded = false;
   // Perf: Cache lowercase device string to avoid creating new String per build
   late String _deviceLower = widget.device.toLowerCase();
+  late ClipLink? _link = clipLinkFor(widget.item);
 
   @override
   void didUpdateWidget(covariant _HistoryItemContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.device != widget.device) {
       _deviceLower = widget.device.toLowerCase();
+    }
+    if (oldWidget.item.content != widget.item.content ||
+        oldWidget.item.contentType != widget.item.contentType) {
+      _link = clipLinkFor(widget.item);
+    }
+  }
+
+  Future<void> _openLink(ClipLink link) async {
+    final failed = await openClipLink(link);
+    if (failed != null) {
+      widget.notificationService?.showToast(
+        message: failed,
+        type: NotificationType.error,
+      );
     }
   }
 
@@ -2509,11 +2526,29 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     if (widget.item.isRichText) {
       return _buildRichTextPreview();
     }
-    return Text(
+    final text = Text(
       widget.item.content,
       maxLines: _isExpanded ? null : 2,
       overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
       style: const TextStyle(fontSize: 13, color: GhostColors.textPrimary),
+    );
+    final link = _link;
+    if (link == null) return text;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          // Sits on the first line's centre: 13px text at its default
+          // leading is about 17px tall.
+          padding: const EdgeInsets.only(top: 1, right: 6),
+          child: ClipLinkGlyph(
+            link: link,
+            size: 15,
+            color: GhostColors.primaryAlpha80,
+          ),
+        ),
+        Expanded(child: text),
+      ],
     );
   }
 
@@ -2641,6 +2676,17 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
         Offset.zero & overlay.size,
       ),
       items: [
+        if (_link case final link? when canOpenClipLink(link))
+          PopupMenuItem<String>(
+            value: 'open',
+            child: Row(
+              children: [
+                const Icon(Icons.open_in_new, size: 16),
+                const SizedBox(width: 12),
+                Text(link.actionLabel),
+              ],
+            ),
+          ),
         const PopupMenuItem<String>(
           value: 'copy',
           child: Row(
@@ -2674,7 +2720,10 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
         ),
       ],
     ).then((value) {
-      if (value == 'copy') {
+      final link = _link;
+      if (value == 'open' && link != null) {
+        unawaited(_openLink(link));
+      } else if (value == 'copy') {
         widget.onTap();
       } else if (value == 'save') {
         _handleSaveToComputer();
@@ -2744,6 +2793,26 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(child: _buildContentPreview()),
+                  if (_link case final link? when canOpenClipLink(link)) ...[
+                    const SizedBox(width: 8),
+                    Tooltip(
+                      message: link.actionLabel,
+                      child: InkResponse(
+                        onTap: () => _openLink(link),
+                        radius: 14,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: _isHovered,
+                          builder: (context, hovered, _) => Icon(
+                            Icons.open_in_new,
+                            size: 15,
+                            color: GhostColors.primary.withValues(
+                              alpha: hovered ? 1 : 0.6,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   if (!widget.item.isImage &&
                       !widget.item.isFile &&
                       widget.item.content.length > 100) ...[
