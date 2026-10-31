@@ -38,6 +38,7 @@ def entries(app_dir, bin_dir, icon, cli=True):
     commands - which for a package differ from where the files are written.
     """
     app = shlex.quote(str(PurePosixPath(app_dir) / 'ghostcopy'))
+    icon_line = f'Icon={str(icon).replace(chr(92), chr(92) * 2)}\n'
     files = {
         'bin/ghostcopy-desktop': ('#!/bin/sh\nexec ' + app + ' "$@"\n', True),
         # "$@" passes each selected file exactly, spaces, quotes and newlines
@@ -50,7 +51,7 @@ def entries(app_dir, bin_dir, icon, cli=True):
             '[Desktop Entry]\nType=Application\nName=GhostCopy\n'
             'Comment=Sync your clipboard across devices\n'
             f'Exec={desktop_exec(str(PurePosixPath(bin_dir) / "ghostcopy-desktop"))} %u\n'
-            f'Icon={str(icon).replace(chr(92), chr(92) * 2)}\n'
+            + icon_line +
             'Terminal=false\nCategories=Utility;\n'
             'MimeType=x-scheme-handler/ghostcopy;\n'
             f'StartupWMClass={APP_ID}\nStartupNotify=false\n', False),
@@ -58,7 +59,10 @@ def entries(app_dir, bin_dir, icon, cli=True):
             '[Desktop Entry]\nType=Service\nMimeType=all/allfiles;\n'
             'Actions=send;\nX-KDE-Protocols=file\n'
             '\n[Desktop Action send]\nName=Send with GhostCopy\n'
-            'Icon=edit-paste\n'
+            # GhostCopy's own icon, as on the Windows context-menu entry,
+            # rather than the theme's generic paste glyph - the menu should
+            # say whose action it is.
+            + icon_line +
             f'Exec={desktop_exec(str(PurePosixPath(bin_dir) / "ghostcopy-send"))} %F\n', True),
     }
     # The CLI is separately named from the GUI and keeps its documented name.

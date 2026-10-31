@@ -21,6 +21,8 @@ class LinuxIntegrationTest(unittest.TestCase):
             self.assertIn('Icon=com.ghostcopy.ghostcopy', entry)
             menu = (root / 'share/kio/servicemenus/com.ghostcopy.ghostcopy.send.desktop').read_text()
             self.assertIn('Exec="/usr/bin/ghostcopy-send" %F', menu)
+            # The right-click action carries the app's icon, not a stock one.
+            self.assertIn('Icon=com.ghostcopy.ghostcopy', menu)
             self.assertIn('/opt/ghostcopy/ghostcopy --send-file "$file"',
                           (root / 'bin/ghostcopy-send').read_text())
             self.assertIn('exec /opt/ghostcopy/ghostcopy-agent "$@"',

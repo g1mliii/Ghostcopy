@@ -15,8 +15,9 @@
          first frame. -->
     <color name="ghost_background">#FF0F0F13</color>
 
-    <!-- Adaptive icon background layer. GhostColors.primary: the launcher
-         masks this to its own shape, so it is a flat fill rather than a tile
-         with corners of its own. -->
-    <color name="ghost_icon_background">#FF6670FF</color>
+    <!-- Adaptive icon background layer, behind the indigo ghost: white, and
+         near-black in values-night/ for launchers that follow the system
+         theme. A flat fill - the launcher masks it to its own shape. See
+         tool/generate_brand_assets.py. -->
+    <color name="ghost_icon_background">#FFFFFFFF</color>
 </resources>

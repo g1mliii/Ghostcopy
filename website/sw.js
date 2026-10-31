@@ -25,7 +25,10 @@
 // precached before the rebrand and the icon resize kept being served to
 // returning visitors whatever the server had. The pages now link versioned
 // icon URLs (?v=2); renaming the cache drops the stale copies outright.
-const CACHE = 'ghostcopy-v4';
+//
+// v5 (2026-10-27): the icons moved from a white ghost on indigo to an indigo
+// ghost on white/black. Icon URLs are ?v=3, and the rename drops v4's copies.
+const CACHE = 'ghostcopy-v5';
 
 // Extensionless, matching what the pages actually link to. Precaching
 // '/download.html' would have cached a 308 to '/download'.
@@ -37,7 +40,7 @@ const PRECACHE = [
     '/terms',
     '/output.css',
     '/waitlist.js',
-    '/icons/ghost.svg?v=2',
+    '/icons/ghost.svg?v=3',
 ];
 
 self.addEventListener('install', (event) => {
