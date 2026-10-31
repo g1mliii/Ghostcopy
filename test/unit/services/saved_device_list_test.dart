@@ -113,6 +113,25 @@ void main() {
     },
   );
 
+  test('a switch while preferences are loading drops the save', () async {
+    // setUp reset the mock, so getInstance has to load again: the queued
+    // save starts, then waits on it.
+    var owner = true;
+    final saving = SavedDeviceList.save(
+      'u1',
+      [device('a')],
+      generation: SavedDeviceList.generation,
+      stillOwner: () => owner,
+    );
+    await Future<void>.microtask(() {});
+    // The save is past the queue and waiting on preferences. Asked before
+    // that wait, ownership said yes, and the write went ahead regardless.
+    owner = false;
+    await saving;
+
+    expect(await SavedDeviceList.load('u1'), isEmpty);
+  });
+
   test('update carries a rename or removal into the saved list', () async {
     await SavedDeviceList.save('u1', [
       device('1'),
