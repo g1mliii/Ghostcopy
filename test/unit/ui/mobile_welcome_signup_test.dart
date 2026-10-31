@@ -175,6 +175,25 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // App Review rejected 1.0.8 asking for a demo QR code: the screen opened on
+  // a live camera, and an iPad with no desktop app had nothing to point it at.
+  testWidgets('opens on Sign In, with the QR scanner one tab over', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MobileWelcomeScreen(onAuthComplete: () => completions++),
+      ),
+    );
+
+    expect(find.widgetWithText(TextField, 'Email'), findsOneWidget);
+    expect(find.textContaining('No computer nearby?'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('Sign In')).dx,
+      lessThan(tester.getTopLeft(find.text('Scan QR')).dx),
+    );
+  });
+
   testWidgets('waits on the welcome screen for the confirmation', (
     tester,
   ) async {
