@@ -111,6 +111,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('stays clear of a side safe-area inset', (tester) async {
+    // An iPhone Duo cover screen: the status strip is 84pt down the right.
+    // The 320pt toast centred on 380pt would reach x = 350, under the strip.
+    tester.view
+      ..physicalSize = const Size(380, 800)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+
+    final context = await pumpHost(tester);
+    showGhostToast(context, 'A message long enough to want the full width');
+    await tester.pumpAndSettle();
+
+    final toast = tester.getRect(
+      find
+          .ancestor(
+            of: find.textContaining('A message'),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    expect(toast.left, greaterThanOrEqualTo(0));
+    expect(toast.right, lessThanOrEqualTo(380 - 84));
+    await finishToast(tester);
+  });
+
   testWidgets('can show a toast after its previous overlay is disposed', (
     tester,
   ) async {
