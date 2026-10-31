@@ -1,6 +1,8 @@
 #include "flutter_window.h"
 
+#include <cwchar>
 #include <optional>
+#include <string>
 #include <flutter/standard_method_codec.h>
 #include <wtsapi32.h>
 
@@ -18,6 +20,19 @@ constexpr wchar_t kStartupTaskId[] = L"GhostCopyStartup";
 // triggered by. WM_APP is the range reserved for an application's own
 // messages, so it cannot collide with anything Windows or Flutter sends.
 constexpr UINT kFlushClipboardMessage = WM_APP + 1;
+
+// Posted by GpuWatchdog when the GPU has been reset under the app.
+constexpr UINT kGpuResetMessage = WM_APP + 2;
+
+// Passed to the copy started after a GPU reset. The pid flag is read in
+// main.cpp, before the engine starts.
+constexpr wchar_t kAfterGpuResetFlag[] = L"--after-gpu-reset";
+constexpr wchar_t kWaitForPidFlag[] = L"--wait-for-pid=";
+
+// A copy started after a reset that sees another within this long does not
+// restart again: a GPU that keeps resetting would otherwise have the app
+// restarting in a loop.
+constexpr ULONGLONG kGpuResetRestartGuardMs = 30000;
 
 // WM_TIMER id for retrying a flush that found the clipboard open elsewhere.
 // Another process holding it open is routine - a clipboard manager, or the
@@ -171,6 +186,9 @@ bool FlutterWindow::OnCreate() {
 
   // WM_CLIPBOARDUPDATE on every clipboard change; see MessageHandler.
   AddClipboardFormatListener(GetHandle());
+
+  created_at_ = ::GetTickCount64();
+  gpu_watchdog_ = std::make_unique<GpuWatchdog>(GetHandle(), kGpuResetMessage);
 
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     if (flutter_controller_) {
@@ -342,6 +360,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       FlushOwnedClipboard();
       break;
 
+    case kGpuResetMessage:
+      RestartAfterGpuReset();
+      return 0;
+
     case WM_TIMER:
       if (wparam == kFlushRetryTimerId) {
         ::KillTimer(hwnd, kFlushRetryTimerId);
@@ -352,4 +374,43 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+// Swaps this process, its Flutter surfaces lost with the GPU, for a fresh one.
+//
+// The new copy starts hidden in the tray, as a login launch does, and waits
+// for this one to exit before it starts its engine (main.cpp): otherwise
+// SingleInstance would find this copy still holding the port, hand it the
+// arguments and quit, leaving the white window behind. This one quits the way
+// Quit in the tray does, so the usual teardown runs.
+//
+// If the new copy cannot be started, this one stays: a white window is a
+// better place to be left than no app at all.
+void FlutterWindow::RestartAfterGpuReset() {
+  if (std::wcsstr(::GetCommandLineW(), kAfterGpuResetFlag) != nullptr &&
+      ::GetTickCount64() - created_at_ < kGpuResetRestartGuardMs) {
+    return;
+  }
+
+  std::wstring exe(32768, L'\0');
+  const DWORD length =
+      ::GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+  if (length == 0 || length >= exe.size()) {
+    return;
+  }
+  exe.resize(length);
+
+  std::wstring command = L"\"" + exe + L"\" --launched-at-startup " +
+                         kAfterGpuResetFlag + L" " + kWaitForPidFlag +
+                         std::to_wstring(::GetCurrentProcessId());
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION process{};
+  if (!::CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE,
+                        0, nullptr, nullptr, &startup, &process)) {
+    return;
+  }
+  ::CloseHandle(process.hThread);
+  ::CloseHandle(process.hProcess);
+  ::PostQuitMessage(0);
 }
