@@ -21,6 +21,7 @@ import '../../utils/device_selection.dart';
 import '../../utils/platform_label.dart';
 import '../account_deletion_text.dart';
 import '../device_type_icon.dart';
+import '../layout/side_safe_area.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -792,7 +793,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SideSafeArea(child: _buildPage(context));
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       backgroundColor: GhostColors.background,
       appBar: AppBar(

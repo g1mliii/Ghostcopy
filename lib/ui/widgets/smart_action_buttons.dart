@@ -163,6 +163,7 @@ class SmartActionButtons extends StatelessWidget {
   void _showJwtPreviewSheet(BuildContext context, String preview) {
     showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       backgroundColor: GhostColors.surface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
