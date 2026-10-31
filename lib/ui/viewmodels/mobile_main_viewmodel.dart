@@ -381,7 +381,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
     bool current() => !_isDisposed && revision == _accountRevision;
 
-    var showingSaved = false;
     final devices = await fetchDevicesShowingSaved(
       _deviceService,
       onSaved: (saved) {
@@ -389,7 +388,6 @@ class MobileMainViewModel extends ChangeNotifier {
         _devices = saved;
         _deviceTypeTargetsCache = null;
         _devicesLoading = false;
-        showingSaved = true;
         notifyListeners();
       },
     );
@@ -398,10 +396,10 @@ class MobileMainViewModel extends ChangeNotifier {
     if (devices != null) {
       _devices = devices;
       _deviceTypeTargetsCache = null;
-    } else if (!showingSaved) {
+    } else if (_devices.isEmpty) {
       _deviceError = 'Failed to load devices. Tap to retry.';
     }
-    // else: offline with a saved list on screen. It is still the best answer
+    // else: offline with devices already on screen. It is still the best answer
     // there is, so it stays rather than working chips turning into an error.
     // Sends route by platform, so a slightly stale list still sends where it
     // says.

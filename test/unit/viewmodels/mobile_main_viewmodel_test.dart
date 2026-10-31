@@ -597,6 +597,31 @@ void main() {
       expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
     });
 
+    for (final throwsException in [true, false]) {
+      test('repeated failed refreshes keep saved chips '
+          '(${throwsException ? 'exception' : 'null result'})', () async {
+        when(() => deviceService.fetchUserDevices()).thenAnswer((_) async {
+          if (throwsException) throw Exception('offline');
+          return null;
+        });
+        when(
+          () => deviceService.getSavedDevices(),
+        ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+        await viewModel.loadDevices();
+        expect(viewModel.deviceError, isNull);
+        expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+
+        for (var refresh = 0; refresh < 2; refresh++) {
+          await viewModel.loadDevices();
+
+          expect(viewModel.deviceError, isNull);
+          expect(viewModel.devicesLoading, isFalse);
+          expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+        }
+      });
+    }
+
     test('a real empty answer replaces the saved list', () async {
       // Every device removed elsewhere: the saved chips must not keep
       // offering them.
