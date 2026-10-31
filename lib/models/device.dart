@@ -114,12 +114,25 @@ class Device {
   bool get isDesktop =>
       deviceType == 'windows' || deviceType == 'macos' || deviceType == 'linux';
 
-  /// Get a display name for the device
+  /// The device's name as the user knows it: "Subaig's iPhone", not
+  /// "Subaig's iPhone · 1A2B3C4D".
+  ///
+  /// Phones register under their name plus ` · ` and 8 hex characters of a
+  /// stable id (ClipboardRepository.initializeDeviceName), because rows are
+  /// unique on the name and two phones can share one. That suffix is for the
+  /// index, not for people, so it is dropped here.
   String get displayName {
-    if (deviceName != null && deviceName!.isNotEmpty) {
-      return deviceName!;
-    }
-
+    final name = isMobile
+        ? deviceName?.replaceFirst(_uniquenessSuffix, '')
+        : deviceName;
+    if (name != null && name.isNotEmpty) return name;
     return platformLabel(deviceType);
   }
+
+  /// Generated mobile identity metadata to retain when editing the visible name.
+  String get registrationSuffix => isMobile
+      ? _uniquenessSuffix.firstMatch(deviceName ?? '')?.group(0) ?? ''
+      : '';
+
+  static final _uniquenessSuffix = RegExp(r' · [0-9A-Fa-f]{8}$');
 }

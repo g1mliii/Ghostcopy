@@ -93,7 +93,10 @@ class _DeviceListItemState extends State<DeviceListItem> {
       return;
     }
 
-    final success = await widget.onRename(widget.device.id, newName);
+    final success = await widget.onRename(
+      widget.device.id,
+      '$newName${widget.device.registrationSuffix}',
+    );
     if (success && mounted) {
       setState(() => _isEditing = false);
     }
@@ -160,7 +163,9 @@ class _DeviceListItemState extends State<DeviceListItem> {
                             ? TextField(
                                 controller: _nameController,
                                 autofocus: true,
-                                maxLength: 255,
+                                maxLength:
+                                    255 -
+                                    widget.device.registrationSuffix.length,
                                 style: const TextStyle(
                                   fontSize: 13,
                                   color: GhostColors.textPrimary,

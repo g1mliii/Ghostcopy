@@ -92,6 +92,7 @@ screenshots, no tracing, no IP, clip text stripped on the device).
 | User Content - Other User Content | Yes | Yes | App Functionality | Clip text and files |
 | Identifiers - User ID | Yes | Yes | App Functionality | Supabase account ID |
 | Identifiers - Device ID | Yes | Yes | App Functionality | Push token per device, and the vendor-ID suffix in the device name |
+| Other Data - device name | Yes | Yes | App Functionality | The name the user gave the phone (user-assigned-device-name entitlement), so their own device list says which is which. It can contain their name; it is never shown to anyone else and is not in crash reports |
 | Contact Info - Name | Yes | Yes | App Functionality | Google sign-in asks for the profile scope, so Supabase stores the Google name (never shown by the app) |
 | Diagnostics - Crash Data | Yes | **No** | App Functionality | Sentry crash reports; no user id is attached |
 | Diagnostics - Other Diagnostic Data | Yes | **No** | App Functionality | Sentry error reports: device model, OS and app version, stack traces |
