@@ -733,11 +733,15 @@ class ClipboardRepository implements IClipboardRepository {
   ) async {
     try {
       debugPrint('[Repository] ↓ Downloading: $storagePath');
+      final timer = Stopwatch()..start();
 
       final raw = await _storageService.downloadFile(storagePath);
       _offlineDownloads.remove(storagePath);
 
-      debugPrint('[Repository] ✓ Downloaded: ${raw.length} bytes');
+      debugPrint(
+        '[Repository] ✓ Downloaded: ${raw.length} bytes '
+        'in ${timer.elapsedMilliseconds}ms',
+      );
 
       // Persist the bytes EXACTLY as received - still encrypted when the clip
       // is encrypted - so a restart does not pay for this download again.
@@ -778,8 +782,12 @@ class ClipboardRepository implements IClipboardRepository {
       );
       return null;
     }
+    final timer = Stopwatch()..start();
     final bytes = await _encryptionService.decryptBytes(raw);
-    debugPrint('[Repository] 🔓 Decrypted to ${bytes.length} bytes');
+    debugPrint(
+      '[Repository] 🔓 Decrypted to ${bytes.length} bytes '
+      'in ${timer.elapsedMilliseconds}ms',
+    );
     return bytes;
   }
 
