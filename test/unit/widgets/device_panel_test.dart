@@ -30,7 +30,7 @@ void main() {
     ).thenAnswer((_) async => [_device('a'), _device('b')]);
     when(devices.fetchUserDevices).thenAnswer((_) {
       fetches++;
-      return fetches == 1 ? firstFetch.future : Future.value([_device('a')]);
+      return firstFetch.future;
     });
     when(devices.getCurrentDeviceId).thenReturn('a');
     when(() => devices.removeDevice('b')).thenAnswer((_) async => true);
@@ -55,12 +55,14 @@ void main() {
     await tester.pump();
     expect(find.byType(DeviceListItem), findsOneWidget);
 
-    // The fetch that started before the removal answers with b still in it.
-    firstFetch.complete([_device('a'), _device('b')]);
+    // The fetch that started before the removal answers with b still in it -
+    // and with c, added on another device, which must not be lost.
+    firstFetch.complete([_device('a'), _device('b'), _device('c')]);
     await tester.pumpAndSettle();
 
-    expect(fetches, 2);
-    expect(find.byType(DeviceListItem), findsOneWidget);
+    expect(fetches, 1);
     expect(find.text('PC b'), findsNothing);
+    expect(find.text('PC c'), findsOneWidget);
+    expect(find.byType(DeviceListItem), findsNWidgets(2));
   });
 }

@@ -66,8 +66,7 @@ class SavedDeviceList {
     bool Function()? stillOwner,
   }) => _queue.run(() async {
     if (generation != _generation) return;
-    if (stillOwner != null && !stillOwner()) return;
-    await _write(userId, devices);
+    await _write(userId, devices, stillOwner: stillOwner);
   });
 
   /// Apply [change] to the list saved for [userId], when there is one.
@@ -106,9 +105,16 @@ class SavedDeviceList {
     }
   }
 
-  static Future<void> _write(String userId, List<Device> devices) async {
+  /// [stillOwner] is asked after the last await before the write, so no
+  /// account switch can fall between the check and the write being issued.
+  static Future<void> _write(
+    String userId,
+    List<Device> devices, {
+    bool Function()? stillOwner,
+  }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (stillOwner != null && !stillOwner()) return;
       await prefs.setString(
         _key,
         jsonEncode({
