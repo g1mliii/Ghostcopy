@@ -193,13 +193,16 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
     // this screen it covered the very control the user had been aiming at.
     //
     // Offset by the safe area so it clears the notch and Dynamic Island rather
-    // than tucking behind them.
-    final topInset = MediaQuery.of(context).padding.top;
+    // than tucking behind them. The sides too: this sits in the Navigator's
+    // overlay, above each route's SideSafeArea, so without them it centred on
+    // the full width and ran under the iPhone Duo's right-edge strip, or the
+    // notch in landscape.
+    final padding = MediaQuery.paddingOf(context);
 
     return Positioned(
-      top: topInset + 12,
-      left: 0,
-      right: 0,
+      top: padding.top + 12,
+      left: padding.left,
+      right: padding.right,
       child: FadeTransition(
         opacity: _fadeAnimation,
         child: SlideTransition(
