@@ -981,6 +981,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       extra += 160;
     }
     if (_viewModel.undecryptableItemCount.value > 0) extra += 90;
+    // The error is capped at two lines when collapsed: see _buildPasteArea.
     if (_viewModel.sendErrorMessage != null) extra += 50;
     // Most of it is text, which grows with the user's text size.
     final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
@@ -1451,6 +1452,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     Expanded(
                       child: Text(
                         sendError,
+                        // Collapsed, the page is a fixed height and
+                        // _collapsedPageFloor allows this two lines; a longer
+                        // message wrapping freely overflowed the column.
+                        maxLines: expand ? 2 : null,
+                        overflow: expand ? TextOverflow.ellipsis : null,
                         style: const TextStyle(
                           fontSize: 12,
                           color: GhostColors.errorLight,
@@ -1747,22 +1753,37 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// away or back, with a chevron saying which.
   Widget _buildHistoryHeading({bool collapsible = false}) {
     final count = _viewModel.filteredHistoryItems.length;
-    final heading = _buildSectionHeading(
-      'Clipboard history',
-      // Saved on this phone and not refreshed - it may be behind.
-      detail: _viewModel.showingSavedHistory
-          ? '$count saved · offline'
-          : '$count recent',
-    );
+    // Saved on this phone and not refreshed - it may be behind.
+    final detail = _viewModel.showingSavedHistory
+        ? '$count saved · offline'
+        : '$count recent';
+    final heading = _buildSectionHeading('Clipboard history', detail: detail);
     if (!collapsible) return heading;
 
     void toggleHistory() =>
         setState(() => _historyCollapsed = !_historyCollapsed);
 
+    // A tap here is not a tap outside the composer: without the region its
+    // onTapOutside unfocused it first, and the keyboard closed on every toggle
+    // that _composerFieldKey exists to keep it open across.
+    return TextFieldTapRegion(
+      child: _historyHeadingButton(heading, detail, toggleHistory),
+    );
+  }
+
+  /// The collapsible history heading's tap target. The label keeps the count,
+  /// which collapsed is the only sign of history a screen reader gets; the
+  /// action is said by the tap hint and the expanded state.
+  Widget _historyHeadingButton(
+    Widget heading,
+    String detail,
+    VoidCallback toggleHistory,
+  ) {
     return Semantics(
       button: true,
       expanded: !_historyCollapsed,
-      label: _historyCollapsed ? 'Show history' : 'Hide history',
+      label: 'Clipboard history, $detail',
+      onTapHint: _historyCollapsed ? 'Show history' : 'Hide history',
       excludeSemantics: true,
       onTap: toggleHistory,
       child: InkWell(
