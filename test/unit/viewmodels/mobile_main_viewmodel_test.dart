@@ -85,6 +85,9 @@ void main() {
     when(
       () => authService.refreshIfAwaitingConfirmation(),
     ).thenAnswer((_) async {});
+    when(
+      () => deviceService.getSavedDevices(),
+    ).thenAnswer((_) async => <Device>[]);
 
     viewModel = MobileMainViewModel(
       authService: authService,
@@ -162,9 +165,7 @@ void main() {
       when(
         () => clipboardRepository.watchHistory(),
       ).thenAnswer((_) => newStream.stream);
-      when(
-        () => deviceService.getUserDevices(forceRefresh: true),
-      ).thenAnswer((_) async => []);
+      when(() => deviceService.fetchUserDevices()).thenAnswer((_) async => []);
       await viewModel.reloadForCurrentUser();
       expect(oldStream.hasListener, isFalse);
       expect(newStream.hasListener, isTrue);
@@ -196,9 +197,7 @@ void main() {
       when(
         () => clipboardRepository.watchHistory(),
       ).thenAnswer((_) => const Stream.empty());
-      when(
-        () => deviceService.getUserDevices(forceRefresh: true),
-      ).thenAnswer((_) async => []);
+      when(() => deviceService.fetchUserDevices()).thenAnswer((_) async => []);
       when(() => clipboardRepository.getHistory()).thenAnswer((_) async => []);
       await viewModel.reloadForCurrentUser();
       oldRequest.complete([
@@ -485,11 +484,7 @@ void main() {
     );
 
     test('two devices of one type collapse to a single chip', () async {
-      when(
-        () => deviceService.getUserDevices(
-          forceRefresh: any(named: 'forceRefresh'),
-        ),
-      ).thenAnswer(
+      when(() => deviceService.fetchUserDevices()).thenAnswer(
         (_) async => [
           device('1', 'windows', 'Work PC'),
           device('2', 'windows', 'Home PC'),
@@ -511,11 +506,7 @@ void main() {
     });
 
     test('a chip is labelled by platform, never by device name', () async {
-      when(
-        () => deviceService.getUserDevices(
-          forceRefresh: any(named: 'forceRefresh'),
-        ),
-      ).thenAnswer(
+      when(() => deviceService.fetchUserDevices()).thenAnswer(
         (_) async => [
           device('1', 'windows', 'Work PC'),
           device('2', 'windows', 'Home PC'),
@@ -536,9 +527,7 @@ void main() {
 
     test('a lone device of its type is still labelled by platform', () async {
       when(
-        () => deviceService.getUserDevices(
-          forceRefresh: any(named: 'forceRefresh'),
-        ),
+        () => deviceService.fetchUserDevices(),
       ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
       await viewModel.loadDevices();
 
@@ -547,6 +536,117 @@ void main() {
       // second PC. The name stays available via deviceNames.
       expect(viewModel.deviceTypeTargets.single.label, 'Windows');
       expect(viewModel.deviceTypeTargets.single.deviceNames, 'Work PC');
+    });
+
+    test('draws the saved list first, then swaps in the fetched one', () async {
+      final fetch = Completer<List<Device>>();
+      when(
+        () => deviceService.fetchUserDevices(),
+      ).thenAnswer((_) => fetch.future);
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      final loading = viewModel.loadDevices();
+      await Future<void>.delayed(Duration.zero);
+
+      // Chips from the last launch, with no spinner, while the fetch is out.
+      expect(viewModel.devicesLoading, isFalse);
+      expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+
+      fetch.complete([
+        device('1', 'windows', 'Work PC'),
+        device('2', 'macos', 'MacBook'),
+      ]);
+      await loading;
+
+      expect(viewModel.deviceTypeTargets.map((t) => t.deviceType), [
+        'macos',
+        'windows',
+      ]);
+      expect(viewModel.deviceError, isNull);
+    });
+
+    test('a failed fetch keeps the saved list instead of an error', () async {
+      when(
+        () => deviceService.fetchUserDevices(),
+      ).thenAnswer((_) async => throw Exception('offline'));
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.deviceError, isNull);
+      expect(viewModel.devicesLoading, isFalse);
+      expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+    });
+
+    test('a fetch that fails without throwing keeps it too', () async {
+      // fetchUserDevices reports a failure as null.
+      when(
+        () => deviceService.fetchUserDevices(),
+      ).thenAnswer((_) async => null);
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.deviceError, isNull);
+      expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+    });
+
+    for (final throwsException in [true, false]) {
+      test('repeated failed refreshes keep saved chips '
+          '(${throwsException ? 'exception' : 'null result'})', () async {
+        when(() => deviceService.fetchUserDevices()).thenAnswer((_) async {
+          if (throwsException) throw Exception('offline');
+          return null;
+        });
+        when(
+          () => deviceService.getSavedDevices(),
+        ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+        await viewModel.loadDevices();
+        expect(viewModel.deviceError, isNull);
+        expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+
+        for (var refresh = 0; refresh < 2; refresh++) {
+          await viewModel.loadDevices();
+
+          expect(viewModel.deviceError, isNull);
+          expect(viewModel.devicesLoading, isFalse);
+          expect(viewModel.deviceTypeTargets.single.deviceType, 'windows');
+        }
+      });
+    }
+
+    test('a real empty answer replaces the saved list', () async {
+      // Every device removed elsewhere: the saved chips must not keep
+      // offering them.
+      when(
+        () => deviceService.fetchUserDevices(),
+      ).thenAnswer((_) async => <Device>[]);
+      when(
+        () => deviceService.getSavedDevices(),
+      ).thenAnswer((_) async => [device('1', 'windows', 'Work PC')]);
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.devices, isEmpty);
+      expect(viewModel.deviceError, isNull);
+    });
+
+    test('with nothing saved, a failed fetch still shows the error', () async {
+      when(
+        () => deviceService.fetchUserDevices(),
+      ).thenAnswer((_) async => throw Exception('offline'));
+
+      await viewModel.loadDevices();
+
+      expect(viewModel.deviceError, isNotNull);
+      expect(viewModel.devices, isEmpty);
     });
 
     test('platformLabel spells product names properly', () {

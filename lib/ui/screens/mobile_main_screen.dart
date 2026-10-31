@@ -1535,7 +1535,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   Widget _buildDeviceError() {
     return GestureDetector(
-      onTap: () => _viewModel.loadDevices(forceRefresh: true),
+      onTap: () => _viewModel.loadDevices(),
       child: Row(
         children: [
           const Icon(

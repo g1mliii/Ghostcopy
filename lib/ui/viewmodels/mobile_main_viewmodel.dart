@@ -368,31 +368,43 @@ class MobileMainViewModel extends ChangeNotifier {
   }
 
   /// Load devices
-  Future<void> loadDevices({bool forceRefresh = false}) async {
+  ///
+  /// With nothing on screen yet - a cold start, or after an account switch -
+  /// the list saved by the last launch is shown while the fetch runs, so the
+  /// chips appear at once instead of after a network round trip. See
+  /// fetchDevicesShowingSaved.
+  Future<void> loadDevices() async {
     final revision = _accountRevision;
     _devicesLoading = true;
     _deviceError = null;
     notifyListeners();
 
-    try {
-      final devices = await _deviceService.getUserDevices(
-        forceRefresh: forceRefresh,
-      );
-      if (!_isDisposed && revision == _accountRevision) {
-        _devices = devices;
+    bool current() => !_isDisposed && revision == _accountRevision;
+
+    final devices = await fetchDevicesShowingSaved(
+      _deviceService,
+      onSaved: (saved) {
+        if (!current() || _devices.isNotEmpty) return;
+        _devices = saved;
         _deviceTypeTargetsCache = null;
         _devicesLoading = false;
-        _deviceError = null;
         notifyListeners();
-      }
-    } on Exception catch (e) {
-      debugPrint('[MobileMainVM] Failed to load devices: $e');
-      if (!_isDisposed && revision == _accountRevision) {
-        _devicesLoading = false;
-        _deviceError = 'Failed to load devices. Tap to retry.';
-        notifyListeners();
-      }
+      },
+    );
+    if (!current()) return;
+
+    if (devices != null) {
+      _devices = devices;
+      _deviceTypeTargetsCache = null;
+    } else if (_devices.isEmpty) {
+      _deviceError = 'Failed to load devices. Tap to retry.';
     }
+    // else: offline with devices already on screen. It is still the best answer
+    // there is, so it stays rather than working chips turning into an error.
+    // Sends route by platform, so a slightly stale list still sends where it
+    // says.
+    _devicesLoading = false;
+    notifyListeners();
   }
 
   /// The history load running now, and whether another was asked for while
@@ -1210,7 +1222,7 @@ class MobileMainViewModel extends ChangeNotifier {
     _isRefreshing = true;
     notifyListeners();
     try {
-      await Future.wait([loadDevices(forceRefresh: true), loadHistory()]);
+      await Future.wait([loadDevices(), loadHistory()]);
     } finally {
       _isRefreshing = false;
       notifyListeners();
@@ -1778,7 +1790,7 @@ class MobileMainViewModel extends ChangeNotifier {
     _historySubscription = null;
     if (_isDisposed) return;
     subscribeToRealtimeUpdates();
-    await Future.wait([loadHistory(), loadDevices(forceRefresh: true)]);
+    await Future.wait([loadHistory(), loadDevices()]);
   }
 
   // ========== CACHE MANAGEMENT ==========
