@@ -361,12 +361,26 @@ class DeviceService implements IDeviceService {
           .map((json) => Device.fromJson(json as Map<String, dynamic>))
           .toList();
 
+      // The account changed while the request was out - a switch straight
+      // to another account, which clears nothing. This list is the old
+      // account's: caching or saving it would show it to the new one.
+      bool stillOwner() => _supabase.auth.currentUser?.id == userId;
+      if (!stillOwner()) {
+        debugPrint('[DeviceService] Account changed mid-fetch - dropped');
+        return null;
+      }
+
       // Update cache
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
       // And the copy the next launch draws first. See SavedDeviceList.
       unawaited(
-        SavedDeviceList.save(userId, devices, generation: savedGeneration),
+        SavedDeviceList.save(
+          userId,
+          devices,
+          generation: savedGeneration,
+          stillOwner: stillOwner,
+        ),
       );
 
       debugPrint(
@@ -547,6 +561,14 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device was updated
       _invalidateCache();
+      _updateSaved(
+        (devices) => [
+          for (final device in devices)
+            device.id == deviceId
+                ? device.copyWith(deviceName: trimmedName)
+                : device,
+        ],
+      );
 
       return true;
     } on PostgrestException catch (e) {
@@ -578,6 +600,12 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device was removed
       _invalidateCache();
+      _updateSaved(
+        (devices) => [
+          for (final device in devices)
+            if (device.id != deviceId) device,
+        ],
+      );
 
       return true;
     } on PostgrestException catch (e) {
@@ -611,6 +639,14 @@ class DeviceService implements IDeviceService {
     return _cachedDevices != null &&
         _lastDeviceFetch != null &&
         DateTime.now().difference(_lastDeviceFetch!) < _cacheExpiry;
+  }
+
+  /// Carry a change the server has accepted into the saved list, so the next
+  /// launch does not draw the list from before it. See SavedDeviceList.update.
+  void _updateSaved(List<Device> Function(List<Device> devices) change) {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+    unawaited(SavedDeviceList.update(userId, change));
   }
 
   /// Invalidate the device cache

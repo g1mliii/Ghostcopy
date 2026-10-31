@@ -33,6 +33,11 @@ class _DevicePanelState extends State<DevicePanel> {
 
   String? _error;
 
+  /// Renames and removals that have succeeded while this panel is open. A
+  /// fetch that started before one finished answers with the list from
+  /// before it, so it is asked again rather than drawn.
+  int _edits = 0;
+
   @override
   void initState() {
     super.initState();
@@ -50,16 +55,25 @@ class _DevicePanelState extends State<DevicePanel> {
       _error = null;
     });
 
-    final devices = await fetchDevicesShowingSaved(
-      widget.deviceService,
-      onSaved: (saved) {
-        if (!mounted || _cachedDevices != null) return;
-        setState(() {
-          _cachedDevices = saved;
-          _isLoading = false;
-        });
-      },
-    );
+    List<Device>? devices;
+    int editsBefore;
+    do {
+      editsBefore = _edits;
+      devices = await fetchDevicesShowingSaved(
+        widget.deviceService,
+        onSaved: (saved) {
+          if (!mounted || _cachedDevices != null) return;
+          setState(() {
+            _cachedDevices = saved;
+            _isLoading = false;
+          });
+        },
+      );
+      // The saved list is drawn and interactive while the fetch is out; a
+      // rename or removal made meanwhile would be undone by drawing this
+      // answer. The edit cleared the service's cache, so asking again gets
+      // the list with it.
+    } while (mounted && devices != null && _edits != editsBefore);
     _fetching = false;
     if (!mounted) return;
     setState(() {
@@ -79,6 +93,7 @@ class _DevicePanelState extends State<DevicePanel> {
     );
     // mounted, not just success: the panel can be closed while the rename is
     // in flight, and setState after dispose throws.
+    if (success) _edits++;
     if (success && mounted) {
       // Update local cache to reflect name change
       setState(() {
@@ -95,6 +110,7 @@ class _DevicePanelState extends State<DevicePanel> {
 
   Future<bool> _handleRemove(String deviceId) async {
     final success = await widget.deviceService.removeDevice(deviceId);
+    if (success) _edits++;
     if (success && mounted) {
       // Remove from local cache
       setState(() {

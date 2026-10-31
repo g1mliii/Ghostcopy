@@ -93,4 +93,76 @@ void main() {
     });
     expect(await SavedDeviceList.load('u1'), isEmpty);
   });
+
+  test(
+    'a save for an account that has been switched away is dropped',
+    () async {
+      await SavedDeviceList.save('u2', [
+        device('b'),
+      ], generation: SavedDeviceList.generation);
+
+      // Account u1's fetch, slower than u2's, lands after the switch to u2.
+      await SavedDeviceList.save(
+        'u1',
+        [device('a')],
+        generation: SavedDeviceList.generation,
+        stillOwner: () => false,
+      );
+
+      expect((await SavedDeviceList.load('u2')).map((d) => d.id), ['b']);
+    },
+  );
+
+  test('update carries a rename or removal into the saved list', () async {
+    await SavedDeviceList.save('u1', [
+      device('1'),
+      device('2'),
+    ], generation: SavedDeviceList.generation);
+
+    await SavedDeviceList.update(
+      'u1',
+      (devices) => [
+        for (final d in devices)
+          d.id == '1' ? d.copyWith(deviceName: 'Desk') : d,
+      ],
+    );
+    await SavedDeviceList.update(
+      'u1',
+      (devices) => [
+        for (final d in devices)
+          if (d.id != '2') d,
+      ],
+    );
+
+    final loaded = await SavedDeviceList.load('u1');
+    expect(loaded.map((d) => d.deviceName), ['Desk']);
+  });
+
+  test('update leaves another account and an empty list alone', () async {
+    var called = false;
+    await SavedDeviceList.update('u1', (devices) {
+      called = true;
+      return devices;
+    });
+    expect(called, isFalse);
+    expect(await SavedDeviceList.load('u1'), isEmpty);
+
+    await SavedDeviceList.save('u1', [
+      device('1'),
+    ], generation: SavedDeviceList.generation);
+    await SavedDeviceList.update('u2', (_) => const []);
+    expect((await SavedDeviceList.load('u1')).map((d) => d.id), ['1']);
+  });
+
+  test('update queued before a clear does not write the list back', () async {
+    await SavedDeviceList.save('u1', [
+      device('1'),
+    ], generation: SavedDeviceList.generation);
+
+    final updating = SavedDeviceList.update('u1', (devices) => devices);
+    final clearing = SavedDeviceList.clear();
+    await Future.wait([updating, clearing]);
+
+    expect(await SavedDeviceList.load('u1'), isEmpty);
+  });
 }
