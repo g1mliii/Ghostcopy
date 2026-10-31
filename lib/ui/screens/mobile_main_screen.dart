@@ -1752,13 +1752,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
     if (!collapsible) return heading;
 
+    void toggleHistory() =>
+        setState(() => _historyCollapsed = !_historyCollapsed);
+
     return Semantics(
       button: true,
       expanded: !_historyCollapsed,
       label: _historyCollapsed ? 'Show history' : 'Hide history',
       excludeSemantics: true,
+      onTap: toggleHistory,
       child: InkWell(
-        onTap: () => setState(() => _historyCollapsed = !_historyCollapsed),
+        onTap: toggleHistory,
         borderRadius: BorderRadius.circular(GhostSpacing.thumbRadius),
         child: ConstrainedBox(
           // A full-height touch target, though the heading is one line.
