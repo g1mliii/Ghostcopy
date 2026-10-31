@@ -348,6 +348,9 @@ class DeviceService implements IDeviceService {
     // Read before the request: a sign-out while it is out clears the saved
     // list, and this fetch must not write it back afterwards.
     final savedGeneration = SavedDeviceList.generation;
+    // And edits: a rename or removal accepted while the request is out is not
+    // in this answer, so it must not be cached or saved over the edit.
+    final editsBefore = _acceptedEdits;
     try {
       final userId = _supabase.auth.currentUser!.id;
 
@@ -370,18 +373,24 @@ class DeviceService implements IDeviceService {
         return null;
       }
 
-      // Update cache
-      _cachedDevices = devices;
-      _lastDeviceFetch = DateTime.now();
-      // And the copy the next launch draws first. See SavedDeviceList.
-      unawaited(
-        SavedDeviceList.save(
-          userId,
-          devices,
-          generation: savedGeneration,
-          stillOwner: stillOwner,
-        ),
-      );
+      // Asked again at the write, after the save's last await: an edit
+      // accepted until then would otherwise be overwritten by this older
+      // list, and the next offline launch draw the old name or device.
+      bool noEditSince() => _acceptedEdits == editsBefore;
+      if (noEditSince()) {
+        // Update cache
+        _cachedDevices = devices;
+        _lastDeviceFetch = DateTime.now();
+        // And the copy the next launch draws first. See SavedDeviceList.
+        unawaited(
+          SavedDeviceList.save(
+            userId,
+            devices,
+            generation: savedGeneration,
+            stillOwner: () => stillOwner() && noEditSince(),
+          ),
+        );
+      }
 
       debugPrint(
         '[DeviceService] Fetched and cached ${devices.length} device(s)',
@@ -641,9 +650,14 @@ class DeviceService implements IDeviceService {
         DateTime.now().difference(_lastDeviceFetch!) < _cacheExpiry;
   }
 
+  /// Renames and removals the server has accepted. A fetch that was out when
+  /// one landed answers without it; see _fetchDevices.
+  int _acceptedEdits = 0;
+
   /// Carry a change the server has accepted into the saved list, so the next
   /// launch does not draw the list from before it. See SavedDeviceList.update.
   void _updateSaved(List<Device> Function(List<Device> devices) change) {
+    _acceptedEdits++;
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
     unawaited(SavedDeviceList.update(userId, change));
