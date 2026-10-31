@@ -33,25 +33,12 @@ void main() {
             elevation: 0,
             scrolledUnderElevation: 0,
             surfaceTintColor: Colors.transparent,
-            title: Row(
-              children: [
-                Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: GhostColors.primary,
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  'GhostCopy',
-                  style: GhostTypography.headline.copyWith(
-                    fontSize: 17,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-              ],
+            title: Text(
+              'GhostCopy',
+              style: GhostTypography.headline.copyWith(
+                fontSize: 17,
+                letterSpacing: -0.2,
+              ),
             ),
             actions: [
               IconButton(
@@ -114,18 +101,6 @@ void main() {
                             style: TextButton.styleFrom(
                               padding: EdgeInsets.zero,
                               foregroundColor: GhostColors.textMuted,
-                            ),
-                          ),
-                          const Spacer(),
-                          const Flexible(
-                            child: Text(
-                              'Nothing to send yet',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: GhostColors.textMuted,
-                              ),
                             ),
                           ),
                         ],
