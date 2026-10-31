@@ -256,20 +256,22 @@ IOS_ICONSET = ("ios", "Runner", "Assets.xcassets", "AppIcon.appiconset")
 def ios_app_icon() -> None:
     """iOS: one 1024px icon per appearance; Xcode derives every size.
 
-    Light and dark are opaque and square - the OS masks the corners, and an
-    app icon with any alpha is rejected at upload. Tinted (iOS 18+) is the
-    mark alone in white on transparency: the system washes it in the user's
-    tint over a dark backing of its own, so a tile of ours would come out as
-    a solid block.
+    Light is opaque and square - the OS masks the corners, and the default
+    icon is rejected at upload if it has any alpha. Dark and tinted (iOS 18+)
+    are the mark alone on transparency, as Apple's asset catalog guidance
+    asks: the system draws its own dark backing behind them, so the eyes,
+    cut out of the ghost, show that backing - black eyes in dark mode. Dark
+    keeps the indigo; tinted is white, which the system washes in the user's
+    tint. A tile of ours would replace the system's backing with a flat
+    square of its own.
     """
     save(tile(1024), *IOS_ICONSET, "Icon-App-1024x1024@1x.png")
-    save(tile(1024, bg=DARK_TILE), *IOS_ICONSET,
-         "Icon-App-Dark-1024x1024@1x.png")
-    tinted = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
     mark_px = int(1024 * 0.92)
     off = (1024 - mark_px) // 2
-    tinted.alpha_composite(mark(mark_px, WHITE), (off, off))
-    save(tinted, *IOS_ICONSET, "Icon-App-Tinted-1024x1024@1x.png")
+    for color, name in ((PRIMARY, "Dark"), (WHITE, "Tinted")):
+        icon = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+        icon.alpha_composite(mark(mark_px, color), (off, off))
+        save(icon, *IOS_ICONSET, f"Icon-App-{name}-1024x1024@1x.png")
 
     def entry(filename, appearance=None):
         image = {"filename": filename, "idiom": "universal",
