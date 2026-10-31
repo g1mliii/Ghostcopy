@@ -43,6 +43,20 @@ flutter_secure_storage's key for a data file that is deleted with the package.
 
 ## iOS: open
 
+- [ ] **iPhone Duo - check on the simulator before the next iOS build**
+      (Xcode 27.1 iPhone Duo simulator). `SideSafeArea`
+      (`lib/ui/layout/side_safe_area.dart`, PR #106) keeps content out of the
+      status strip down the right edge. Confirm closed (cover display, both
+      orientations) and fully open that nothing sits under the strip, and that
+      the strip shows the app background rather than a black bar. Then try
+      **half-folded**: the crease is a reserved region that Apple's own
+      layouts move around automatically, but ours is custom Flutter, and it
+      is not known whether Flutter on iOS reports the crease to us. Check that
+      neither the composer nor the history list, nor the divider between the
+      two panes, lands in the crease. If something does, screenshot it - the
+      fix is to read the fold and split around it. Retake the App Store
+      screenshots afterwards, and add Duo ones for the "optimized for iPhone
+      Duo" badge
 - [ ] **Share extension rewrite - confirm on device** (merged to main in
       `7d1f6d2`, `ios/ShareExtension/ShareViewController.swift`).
       The package's loader asked a document for `public.text`, got a file URL

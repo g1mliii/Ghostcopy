@@ -221,5 +221,11 @@ Required: 6.9" iPhone (1320 x 2868, iPhone 18 Pro Max simulator) and 13" iPad
 (2064 x 2752, iPad Pro 13-inch simulator), because the app targets iPad.
 Raw captures are in `docs/app-store-screenshots/`.
 
+iPhone Duo screenshots are optional, and supplying them is what puts the
+"optimized for iPhone Duo" badge on the product page. Take them on the iPhone
+Duo simulator in Xcode 27.1 or later, open and closed. Retake any taken before
+`SideSafeArea` (`lib/ui/layout/side_safe_area.dart`): until then the status
+strip down the right edge sat over the composer and history.
+
 Screenshot protection does not affect captures on iOS: it only blurs the
 app-switcher preview, and is off by default.

@@ -13,6 +13,7 @@ import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../utils/auth_errors.dart';
 import '../guest_clips_guard.dart';
+import '../layout/side_safe_area.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -166,7 +167,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SideSafeArea(child: _buildPage(context));
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       backgroundColor: GhostColors.background,
       body: SafeArea(
