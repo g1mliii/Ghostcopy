@@ -33,7 +33,10 @@ class ClipLink {
 
   static final _whitespace = RegExp(r'\s');
   static final _email = RegExp(
-    r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$',
+    // The last label is letters, or punycode for a non-Latin top-level
+    // domain (`xn--p1ai`).
+    r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*'
+    r'\.([A-Za-z]{2,}|xn--[A-Za-z0-9-]+)$',
   );
   static final _phoneChars = RegExp(r'^\+?[0-9()\-. ]+$');
   static final _nonDigit = RegExp(r'\D');
@@ -419,9 +422,14 @@ class _MapPlace {
     return _MapPlace(_MapSource.google, query: query, latLng: latLng);
   }
 
-  /// `geo:lat,lng`, `geo:lat,lng?q=...`, `geo:0,0?q=...`.
+  /// `geo:lat,lng`, `geo:lat,lng?q=...`, `geo:0,0?q=...`, and the 3D
+  /// `geo:lat,lng,alt`, whose altitude no map here uses.
   static _MapPlace? fromGeo(Uri uri) {
-    final coords = uri.path.split(';').first;
+    var coords = uri.path.split(';').first;
+    final parts = coords.split(',');
+    if (parts.length == 3 && _number.hasMatch(parts[2].trim())) {
+      coords = '${parts[0]},${parts[1]}';
+    }
     final latLng = _latLngOrNull(coords);
     final query = uri.queryParameters['q'];
     final hasQuery = query != null && query.trim().isNotEmpty;
@@ -434,6 +442,8 @@ class _MapPlace {
       latLng: realLatLng,
     );
   }
+
+  static final _number = RegExp(r'^-?\d+(\.\d+)?$');
 
   static String? _first(Map<String, String> params, List<String> keys) {
     for (final key in keys) {
