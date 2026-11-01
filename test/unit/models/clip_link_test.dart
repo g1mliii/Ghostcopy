@@ -661,6 +661,50 @@ void main() {
       }
     });
 
+    test('navigation routes that are told to act stay text', () {
+      for (final text in [
+        'drafts://open?uuid=1&action=Delete',
+        'bear://x-callback-url/open-note?id=1&x-success=shortcuts://run',
+        'drafts://x-callback-url/open?uuid=1&x-error=bear://x',
+      ]) {
+        expect(
+          ClipLink.detect(text)?.kind,
+          isNot(ClipLinkKind.app),
+          reason: text,
+        );
+      }
+    });
+
+    test("Whereby's own pages are not meetings", () {
+      expect(
+        ClipLink.detect('https://whereby.com/information/tos')?.kind,
+        isNot(ClipLinkKind.meeting),
+      );
+      expect(
+        ClipLink.detect('https://whereby.com/pricing')?.kind,
+        isNot(ClipLinkKind.meeting),
+      );
+      expect(
+        ClipLink.detect('https://whereby.com/team-standup')?.kind,
+        ClipLinkKind.meeting,
+      );
+    });
+
+    test('a file and line is not a host and port', () {
+      for (final text in [
+        'schema.sql:42',
+        'Component.vue:80',
+        'build.gradle:12',
+      ]) {
+        expect(ClipLink.detect(text), isNull, reason: text);
+      }
+      expect(
+        ClipLink.detect('staging.example.com:8443/admin')?.kind,
+        ClipLinkKind.web,
+      );
+      expect(ClipLink.detect('example.io:3000')?.kind, ClipLinkKind.web);
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);

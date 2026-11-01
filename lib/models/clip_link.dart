@@ -217,7 +217,11 @@ class ClipLink {
     (
       ClipLinkKind.meeting,
       'Whereby',
-      (h, u) => h == 'whereby.com' && u.path.length > 1,
+      (h, u) =>
+          h == 'whereby.com' &&
+          u.pathSegments.length == 1 &&
+          u.pathSegments.first.isNotEmpty &&
+          !_wherebyPages.contains(u.pathSegments.first.toLowerCase()),
     ),
     (
       ClipLinkKind.music,
@@ -291,6 +295,27 @@ class ClipLink {
   };
 
   static final _edgeSlashes = RegExp(r'^/+|/+$');
+
+  /// Whereby's own site, beside its rooms (`whereby.com/<room>`).
+  static const _wherebyPages = {
+    'information',
+    'user',
+    'org',
+    'login',
+    'signup',
+    'pricing',
+    'blog',
+    'careers',
+    'download',
+    'embedded',
+    'about',
+    'contact',
+    'product',
+    'features',
+    'security',
+    'terms',
+    'privacy',
+  };
   static const _editorSchemes = {'vscode', 'vscode-insiders', 'cursor'};
 
   /// Apps whose links also *do* things - run an action, add a task, trash a
@@ -325,6 +350,15 @@ class ClipLink {
         '',
       );
       if (!routes.contains(route)) return null;
+      // A navigation route can still be told to act: Drafts' `open` runs
+      // `action=` on the draft it opens, and every x-callback-url route
+      // follows `x-success=` to another URL - which could be one of the
+      // routes refused above.
+      if (uri.queryParameters.keys.any(
+        (key) => key == 'action' || key.toLowerCase().startsWith('x-'),
+      )) {
+        return null;
+      }
     }
     final (kind, name) = app;
     var target = uri;
@@ -343,8 +377,15 @@ class ClipLink {
     r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa))(:\d{1,5})?(/\S*)?$',
     caseSensitive: false,
   );
+  // The top-level domain is a country code or a common generic one, so a
+  // file and line with an extension outside [_fileAndLine]'s list
+  // (`schema.sql:42`, `Component.vue:80`) does not read as a host. A country
+  // code that is also an extension (`.rs`, `.py`, `.md`) is ruled out there.
   static final _hostWithPort = RegExp(
-    r'^[a-z0-9-]+(\.[a-z0-9-]+)+:\d{2,5}(/\S*)?$',
+    r'^[a-z0-9-]+(\.[a-z0-9-]+)*'
+    r'\.([a-z]{2}|com|org|net|edu|gov|mil|int|info|biz|dev|app|cloud|tech|'
+    'site|online|xyz|page|run|live|host|systems|services|network|software)'
+    r':\d{2,5}(/\S*)?$',
     caseSensitive: false,
   );
 
