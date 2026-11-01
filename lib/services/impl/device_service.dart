@@ -348,9 +348,11 @@ class DeviceService implements IDeviceService {
     // Read before the request: a sign-out while it is out clears the saved
     // list, and this fetch must not write it back afterwards.
     final savedGeneration = SavedDeviceList.generation;
-    // And edits: a rename or removal accepted while the request is out is not
-    // in this answer, so it must not be cached or saved over the edit.
-    final editsBefore = _acceptedEdits;
+    // And edits: a rename or removal accepted while the request is out may
+    // not be in this answer, so it is applied to it before anything is
+    // cached or saved.
+    final editsBefore = _editsDuringFetch.length;
+    _fetchesOut++;
     try {
       final userId = _supabase.auth.currentUser!.id;
 
@@ -360,7 +362,7 @@ class DeviceService implements IDeviceService {
           .eq('user_id', userId)
           .order('last_active', ascending: false);
 
-      final devices = (response as List)
+      var devices = (response as List)
           .map((json) => Device.fromJson(json as Map<String, dynamic>))
           .toList();
 
@@ -373,24 +375,27 @@ class DeviceService implements IDeviceService {
         return null;
       }
 
-      // Asked again at the write, after the save's last await: an edit
-      // accepted until then would otherwise be overwritten by this older
-      // list, and the next offline launch draw the old name or device.
-      bool noEditSince() => _acceptedEdits == editsBefore;
-      if (noEditSince()) {
-        // Update cache
-        _cachedDevices = devices;
-        _lastDeviceFetch = DateTime.now();
-        // And the copy the next launch draws first. See SavedDeviceList.
-        unawaited(
-          SavedDeviceList.save(
-            userId,
-            devices,
-            generation: savedGeneration,
-            stillOwner: () => stillOwner() && noEditSince(),
-          ),
-        );
+      // Edits the server accepted while this was out: the answer may predate
+      // them, and the server has them, so the answer with them applied is
+      // the server's list. Saved as such - not skipped, which lost whatever
+      // else the answer brought (a device added elsewhere). An edit accepted
+      // after this point queues its own update behind this save.
+      for (final edit in _editsDuringFetch.skip(editsBefore)) {
+        devices = edit(devices);
       }
+
+      // Update cache
+      _cachedDevices = devices;
+      _lastDeviceFetch = DateTime.now();
+      // And the copy the next launch draws first. See SavedDeviceList.
+      unawaited(
+        SavedDeviceList.save(
+          userId,
+          devices,
+          generation: savedGeneration,
+          stillOwner: stillOwner,
+        ),
+      );
 
       debugPrint(
         '[DeviceService] Fetched and cached ${devices.length} device(s)',
@@ -405,6 +410,9 @@ class DeviceService implements IDeviceService {
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to fetch devices: $e');
       return null;
+    } finally {
+      // Kept only while a fetch is out to apply them to; see _updateSaved.
+      if (--_fetchesOut == 0) _editsDuringFetch.clear();
     }
   }
 
@@ -650,14 +658,15 @@ class DeviceService implements IDeviceService {
         DateTime.now().difference(_lastDeviceFetch!) < _cacheExpiry;
   }
 
-  /// Renames and removals the server has accepted. A fetch that was out when
-  /// one landed answers without it; see _fetchDevices.
-  int _acceptedEdits = 0;
+  /// Renames and removals the server accepted while a fetch was out. That
+  /// fetch's answer may predate them; see _fetchDevices.
+  final _editsDuringFetch = <List<Device> Function(List<Device> devices)>[];
+  int _fetchesOut = 0;
 
   /// Carry a change the server has accepted into the saved list, so the next
   /// launch does not draw the list from before it. See SavedDeviceList.update.
   void _updateSaved(List<Device> Function(List<Device> devices) change) {
-    _acceptedEdits++;
+    if (_fetchesOut > 0) _editsDuringFetch.add(change);
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
     unawaited(SavedDeviceList.update(userId, change));
