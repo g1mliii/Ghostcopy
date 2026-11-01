@@ -568,6 +568,14 @@ void main() {
       expect(ClipLink.detect('mailto:alice@example.com,bob'), isNull);
     });
 
+    test('mailto: links with no recipient open a draft', () {
+      final link = ClipLink.detect('mailto:?subject=Feedback')!;
+      expect(link.kind, ClipLinkKind.email);
+      expect(link.label, 'New email');
+      expect(link.uri.queryParameters['subject'], 'Feedback');
+      expect(ClipLink.detect('mailto:'), isNull);
+    });
+
     test('native geo: links open as sent on Android', () {
       for (final text in [
         'geo:43.6426,-79.3871?z=18',
