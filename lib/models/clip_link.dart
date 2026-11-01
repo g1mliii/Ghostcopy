@@ -39,6 +39,9 @@ class ClipLink {
     r'\.([A-Za-z]{2,}|xn--[A-Za-z0-9-]+)$',
   );
   static final _phoneChars = RegExp(r'^\+?[0-9()\-. ]+$');
+  // No-break and narrow no-break spaces: what a number copied from a web
+  // page, PDF or document is often spaced with (`+33 1 42 68 53 00`).
+  static final _noBreakSpace = RegExp('[\u00A0\u202F]');
   static final _nonDigit = RegExp(r'\D');
   static final _ipv4 = RegExp(r'^\d{1,3}(\.\d{1,3}){3}$');
   static final _date = RegExp(
@@ -158,7 +161,7 @@ class ClipLink {
   /// addresses, which have the same characters, are ruled out. A `tel:` link
   /// says what it is, so [explicit] lifts the formatting requirement.
   static ClipLink? _phone(String text, {bool explicit = false}) {
-    final number = text.trim();
+    final number = text.trim().replaceAll(_noBreakSpace, ' ');
     if (!_phoneChars.hasMatch(number)) return null;
     if (_ipv4.hasMatch(number) ||
         _date.hasMatch(number) ||
@@ -493,8 +496,21 @@ class _MapPlace {
     );
   }
 
-  Uri toGoogleMaps() => Uri.https('www.google.com', '/maps/search/', {
-    'api': '1',
-    'query': query ?? latLng!,
-  });
+  /// A search, or a pin. With both a query and coordinates the search is
+  /// scoped to them, in the form Google Maps writes its own links in: the
+  /// API form has no way to say where to search, and `query=Home` alone
+  /// could find any Home.
+  Uri toGoogleMaps() {
+    if (query != null && latLng != null) {
+      return Uri(
+        scheme: 'https',
+        host: 'www.google.com',
+        pathSegments: ['maps', 'search', query!, '@$latLng,15z'],
+      );
+    }
+    return Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query ?? latLng!,
+    });
+  }
 }
