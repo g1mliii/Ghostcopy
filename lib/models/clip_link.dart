@@ -166,7 +166,11 @@ class ClipLink {
   }
 
   static final _meetCode = RegExp('^/[a-z]{3}-[a-z]{4}-[a-z]{3}');
-  static final _amazonMusic = RegExp(r'^music\.amazon\.[a-z.]+$');
+  // Amazon's own storefront domains, not any suffix after `amazon.`
+  // (`music.amazon.attacker.com`).
+  static final _amazonMusic = RegExp(
+    r'^music\.amazon\.(com|ca|de|fr|it|es|in|co\.uk|co\.jp|com\.au|com\.br|com\.mx)$',
+  );
 
   static bool _hostIs(String host, String domain) =>
       host == domain || host.endsWith('.$domain');
@@ -259,7 +263,8 @@ class ClipLink {
   /// shortcut, `steam:` installs and launches games, `raycast:` runs
   /// commands. VS Code and Cursor are in for `file` links only - opening a
   /// file at a line - since their other links hand the URI to extensions,
-  /// which clone repositories and more ([_editorSchemes]).
+  /// which clone repositories and more ([_editorSchemes]). Note and to-do
+  /// apps are in for their navigation routes only ([_navigationRoutes]).
   static const _appSchemes = <String, (ClipLinkKind, String)>{
     'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
     'zoomus': (ClipLinkKind.meeting, 'Zoom'),
@@ -285,7 +290,25 @@ class ClipLink {
     'drafts': (ClipLinkKind.app, 'Drafts'),
   };
 
+  static final _edgeSlashes = RegExp(r'^/+|/+$');
   static const _editorSchemes = {'vscode', 'vscode-insiders', 'cursor'};
+
+  /// Apps whose links also *do* things - run an action, add a task, trash a
+  /// note - by route, and the routes that only open something. A link on
+  /// any other route stays text. `drafts://x-callback-url/runAction` would
+  /// otherwise run whatever that action does, from a synced clip.
+  static const _navigationRoutes = <String, Set<String>>{
+    'obsidian': {'open', 'search'},
+    'drafts': {'open', 'x-callback-url/open'},
+    'bear': {
+      'x-callback-url/open-note',
+      'x-callback-url/open-tag',
+      'x-callback-url/search',
+    },
+    'things': {'show', 'search'},
+    'todoist': {'task', 'project', 'today', 'upcoming', 'inbox'},
+    'craftdocs': {'open'},
+  };
 
   static ClipLink? _appLink(String text) {
     final colon = text.indexOf(':');
@@ -296,6 +319,13 @@ class ClipLink {
     final uri = Uri.tryParse(text);
     if (uri == null || text.length == colon + 1) return null;
     if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
+    if (_navigationRoutes[scheme] case final routes?) {
+      final route = '${uri.host}${uri.path}'.toLowerCase().replaceAll(
+        _edgeSlashes,
+        '',
+      );
+      if (!routes.contains(route)) return null;
+    }
     final (kind, name) = app;
     var target = uri;
     // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
@@ -373,6 +403,10 @@ class ClipLink {
       lat = double.parse(decimal.group(1)!);
       lng = double.parse(decimal.group(2)!);
     } else if (_dmsCoordinates.firstMatch(text) case final dms?) {
+      // Minutes and seconds run 0-59; `43°99'` is not a place.
+      for (final at in [2, 3, 6, 7]) {
+        if (double.parse(dms.group(at)!) >= 60) return null;
+      }
       double degrees(int at) =>
           double.parse(dms.group(at)!) +
           double.parse(dms.group(at + 1)!) / 60 +
@@ -383,6 +417,9 @@ class ClipLink {
     if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) {
       return null;
     }
+    // `geo:0,0` means "no coordinate, search instead", and 0,0 is open sea:
+    // a copied `0.000, 0.000` is a placeholder, not a place.
+    if (lat == 0 && lng == 0) return null;
     String fixed(double v) =>
         v.toStringAsFixed(6).replaceFirst(_trailingZeros, '');
     return ClipLink._(
@@ -421,7 +458,11 @@ class ClipLink {
 
   /// A street address, on one line or up to four: `123 Main St`,
   /// `1600 Amphitheatre Pkwy, Mountain View, CA 94043`, `350 rue Sherbrooke`,
-  /// `Unter den Linden 77`, `221B Baker Street\nLondon NW1 6XE`.
+  /// `Friedrichstraße 43`, `221B Baker Street\nLondon NW1 6XE`.
+  ///
+  /// A continental street needs its type in the name (-straße, -weg,
+  /// -straat...). One without, like `Unter den Linden 77`, is words and then
+  /// a number, which is also `Room 12` and `Chapter 3`, so it stays text.
   ///
   /// A best guess, and deliberately one that leans towards yes: the cost of a
   /// wrong one is an Open in Maps button on a clip that did not need it. The
@@ -730,10 +771,16 @@ class ClipLink {
   ClipLinkAlternate? alternateOn(String platform) {
     if (!canOpenOn(platform)) return null;
     return switch (kind) {
+      // A local number's `phone-context` says which country and area it is
+      // in; `sms:` has no way to carry it, and the number alone could reach
+      // someone else. Call keeps it; Text is left out.
+      ClipLinkKind.phone
+          when uri.path.toLowerCase().contains(';phone-context=') =>
+        null,
       ClipLinkKind.phone => ClipLinkAlternate(
         ClipLinkAlternateKind.text,
         'Text',
-        // The number alone: a tel: link's parameters (;ext=456) mean
+        // The number alone: a tel: link's other parameters (;ext=456) mean
         // nothing to a text.
         Uri(scheme: 'sms', path: uri.path.split(';').first),
       ),

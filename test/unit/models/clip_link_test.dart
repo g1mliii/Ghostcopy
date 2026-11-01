@@ -621,4 +621,63 @@ void main() {
       expect(ClipLink.detect('+44 20 7946 0958 123')?.kind, ClipLinkKind.phone);
     });
   });
+
+  group('from review, more kinds', () {
+    test('only real Amazon domains are Amazon Music', () {
+      expect(
+        ClipLink.detect('https://music.amazon.attacker.com/track')?.service,
+        isNot('Amazon Music'),
+      );
+      expect(
+        ClipLink.detect('https://music.amazon.co.uk/albums/B0')?.service,
+        'Amazon Music',
+      );
+    });
+
+    test('app links that perform actions stay text', () {
+      for (final text in [
+        'drafts://x-callback-url/runAction?action=Delete',
+        'bear://x-callback-url/trash?id=1',
+        'things:///add?title=x',
+        'todoist://addtask?content=x',
+        'obsidian://new?vault=Notes&name=x',
+        'craftdocs://createdocument?spaceId=1',
+      ]) {
+        expect(
+          ClipLink.detect(text)?.kind,
+          isNot(ClipLinkKind.app),
+          reason: text,
+        );
+      }
+      for (final text in [
+        'drafts://open?uuid=1',
+        'bear://x-callback-url/open-note?id=1',
+        'things:///show?id=today',
+        'todoist://today',
+        'obsidian://open?vault=Notes&file=Inbox',
+        'craftdocs://open?blockId=1&spaceId=2',
+      ]) {
+        expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
+      }
+    });
+
+    test('DMS minutes and seconds must be under 60', () {
+      expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
+      expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);
+    });
+
+    test('0,0 coordinates are a placeholder, not a place', () {
+      expect(ClipLink.detect('0.000, 0.000'), isNull);
+    });
+
+    test('no Text for a number with a phone context', () {
+      final local = ClipLink.detect('tel:5550123;phone-context=+1-201')!;
+      expect(local.kind, ClipLinkKind.phone);
+      expect(local.alternateOn('android'), isNull);
+      expect(
+        ClipLink.detect('tel:+12015550123;ext=4')!.alternateOn('android'),
+        isNotNull,
+      );
+    });
+  });
 }
