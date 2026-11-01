@@ -586,6 +586,30 @@ void main() {
       }
     });
 
+    test('punycode top-level domains in email addresses', () {
+      expect(
+        ClipLink.detect('user@xn--80a1acny.xn--p1ai')?.kind,
+        ClipLinkKind.email,
+      );
+      expect(ClipLink.detect('user@example.xn--'), isNull);
+    });
+
+    test('3D geo: links keep their place and open as sent on Android', () {
+      final link = ClipLink.detect('geo:48.2010,16.3695,183')!;
+      expect(link.kind, ClipLinkKind.map);
+      expect(link.label, '48.2010,16.3695');
+      expect(link.openUri('android'), link.uri);
+      expect(
+        link.openUri('windows').queryParameters['query'],
+        '48.2010,16.3695',
+      );
+      // A 2D link keeps both coordinates.
+      expect(
+        ClipLink.detect('geo:43.6426,-79.3871')!.label,
+        '43.6426,-79.3871',
+      );
+    });
+
     test('a card number written in groups is not a phone number', () {
       expect(ClipLink.detect('3782 822463 10005'), isNull);
       // A long international number still is.
