@@ -465,10 +465,19 @@ class _MapPlace {
     return trimmed;
   }
 
-  Uri toGeo() => Uri.parse(
-    'geo:${latLng ?? '0,0'}'
-    '${query != null ? '?q=${Uri.encodeQueryComponent(query!)}' : ''}',
-  );
+  Uri toGeo() {
+    // A textual q searches near the coordinates. Android's lat,lng(label)
+    // form keeps the selected pin and uses the place name only as its label.
+    final geoQuery = query == null
+        ? null
+        : latLng == null
+        ? query
+        : '$latLng($query)';
+    return Uri.parse(
+      'geo:${latLng ?? '0,0'}'
+      '${geoQuery != null ? '?q=${Uri.encodeQueryComponent(geoQuery)}' : ''}',
+    );
+  }
 
   /// On maps.apple.com when [web], which every Apple device answers; on
   /// `maps:` otherwise, which only the Maps app does.
