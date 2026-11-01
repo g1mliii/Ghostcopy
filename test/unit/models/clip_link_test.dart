@@ -164,11 +164,11 @@ void main() {
     test('Android opens Apple Maps links as geo:, and geo: as sent', () {
       expect(
         appleClassic.openUri('android').toString(),
-        'geo:48.8584,2.2945?q=Eiffel+Tower',
+        'geo:48.8584,2.2945?q=48.8584%2C2.2945%28Eiffel+Tower%29',
       );
       expect(
         applePlace.openUri('android').toString(),
-        'geo:37.33,-122.03?q=Apple',
+        'geo:37.33,-122.03?q=37.33%2C-122.03%28Apple%29',
       );
       // A native geo: link is already Android's; it opens as sent.
       expect(geo.openUri('android'), geo.uri);
@@ -202,9 +202,10 @@ void main() {
 
     test('Windows and Linux open geo: as a Google Maps search', () {
       for (final platform in ['windows', 'linux']) {
+        // Scoped to the coordinates the link carries.
         expect(
           geo.openUri(platform).toString(),
-          'https://www.google.com/maps/search/?api=1&query=CN+Tower',
+          'https://www.google.com/maps/search/CN%20Tower/@43.6426,-79.3871,15z',
         );
         expect(appleClassic.openUri(platform), appleClassic.uri);
       }
@@ -490,6 +491,32 @@ void main() {
   });
 
   group('from review', () {
+    test('Android keeps Apple place coordinates with an ambiguous label', () {
+      for (final url in [
+        'https://maps.apple.com/?q=Home&ll=37.33,-122.03',
+        'https://maps.apple.com/place?name=Home&coordinate=37.33,-122.03',
+      ]) {
+        final link = ClipLink.detect(url)!;
+        final opened = link.openUri('android');
+        // Android's coordinate(label) query selects a pin; a bare label
+        // searches for a different place near the geo: coordinates.
+        expect(opened.scheme, 'geo');
+        expect(opened.path, '37.33,-122.03');
+        expect(opened.queryParameters['q'], '37.33,-122.03(Home)');
+      }
+    });
+
+    test('Android keeps Apple searches and unnamed coordinates', () {
+      final search = ClipLink.detect('https://maps.apple.com/?q=Coffee')!;
+      expect(search.openUri('android').path, '0,0');
+      expect(search.openUri('android').queryParameters['q'], 'Coffee');
+
+      final coordinates = ClipLink.detect(
+        'https://maps.apple.com/place?coordinate=37.33,-122.03',
+      )!;
+      expect(coordinates.openUri('android').toString(), 'geo:37.33,-122.03');
+    });
+
     test('a clip that cannot be decoded stays text rather than throwing', () {
       for (final text in [
         'tel:%FF',
@@ -612,6 +639,28 @@ void main() {
       expect(
         ClipLink.detect('geo:43.6426,-79.3871')!.label,
         '43.6426,-79.3871',
+      );
+    });
+
+    test('numbers spaced with no-break spaces', () {
+      for (final text in [
+        '+33\u00A01\u00A042\u00A068\u00A053\u00A000',
+        '+33\u202F1 42 68 53 00',
+      ]) {
+        expect(ClipLink.detect(text)?.kind, ClipLinkKind.phone, reason: text);
+      }
+      expect(
+        ClipLink.detect(
+          '+33\u00A01\u00A042\u00A068\u00A053\u00A000',
+        )!.uri.toString(),
+        'tel:+33142685300',
+      );
+    });
+
+    test('a geo: search without coordinates stays an API search', () {
+      expect(
+        ClipLink.detect('geo:0,0?q=CN%20Tower')!.openUri('linux').toString(),
+        'https://www.google.com/maps/search/?api=1&query=CN+Tower',
       );
     });
 

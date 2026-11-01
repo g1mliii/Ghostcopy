@@ -56,7 +56,7 @@ void main() {
 
     expect(launcher.launched, [
       (
-        'geo:43.6426,-79.3871?q=CN+Tower',
+        'geo:43.6426,-79.3871?q=43.6426%2C-79.3871%28CN+Tower%29',
         PreferredLaunchMode.externalApplication,
       ),
       (link.uri.toString(), PreferredLaunchMode.externalApplication),

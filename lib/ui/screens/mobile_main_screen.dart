@@ -2145,9 +2145,12 @@ class _HistoryRowState extends State<_HistoryRow> {
     ClipLink link, {
     bool alternate = false,
   }) async {
-    Adaptive.successFeedback();
     final failed = await openClipLink(link, alternate: alternate);
-    if (failed != null && context.mounted) {
+    // The tick only once it opened, as Send and Copy do: not a tick and then
+    // an error toast.
+    if (failed == null) {
+      Adaptive.successFeedback();
+    } else if (context.mounted) {
       showGhostToast(context, failed, type: GhostToastType.error);
     }
   }
