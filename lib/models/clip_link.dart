@@ -328,6 +328,7 @@ class _MapPlace {
     this.source, {
     this.query,
     this.latLng,
+    this.center,
     this.isShortLink = false,
   });
 
@@ -336,6 +337,11 @@ class _MapPlace {
 
   /// `lat,lng`, as both Apple's `ll` and `geo:` write it.
   final String? latLng;
+
+  /// Where a search is centred, not a place: Apple's `center` on a
+  /// `/search` link. A pin at [latLng] is labelled with [query]; a search
+  /// for [query] near [center] finds whatever is there.
+  final String? center;
 
   /// `maps.apple/p/...` or `maps.app.goo.gl/...`: only the redirect knows the
   /// place.
@@ -382,6 +388,7 @@ class _MapPlace {
         latLng: _latLngOrNull(
           params['ll'] ?? params['coordinate'] ?? params['sll'],
         ),
+        center: _latLngOrNull(params['center']),
       );
     }
     if (host == 'maps.apple') {
@@ -471,13 +478,14 @@ class _MapPlace {
   Uri toGeo() {
     // A textual q searches near the coordinates. Android's lat,lng(label)
     // form keeps the selected pin and uses the place name only as its label.
+    // A search keeps its centre as the place to search near.
     final geoQuery = query == null
         ? null
         : latLng == null
         ? query
         : '$latLng($query)';
     return Uri.parse(
-      'geo:${latLng ?? '0,0'}'
+      'geo:${latLng ?? center ?? '0,0'}'
       '${geoQuery != null ? '?q=${Uri.encodeQueryComponent(geoQuery)}' : ''}',
     );
   }
@@ -501,11 +509,12 @@ class _MapPlace {
   /// API form has no way to say where to search, and `query=Home` alone
   /// could find any Home.
   Uri toGoogleMaps() {
-    if (query != null && latLng != null) {
+    final near = latLng ?? center;
+    if (query != null && near != null) {
       return Uri(
         scheme: 'https',
         host: 'www.google.com',
-        pathSegments: ['maps', 'search', query!, '@$latLng,15z'],
+        pathSegments: ['maps', 'search', query!, '@$near,15z'],
       );
     }
     return Uri.https('www.google.com', '/maps/search/', {

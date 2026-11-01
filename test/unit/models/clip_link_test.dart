@@ -401,6 +401,16 @@ void main() {
       );
     });
 
+    test('an Apple Maps search keeps its centre on Android', () {
+      final search = ClipLink.detect(
+        'https://maps.apple.com/search?query=pizza&center=51.507984,-0.128015',
+      )!;
+      expect(
+        search.openUri('android').toString(),
+        'geo:51.507984,-0.128015?q=pizza',
+      );
+    });
+
     test('a geo: search without coordinates stays an API search', () {
       expect(
         ClipLink.detect('geo:0,0?q=CN%20Tower')!.openUri('linux').toString(),
