@@ -764,6 +764,32 @@ void main() {
       expect(ClipLink.detect('example.io:3000')?.kind, ClipLinkKind.web);
     });
 
+    test('more from review', () {
+      // Multicast and broadcast are not machines to open a page on.
+      expect(ClipLink.detect('224.0.0.1'), isNull);
+      expect(ClipLink.detect('255.255.255.255'), isNull);
+      expect(ClipLink.detect('192.168.1.1')?.kind, ClipLinkKind.web);
+      // An encoded `;` is still a parameter delimiter for Text.
+      final encoded = ClipLink.detect('tel:5550123%3Bphone-context=+1-201')!;
+      expect(encoded.kind, ClipLinkKind.phone);
+      expect(encoded.alternateOn('android'), isNull);
+      // Parcelforce numbers go to Parcelforce.
+      expect(ClipLink.detect('EC080250821GB')!.uri.host, 'www.parcelforce.com');
+      // A Teams chat is the app; a meeting link is a meeting.
+      expect(
+        ClipLink.detect(
+          'msteams://teams.microsoft.com/l/chat/0/0?users=a@example.com',
+        )?.kind,
+        ClipLinkKind.app,
+      );
+      expect(
+        ClipLink.detect(
+          'msteams://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0',
+        )?.kind,
+        ClipLinkKind.meeting,
+      );
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);

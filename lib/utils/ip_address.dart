@@ -29,3 +29,16 @@ bool isNonPublicIPv4(List<int> b) {
 
   return false;
 }
+
+/// Whether the IPv4 address [b] (four bytes) is a machine on the user's own
+/// network or this one: private networks, loopback, link-local and
+/// carrier-grade NAT (Tailscale's range). Unlike [isNonPublicIPv4], not the
+/// reserved, benchmarking and multicast blocks - addresses no browser opens
+/// a page on, which link detection must not offer one for.
+bool isLocalUnicastIPv4(List<int> b) =>
+    b[0] == 10 ||
+    b[0] == 127 ||
+    (b[0] == 169 && b[1] == 254) ||
+    (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+    (b[0] == 192 && b[1] == 168) ||
+    (b[0] == 100 && b[1] >= 64 && b[1] <= 127);

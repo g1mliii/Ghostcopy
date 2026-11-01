@@ -298,6 +298,10 @@ class ClipLink {
   };
 
   static final _edgeSlashes = RegExp(r'^/+|/+$');
+  static final _teamsMeetingPath = RegExp(
+    '/l/(meetup-join|meeting|call)/',
+    caseSensitive: false,
+  );
 
   /// Whereby's own site, beside its rooms (`whereby.com/<room>`).
   static const _wherebyPages = {
@@ -363,7 +367,13 @@ class ClipLink {
         return null;
       }
     }
-    final (kind, name) = app;
+    var (kind, name) = app;
+    // Teams links go to chats, channels, files and tabs as well as meetings;
+    // only a meeting or call link is joined.
+    if (scheme == 'msteams' &&
+        !_teamsMeetingPath.hasMatch('${uri.host}${uri.path}')) {
+      kind = ClipLinkKind.app;
+    }
     var target = uri;
     // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
     // opens the app where it is installed and the web player where it is not.
@@ -420,7 +430,7 @@ class ClipLink {
       final octets = address.split('.').map(int.parse).toList();
       if (octets.any((o) => o > 255)) return null;
       final bare = address.length == text.length;
-      if (bare && !isNonPublicIPv4(octets)) return null;
+      if (bare && !isLocalUnicastIPv4(octets)) return null;
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
@@ -541,6 +551,7 @@ class ClipLink {
 
   static final _ups = RegExp(r'^1Z[0-9A-Z]{16}$');
   static final _usps = RegExp(r'^9[2-5]\d{18,20}$');
+  static final _parcelforce = RegExp('^(E[A-E]|CP)');
   static final _s10 = RegExp(r'^[A-Z]{2}\d{9}[A-Z]{2}$');
 
   /// A parcel tracking number, as the carrier's own tracking page.
@@ -571,6 +582,14 @@ class ClipLink {
           ),
         ),
         'US' => ('USPS', _uspsPage(number)),
+        // Parcelforce's services share Royal Mail's GB suffix, and Royal
+        // Mail's tracker does not show them: EA-EE and CP.
+        'GB' when _parcelforce.hasMatch(number) => (
+          'Parcelforce',
+          Uri.https('www.parcelforce.com', '/track-trace', {
+            'trackNumber': number,
+          }),
+        ),
         'GB' => (
           'Royal Mail',
           Uri.parse(
@@ -812,21 +831,25 @@ class ClipLink {
   /// - A song or album can be found on the other services through song.link,
   ///   which is what makes an Apple Music link useful on a phone with only
   ///   Spotify, and the other way round.
+  // Detection decoded this path already, so it decodes.
+  String get _telPath => Uri.decodeComponent(uri.path);
+
   ClipLinkAlternate? alternateOn(String platform) {
     if (!canOpenOn(platform)) return null;
     return switch (kind) {
       // A local number's `phone-context` says which country and area it is
       // in; `sms:` has no way to carry it, and the number alone could reach
       // someone else. Call keeps it; Text is left out.
+      // Decoded, as detection read it: `%3B` is a `;` there too.
       ClipLinkKind.phone
-          when uri.path.toLowerCase().contains(';phone-context=') =>
+          when _telPath.toLowerCase().contains(';phone-context=') =>
         null,
       ClipLinkKind.phone => ClipLinkAlternate(
         ClipLinkAlternateKind.text,
         'Text',
         // The number alone: a tel: link's other parameters (;ext=456) mean
         // nothing to a text.
-        Uri(scheme: 'sms', path: uri.path.split(';').first),
+        Uri(scheme: 'sms', path: _telPath.split(';').first),
       ),
       ClipLinkKind.music => ClipLinkAlternate(
         ClipLinkAlternateKind.findElsewhere,
