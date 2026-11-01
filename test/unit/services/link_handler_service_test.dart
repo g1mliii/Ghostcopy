@@ -240,6 +240,37 @@ Name=New Window
     });
   });
 
+  test('a nested desktop file ID is found under its subdirectory', () {
+    expect(LinuxLinkHandlerService.desktopEntryPaths('firefox.desktop'), [
+      'firefox.desktop',
+    ]);
+    expect(LinuxLinkHandlerService.desktopEntryPaths('kde4-kmail.desktop'), [
+      'kde4-kmail.desktop',
+      'kde4/kmail.desktop',
+    ]);
+  });
+
+  test('the cache keeps at most maxEntries lookups', () async {
+    final service = _CountingService();
+    for (var i = 0; i <= CachingLinkHandlerService.maxEntries; i++) {
+      await service.handlerFor(ClipLink.detect('https://host$i.com')!);
+    }
+    expect(service.calls, CachingLinkHandlerService.maxEntries + 1);
+    // The most recent are still cached; the first was evicted.
+    await service.handlerFor(
+      ClipLink.detect(
+        'https://host${CachingLinkHandlerService.maxEntries}.com',
+      )!,
+    );
+    expect(service.calls, CachingLinkHandlerService.maxEntries + 1);
+    expect(
+      service.cachedHandlerFor(ClipLink.detect('https://host0.com')!),
+      isNull,
+    );
+    await service.handlerFor(ClipLink.detect('https://host0.com')!);
+    expect(service.calls, CachingLinkHandlerService.maxEntries + 2);
+  });
+
   test('xdgDataDirs follows the spec', () {
     expect(xdgDataDirs({'HOME': '/home/u'}), [
       '/home/u/.local/share',
@@ -260,16 +291,13 @@ Name=New Window
     );
   });
 
-  test(
-    'an Error from a lookup is the generic glyph, not a cached throw',
-    () async {
-      final service = _ThrowingService();
-      final link = ClipLink.detect('https://example.com')!;
-      expect(await service.handlerFor(link), isNull);
-      expect(await service.handlerFor(link), isNull);
-      expect(service.calls, 1);
-    },
-  );
+  test('a failed lookup is the generic glyph, not a cached throw', () async {
+    final service = _ThrowingService();
+    final link = ClipLink.detect('https://example.com')!;
+    expect(await service.handlerFor(link), isNull);
+    expect(await service.handlerFor(link), isNull);
+    expect(service.calls, 1);
+  });
 
   test('the cache key holds what each platform routes by', () {
     String key(CachingLinkHandlerService service, String url) =>
@@ -290,15 +318,20 @@ Name=New Window
     // macOS: per host.
     expect(key(macos, 'https://a.com/x'), isNot(key(macos, 'https://b.org/x')));
     expect(key(macos, 'https://a.com/x'), key(macos, 'https://a.com/y'));
-    // Android: per host and first path segment - Docs and Sheets apart, and
-    // Google Maps apart from Google search.
+    // Android: per host and path - Docs and Sheets apart, Google Maps apart
+    // from Google search, and routes that differ deeper down apart too. The
+    // query is not part of it.
     expect(
       key(android, 'https://docs.google.com/document/d/1'),
       isNot(key(android, 'https://docs.google.com/spreadsheets/d/1')),
     );
     expect(
-      key(android, 'https://docs.google.com/document/d/1'),
-      key(android, 'https://docs.google.com/document/d/2'),
+      key(android, 'https://example.com/open/native'),
+      isNot(key(android, 'https://example.com/open/web')),
+    );
+    expect(
+      key(android, 'https://example.com/a?x=1'),
+      key(android, 'https://example.com/a?x=2'),
     );
     expect(
       key(android, 'https://www.google.com/maps/place/x'),
@@ -320,6 +353,21 @@ class _ThrowingService extends CachingLinkHandlerService {
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {
     calls++;
-    throw RangeError('odd icon');
+    throw const FileSystemException('icon gone');
+  }
+}
+
+class _CountingService extends CachingLinkHandlerService {
+  _CountingService() : super(platform: 'macos');
+
+  int calls = 0;
+
+  @override
+  String cacheKeyFor(Uri uri) => uri.host;
+
+  @override
+  Future<LinkHandler?> lookUp(Uri uri) async {
+    calls++;
+    return LinkHandler(name: uri.host);
   }
 }

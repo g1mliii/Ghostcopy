@@ -54,33 +54,40 @@ typedef _FoundIcon = ({Uint8List? png, String? pngFile});
 
 /// The whole lookup, on whichever isolate runs it: only plain data comes
 /// back, and the ImageProvider is made on the caller's.
-_FoundHandler? _handlerForScheme(String scheme) {
-  _ensureCom();
-  final name = _resolveIndirect(_assocQuery(scheme, _assocStrFriendlyAppName));
-  if (name == null || name.isEmpty) return null;
-  final icon =
-      _iconFromReference(_assocQuery(scheme, _assocStrAppIconReference)) ??
-      _iconFromReference(_assocQuery(scheme, _assocStrDefaultIcon));
-  return (name: name, png: icon?.png, pngFile: icon?.pngFile);
-}
-
+///
 /// SHLoadIndirectString needs COM on the calling thread to resolve a
-/// packaged app's ms-resource reference, and the lookup runs on a background
-/// isolate's thread, which nothing else has put in COM. Per isolate, as
-/// globals are. A thread already in COM answers a harmless S_FALSE or
-/// RPC_E_CHANGED_MODE.
-bool _comReady = false;
-void _ensureCom() {
-  if (_comReady) return;
-  _comReady = true;
-  _coInitializeEx(nullptr, 2); // COINIT_APARTMENTTHREADED
+/// packaged app's ms-resource reference, and the isolate's thread is one
+/// nothing else has put in COM. The VM reuses those threads, so every
+/// successful CoInitializeEx - S_FALSE, already initialised, included - is
+/// balanced before returning. RPC_E_CHANGED_MODE (negative) is a thread
+/// someone else initialised differently, and is not ours to undo.
+_FoundHandler? _handlerForScheme(String scheme) {
+  final com = _coInitializeEx(nullptr, 2); // COINIT_APARTMENTTHREADED
+  try {
+    final name = _resolveIndirect(
+      _assocQuery(scheme, _assocStrFriendlyAppName),
+    );
+    if (name == null || name.isEmpty) return null;
+    final icon =
+        _iconFromReference(_assocQuery(scheme, _assocStrAppIconReference)) ??
+        _iconFromReference(_assocQuery(scheme, _assocStrDefaultIcon));
+    return (name: name, png: icon?.png, pngFile: icon?.pngFile);
+  } finally {
+    if (com >= 0) _coUninitialize();
+  }
 }
 
-final _coInitializeEx = DynamicLibrary.open('ole32.dll')
+final _ole32 = DynamicLibrary.open('ole32.dll');
+
+final _coInitializeEx = _ole32
     .lookupFunction<
       Int32 Function(Pointer<Void> reserved, Uint32 model),
       int Function(Pointer<Void> reserved, int model)
     >('CoInitializeEx');
+
+final _coUninitialize = _ole32.lookupFunction<Void Function(), void Function()>(
+  'CoUninitialize',
+);
 
 // AssocQueryStringW.
 const _assocfIsProtocol = 0x1000;
@@ -358,7 +365,11 @@ Uint8List? _iconToPng(int icon, Arena arena) {
     if (_getObject(color, sizeOf<_Bitmap>(), bitmap.cast()) == 0) return null;
     final width = bitmap.ref.bmWidth;
     final height = bitmap.ref.bmHeight;
-    if (width <= 0 || height <= 0) return null;
+    // Asked for at 64px; anything far off that is not a bitmap to allocate
+    // for. Malformed native data is null here, not an Error further on.
+    if (width <= 0 || height <= 0 || width > 1024 || height > 1024) {
+      return null;
+    }
 
     // BITMAPINFO is the header plus a colour table GetDIBits leaves unused at
     // 32bpp; the spare bytes are room for it all the same.

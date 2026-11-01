@@ -14,7 +14,9 @@ import 'command_line_tool_service.dart' show ProcessRunner;
 /// The caching every platform shares: one lookup per [cacheKeyFor], refreshed
 /// after [maxAge] so a default app changed while GhostCopy sits in the tray
 /// for a week is picked up, and one [LinkHandler] per app, so fifty links that
-/// open in Chrome share one decoded icon.
+/// open in Chrome share one decoded icon. At most [maxEntries] keys are kept,
+/// least recently used first out, so a tray session that sees thousands of
+/// distinct links does not keep a lookup for every one.
 abstract class CachingLinkHandlerService implements ILinkHandlerService {
   CachingLinkHandlerService({required this.platform});
 
@@ -22,7 +24,10 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
   final String platform;
 
   static const maxAge = Duration(minutes: 10);
+  static const maxEntries = 128;
 
+  // Map literals keep insertion order: a key is moved to the end when used,
+  // so the first is the least recently used.
   final _lookups = <String, ({DateTime at, Future<LinkHandler?> handler})>{};
   final _resolved = <String, LinkHandler?>{};
   final _byName = <String, LinkHandler>{};
@@ -40,18 +45,28 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
     final uri = link.openUri(platform);
     final key = cacheKeyFor(uri);
     final now = DateTime.now();
-    if (_lookups[key] case final lookup?
+    if (_lookups.remove(key) case final lookup?
         when now.difference(lookup.at) <= maxAge) {
+      _lookups[key] = lookup;
       return lookup.handler;
     }
     final handler = _lookUpSafely(uri).then((found) {
       final shared = found == null
           ? null
           : _byName.putIfAbsent(found.name, () => found);
-      _resolved[key] = shared;
+      // Only while the lookup is still wanted: one evicted meanwhile stays
+      // out, so the two maps stay bounded together.
+      if (_lookups.containsKey(key)) {
+        _resolved.remove(key);
+        _resolved[key] = shared;
+      }
       return shared;
     });
     _lookups[key] = (at: now, handler: handler);
+    while (_lookups.length > maxEntries) {
+      _resolved.remove(_lookups.keys.first);
+      _lookups.remove(_lookups.keys.first);
+    }
     return handler;
   }
 
@@ -59,16 +74,15 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
   LinkHandler? cachedHandlerFor(ClipLink link) =>
       _resolved[cacheKeyFor(link.openUri(platform))];
 
-  /// An icon is decoration: anything that goes wrong finding it leaves the
-  /// generic glyph, never an error the user sees.
-  ///
-  /// Object, not Exception: the Windows lookup is FFI and image encoding, and
-  /// what those throw (ArgumentError, RangeError) are Errors. One escaping
-  /// would be cached in `_lookups` and rethrown, unhandled, to every row.
+  /// An icon is decoration: a lookup that fails - no answer, a timeout, a
+  /// platform or file error - leaves the generic glyph, never an error the
+  /// user sees. An Error is a bug in the lookup, not a missing icon, and is
+  /// left to surface; each platform turns malformed native data into null
+  /// rather than throwing.
   Future<LinkHandler?> _lookUpSafely(Uri uri) async {
     try {
       return await lookUp(uri);
-    } on Object catch (e) {
+    } on Exception catch (e) {
       debugPrint('[LinkHandler] No handler for ${uri.scheme}: $e');
       return null;
     }
@@ -97,17 +111,17 @@ class ChannelLinkHandlerService extends CachingLinkHandlerService {
 
   /// Android routes web links by host and path - google.com/maps opens Google
   /// Maps and google.com/search the browser, docs.google.com/document opens
-  /// Docs and /spreadsheets Sheets - so a web link keys on its host and first
-  /// path segment there. A `geo:` or `tel:` path is the place or number
-  /// itself, so other schemes key on the scheme. macOS answers by host at
-  /// most.
+  /// Docs and /spreadsheets Sheets - and an app's intent filter can match a
+  /// path at any depth, so a web link keys on its host and whole path there.
+  /// Not the query, which no filter matches. A `geo:` or `tel:` path is the
+  /// place or number itself, so other schemes key on the scheme. macOS
+  /// answers by host at most.
   @override
   String cacheKeyFor(Uri uri) {
     final web = uri.isScheme('https') || uri.isScheme('http');
     if (!web) return uri.scheme;
     if (platform != 'android') return '${uri.scheme}:${uri.host}';
-    final segments = uri.pathSegments;
-    return '${uri.scheme}:${uri.host}/${segments.isEmpty ? '' : segments.first}';
+    return '${uri.scheme}:${uri.host}${uri.path}';
   }
 
   @override
@@ -162,10 +176,11 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
     if (!desktopId.endsWith('.desktop')) return null;
 
     final dataDirs = xdgDataDirs(environment);
-    final entry = dataDirs
-        .map((dir) => File(path.join(dir, 'applications', desktopId)))
-        .where((file) => file.existsSync())
-        .firstOrNull;
+    final entry = [
+      for (final dir in dataDirs)
+        for (final relative in desktopEntryPaths(desktopId))
+          File(path.join(dir, 'applications', relative)),
+    ].where((file) => file.existsSync()).firstOrNull;
     if (entry == null) return null;
 
     final keys = parseDesktopEntry(await entry.readAsString());
@@ -173,6 +188,25 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
     if (name == null || name.isEmpty) return null;
     final icon = _iconFile(keys['Icon'], dataDirs);
     return LinkHandler(name: name, icon: icon == null ? null : FileImage(icon));
+  }
+
+  /// Where under `applications/` the entry for [desktopId] can be.
+  ///
+  /// A desktop file ID is its path below `applications/` with each `/` made
+  /// a `-`, so `kde4-kmail.desktop` may be `kde4/kmail.desktop`. Every way of
+  /// reading the dashes back is a candidate, the literal name first; an ID
+  /// with more than a few dashes is tried as written only.
+  @visibleForTesting
+  static List<String> desktopEntryPaths(String desktopId) {
+    final parts = desktopId.split('-');
+    if (parts.length == 1 || parts.length > 5) return [desktopId];
+    var paths = [parts.first];
+    for (final part in parts.skip(1)) {
+      paths = [
+        for (final prefix in paths) ...['$prefix-$part', '$prefix/$part'],
+      ];
+    }
+    return paths;
   }
 
   File? _iconFile(String? icon, List<String> dataDirs) {
