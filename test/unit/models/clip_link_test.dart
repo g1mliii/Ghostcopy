@@ -238,4 +238,70 @@ void main() {
     expect(phone.canOpenOn('windows'), isTrue);
     expect(ClipLink.detect('https://example.com')!.canOpenOn('linux'), isTrue);
   });
+
+  group('from review', () {
+    test('a clip that cannot be decoded stays text rather than throwing', () {
+      for (final text in [
+        'tel:%FF',
+        'mailto:%FF@example.com',
+        'https://maps.apple.com/?q=%FF',
+        'geo:0,0?q=%FF',
+      ]) {
+        expect(() => ClipLink.detect(text), returnsNormally, reason: text);
+      }
+      expect(ClipLink.detect('tel:%FF'), isNull);
+    });
+
+    test('tel: parameters are kept', () {
+      final link = ClipLink.detect('tel:+1-201-555-0123;ext=456')!;
+      expect(link.kind, ClipLinkKind.phone);
+      expect(link.uri.toString(), 'tel:+1-201-555-0123;ext=456');
+      expect(ClipLink.detect('tel:12;ext=4'), isNull);
+    });
+
+    test('Apple Maps directions open as Google Maps directions on Android', () {
+      final route = ClipLink.detect(
+        'https://maps.apple.com/?saddr=Current+Location&daddr=Airport&dirflg=d',
+      )!;
+      expect(
+        route.openUri('android').toString(),
+        'https://www.google.com/maps/dir/?api=1&destination=Airport'
+        '&travelmode=driving',
+      );
+      final fromHome = ClipLink.detect(
+        'https://maps.apple.com/?saddr=Home&daddr=Work&dirflg=w',
+      )!;
+      expect(fromHome.openUri('android').queryParameters, {
+        'api': '1',
+        'origin': 'Home',
+        'destination': 'Work',
+        'travelmode': 'walking',
+      });
+    });
+
+    test('a four-by-four phone number is not a range', () {
+      expect(ClipLink.detect('2123-4567')!.kind, ClipLinkKind.phone);
+      expect(ClipLink.detect('1000-2000'), isNull);
+    });
+
+    test('only Google domains are Google Maps', () {
+      expect(
+        ClipLink.detect('https://google.com.evil/maps/search/Bank')!.kind,
+        ClipLinkKind.web,
+      );
+      expect(
+        ClipLink.detect('https://www.google.co.uk/maps/search/Bank')!.kind,
+        ClipLinkKind.map,
+      );
+      expect(
+        ClipLink.detect('https://www.google.ca/maps/place/CN+Tower')!.kind,
+        ClipLinkKind.map,
+      );
+    });
+
+    test('IPv6 web links', () {
+      final link = ClipLink.detect('https://[2001:db8::1]/status')!;
+      expect(link.kind, ClipLinkKind.web);
+    });
+  });
 }
