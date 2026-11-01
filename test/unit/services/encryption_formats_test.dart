@@ -199,7 +199,13 @@ void main() {
     test('is never chosen when encrypting', () {
       expect(
         () => encryptFileBytesSync(wrapPlain, key, nonce: wrapNonce),
-        throwsArgumentError,
+        throwsA(
+          isA<EncryptionException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('wraps the GCM counter'),
+          ),
+        ),
       );
     });
   });

@@ -14,9 +14,17 @@ import '../passphrase_sync_service.dart';
 import 'keychain_accessibility.dart';
 import 'passphrase_sync_service.dart';
 
-/// What a background isolate needs for one encrypt or decrypt: the payload
-/// and the key. `compute` takes a single argument.
-typedef _CryptoJob<T> = (T data, Uint8List key);
+/// What a background isolate needs for one encrypt or decrypt. `compute`
+/// takes a single argument.
+class _CryptoJob<T> {
+  const _CryptoJob(this.data, this.key);
+
+  /// The plaintext or ciphertext to work on.
+  final T data;
+
+  /// The 32-byte AES key.
+  final Uint8List key;
+}
 
 /// Concrete implementation of IEncryptionService using optional user passphrase
 ///
@@ -507,7 +515,7 @@ class EncryptionService implements IEncryptionService {
       if (plaintext.length < 5000) return encryptTextSync(plaintext, key);
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(_encryptText, (plaintext, key));
+      return await compute(_encryptText, _CryptoJob(plaintext, key));
     } on Exception catch (e) {
       debugPrint('Encryption failed: $e');
       throw EncryptionException('Failed to encrypt content: $e');
@@ -526,7 +534,7 @@ class EncryptionService implements IEncryptionService {
 
     // Files are large by definition; always use an isolate to keep the UI and
     // the tray-mode event loop responsive.
-    return compute(_encryptFileBytes, (plain, key));
+    return compute(_encryptFileBytes, _CryptoJob(plain, key));
   }
 
   @override
@@ -537,22 +545,22 @@ class EncryptionService implements IEncryptionService {
     final key = _keyBytes;
     if (key == null) return cipher;
 
-    return compute(_decryptFileBytes, (cipher, key));
+    return compute(_decryptFileBytes, _CryptoJob(cipher, key));
   }
 
   // compute() entry points. The work is in the top-level functions below,
   // where the formats are described and tests can reach them.
   static Uint8List _encryptFileBytes(_CryptoJob<Uint8List> job) =>
-      encryptFileBytesSync(job.$1, job.$2);
+      encryptFileBytesSync(job.data, job.key);
 
   static Uint8List _decryptFileBytes(_CryptoJob<Uint8List> job) =>
-      decryptFileBytesSync(job.$1, job.$2);
+      decryptFileBytesSync(job.data, job.key);
 
   static String _encryptText(_CryptoJob<String> job) =>
-      encryptTextSync(job.$1, job.$2);
+      encryptTextSync(job.data, job.key);
 
   static String _decryptText(_CryptoJob<String> job) =>
-      decryptTextSync(job.$1, job.$2);
+      decryptTextSync(job.data, job.key);
 
   @override
   Future<String> decrypt(String ciphertext) async {
@@ -570,7 +578,7 @@ class EncryptionService implements IEncryptionService {
       if (ciphertext.length < 7000) return decryptTextSync(ciphertext, key);
 
       // For larger content, run in background isolate to prevent UI blocking
-      return await compute(_decryptText, (ciphertext, key));
+      return await compute(_decryptText, _CryptoJob(ciphertext, key));
     } on Exception catch (e) {
       debugPrint('Decryption failed: $e');
       throw EncryptionException('Failed to decrypt content: $e');
@@ -644,6 +652,9 @@ const int _blockLength = 16;
 
 /// How many CTR blocks [blockCount] of data take before GCM's 32-bit counter
 /// wraps under [nonce], or null if it does not wrap within them.
+///
+/// [keyBytes] is the 32-byte AES key, which with [nonce] fixes where the
+/// counter starts; [nonce] is 16 bytes.
 @visibleForTesting
 int? gcmBlocksBeforeCounterWrap(
   Uint8List keyBytes,
@@ -723,7 +734,9 @@ crypto.SecretBox _gcmSeal(
   var chosen = nonce ?? _aesGcm.newNonce();
   while (gcmBlocksBeforeCounterWrap(keyBytes, chosen, blocks) != null) {
     if (nonce != null) {
-      throw ArgumentError.value(nonce, 'nonce', 'GCM counter wraps');
+      // An Exception, not an ArgumentError, so callers' `on Exception`
+      // turns it into an EncryptionException like any other failure.
+      throw EncryptionException('Given nonce wraps the GCM counter');
     }
     chosen = _aesGcm.newNonce();
   }
@@ -768,7 +781,8 @@ Uint8List _gcmOpen(crypto.SecretBox box, Uint8List keyBytes) {
   return plain;
 }
 
-/// Encrypt a file for R2 upload: `[16-byte IV][ciphertext][16-byte tag]`.
+/// Encrypt the file bytes [plain] under the 32-byte [keyBytes] for R2
+/// upload: `[16-byte IV][ciphertext][16-byte tag]`.
 ///
 /// Deliberately NOT the base64 text format: that inflates by ~33%, which is
 /// why files were once left unencrypted ("too large, would exceed 10MB limit
@@ -788,7 +802,8 @@ Uint8List encryptFileBytesSync(
   }
 }
 
-/// Decrypt what [encryptFileBytesSync] wrote.
+/// Decrypt [stored], what [encryptFileBytesSync] wrote, under the 32-byte
+/// [keyBytes]. Throws [EncryptionException] if it is malformed or tampered.
 @visibleForTesting
 Uint8List decryptFileBytesSync(Uint8List stored, Uint8List keyBytes) {
   if (stored.length < _nonceLength + _tagLength) {
@@ -809,7 +824,8 @@ Uint8List decryptFileBytesSync(Uint8List stored, Uint8List keyBytes) {
   }
 }
 
-/// Encrypt a text clip: `base64(IV):base64(ciphertext + tag)`, UTF-8 inside.
+/// Encrypt the text clip [plaintext] under the 32-byte [keyBytes]:
+/// `base64(IV):base64(ciphertext + tag)`, UTF-8 inside.
 ///
 /// [nonce] is for tests that compare against fixed vectors; leave it null.
 @visibleForTesting
@@ -827,7 +843,8 @@ String encryptTextSync(
   }
 }
 
-/// Decrypt what [encryptTextSync] wrote.
+/// Decrypt [stored], what [encryptTextSync] wrote, under the 32-byte
+/// [keyBytes]. Throws [EncryptionException] if it is malformed or tampered.
 ///
 /// Malformed UTF-8 is replaced rather than thrown on, as PointyCastle's
 /// decrypt did, so a clip that once decoded still does.
