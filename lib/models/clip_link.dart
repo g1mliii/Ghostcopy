@@ -121,6 +121,12 @@ class ClipLink {
     final uri = Uri.tryParse(text);
     if (uri == null) return null;
     final address = Uri.decodeComponent(uri.path);
+    // Recipients are optional: `mailto:?subject=Feedback` opens a draft to
+    // be addressed. A link with neither is just the scheme, and stays text.
+    if (address.trim().isEmpty) {
+      if (uri.query.isEmpty) return null;
+      return ClipLink._(ClipLinkKind.email, uri, 'New email');
+    }
     // A mailto: link may name several recipients, comma-separated; each has
     // to be an address, and the link keeps them all.
     final recipients = address.split(',').map((a) => a.trim()).toList();
