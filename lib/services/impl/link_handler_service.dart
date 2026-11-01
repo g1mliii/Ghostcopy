@@ -109,18 +109,19 @@ class ChannelLinkHandlerService extends CachingLinkHandlerService {
 
   final MethodChannel _channel;
 
-  /// Android routes web links by host and path - google.com/maps opens Google
-  /// Maps and google.com/search the browser, docs.google.com/document opens
-  /// Docs and /spreadsheets Sheets - and an app's intent filter can match a
-  /// path at any depth, so a web link keys on its host and whole path there.
-  /// Not the query, which no filter matches. A `geo:` or `tel:` path is the
-  /// place or number itself, so other schemes key on the scheme. macOS
-  /// answers by host at most.
+  /// Both route web links by more than the host - google.com/maps opens
+  /// Google Maps and google.com/search the browser, docs.google.com/document
+  /// opens Docs and /spreadsheets Sheets. An Android intent filter can match a
+  /// path at any depth, and a macOS universal link's associated-domains
+  /// components can match the query and fragment too, so a web link keys on
+  /// everything but the scheme's own defaults: path on Android, the whole URL
+  /// on macOS. A `geo:` or `tel:` path is the place or number itself, so other
+  /// schemes key on the scheme.
   @override
   String cacheKeyFor(Uri uri) {
     final web = uri.isScheme('https') || uri.isScheme('http');
     if (!web) return uri.scheme;
-    if (platform != 'android') return '${uri.scheme}:${uri.host}';
+    if (platform == 'macos') return uri.toString();
     return '${uri.scheme}:${uri.host}${uri.path}';
   }
 

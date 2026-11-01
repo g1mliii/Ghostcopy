@@ -318,9 +318,13 @@ Name=New Window
         key(service, 'https://www.google.com/maps/place/x'),
       );
     }
-    // macOS: per host.
+    // macOS: the whole URL, which universal links can match on.
     expect(key(macos, 'https://a.com/x'), isNot(key(macos, 'https://b.org/x')));
-    expect(key(macos, 'https://a.com/x'), key(macos, 'https://a.com/y'));
+    expect(key(macos, 'https://a.com/x'), isNot(key(macos, 'https://a.com/y')));
+    expect(
+      key(macos, 'https://a.com/x?app=1'),
+      isNot(key(macos, 'https://a.com/x?app=0')),
+    );
     // Android: per host and path - Docs and Sheets apart, Google Maps apart
     // from Google search, and routes that differ deeper down apart too. The
     // query is not part of it.
