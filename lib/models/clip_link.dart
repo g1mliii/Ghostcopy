@@ -121,8 +121,11 @@ class ClipLink {
     final uri = Uri.tryParse(text);
     if (uri == null) return null;
     final address = Uri.decodeComponent(uri.path);
-    if (!_email.hasMatch(address)) return null;
-    return ClipLink._(ClipLinkKind.email, uri, address);
+    // A mailto: link may name several recipients, comma-separated; each has
+    // to be an address, and the link keeps them all.
+    final recipients = address.split(',').map((a) => a.trim()).toList();
+    if (recipients.any((a) => !_email.hasMatch(a))) return null;
+    return ClipLink._(ClipLinkKind.email, uri, recipients.join(', '));
   }
 
   static ClipLink? _geo(String text) {
@@ -149,6 +152,16 @@ class ClipLink {
     if (_ipv4.hasMatch(number) || _date.hasMatch(number)) return null;
     final digits = number.replaceAll(_nonDigit, '');
     if (digits.length < 7 || digits.length > 15) return null;
+    // A payment card number written in groups (`3782 822463 10005`, an
+    // American Express number) has the characters of a phone number too; the
+    // card's Luhn check digit tells it apart. Only from 13 digits up, where
+    // cards start and national phone numbers have mostly stopped.
+    if (!explicit &&
+        !number.startsWith('+') &&
+        digits.length >= 13 &&
+        _luhnValid(digits)) {
+      return null;
+    }
     final international = number.startsWith('+');
     if (!explicit && !international) {
       if (digits.length == number.length) return null;
@@ -204,7 +217,9 @@ class ClipLink {
         if (apple) {
           if (_appleDirections(uri) case final directions?) return directions;
         }
-        if ((apple || geo) && place.hasLocation) return place.toGeo();
+        // geo: as sent: Android handles it, zoom (?z=) and uncertainty
+        // (;u=) included, which a rebuilt URI would drop.
+        if (apple && place.hasLocation) return place.toGeo();
       case 'macos':
         if (apple &&
             !place.isShortLink &&
@@ -247,6 +262,19 @@ class ClipLink {
       'destination': destination,
       'travelmode': ?mode,
     });
+  }
+
+  static bool _luhnValid(String digits) {
+    var sum = 0;
+    for (var i = 0; i < digits.length; i++) {
+      var digit = digits.codeUnitAt(digits.length - 1 - i) - 48;
+      if (i.isOdd) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+    }
+    return sum % 10 == 0;
   }
 
   /// Whether [platform] has anything that opens this kind of link.
