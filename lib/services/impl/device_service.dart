@@ -380,8 +380,8 @@ class DeviceService implements IDeviceService {
       // the server's list. Saved as such - not skipped, which lost whatever
       // else the answer brought (a device added elsewhere). An edit accepted
       // after this point queues its own update behind this save.
-      for (final edit in _editsDuringFetch.skip(editsBefore)) {
-        devices = edit(devices);
+      for (final (:owner, :change) in _editsDuringFetch.skip(editsBefore)) {
+        if (owner == userId) devices = change(devices);
       }
 
       // Update cache
@@ -568,6 +568,9 @@ class DeviceService implements IDeviceService {
       return false;
     }
 
+    // The account the edit was made in: the saved list it updates is that
+    // one's, even if the account changes while the request is out.
+    final userId = _supabase.auth.currentUser?.id;
     try {
       await _supabase
           .from('devices')
@@ -579,6 +582,7 @@ class DeviceService implements IDeviceService {
       // Invalidate cache since device was updated
       _invalidateCache();
       _updateSaved(
+        userId,
         (devices) => [
           for (final device in devices)
             device.id == deviceId
@@ -610,6 +614,8 @@ class DeviceService implements IDeviceService {
       return false;
     }
 
+    // As in updateDeviceName.
+    final userId = _supabase.auth.currentUser?.id;
     try {
       await _supabase.from('devices').delete().eq('id', deviceId);
 
@@ -618,6 +624,7 @@ class DeviceService implements IDeviceService {
       // Invalidate cache since device was removed
       _invalidateCache();
       _updateSaved(
+        userId,
         (devices) => [
           for (final device in devices)
             if (device.id != deviceId) device,
@@ -659,16 +666,23 @@ class DeviceService implements IDeviceService {
   }
 
   /// Renames and removals the server accepted while a fetch was out. That
-  /// fetch's answer may predate them; see _fetchDevices.
-  final _editsDuringFetch = <List<Device> Function(List<Device> devices)>[];
+  /// fetch's answer may predate them; see _fetchDevices. Each carries the
+  /// account it was made in, and applies only to that account's fetches.
+  final _editsDuringFetch =
+      <({String owner, List<Device> Function(List<Device> devices) change})>[];
   int _fetchesOut = 0;
 
   /// Carry a change the server has accepted into the saved list, so the next
   /// launch does not draw the list from before it. See SavedDeviceList.update.
-  void _updateSaved(List<Device> Function(List<Device> devices) change) {
-    if (_fetchesOut > 0) _editsDuringFetch.add(change);
-    final userId = _supabase.auth.currentUser?.id;
+  /// [userId] is the account the edit was made in, read before its request.
+  void _updateSaved(
+    String? userId,
+    List<Device> Function(List<Device> devices) change,
+  ) {
     if (userId == null) return;
+    if (_fetchesOut > 0) {
+      _editsDuringFetch.add((owner: userId, change: change));
+    }
     unawaited(SavedDeviceList.update(userId, change));
   }
 
