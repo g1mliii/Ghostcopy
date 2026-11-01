@@ -348,6 +348,11 @@ class DeviceService implements IDeviceService {
     // Read before the request: a sign-out while it is out clears the saved
     // list, and this fetch must not write it back afterwards.
     final savedGeneration = SavedDeviceList.generation;
+    // And edits: a rename or removal accepted while the request is out may
+    // not be in this answer, so it is applied to it before anything is
+    // cached or saved.
+    final editsBefore = _editsDuringFetch.length;
+    _fetchesOut++;
     try {
       final userId = _supabase.auth.currentUser!.id;
 
@@ -357,16 +362,39 @@ class DeviceService implements IDeviceService {
           .eq('user_id', userId)
           .order('last_active', ascending: false);
 
-      final devices = (response as List)
+      var devices = (response as List)
           .map((json) => Device.fromJson(json as Map<String, dynamic>))
           .toList();
+
+      // The account changed while the request was out - a switch straight
+      // to another account, which clears nothing. This list is the old
+      // account's: caching or saving it would show it to the new one.
+      bool stillOwner() => _supabase.auth.currentUser?.id == userId;
+      if (!stillOwner()) {
+        debugPrint('[DeviceService] Account changed mid-fetch - dropped');
+        return null;
+      }
+
+      // Edits the server accepted while this was out: the answer may predate
+      // them, and the server has them, so the answer with them applied is
+      // the server's list. Saved as such - not skipped, which lost whatever
+      // else the answer brought (a device added elsewhere). An edit accepted
+      // after this point queues its own update behind this save.
+      for (final (:owner, :change) in _editsDuringFetch.skip(editsBefore)) {
+        if (owner == userId) devices = change(devices);
+      }
 
       // Update cache
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
       // And the copy the next launch draws first. See SavedDeviceList.
       unawaited(
-        SavedDeviceList.save(userId, devices, generation: savedGeneration),
+        SavedDeviceList.save(
+          userId,
+          devices,
+          generation: savedGeneration,
+          stillOwner: stillOwner,
+        ),
       );
 
       debugPrint(
@@ -382,6 +410,9 @@ class DeviceService implements IDeviceService {
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to fetch devices: $e');
       return null;
+    } finally {
+      // Kept only while a fetch is out to apply them to; see _updateSaved.
+      if (--_fetchesOut == 0) _editsDuringFetch.clear();
     }
   }
 
@@ -537,6 +568,9 @@ class DeviceService implements IDeviceService {
       return false;
     }
 
+    // The account the edit was made in: the saved list it updates is that
+    // one's, even if the account changes while the request is out.
+    final userId = _supabase.auth.currentUser?.id;
     try {
       await _supabase
           .from('devices')
@@ -547,6 +581,15 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device was updated
       _invalidateCache();
+      _updateSaved(
+        userId,
+        (devices) => [
+          for (final device in devices)
+            device.id == deviceId
+                ? device.copyWith(deviceName: trimmedName)
+                : device,
+        ],
+      );
 
       return true;
     } on PostgrestException catch (e) {
@@ -571,6 +614,8 @@ class DeviceService implements IDeviceService {
       return false;
     }
 
+    // As in updateDeviceName.
+    final userId = _supabase.auth.currentUser?.id;
     try {
       await _supabase.from('devices').delete().eq('id', deviceId);
 
@@ -578,6 +623,13 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device was removed
       _invalidateCache();
+      _updateSaved(
+        userId,
+        (devices) => [
+          for (final device in devices)
+            if (device.id != deviceId) device,
+        ],
+      );
 
       return true;
     } on PostgrestException catch (e) {
@@ -611,6 +663,27 @@ class DeviceService implements IDeviceService {
     return _cachedDevices != null &&
         _lastDeviceFetch != null &&
         DateTime.now().difference(_lastDeviceFetch!) < _cacheExpiry;
+  }
+
+  /// Renames and removals the server accepted while a fetch was out. That
+  /// fetch's answer may predate them; see _fetchDevices. Each carries the
+  /// account it was made in, and applies only to that account's fetches.
+  final _editsDuringFetch =
+      <({String owner, List<Device> Function(List<Device> devices) change})>[];
+  int _fetchesOut = 0;
+
+  /// Carry a change the server has accepted into the saved list, so the next
+  /// launch does not draw the list from before it. See SavedDeviceList.update.
+  /// [userId] is the account the edit was made in, read before its request.
+  void _updateSaved(
+    String? userId,
+    List<Device> Function(List<Device> devices) change,
+  ) {
+    if (userId == null) return;
+    if (_fetchesOut > 0) {
+      _editsDuringFetch.add((owner: userId, change: change));
+    }
+    unawaited(SavedDeviceList.update(userId, change));
   }
 
   /// Invalidate the device cache
