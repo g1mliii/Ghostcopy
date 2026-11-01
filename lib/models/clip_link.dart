@@ -47,6 +47,8 @@ class ClipLink {
   // Round on both ends, as ranges are written (`1000-2000`): a phone number
   // with two four-digit groups (`2123-4567`, a Hong Kong number) is not.
   static final _range = RegExp(r'^[1-9]\d+00-[1-9]\d+00$');
+  // A US Social Security number. No phone numbering plan is written 3-2-4.
+  static final _ssn = RegExp(r'^\d{3}-\d{2}-\d{4}$');
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.
@@ -158,7 +160,11 @@ class ClipLink {
   static ClipLink? _phone(String text, {bool explicit = false}) {
     final number = text.trim();
     if (!_phoneChars.hasMatch(number)) return null;
-    if (_ipv4.hasMatch(number) || _date.hasMatch(number)) return null;
+    if (_ipv4.hasMatch(number) ||
+        _date.hasMatch(number) ||
+        _ssn.hasMatch(number)) {
+      return null;
+    }
     final digits = number.replaceAll(_nonDigit, '');
     if (digits.length < 7 || digits.length > 15) return null;
     // A payment card number written in groups (`3782 822463 10005`, an

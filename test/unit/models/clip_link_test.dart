@@ -330,6 +330,11 @@ void main() {
       }
     });
 
+    test('a Social Security number is not a phone number', () {
+      expect(ClipLink.detect('123-45-6789'), isNull);
+      expect(ClipLink.detect('123-456-7890')?.kind, ClipLinkKind.phone);
+    });
+
     test('punycode top-level domains in email addresses', () {
       expect(
         ClipLink.detect('user@xn--80a1acny.xn--p1ai')?.kind,
