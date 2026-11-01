@@ -30,10 +30,10 @@ constexpr UINT kGpuResetMessage = WM_APP + 2;
 constexpr wchar_t kAfterGpuResetFlag[] = L"--after-gpu-reset";
 constexpr wchar_t kWaitForPidFlag[] = L"--wait-for-pid=";
 
-// A copy started after a reset that sees another within this long does not
-// restart again: a GPU that keeps resetting would otherwise have the app
-// restarting in a loop.
+// A copy started after a reset defers another restart until it has lived this
+// long, so repeated resets cannot cause a rapid restart loop.
 constexpr ULONGLONG kGpuResetRestartGuardMs = 30000;
+constexpr UINT_PTR kGpuResetRestartTimerId = 2;
 
 // WM_TIMER id for retrying a flush that found the clipboard open elsewhere.
 // Another process holding it open is routine - a clipboard manager, or the
@@ -290,6 +290,7 @@ void FlutterWindow::OnDestroy() {
   WTSUnRegisterSessionNotification(GetHandle());
   RemoveClipboardFormatListener(GetHandle());
   ::KillTimer(GetHandle(), kFlushRetryTimerId);
+  ::KillTimer(GetHandle(), kGpuResetRestartTimerId);
 
   // Clean up power monitor
   if (power_monitor_) {
@@ -372,6 +373,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       return 0;
 
     case WM_TIMER:
+      if (wparam == kGpuResetRestartTimerId) {
+        ::KillTimer(hwnd, kGpuResetRestartTimerId);
+        RestartAfterGpuReset();
+        return 0;
+      }
       if (wparam == kFlushRetryTimerId) {
         ::KillTimer(hwnd, kFlushRetryTimerId);
         FlushOwnedClipboard();
@@ -394,9 +400,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 // If the new copy cannot be started, this one stays: a white window is a
 // better place to be left than no app at all.
 void FlutterWindow::RestartAfterGpuReset() {
+  const ULONGLONG elapsed = ::GetTickCount64() - created_at_;
   if (std::wcsstr(::GetCommandLineW(), kAfterGpuResetFlag) != nullptr &&
-      ::GetTickCount64() - created_at_ < kGpuResetRestartGuardMs) {
-    return;
+      elapsed < kGpuResetRestartGuardMs) {
+    // The one-shot watchdog will not notify us again. Retain the reset by
+    // scheduling recovery at the end of the guard instead of discarding it.
+    // If the timer cannot be created, recover now rather than stay blank.
+    if (::SetTimer(GetHandle(), kGpuResetRestartTimerId,
+                   static_cast<UINT>(kGpuResetRestartGuardMs - elapsed),
+                   nullptr) != 0) {
+      return;
+    }
   }
 
   std::wstring exe(32768, L'\0');
