@@ -41,11 +41,26 @@ class ClipLink {
   static final _date = RegExp(
     r'^(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]\d{2,4})$',
   );
-  static final _range = RegExp(r'^[1-9]\d{3,}-\d{4,}$');
+  // Round on both ends, as ranges are written (`1000-2000`): a phone number
+  // with two four-digit groups (`2123-4567`, a Hong Kong number) is not.
+  static final _range = RegExp(r'^[1-9]\d+00-[1-9]\d+00$');
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.
+  ///
+  /// Never throws: it runs while a history row builds, so one synced clip
+  /// that cannot be decoded - `tel:%FF`, an escape that is not UTF-8 - would
+  /// otherwise replace that row with an error on every device. Such a clip
+  /// stays text.
   static ClipLink? detect(String content) {
+    try {
+      return _detect(content);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static ClipLink? _detect(String content) {
     final text = content.trim();
     if (text.isEmpty || text.length > maxLength || text.contains('\n')) {
       return null;
@@ -61,7 +76,14 @@ class ClipLink {
       // `tel:%` or `tel:%zz`, and detect runs while a history row builds.
       final uri = Uri.tryParse(text);
       if (uri == null || uri.hasQuery || uri.hasFragment) return null;
-      return _phone(Uri.decodeComponent(uri.path), explicit: true);
+      // RFC 3966 parameters - `;ext=456`, `;phone-context=...` - follow the
+      // number. The number alone is checked; the link keeps them.
+      final path = Uri.decodeComponent(uri.path);
+      final separator = path.indexOf(';');
+      if (separator < 0) return _phone(path, explicit: true);
+      final number = _phone(path.substring(0, separator), explicit: true);
+      if (number == null || path.contains(_whitespace)) return null;
+      return ClipLink._(ClipLinkKind.phone, uri, number.label);
     }
     if (lower.startsWith('geo:')) return _geo(text);
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
@@ -82,9 +104,11 @@ class ClipLink {
     final uri = Uri.tryParse(text);
     if (uri == null || !uri.hasAuthority) return null;
     final host = uri.host.toLowerCase();
-    if (host.isEmpty || !(host.contains('.') || host == 'localhost')) {
-      return null;
-    }
+    // A name with a dot, localhost, or an IPv6 literal (`[2001:db8::1]`,
+    // which Uri.host gives without its brackets).
+    final validHost =
+        host.contains('.') || host == 'localhost' || host.contains(':');
+    if (host.isEmpty || !validHost) return null;
     final place = _MapPlace.fromWeb(uri);
     if (place != null) {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
@@ -177,6 +201,9 @@ class ClipLink {
 
     switch (platform) {
       case 'android':
+        if (apple) {
+          if (_appleDirections(uri) case final directions?) return directions;
+        }
         if ((apple || geo) && place.hasLocation) return place.toGeo();
       case 'macos':
         if (apple &&
@@ -192,6 +219,34 @@ class ClipLink {
         if (geo) return place.toGoogleMaps();
     }
     return uri;
+  }
+
+  /// An Apple Maps directions link as the same route in Google Maps, which
+  /// Android's maps app opens: `geo:` holds only a place, so a route rewritten
+  /// to it lost its start and travel mode and was no longer directions.
+  static Uri? _appleDirections(Uri uri) {
+    final params = uri.queryParameters;
+    final destination = params['daddr'] ?? params['destination'];
+    if (destination == null || destination.trim().isEmpty) return null;
+    final origin = params['saddr'] ?? params['source'];
+    // Apple's word for "from where I am", which is also Google's default.
+    final fromHere =
+        origin == null ||
+        origin.trim().isEmpty ||
+        origin.trim().toLowerCase() == 'current location';
+    final mode = switch (params['dirflg'] ?? params['mode']) {
+      'd' || 'driving' => 'driving',
+      'w' || 'walking' => 'walking',
+      'r' || 'transit' => 'transit',
+      'cycling' => 'bicycling',
+      _ => null,
+    };
+    return Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      if (!fromHere) 'origin': origin,
+      'destination': destination,
+      'travelmode': ?mode,
+    });
   }
 
   /// Whether [platform] has anything that opens this kind of link.
@@ -252,7 +307,12 @@ class _MapPlace {
       };
 
   static const _googleShortHosts = {'maps.app.goo.gl', 'goo.gl'};
-  static final _googleHost = RegExp(r'^(www\.)?google\.[a-z.]+$');
+  // google.com and Google's country domains (google.ca, google.co.uk,
+  // google.com.au) - not any host that starts google., which
+  // google.com.evil does.
+  static final _googleHost = RegExp(
+    r'^(www\.)?google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$',
+  );
 
   static _MapPlace? fromWeb(Uri uri) {
     final host = uri.host.toLowerCase();
