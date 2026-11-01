@@ -1,5 +1,6 @@
 #include "flutter_window.h"
 
+#include <algorithm>
 #include <cwchar>
 #include <optional>
 #include <string>
@@ -188,7 +189,13 @@ bool FlutterWindow::OnCreate() {
   AddClipboardFormatListener(GetHandle());
 
   created_at_ = ::GetTickCount64();
-  gpu_watchdog_ = std::make_unique<GpuWatchdog>(GetHandle(), kGpuResetMessage);
+  // One-shot uploads do not need rendered surfaces. Restarting one as a tray
+  // app would interrupt the upload and lose its result notification.
+  const auto& arguments = project_.dart_entrypoint_arguments();
+  if (std::find(arguments.begin(), arguments.end(), "--send-file") ==
+      arguments.end()) {
+    gpu_watchdog_ = std::make_unique<GpuWatchdog>(GetHandle(), kGpuResetMessage);
+  }
 
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     if (flutter_controller_) {
