@@ -50,8 +50,11 @@ void main() {
         final handler = await service.handlerFor(first);
         expect(handler!.name, 'Google Maps');
         expect((handler.icon! as MemoryImage).bytes, icon);
-        // Rewritten to geo: for Android, which is what tapping Open sends.
-        expect(asked, ['geo:43.6426,-79.3871?q=CN+Tower']);
+        // Rewritten to geo: for Android, which is what tapping Open sends:
+        // the pin, labelled with the place name.
+        expect(asked, [
+          'geo:43.6426,-79.3871?q=43.6426%2C-79.3871%28CN+Tower%29',
+        ]);
 
         expect((await service.handlerFor(second))!.name, 'Google Maps');
         expect(asked, hasLength(1));
