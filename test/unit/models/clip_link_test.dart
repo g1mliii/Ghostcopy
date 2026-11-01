@@ -161,7 +161,7 @@ void main() {
     )!;
     final geo = ClipLink.detect('geo:43.6426,-79.3871?q=CN%20Tower')!;
 
-    test('Android opens Apple Maps and geo: links as geo:', () {
+    test('Android opens Apple Maps links as geo:, and geo: as sent', () {
       expect(
         appleClassic.openUri('android').toString(),
         'geo:48.8584,2.2945?q=Eiffel+Tower',
@@ -170,10 +170,8 @@ void main() {
         applePlace.openUri('android').toString(),
         'geo:37.33,-122.03?q=Apple',
       );
-      expect(
-        geo.openUri('android').toString(),
-        'geo:43.6426,-79.3871?q=CN+Tower',
-      );
+      // A native geo: link is already Android's; it opens as sent.
+      expect(geo.openUri('android'), geo.uri);
       // Google Maps' own app claims these, and a short link has nothing to
       // rewrite.
       expect(google.openUri('android'), google.uri);
@@ -558,6 +556,32 @@ void main() {
     test('IPv6 web links', () {
       final link = ClipLink.detect('https://[2001:db8::1]/status')!;
       expect(link.kind, ClipLinkKind.web);
+    });
+
+    test('mailto: links with several recipients', () {
+      final link = ClipLink.detect(
+        'mailto:alice@example.com,bob@example.com?subject=Update',
+      )!;
+      expect(link.kind, ClipLinkKind.email);
+      expect(link.label, 'alice@example.com, bob@example.com');
+      expect(link.uri.queryParameters['subject'], 'Update');
+      expect(ClipLink.detect('mailto:alice@example.com,bob'), isNull);
+    });
+
+    test('native geo: links open as sent on Android', () {
+      for (final text in [
+        'geo:43.6426,-79.3871?z=18',
+        'geo:43.6426,-79.3871;u=35',
+      ]) {
+        final link = ClipLink.detect(text)!;
+        expect(link.openUri('android'), link.uri, reason: text);
+      }
+    });
+
+    test('a card number written in groups is not a phone number', () {
+      expect(ClipLink.detect('3782 822463 10005'), isNull);
+      // A long international number still is.
+      expect(ClipLink.detect('+44 20 7946 0958 123')?.kind, ClipLinkKind.phone);
     });
   });
 }
