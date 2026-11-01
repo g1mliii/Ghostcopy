@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "gpu_watchdog.h"
 #include "power_monitor.h"
 #include "win32_window.h"
 
@@ -58,6 +59,12 @@ class FlutterWindow : public Win32Window {
 
   // Power state monitor for sleep/wake/lock events
   std::unique_ptr<PowerMonitor> power_monitor_;
+
+  // Restarts the app when the GPU is reset under it; see GpuWatchdog and
+  // RestartAfterGpuReset.
+  std::unique_ptr<GpuWatchdog> gpu_watchdog_;
+  ULONGLONG created_at_ = 0;
+  void RestartAfterGpuReset();
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

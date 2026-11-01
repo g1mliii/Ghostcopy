@@ -8,6 +8,7 @@ project(runner LANGUAGES CXX)
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
+  "gpu_watchdog.cpp"
   "main.cpp"
   "package_context.cpp"
   "power_monitor.cpp"
@@ -75,6 +76,8 @@ target_link_libraries(${BINARY_NAME} PRIVATE "Wtsapi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib")
 # C++/WinRT, for Windows.ApplicationModel.StartupTask in package_context.cpp.
 target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
+# The tripwire device GpuWatchdog keeps, in gpu_watchdog.cpp.
+target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
