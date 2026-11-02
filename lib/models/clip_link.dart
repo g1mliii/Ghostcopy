@@ -198,6 +198,8 @@ class ClipLink {
           _hostIs(h, 'zoom.us') &&
           (_pathStarts(u, '/j/') ||
               _pathStarts(u, '/my/') ||
+              // The Zoom Web App: /wc/<meeting>/join.
+              (_pathStarts(u, '/wc/') && u.path.endsWith('/join')) ||
               _pathStarts(u, '/w/') ||
               _pathStarts(u, '/s/')),
     ),
@@ -215,7 +217,10 @@ class ClipLink {
               // new meetings get.
               (u.path.contains('/l/meetup-join') ||
                   u.path.startsWith('/meet/'))) ||
-          (h == 'teams.live.com' && _pathStarts(u, '/meet')),
+          (h == 'teams.live.com' && _pathStarts(u, '/meet')) ||
+          // US government clouds: GCC High and DoD.
+          ((h == 'gov.teams.microsoft.us' || h == 'dod.teams.microsoft.us') &&
+              u.path.contains('/l/meetup-join')),
     ),
     (
       ClipLinkKind.meeting,
@@ -397,7 +402,7 @@ class ClipLink {
   }
 
   static final _localHost = RegExp(
-    r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa))(:\d{1,5})?(/\S*)?$',
+    r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa))(:\d{1,5})?([/?#]\S*)?$',
     caseSensitive: false,
   );
   // The top-level domain is a country code or a common generic one, so a
@@ -408,7 +413,7 @@ class ClipLink {
     r'^[a-z0-9-]+(\.[a-z0-9-]+)*'
     r'\.([a-z]{2}|com|org|net|edu|gov|mil|int|info|biz|dev|app|cloud|tech|'
     'site|online|xyz|page|run|live|host|systems|services|network|software)'
-    r':\d{2,5}(/\S*)?$',
+    r':\d{2,5}([/?#]\S*)?$',
     caseSensitive: false,
   );
 
@@ -418,7 +423,7 @@ class ClipLink {
     r'\.(dart|py|js|jsx|ts|tsx|mjs|cjs|kt|kts|java|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|cs|go|rs|rb|php|lua|sh|zig|scala|ex|exs|json|ya?ml|toml|xml|html?|css|scss|txt|md|log):\d',
     caseSensitive: false,
   );
-  static final _addressEnd = RegExp('[:/]');
+  static final _addressEnd = RegExp('[:/?#]');
 
   /// A machine on the network, written without `http://`: `localhost:3000`,
   /// `192.168.1.1`, `printer.local`, `nas.lan:5000/admin`. Router pages and
@@ -444,8 +449,8 @@ class ClipLink {
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
-    // Five digits reach 99999; a port stops at 65535.
-    if (uri.hasPort && uri.port > 65535) return null;
+    // Five digits reach 99999; a port runs 1-65535, 0 being reserved.
+    if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
     return ClipLink._(ClipLinkKind.web, uri, uri.host);
   }
 

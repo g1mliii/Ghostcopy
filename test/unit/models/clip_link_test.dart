@@ -817,6 +817,28 @@ void main() {
       );
     });
 
+    test('port 0, Zoom Web App, government Teams, query-only local URLs', () {
+      expect(ClipLink.detect('localhost:0'), isNull);
+      expect(ClipLink.detect('192.168.1.1:0'), isNull);
+      expect(
+        ClipLink.detect('https://zoom.us/wc/123456789/join')?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(
+        ClipLink.detect(
+          'https://gov.teams.microsoft.us/l/meetup-join/19%3ax/0',
+        )?.kind,
+        ClipLinkKind.meeting,
+      );
+      for (final text in [
+        'localhost:3000?debug=1',
+        'printer.local?admin=1',
+        '192.168.1.1#status',
+      ]) {
+        expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+      }
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);

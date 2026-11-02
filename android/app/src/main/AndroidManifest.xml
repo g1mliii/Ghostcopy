@@ -242,5 +242,13 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="todoist"/>
         </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="craftdocs"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="spotify"/>
+        </intent>
     </queries>
 </manifest>
