@@ -4,7 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
-import '../../services/impl/crash_reporting_service.dart';
+import '../../services/crash_reporting_service.dart';
 import '../../utils/target_device_type.dart';
 
 /// The icon for a kind of link, before anything is known about which app on

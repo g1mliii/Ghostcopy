@@ -2798,7 +2798,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                     Tooltip(
                       message: link.actionLabel,
                       child: InkResponse(
-                        onTap: () => _openLink(link),
+                        onTap: () => unawaited(_openLink(link)),
                         radius: 14,
                         child: ValueListenableBuilder<bool>(
                           valueListenable: _isHovered,

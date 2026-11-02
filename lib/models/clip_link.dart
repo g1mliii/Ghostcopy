@@ -52,6 +52,7 @@ class ClipLink {
   static final _range = RegExp(r'^[1-9]\d+00-[1-9]\d+00$');
   // A US Social Security number. No phone numbering plan is written 3-2-4.
   static final _ssn = RegExp(r'^\d{3}-\d{2}-\d{4}$');
+  static final _isbn10Format = RegExp(r'^\d+[- ]\d+[- ]\d+[- ]\d$');
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.
@@ -188,6 +189,13 @@ class ClipLink {
           (digits.startsWith('978') || digits.startsWith('979'))) {
         return null;
       }
+      // ISBN-10 has four groups and a modulo-11 check digit. Keep ordinary
+      // phone grouping, explicit tel: links and international numbers.
+      if (digits.length == 10 &&
+          _isbn10Format.hasMatch(number) &&
+          _isbn10Valid(digits)) {
+        return null;
+      }
       // So is a range (`1000-2000`): two long groups and a dash. A number
       // written that way starts with a trunk 0 (`0800-123456`).
       if (_range.hasMatch(number)) return null;
@@ -274,12 +282,33 @@ class ClipLink {
       'cycling' => 'bicycling',
       _ => null,
     };
+    final waypoints = (uri.queryParametersAll['waypoint'] ?? const <String>[])
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    // Apple repeats waypoint parameters; Google joins them with pipes.
+    // Only tolls and highways are avoid preferences shared by both formats.
+    final avoid = (uri.queryParametersAll['avoid'] ?? const <String>[])
+        .expand((value) => value.split(','))
+        .map((value) => value.trim())
+        .where((value) => const {'tolls', 'highways'}.contains(value))
+        .toSet();
     return Uri.https('www.google.com', '/maps/dir/', {
       'api': '1',
       if (!fromHere) 'origin': origin,
       'destination': destination,
       'travelmode': ?mode,
+      if (waypoints.isNotEmpty) 'waypoints': waypoints.join('|'),
+      if (avoid.isNotEmpty) 'avoid': avoid.join(','),
     });
+  }
+
+  static bool _isbn10Valid(String digits) {
+    var sum = 0;
+    for (var i = 0; i < digits.length; i++) {
+      sum += (digits.codeUnitAt(i) - 48) * (10 - i);
+    }
+    return sum % 11 == 0;
   }
 
   static bool _luhnValid(String digits) {
@@ -347,11 +376,12 @@ class _MapPlace {
   /// place.
   final bool isShortLink;
 
-  bool get hasLocation => query != null || latLng != null;
+  bool get hasLocation => query != null || latLng != null || center != null;
 
   String get label =>
       query ??
       latLng ??
+      center ??
       switch (source) {
         _MapSource.apple => 'Apple Maps',
         _MapSource.google => 'Google Maps',
@@ -445,7 +475,21 @@ class _MapPlace {
       coords = '${parts[0]},${parts[1]}';
     }
     final latLng = _latLngOrNull(coords);
-    final query = uri.queryParameters['q'];
+    final query = uri.queryParameters['q']?.trim();
+    // Android's q=lat,lng(label) selects a pin independently of the geo:
+    // path, which may be 0,0 or the map's search center.
+    final labelStart = query?.indexOf('(') ?? -1;
+    if (query != null && labelStart > 0 && query.endsWith(')')) {
+      final pin = _latLngOrNull(query.substring(0, labelStart));
+      if (pin != null) {
+        final label = query.substring(labelStart + 1, query.length - 1).trim();
+        return _MapPlace(
+          _MapSource.geo,
+          query: label.isEmpty ? null : label,
+          latLng: pin,
+        );
+      }
+    }
     final hasQuery = query != null && query.trim().isNotEmpty;
     // geo:0,0 is the "no coordinate, search instead" form.
     final realLatLng = latLng == '0,0' ? null : latLng;

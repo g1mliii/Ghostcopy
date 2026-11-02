@@ -2244,7 +2244,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                 ),
                 if (link != null && canOpenClipLink(link))
                   IconButton(
-                    onPressed: () => _openLink(context, link),
+                    onPressed: () => unawaited(_openLink(context, link)),
                     tooltip: link.actionLabel,
                     icon: const Icon(Icons.open_in_new_rounded, size: 18),
                     color: GhostColors.accentText,
