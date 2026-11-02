@@ -243,6 +243,7 @@ void main() {
       for (final url in [
         'https://maps.apple.com/?q=Home&ll=37.33,-122.03',
         'https://maps.apple.com/place?name=Home&coordinate=37.33,-122.03',
+        'https://maps.apple.com/?q=Home&ll=37.33,-122.03&sll=51.507984,-0.128015',
       ]) {
         final link = ClipLink.detect(url)!;
         final opened = link.openUri('android');
@@ -402,13 +403,17 @@ void main() {
     });
 
     test('an Apple Maps search keeps its centre on Android', () {
-      final search = ClipLink.detect(
+      for (final url in [
         'https://maps.apple.com/search?query=pizza&center=51.507984,-0.128015',
-      )!;
-      expect(
-        search.openUri('android').toString(),
-        'geo:51.507984,-0.128015?q=pizza',
-      );
+        'https://maps.apple.com/?q=pizza&sll=51.507984,-0.128015',
+      ]) {
+        final search = ClipLink.detect(url)!;
+        expect(
+          search.openUri('android').toString(),
+          'geo:51.507984,-0.128015?q=pizza',
+          reason: url,
+        );
+      }
     });
 
     test('a geo: search without coordinates stays an API search', () {

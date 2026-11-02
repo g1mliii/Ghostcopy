@@ -338,9 +338,9 @@ class _MapPlace {
   /// `lat,lng`, as both Apple's `ll` and `geo:` write it.
   final String? latLng;
 
-  /// Where a search is centred, not a place: Apple's `center` on a
-  /// `/search` link. A pin at [latLng] is labelled with [query]; a search
-  /// for [query] near [center] finds whatever is there.
+  /// Where a search is centred, not a place: Apple's classic `sll` or
+  /// `center` on a `/search` link. A pin at [latLng] is labelled with [query];
+  /// a search for [query] near [center] finds whatever is there.
   final String? center;
 
   /// `maps.apple/p/...` or `maps.app.goo.gl/...`: only the redirect knows the
@@ -385,10 +385,8 @@ class _MapPlace {
           'daddr',
           'saddr',
         ]),
-        latLng: _latLngOrNull(
-          params['ll'] ?? params['coordinate'] ?? params['sll'],
-        ),
-        center: _latLngOrNull(params['center']),
+        latLng: _latLngOrNull(params['ll'] ?? params['coordinate']),
+        center: _latLngOrNull(params['center'] ?? params['sll']),
       );
     }
     if (host == 'maps.apple') {
