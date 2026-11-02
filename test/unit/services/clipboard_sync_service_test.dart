@@ -242,12 +242,14 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     }
     verify(clipboard.read).called(1);
+    final manualSend = service.sendCurrentClipboard();
+    verifyNever(clipboard.read);
     pending.completeError(Exception('Temporary read failure'));
-    await tester.pump();
     when(
       clipboard.read,
     ).thenAnswer((_) async => const ClipboardContent.empty());
-    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    await manualSend;
     verify(clipboard.read).called(1);
     service.stopClipboardMonitoring();
   });

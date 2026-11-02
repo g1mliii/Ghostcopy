@@ -1642,7 +1642,19 @@ void _invokeSendClipboard() {
   unawaited(locator<IClipboardSyncService>().sendCurrentClipboard());
 }
 
-Future<void> _registerDesktopShortcuts() async {
+Future<void> _sendHotkeyUpdates = Future<void>.value();
+
+Future<void> _queueSendHotkeyUpdate(Future<void> Function() update) {
+  final result = _sendHotkeyUpdates.then((_) => update());
+  // Report failures to the caller while allowing later changes to proceed.
+  _sendHotkeyUpdates = result.then<void>(
+    (_) {},
+    onError: (Object _, StackTrace _) {},
+  );
+  return result;
+}
+
+Future<void> _registerDesktopShortcuts() => _queueSendHotkeyUpdate(() async {
   await _registerSavedHotkey();
   if (locator<IHotkeyService>().managedBySystem) return;
   try {
@@ -1651,7 +1663,7 @@ Future<void> _registerDesktopShortcuts() async {
   } on Exception catch (e) {
     debugPrint('[Hotkey] Could not restore send shortcut: $e');
   }
-}
+});
 
 Future<void> _registerSendHotkey(HotKey? hotkey) async {
   if (hotkey == _activeHotkey) throw UnsupportedHotkeyException(hotkey!.key);
@@ -1666,10 +1678,11 @@ Future<void> _registerSendHotkey(HotKey? hotkey) async {
 }
 
 /// Apply or clear the global send shortcut.
-Future<void> applySendHotkey(HotKey? hotkey) async {
-  await _registerSendHotkey(hotkey);
-  await locator<ISettingsService>().setSendHotkey(hotkey);
-}
+Future<void> applySendHotkey(HotKey? hotkey) =>
+    _queueSendHotkeyUpdate(() async {
+      await _registerSendHotkey(hotkey);
+      await locator<ISettingsService>().setSendHotkey(hotkey);
+    });
 
 /// Register the saved global hotkey, falling back to [defaultHotkey].
 ///

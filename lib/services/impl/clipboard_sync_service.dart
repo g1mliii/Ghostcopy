@@ -124,7 +124,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
   bool _isMonitoring = false;
-  bool _isCheckingClipboard = false;
+  Completer<void>? _clipboardCheck;
 
   @override
   bool get isMonitoring => _isMonitoring;
@@ -1016,12 +1016,14 @@ class ClipboardSyncService implements IClipboardSyncService {
       _checkClipboardForAutoSend(manual: true);
 
   Future<void> _checkClipboardForAutoSend({bool manual = false}) async {
-    if (_clipboardWritesInProgress > 0 || _isDisposed || _isCheckingClipboard) {
-      return;
+    while (_clipboardCheck != null) {
+      if (!manual) return;
+      await _clipboardCheck!.future;
     }
+    if (_clipboardWritesInProgress > 0 || _isDisposed) return;
     // A slow native read/upload can outlive the timer interval. Keep only one
     // payload in flight instead of accumulating reads and duplicate work.
-    _isCheckingClipboard = true;
+    _clipboardCheck = Completer<void>();
     try {
       // Nothing written to the pasteboard since the last tick means the
       // payload cannot have changed, so the full read is skipped entirely.
@@ -1091,6 +1093,13 @@ class ClipboardSyncService implements IClipboardSyncService {
           clipboardContent.text!,
         );
         if (detection.isSensitive) {
+          if (manual) {
+            _notificationService?.showToast(
+              message:
+                  'Clipboard was not sent because it contains sensitive text.',
+              type: NotificationType.warning,
+            );
+          }
           debugPrint(
             '[ClipboardSyncService] Auto-send blocked: ${detection.type?.label} detected',
           );
@@ -1116,6 +1125,27 @@ class ClipboardSyncService implements IClipboardSyncService {
           clipboardContent.imageBytes!,
           clipboardContent.mimeType!,
         );
+      } else if (manual && clipboardContent.hasHtml) {
+        await _autoSend(
+          noun: 'HTML',
+          contentHash: contentHash,
+          insert: (context) => _clipboardRepository.insertRichText(
+            userId: context.userId,
+            deviceType: context.deviceType,
+            deviceName: context.deviceName,
+            content: clipboardContent.html!,
+            format: RichTextFormat.html,
+            targetDeviceTypes: context.targetDeviceTypes,
+          ),
+          message: (targets) => 'Sent HTML to $targets',
+          failureMessage: 'Could not send HTML',
+          afterInsert: (context) => _fireIntegrations(
+            content: clipboardContent.html!,
+            deviceType: context.deviceType,
+            direction: 'sent',
+            screened: true,
+          ),
+        );
       } else if (clipboardContent.hasText) {
         final textContent = clipboardContent.text!;
         debugPrint(
@@ -1126,7 +1156,8 @@ class ClipboardSyncService implements IClipboardSyncService {
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Clipboard check failed: $e');
     } finally {
-      _isCheckingClipboard = false;
+      _clipboardCheck!.complete();
+      _clipboardCheck = null;
     }
   }
 
