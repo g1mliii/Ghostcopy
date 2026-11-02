@@ -31,7 +31,7 @@ void main() {
       locator
         ..registerSingleton<IHotkeyService>(hotkeys)
         ..registerSingleton<ISettingsService>(settings);
-      addTearDown(() => locator.reset());
+      addTearDown(locator.reset);
       final registered = Completer<void>();
       when(
         () => hotkeys.registerHotkey(key, any()),
