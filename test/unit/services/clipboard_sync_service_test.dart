@@ -283,6 +283,23 @@ void main() {
         ),
       ).called(1);
 
+  test(
+    'send shortcut blocks a sensitive value split across HTML tags',
+    () async {
+      clipboardValue = ClipboardContent.html(
+        '<span>41111111</span><span>11111111</span>',
+      );
+      when(
+        () => security.detectSensitiveDataAsync('4111111111111111'),
+      ).thenAnswer((_) async => const DetectionResult(isSensitive: true));
+      await service.sendCurrentClipboard();
+      verify(
+        () => security.detectSensitiveDataAsync('4111111111111111'),
+      ).called(1);
+      verifyZeroInteractions(repository);
+    },
+  );
+
   testWidgets('manual text sends reach both integrations', (tester) async {
     service.notifyManualSend('manual clip');
     await tester.pump();

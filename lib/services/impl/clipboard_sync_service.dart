@@ -1089,9 +1089,17 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Security check (only for text content)
       if (clipboardContent.hasText) {
-        final detection = await _securityService.detectSensitiveDataAsync(
-          clipboardContent.text!,
-        );
+        final text = clipboardContent.text!;
+        var detection = await _securityService.detectSensitiveDataAsync(text);
+        if (!detection.isSensitive && manual && clipboardContent.hasHtml) {
+          // The stored markup and the text it renders can expose different secrets.
+          final readable = htmlToPlainText(clipboardContent.html!);
+          if (readable != text) {
+            detection = await _securityService.detectSensitiveDataAsync(
+              readable,
+            );
+          }
+        }
         if (detection.isSensitive) {
           if (manual) {
             _notificationService?.showToast(
@@ -1141,6 +1149,7 @@ class ClipboardSyncService implements IClipboardSyncService {
           failureMessage: 'Could not send HTML',
           afterInsert: (context) => _fireIntegrations(
             content: clipboardContent.html!,
+            isHtml: true,
             deviceType: context.deviceType,
             direction: 'sent',
             screened: true,
