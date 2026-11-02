@@ -839,6 +839,17 @@ void main() {
       }
     });
 
+    test('Whereby rooms on a Business subdomain', () {
+      expect(
+        ClipLink.detect('https://company.whereby.com/team-standup')?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(
+        ClipLink.detect('https://support.whereby.com/articles')?.kind,
+        isNot(ClipLinkKind.meeting),
+      );
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);

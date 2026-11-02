@@ -235,8 +235,11 @@ class ClipLink {
     (
       ClipLinkKind.meeting,
       'Whereby',
+      // whereby.com, or a Business account's own subdomain
+      // (company.whereby.com) - not Whereby's own help and docs sites.
       (h, u) =>
-          h == 'whereby.com' &&
+          _hostIs(h, 'whereby.com') &&
+          !_wherebySites.contains(h) &&
           u.pathSegments.length == 1 &&
           u.pathSegments.first.isNotEmpty &&
           !_wherebyPages.contains(u.pathSegments.first.toLowerCase()),
@@ -317,6 +320,15 @@ class ClipLink {
     '/l/(meetup-join|meeting|call)/',
     caseSensitive: false,
   );
+
+  static const _wherebySites = {
+    'support.whereby.com',
+    'docs.whereby.com',
+    'help.whereby.com',
+    'blog.whereby.com',
+    'status.whereby.com',
+    'embedded.whereby.com',
+  };
 
   /// Whereby's own site, beside its rooms (`whereby.com/<room>`).
   static const _wherebyPages = {
