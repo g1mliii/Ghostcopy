@@ -239,6 +239,101 @@ void main() {
   });
 
   group('from review', () {
+    test('regional maps.google hosts keep their map action', () {
+      for (final host in [
+        'maps.google.com',
+        'maps.google.co.uk',
+        'maps.google.com.au',
+        'maps.google.ca',
+      ]) {
+        final link = ClipLink.detect('https://$host/?q=London')!;
+        expect(link.kind, ClipLinkKind.map, reason: host);
+        expect(link.label, 'London');
+        expect(link.actionLabel, 'Open in Maps');
+        expect(link.openUri('android'), link.uri);
+      }
+      for (final host in [
+        'maps.google.co.uk.evil',
+        'maps.google.com.au.evil',
+        'maps.evilgoogle.co.uk',
+        'maps.evil.google.com',
+      ]) {
+        expect(
+          ClipLink.detect('https://$host/maps/search/London')!.kind,
+          ClipLinkKind.web,
+          reason: host,
+        );
+      }
+      expect(
+        ClipLink.detect('https://www.google.co.uk/?q=London')!.kind,
+        ClipLinkKind.web,
+      );
+    });
+
+    test('email dots and domain hyphens must be inside their components', () {
+      for (final address in [
+        'first..last@example.com',
+        '.first@example.com',
+        'first.@example.com',
+        'user@-example.com',
+        'user@example-.com',
+        'user@sub.-example.com',
+        'user@sub-.example.com',
+        'user@example..com',
+        'user@example.xn--abc-',
+      ]) {
+        expect(ClipLink.detect(address), isNull, reason: address);
+        expect(ClipLink.detect('mailto:$address'), isNull, reason: address);
+        expect(
+          ClipLink.detect('mailto:valid@example.com,$address'),
+          isNull,
+          reason: address,
+        );
+      }
+      for (final address in [
+        'first.last+tag@sub-domain.example.com',
+        'a_b%tag@example.co.uk',
+        'user@xn--80a1acny.xn--p1ai',
+        'a@b.co',
+      ]) {
+        expect(ClipLink.detect(address)?.kind, ClipLinkKind.email);
+        expect(
+          ClipLink.detect('mailto:${Uri.encodeComponent(address)}')?.kind,
+          ClipLinkKind.email,
+        );
+      }
+      expect(ClipLink.detect('mailto:first%2E%2Elast@example.com'), isNull);
+    });
+
+    test('Android retains Look Around as a panorama', () {
+      final link = ClipLink.detect(
+        'https://maps.apple.com/look-around?coordinate=48.8584,2.2945',
+      )!;
+      final opened = link.openUri('android');
+      expect(opened.scheme, 'https');
+      expect(opened.host, 'www.google.com');
+      expect(opened.path, '/maps/@');
+      expect(opened.queryParameters, {
+        'api': '1',
+        'map_action': 'pano',
+        'viewpoint': '48.8584,2.2945',
+      });
+      for (final platform in ['ios', 'macos', 'windows', 'linux']) {
+        expect(link.openUri(platform), link.uri);
+      }
+      // An address or Apple place ID cannot provide a Street View viewpoint.
+      for (final query in [
+        'address=Eiffel%20Tower',
+        'place-id=IBE1F65094A7A13B1',
+        'coordinate=invalid&address=Eiffel%20Tower',
+      ]) {
+        final unresolved = ClipLink.detect(
+          'https://maps.apple.com/look-around?$query',
+        )!;
+        expect(unresolved.openUri('android'), unresolved.uri);
+      }
+    });
+
     test('Android retains route stops and supported avoid preferences', () {
       final route = ClipLink.detect(
         'https://maps.apple.com/directions?source=A&destination=C'

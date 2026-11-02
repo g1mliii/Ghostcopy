@@ -35,8 +35,9 @@ class ClipLink {
   static final _email = RegExp(
     // The last label is letters, or punycode for a non-Latin top-level
     // domain (`xn--p1ai`).
-    r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*'
-    r'\.([A-Za-z]{2,}|xn--[A-Za-z0-9-]+)$',
+    r'^[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@'
+    r'(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
+    r'(?:[A-Za-z]{2,}|xn--[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)$',
   );
   static final _phoneChars = RegExp(r'^\+?[0-9()\-. ]+$');
   // No-break and narrow no-break spaces: what a number copied from a web
@@ -241,6 +242,17 @@ class ClipLink {
     switch (platform) {
       case 'android':
         if (apple) {
+          if (uri.path == '/look-around') {
+            // Preserve the panorama intent. Apple-only place IDs and
+            // addresses cannot supply a Street View viewpoint.
+            final coordinates = place.latLng;
+            if (coordinates == null) return uri;
+            return Uri.https('www.google.com', '/maps/@', {
+              'api': '1',
+              'map_action': 'pano',
+              'viewpoint': coordinates,
+            });
+          }
           if (_appleDirections(uri) case final directions?) return directions;
         }
         // geo: as sent: Android handles it, zoom (?z=) and uncertainty
@@ -393,7 +405,7 @@ class _MapPlace {
   // google.com.au) - not any host that starts google., which
   // google.com.evil does.
   static final _googleHost = RegExp(
-    r'^(www\.)?google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$',
+    r'^(www\.|maps\.)?google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$',
   );
 
   static _MapPlace? fromWeb(Uri uri) {
@@ -430,9 +442,8 @@ class _MapPlace {
       }
       return const _MapPlace(_MapSource.google, isShortLink: true);
     }
-    final googleHost = host == 'maps.google.com' || _googleHost.hasMatch(host);
-    if (!googleHost) return null;
-    if (host != 'maps.google.com' &&
+    if (!_googleHost.hasMatch(host)) return null;
+    if (!host.startsWith('maps.') &&
         (segments.isEmpty || segments.first != 'maps')) {
       return null;
     }
