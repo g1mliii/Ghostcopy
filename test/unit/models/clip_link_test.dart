@@ -725,6 +725,7 @@ void main() {
         'drafts://open?uuid=1&action=Delete',
         'bear://x-callback-url/open-note?id=1&x-success=shortcuts://run',
         'drafts://x-callback-url/open?uuid=1&x-error=bear://x',
+        'bear://x-callback-url/open-note?id=1&pin=yes',
       ]) {
         expect(
           ClipLink.detect(text)?.kind,
@@ -856,6 +857,11 @@ void main() {
       expect(s10.uri.host, 'www.parcelforce.com');
       // Only digits and letters in groups; anything else stays text.
       expect(ClipLink.detect('EC-080-250-821-GB'), isNull);
+      // However it was spaced.
+      expect(
+        ClipLink.detect('EC\u00A0080\u00A0250  821\u00A0GB')?.kind,
+        ClipLinkKind.tracking,
+      );
     });
 
     test('DMS minutes and seconds must be under 60', () {

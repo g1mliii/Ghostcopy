@@ -113,9 +113,7 @@ class ClipLink {
       return _coordinates(text) ??
           _phone(text) ??
           _address(text) ??
-          (_groupedId.hasMatch(text)
-              ? _tracking(text.replaceAll(_whitespace, ''))
-              : null);
+          _groupedTracking(text);
     }
 
     final lower = text.toLowerCase();
@@ -322,6 +320,29 @@ class ClipLink {
   };
 
   static final _edgeSlashes = RegExp(r'^/+|/+$');
+
+  /// The query parameters each [_navigationRoutes] app may carry: the ones
+  /// that pick what to open, and nothing that changes it.
+  static const _navigationParams = <String, Set<String>>{
+    'obsidian': {'vault', 'file', 'path', 'query'},
+    'drafts': {'uuid'},
+    'bear': {
+      'id',
+      'title',
+      'header',
+      'term',
+      'name',
+      'tag',
+      'exclude_trashed',
+      'new_window',
+      'float',
+      'show_window',
+      'open_note',
+    },
+    'things': {'id', 'query', 'filter'},
+    'todoist': {'id'},
+    'craftdocs': {'blockId', 'spaceId'},
+  };
   static final _teamsMeetingPath = RegExp(
     '/l/(meetup-join|meeting|call)/',
     caseSensitive: false,
@@ -390,13 +411,13 @@ class ClipLink {
         '',
       );
       if (!routes.contains(route)) return null;
-      // A navigation route can still be told to act: Drafts' `open` runs
-      // `action=` on the draft it opens, and every x-callback-url route
-      // follows `x-success=` to another URL - which could be one of the
-      // routes refused above.
-      if (uri.queryParameters.keys.any(
-        (key) => key == 'action' || key.toLowerCase().startsWith('x-'),
-      )) {
+      // A navigation route can still be told to act - Drafts' `open` runs
+      // `action=` on the draft it opens, Bear's `open-note` pins it with
+      // `pin=yes`, and every x-callback-url route follows `x-success=` to
+      // another URL. So only the parameters that say what to open are let
+      // through.
+      final allowed = _navigationParams[scheme]!;
+      if (uri.queryParameters.keys.any((key) => !allowed.contains(key))) {
         return null;
       }
     }
@@ -589,6 +610,16 @@ class ClipLink {
   static final _ups = RegExp(r'^1Z[0-9A-Z]{16}$');
   static final _usps = RegExp(r'^9[2-5]\d{18,20}$');
   static final _groupedId = RegExp(r'^[A-Za-z0-9]+( [A-Za-z0-9]+)+$');
+  static final _whitespaceRun = RegExp(r'\s+');
+
+  /// A tracking number printed in groups, with whatever spacing it was
+  /// copied with - no-break spaces from a PDF, doubled spaces.
+  static ClipLink? _groupedTracking(String text) {
+    final spaced = text.replaceAll(_whitespaceRun, ' ');
+    if (!_groupedId.hasMatch(spaced)) return null;
+    return _tracking(spaced.replaceAll(' ', ''));
+  }
+
   static final _parcelforce = RegExp('^(E[A-E]|CP)');
   static final _s10 = RegExp(r'^[A-Z]{2}\d{9}[A-Z]{2}$');
 
