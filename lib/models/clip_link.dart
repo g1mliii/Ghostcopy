@@ -203,7 +203,8 @@ class ClipLink {
       ClipLinkKind.meeting,
       'Zoom',
       (h, u) =>
-          _hostIs(h, 'zoom.us') &&
+          // Zoom, and Zoom for Government.
+          (_hostIs(h, 'zoom.us') || _hostIs(h, 'zoomgov.com')) &&
           (_pathStarts(u, '/j/') ||
               _pathStarts(u, '/my/') ||
               // The Zoom Web App: /wc/<meeting>/join.

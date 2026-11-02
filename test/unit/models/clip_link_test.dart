@@ -876,6 +876,10 @@ void main() {
         ClipLink.detect('https://youtube.com/watch?v=abc')?.kind,
         ClipLinkKind.video,
       );
+      expect(
+        ClipLink.detect('https://cacb.zoomgov.com/j/1617514241')?.kind,
+        ClipLinkKind.meeting,
+      );
       expect(ClipLink.detect('zoommtg://'), isNull);
       expect(ClipLink.detect('spotify://'), isNull);
       expect(ClipLink.detect('example.com:8/status')?.kind, ClipLinkKind.web);
