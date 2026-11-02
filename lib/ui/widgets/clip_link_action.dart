@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../services/impl/crash_reporting_service.dart';
+import '../../services/impl/link_handler_service.dart';
 import '../../services/link_handler_service.dart';
 import '../../utils/target_device_type.dart';
 
@@ -88,6 +89,7 @@ class ClipLinkHandlerBuilder extends StatefulWidget {
 
 class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
   LinkHandler? _handler;
+  DateTime _resolvedAt = DateTime.now();
 
   @override
   void initState() {
@@ -102,6 +104,7 @@ class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
   }
 
   void _resolve() {
+    _resolvedAt = DateTime.now();
     final service = LinkHandlerService.instance;
     final link = widget.link;
     _handler = service.cachedHandlerFor(link);
@@ -118,7 +121,20 @@ class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, _handler);
+  Widget build(BuildContext context) {
+    // A row stays mounted across hiding the Spotlight or backgrounding the
+    // app, so a default app changed meanwhile is picked up the next time the
+    // row is drawn after the service's own refresh age - not only when a
+    // new row is built. No timer: an idle row costs nothing.
+    if (DateTime.now().difference(_resolvedAt) >
+        CachingLinkHandlerService.maxAge) {
+      _resolvedAt = DateTime.now();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _resolve();
+      });
+    }
+    return widget.builder(context, _handler);
+  }
 }
 
 /// A [Tooltip] saying [clipLinkActionLabel] for this device's handler.

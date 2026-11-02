@@ -49,11 +49,12 @@ object LinkHandler {
                 return@setMethodCallHandler
             }
             executor.execute {
-                // Throwable, so a reply always goes back: an icon is
-                // decoration, never worth a Dart future that never completes.
+                // A lookup that fails - a bad URL, a package that went away
+                // mid-query - is the generic glyph. An Error is a bug or the
+                // process running out of memory, and is left to surface.
                 val handler = try {
                     lookUp(app, url)
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
                     null
                 }
                 main.post { result.success(handler) }
@@ -78,7 +79,7 @@ object LinkHandler {
         val name = info.applicationInfo.loadLabel(pm).toString()
         val icon = try {
             png(info.loadIcon(pm))
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             null
         }
         return buildMap<String, Any> {

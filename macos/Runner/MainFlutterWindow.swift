@@ -170,7 +170,13 @@ final class LinkHandlerChannel {
         result(FlutterError(code: "INVALID_ARGS", message: "url is required", details: nil))
         return
       }
-      result(LinkHandlerChannel.handler(for: url))
+      // LaunchServices, the icon load and the PNG encode, off the main
+      // thread a frame is drawn on; the reply goes back on it, as Flutter
+      // requires.
+      DispatchQueue.global(qos: .utility).async {
+        let handler = LinkHandlerChannel.handler(for: url)
+        DispatchQueue.main.async { result(handler) }
+      }
     }
   }
 
