@@ -1617,7 +1617,7 @@ void _invokeHotkeyCallback() {
 /// Single entry point so the Spotlight callback is wired in exactly one place.
 /// Throws [UnsupportedHotkeyException] if the key cannot be registered; the
 /// previous registration is left in place in that case, and nothing is saved.
-Future<void> applyHotkey(HotKey hotkey) async {
+Future<void> applyHotkey(HotKey hotkey) => _queueHotkeyUpdate(() async {
   if (hotkey == _activeSendHotkey) throw UnsupportedHotkeyException(hotkey.key);
   final hotkeyService = locator<IHotkeyService>();
 
@@ -1632,7 +1632,7 @@ Future<void> applyHotkey(HotKey hotkey) async {
 
   await locator<ISettingsService>().setHotkey(hotkey);
   debugPrint('[Hotkey] Applied ${hotkey.toStorageString()}');
-}
+});
 
 /// The shortcut currently registered with the OS.
 HotKey _activeHotkey = defaultHotkey;
@@ -1642,24 +1642,30 @@ void _invokeSendClipboard() {
   unawaited(locator<IClipboardSyncService>().sendCurrentClipboard());
 }
 
-Future<void> _sendHotkeyUpdates = Future<void>.value();
+Future<void> _hotkeyUpdates = Future<void>.value();
 
-Future<void> _queueSendHotkeyUpdate(Future<void> Function() update) {
-  final result = _sendHotkeyUpdates.then((_) => update());
+Future<void> _queueHotkeyUpdate(Future<void> Function() update) {
+  final result = _hotkeyUpdates.then((_) => update());
   // Report failures to the caller while allowing later changes to proceed.
-  _sendHotkeyUpdates = result.then<void>(
+  _hotkeyUpdates = result.then<void>(
     (_) {},
     onError: (Object _, StackTrace _) {},
   );
   return result;
 }
 
-Future<void> _registerDesktopShortcuts() => _queueSendHotkeyUpdate(() async {
+Future<void> _registerDesktopShortcuts() => _queueHotkeyUpdate(() async {
   await _registerSavedHotkey();
   if (locator<IHotkeyService>().managedBySystem) return;
   try {
     final saved = await locator<ISettingsService>().getSendHotkey();
-    if (saved != null) await _registerSendHotkey(saved);
+    if (saved == null) return;
+    try {
+      await _registerSendHotkey(saved);
+    } on Exception {
+      await locator<ISettingsService>().setSendHotkey(null);
+      rethrow;
+    }
   } on Exception catch (e) {
     debugPrint('[Hotkey] Could not restore send shortcut: $e');
   }
@@ -1677,12 +1683,17 @@ Future<void> _registerSendHotkey(HotKey? hotkey) async {
   _activeSendHotkey = hotkey;
 }
 
+/// Wait for pending OS registrations before displaying the active send shortcut.
+Future<HotKey?> registeredSendHotkey() async {
+  await _hotkeyUpdates;
+  return _activeSendHotkey;
+}
+
 /// Apply or clear the global send shortcut.
-Future<void> applySendHotkey(HotKey? hotkey) =>
-    _queueSendHotkeyUpdate(() async {
-      await _registerSendHotkey(hotkey);
-      await locator<ISettingsService>().setSendHotkey(hotkey);
-    });
+Future<void> applySendHotkey(HotKey? hotkey) => _queueHotkeyUpdate(() async {
+  await _registerSendHotkey(hotkey);
+  await locator<ISettingsService>().setSendHotkey(hotkey);
+});
 
 /// Register the saved global hotkey, falling back to [defaultHotkey].
 ///

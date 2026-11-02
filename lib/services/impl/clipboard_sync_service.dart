@@ -178,6 +178,19 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   int _clipboardWritesInProgress = 0;
 
+  bool _clipboardUnavailableForSend({required bool manual}) {
+    if (_isDisposed) return true;
+    if (_clipboardWritesInProgress == 0) return false;
+    if (manual) {
+      _notificationService?.showToast(
+        message:
+            'Clipboard is being updated. Try sending again when it finishes.',
+        type: NotificationType.warning,
+      );
+    }
+    return true;
+  }
+
   // Pending background operations for clean shutdown (Fix #10)
 
   // Content deduplication
@@ -1020,7 +1033,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       if (!manual) return;
       await _clipboardCheck!.future;
     }
-    if (_clipboardWritesInProgress > 0 || _isDisposed) return;
+    if (_clipboardUnavailableForSend(manual: manual)) return;
     // A slow native read/upload can outlive the timer interval. Keep only one
     // payload in flight instead of accumulating reads and duplicate work.
     _clipboardCheck = Completer<void>();
@@ -1038,7 +1051,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Read clipboard using ClipboardService (supports all formats)
       final clipboardContent = await _clipboardService.read();
-      if (_clipboardWritesInProgress > 0 || _isDisposed) return;
+      if (_clipboardUnavailableForSend(manual: manual)) return;
 
       // The counter is committed only once the read has actually produced
       // something, so a read that failed - a clipboard briefly held open by

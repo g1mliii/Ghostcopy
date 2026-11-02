@@ -101,6 +101,13 @@ dependencies:
   url_launcher: ^6.3.0
   window_manager: ^0.5.1
 
+# Native registration must report conflicts and suppress held-key repeats.
+dependency_overrides:
+  hotkey_manager_linux:
+    path: packages/hotkey_manager_linux
+  hotkey_manager_windows:
+    path: packages/hotkey_manager_windows
+
 dev_dependencies:
   # Deterministic timer control for the lifecycle controller's idle switching.
   dart_jsonwebtoken: ^3.1.1

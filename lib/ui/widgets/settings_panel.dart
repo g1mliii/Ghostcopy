@@ -251,7 +251,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     if (widget.hotkeyService == null) return;
 
     final saved = await widget.settingsService.getHotkey();
-    final send = await widget.settingsService.getSendHotkey();
+    final send = await registeredSendHotkey();
     if (!mounted) return;
     _sendHotkey = send;
     _currentHotkey = saved ?? defaultHotkey;

@@ -1359,6 +1359,14 @@ void main() {
         () => repository.downloadFile(any()),
       ).thenAnswer((_) => download.future);
       await receive(tester); // clip 1 is now downloading
+      await service.sendCurrentClipboard();
+      verify(
+        () => notifier.showToast(
+          message:
+              'Clipboard is being updated. Try sending again when it finishes.',
+          type: NotificationType.warning,
+        ),
+      ).called(1);
 
       pasteboard++; // the user copies in another app
       when(repository.getLatestItemId).thenAnswer((_) async => '2');
