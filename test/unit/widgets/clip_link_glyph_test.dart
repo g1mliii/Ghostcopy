@@ -1,6 +1,8 @@
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clip_link.dart';
+import 'package:ghostcopy/services/impl/link_handler_service.dart';
 import 'package:ghostcopy/services/link_handler_service.dart';
 import 'package:ghostcopy/ui/widgets/clip_link_action.dart';
 import 'package:image/image.dart' as img;
@@ -8,7 +10,7 @@ import 'package:image/image.dart' as img;
 class _FakeHandlers implements ILinkHandlerService {
   _FakeHandlers(this.handler);
 
-  final LinkHandler? handler;
+  LinkHandler? handler;
   bool resolved = false;
 
   @override
@@ -45,6 +47,44 @@ void main() {
   final png = img.encodePng(img.Image(width: 2, height: 2));
 
   tearDown(() => LinkHandlerService.instance = null);
+
+  testWidgets('a retained row redraws a handler refreshed by another row', (
+    tester,
+  ) async {
+    var now = DateTime(2026);
+    await withClock(Clock(() => now), () async {
+      final service = _FakeHandlers(const LinkHandler(name: 'Old Browser'));
+      LinkHandlerService.instance = service;
+      final rowKey = GlobalKey();
+
+      Widget row() => MaterialApp(
+        home: ClipLinkHandlerBuilder(
+          key: rowKey,
+          link: link,
+          builder: (context, handler) =>
+              Text(clipLinkActionLabel(link, handler)),
+        ),
+      );
+
+      await tester.pumpWidget(row());
+      await tester.pump();
+      expect(find.text('Open in Old Browser'), findsOneWidget);
+      final originalState = rowKey.currentState;
+
+      // Another row has refreshed the shared service while this one stayed
+      // mounted. Its next build schedules its own refresh after the frame.
+      service.handler = const LinkHandler(name: 'New Browser');
+      now = now.add(
+        CachingLinkHandlerService.maxAge + const Duration(seconds: 1),
+      );
+      await tester.pumpWidget(row());
+      expect(rowKey.currentState, same(originalState));
+      await tester.pump();
+
+      expect(find.text('Open in New Browser'), findsOneWidget);
+      expect(find.text('Open in Old Browser'), findsNothing);
+    });
+  });
 
   testWidgets('shows the app that opens it once that is known', (tester) async {
     LinkHandlerService.instance = _FakeHandlers(

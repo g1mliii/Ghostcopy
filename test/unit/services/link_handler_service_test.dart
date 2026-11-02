@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -128,6 +129,47 @@ void main() {
         );
       },
     );
+  });
+
+  test('an expired lookup recovers a previously unreadable app icon', () async {
+    var now = DateTime(2026);
+    await withClock(Clock(() => now), () async {
+      final service = _MutableHandlerService();
+      final link = ClipLink.detect('https://example.com')!;
+      final original = await service.handlerFor(link);
+      expect(original!.icon, isNull);
+
+      final icon = MemoryImage(Uint8List.fromList([1, 2, 3]));
+      service.handler = LinkHandler(name: 'Browser', icon: icon);
+      now = now.add(
+        CachingLinkHandlerService.maxAge + const Duration(seconds: 1),
+      );
+
+      final refreshed = await service.handlerFor(link);
+      expect(refreshed!.icon, same(icon));
+      expect(service.cachedHandlerFor(link), same(refreshed));
+    });
+  });
+
+  test('an expired lookup replaces an app icon at a new file path', () async {
+    var now = DateTime(2026);
+    await withClock(Clock(() => now), () async {
+      final originalIcon = FileImage(File('/browser/v1/icon.png'));
+      final service = _MutableHandlerService()
+        ..handler = LinkHandler(name: 'Browser', icon: originalIcon);
+      final link = ClipLink.detect('https://example.com')!;
+      expect((await service.handlerFor(link))!.icon, same(originalIcon));
+
+      final updatedIcon = FileImage(File('/browser/v2/icon.png'));
+      service.handler = LinkHandler(name: 'Browser', icon: updatedIcon);
+      now = now.add(
+        CachingLinkHandlerService.maxAge + const Duration(seconds: 1),
+      );
+
+      final refreshed = await service.handlerFor(link);
+      expect(refreshed!.icon, same(updatedIcon));
+      expect(service.cachedHandlerFor(link), same(refreshed));
+    });
   });
 
   group('LinuxLinkHandlerService', () {
@@ -347,6 +389,18 @@ Name=New Window
     // A geo: or tel: path is the place or number itself.
     expect(key(android, 'geo:1.0,2.0'), key(android, 'geo:3.0,4.0'));
   });
+}
+
+class _MutableHandlerService extends CachingLinkHandlerService {
+  _MutableHandlerService() : super(platform: 'windows');
+
+  LinkHandler handler = const LinkHandler(name: 'Browser');
+
+  @override
+  String cacheKeyFor(Uri uri) => uri.scheme;
+
+  @override
+  Future<LinkHandler?> lookUp(Uri uri) async => handler;
 }
 
 class _ThrowingService extends CachingLinkHandlerService {
