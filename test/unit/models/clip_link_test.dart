@@ -803,6 +803,20 @@ void main() {
       expect(ClipLink.detect('123 Église St')?.kind, ClipLinkKind.map);
     });
 
+    test('music home pages are pages; Classroom Meet links are meetings', () {
+      final home = ClipLink.detect('https://open.spotify.com/')!;
+      expect(home.kind, ClipLinkKind.web);
+      expect(home.alternateOn('android'), isNull);
+      expect(
+        ClipLink.detect('https://open.spotify.com/track/abc')?.kind,
+        ClipLinkKind.music,
+      );
+      expect(
+        ClipLink.detect('https://meet.google.com/lookup/abcdef123')?.kind,
+        ClipLinkKind.meeting,
+      );
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);

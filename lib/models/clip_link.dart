@@ -162,13 +162,19 @@ class ClipLink {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
     }
     final site = host.startsWith('www.') ? host.substring(4) : host;
+    // A music service's home page is a page, not something to play or find
+    // elsewhere: song.link has nothing to resolve for `open.spotify.com/`.
+    final hasPath = uri.pathSegments.any((s) => s.isNotEmpty);
     for (final (kind, name, matches) in _webServices) {
+      if (kind == ClipLinkKind.music && !hasPath) continue;
       if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
     }
     return ClipLink._(ClipLinkKind.web, uri, site);
   }
 
-  static final _meetCode = RegExp('^/[a-z]{3}-[a-z]{4}-[a-z]{3}');
+  // A meeting code, or Classroom's stable /lookup/<id> link to a class's
+  // current meeting.
+  static final _meetCode = RegExp(r'^/([a-z]{3}-[a-z]{4}-[a-z]{3}|lookup/\w+)');
   // Amazon's own storefront domains, not any suffix after `amazon.`
   // (`music.amazon.attacker.com`).
   static final _amazonMusic = RegExp(
