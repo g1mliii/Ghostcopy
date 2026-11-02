@@ -93,6 +93,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
   String _obsidianFileName = 'clipboard.md';
+  HotKey? _sendHotkey;
   HotKey _currentHotkey = defaultHotkey;
 
   // Text controllers
@@ -250,8 +251,10 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     if (widget.hotkeyService == null) return;
 
     final saved = await widget.settingsService.getHotkey();
-    if (saved == null || !mounted) return;
-    _currentHotkey = saved;
+    final send = await widget.settingsService.getSendHotkey();
+    if (!mounted) return;
+    _sendHotkey = send;
+    _currentHotkey = saved ?? defaultHotkey;
     scheduleRebuild();
   }
 
@@ -677,6 +680,27 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         // the right-click menu sends, so hiding it with auto-send off would
         // strand a setting that is still in effect.
         _buildDeviceSelector(),
+        if (widget.hotkeyService != null) ...[
+          const SizedBox(height: 10),
+          if (widget.hotkeyService!.managedBySystem)
+            ListTile(
+              title: const Text('Send current clipboard'),
+              subtitle: const Text('Assign a shortcut in KDE Plasma'),
+              onTap: _configureSystemShortcut,
+            )
+          else ...[
+            HotkeyCapture(
+              title: 'Send current clipboard',
+              currentHotkey: _sendHotkey,
+              onHotkeyChanged: _changeSendHotkey,
+            ),
+            if (_sendHotkey != null)
+              TextButton(
+                onPressed: () => _changeSendHotkey(null),
+                child: const Text('Clear send shortcut'),
+              ),
+          ],
+        ],
         const SizedBox(height: 10),
         // URL shortening toggle
         _buildSettingToggle(
@@ -1570,6 +1594,22 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         const SnackBar(
           content: Text(
             'Open System Settings → Keyboard → Shortcuts to configure GhostCopy.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _changeSendHotkey(HotKey? key) async {
+    try {
+      await applySendHotkey(key);
+      if (mounted) setState(() => _sendHotkey = key);
+    } on Exception {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not apply send shortcut. Try another combination.',
           ),
         ),
       );

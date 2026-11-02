@@ -466,7 +466,7 @@ Future<void> _appMain(
     // Initialize core services first
     final trayService = TrayService();
     final hotkeyService = LinuxClipboardReader.isWayland
-        ? LinuxHotkeyService()
+        ? LinuxHotkeyService(onSendClipboard: _invokeSendClipboard)
         : HotkeyService();
     final gameModeService = GameModeService();
     final settingsService = SettingsService();
@@ -1065,7 +1065,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // only when nothing has been saved. This used to always register the
       // hardcoded default, so a customised shortcut was discarded on restart.
       _onHotkeyPressed = _handleHotkeySpotlight;
-      unawaited(_registerSavedHotkey());
+      unawaited(_registerDesktopShortcuts());
       if (Platform.isLinux && !widget.launchedAtStartup) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_handleHotkeySpotlight());
@@ -1618,6 +1618,7 @@ void _invokeHotkeyCallback() {
 /// Throws [UnsupportedHotkeyException] if the key cannot be registered; the
 /// previous registration is left in place in that case, and nothing is saved.
 Future<void> applyHotkey(HotKey hotkey) async {
+  if (hotkey == _activeSendHotkey) throw UnsupportedHotkeyException(hotkey.key);
   final hotkeyService = locator<IHotkeyService>();
 
   // Register first: if the new combo is rejected, the old one must survive and
@@ -1635,6 +1636,40 @@ Future<void> applyHotkey(HotKey hotkey) async {
 
 /// The shortcut currently registered with the OS.
 HotKey _activeHotkey = defaultHotkey;
+HotKey? _activeSendHotkey;
+
+void _invokeSendClipboard() {
+  unawaited(locator<IClipboardSyncService>().sendCurrentClipboard());
+}
+
+Future<void> _registerDesktopShortcuts() async {
+  await _registerSavedHotkey();
+  if (locator<IHotkeyService>().managedBySystem) return;
+  try {
+    final saved = await locator<ISettingsService>().getSendHotkey();
+    if (saved != null) await _registerSendHotkey(saved);
+  } on Exception catch (e) {
+    debugPrint('[Hotkey] Could not restore send shortcut: $e');
+  }
+}
+
+Future<void> _registerSendHotkey(HotKey? hotkey) async {
+  if (hotkey == _activeHotkey) throw UnsupportedHotkeyException(hotkey!.key);
+  final service = locator<IHotkeyService>();
+  final previous = _activeSendHotkey;
+  if (previous == hotkey) return;
+  if (hotkey != null) {
+    await service.registerHotkey(hotkey, _invokeSendClipboard);
+  }
+  if (previous != null) await service.unregisterHotkey(previous);
+  _activeSendHotkey = hotkey;
+}
+
+/// Apply or clear the global send shortcut.
+Future<void> applySendHotkey(HotKey? hotkey) async {
+  await _registerSendHotkey(hotkey);
+  await locator<ISettingsService>().setSendHotkey(hotkey);
+}
 
 /// Register the saved global hotkey, falling back to [defaultHotkey].
 ///

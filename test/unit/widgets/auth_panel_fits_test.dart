@@ -50,6 +50,9 @@ class _FakeNotifications implements INotificationService {
 
 class _FakeSync implements IClipboardSyncService {
   @override
+  Future<void> sendCurrentClipboard() async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 

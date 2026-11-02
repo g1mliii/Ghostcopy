@@ -81,6 +81,12 @@ abstract class ISettingsService {
   /// silently discarded whatever the user had chosen.
   Future<void> setHotkey(HotKey hotkey);
 
+  /// Read the optional send shortcut.
+  Future<HotKey?> getSendHotkey();
+
+  /// Save or clear the send shortcut.
+  Future<void> setSendHotkey(HotKey? hotkey);
+
   Future<bool> getAutoShortenUrls();
 
   /// Set auto-shorten URLs enabled setting

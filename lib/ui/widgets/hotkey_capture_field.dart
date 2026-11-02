@@ -15,10 +15,12 @@ class HotkeyCapture extends StatefulWidget {
   const HotkeyCapture({
     required this.currentHotkey,
     required this.onHotkeyChanged,
+    this.title = 'Global Hotkey',
     super.key,
   });
 
-  final HotKey currentHotkey;
+  final HotKey? currentHotkey;
+  final String title;
   final ValueChanged<HotKey> onHotkeyChanged;
 
   @override
@@ -70,7 +72,6 @@ class HotkeyCapture extends StatefulWidget {
 
 class _HotkeyCapture extends State<HotkeyCapture> {
   bool _isRecording = false;
-  HotKey? _capturedHotkey;
 
   // Track currently pressed modifier keys
   bool _ctrlPressed = false;
@@ -80,8 +81,10 @@ class _HotkeyCapture extends State<HotkeyCapture> {
 
   @override
   Widget build(BuildContext context) {
-    final displayHotkey = _capturedHotkey ?? widget.currentHotkey;
-    final hotkeyText = formatHotkey(displayHotkey);
+    final displayHotkey = widget.currentHotkey;
+    final hotkeyText = displayHotkey == null
+        ? 'Unassigned'
+        : formatHotkey(displayHotkey);
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -97,7 +100,7 @@ class _HotkeyCapture extends State<HotkeyCapture> {
               const Icon(Icons.keyboard, size: 14, color: GhostColors.primary),
               const SizedBox(width: 6),
               Text(
-                'Global Hotkey',
+                widget.title,
                 style: GhostTypography.body.copyWith(
                   fontSize: 13,
                   color: GhostColors.textPrimary,
@@ -214,7 +217,7 @@ class _HotkeyCapture extends State<HotkeyCapture> {
       _isRecording = !_isRecording;
       if (!_isRecording) {
         // User canceled
-        _capturedHotkey = null;
+
         _resetModifiers();
       }
     });
@@ -263,7 +266,6 @@ class _HotkeyCapture extends State<HotkeyCapture> {
         );
 
         setState(() {
-          _capturedHotkey = newHotkey;
           _isRecording = false;
         });
 

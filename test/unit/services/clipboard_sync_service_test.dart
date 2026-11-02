@@ -197,6 +197,30 @@ void main() {
         .setMockMethodCallHandler(clipboardChangeChannel, null);
   });
 
+  test(
+    'send shortcut reads and sends unchanged text with monitoring off',
+    () async {
+      clipboardValue = ClipboardContent.text('current selection');
+      when(
+        settings.getAutoSendTargetDevices,
+      ).thenAnswer((_) async => {'android'});
+      when(() => repository.insert(any())).thenAnswer(
+        (call) async => call.positionalArguments.first as ClipboardItem,
+      );
+      await service.sendCurrentClipboard();
+      await service.sendCurrentClipboard();
+      verify(clipboard.read).called(2);
+      final items = verify(
+        () => repository.insert(captureAny()),
+      ).captured.cast<ClipboardItem>();
+      expect(items, hasLength(2));
+      for (final item in items) {
+        expect(item.content, 'current selection');
+        expect(item.targetDeviceTypes, ['android']);
+      }
+    },
+  );
+
   testWidgets('slow clipboard reads do not overlap timer ticks', (
     tester,
   ) async {

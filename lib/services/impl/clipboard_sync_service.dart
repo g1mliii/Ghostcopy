@@ -1011,7 +1011,11 @@ class ClipboardSyncService implements IClipboardSyncService {
     }
   }
 
-  Future<void> _checkClipboardForAutoSend() async {
+  @override
+  Future<void> sendCurrentClipboard() =>
+      _checkClipboardForAutoSend(manual: true);
+
+  Future<void> _checkClipboardForAutoSend({bool manual = false}) async {
     if (_clipboardWritesInProgress > 0 || _isDisposed || _isCheckingClipboard) {
       return;
     }
@@ -1022,7 +1026,8 @@ class ClipboardSyncService implements IClipboardSyncService {
       // Nothing written to the pasteboard since the last tick means the
       // payload cannot have changed, so the full read is skipped entirely.
       final changeCount = await _readClipboardChangeCount();
-      if (changeCount != null &&
+      if (!manual &&
+          changeCount != null &&
           (changeCount == _lastClipboardChangeCount ||
               (changeCount == _emptyReadChangeCount &&
                   _emptyReads >= _maxFailedReads))) {
@@ -1064,14 +1069,15 @@ class ClipboardSyncService implements IClipboardSyncService {
       final contentHash = _calculateClipboardContentHash(clipboardContent);
 
       // Skip if unchanged (compare hashes instead of raw content)
-      if (contentHash == _lastMonitoredClipboard) {
+      if (!manual && contentHash == _lastMonitoredClipboard) {
         return;
       }
 
       _lastMonitoredClipboard = contentHash;
 
       // Rate limiting
-      if (_lastSendTime != null) {
+      if (manual) _lastSentContentHash = '';
+      if (!manual && _lastSendTime != null) {
         final timeSinceLastSend = DateTime.now().difference(_lastSendTime!);
         if (timeSinceLastSend < _minSendInterval) {
           debugPrint('[ClipboardSyncService] Auto-send rate limited');
