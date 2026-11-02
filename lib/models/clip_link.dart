@@ -107,9 +107,15 @@ class ClipLink {
     // An address is the one kind that spans lines.
     if (text.contains('\n')) return _address(text);
     // Coordinates, phone numbers and addresses are the kinds written with
-    // spaces in them.
+    // spaces in them - and tracking numbers, which carriers print in groups
+    // (`RR 123 456 785 CA`, `1Z 999 AA1 01 2345 678 4`).
     if (text.contains(_whitespace)) {
-      return _coordinates(text) ?? _phone(text) ?? _address(text);
+      return _coordinates(text) ??
+          _phone(text) ??
+          _address(text) ??
+          (_groupedId.hasMatch(text)
+              ? _tracking(text.replaceAll(_whitespace, ''))
+              : null);
     }
 
     final lower = text.toLowerCase();
@@ -582,6 +588,7 @@ class ClipLink {
 
   static final _ups = RegExp(r'^1Z[0-9A-Z]{16}$');
   static final _usps = RegExp(r'^9[2-5]\d{18,20}$');
+  static final _groupedId = RegExp(r'^[A-Za-z0-9]+( [A-Za-z0-9]+)+$');
   static final _parcelforce = RegExp('^(E[A-E]|CP)');
   static final _s10 = RegExp(r'^[A-Z]{2}\d{9}[A-Z]{2}$');
 

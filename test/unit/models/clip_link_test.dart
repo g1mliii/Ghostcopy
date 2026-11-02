@@ -850,6 +850,14 @@ void main() {
       );
     });
 
+    test('tracking numbers written in groups', () {
+      final s10 = ClipLink.detect('EC 080 250 821 GB')!;
+      expect(s10.kind, ClipLinkKind.tracking);
+      expect(s10.uri.host, 'www.parcelforce.com');
+      // Only digits and letters in groups; anything else stays text.
+      expect(ClipLink.detect('EC-080-250-821-GB'), isNull);
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);
