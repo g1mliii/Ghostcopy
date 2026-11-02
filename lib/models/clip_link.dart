@@ -204,7 +204,11 @@ class ClipLink {
       ClipLinkKind.meeting,
       'Microsoft Teams',
       (h, u) =>
-          (h == 'teams.microsoft.com' && u.path.contains('/l/meetup-join')) ||
+          (h == 'teams.microsoft.com' &&
+              // Older invitations, and the shorter /meet/<id>?p=... ones
+              // new meetings get.
+              (u.path.contains('/l/meetup-join') ||
+                  u.path.startsWith('/meet/'))) ||
           (h == 'teams.live.com' && _pathStarts(u, '/meet')),
     ),
     (
@@ -434,6 +438,8 @@ class ClipLink {
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
+    // Five digits reach 99999; a port stops at 65535.
+    if (uri.hasPort && uri.port > 65535) return null;
     return ClipLink._(ClipLinkKind.web, uri, uri.host);
   }
 
@@ -490,11 +496,13 @@ class ClipLink {
       'Sideroad|Concession|Gate|Heights|Hill|Park';
   static final _streetLine = RegExp(
     r'^(?:(?:unit|suite|apt|#)\s*\w+[,\s]+)?\d+[a-z]?(?:-\d+)?\s+'
-    r"(?:[a-z0-9][\w'.-]*\s+){0,4}(?:"
+    // Street words may start with any letter: `123 Église St`.
+    r"(?:[\p{L}0-9][\p{L}\p{N}_'.-]*\s+){0,4}(?:"
     '$_streetTypes'
     r')\.?(?:\s+(?:N|S|E|W|NE|NW|SE|SW|North|South|East|West))?'
     r'(?:$|[,\n]|\s+(?:unit|suite|apt|#))',
     caseSensitive: false,
+    unicode: true,
   );
   static final _frenchStreet = RegExp(
     r'^\d+[a-z]?,?\s+(?:rue|avenue|av\.?|boulevard|boul\.?|chemin|ch\.?|route|rang|mont[ée]e|place|all[ée]e|impasse|quai|cours)\s+\S',

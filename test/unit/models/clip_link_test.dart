@@ -790,6 +790,19 @@ void main() {
       );
     });
 
+    test('Teams /meet/ links, ports past 65535, accented street names', () {
+      expect(
+        ClipLink.detect(
+          'https://teams.microsoft.com/meet/22503094877696?p=abc',
+        )?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(ClipLink.detect('localhost:99999'), isNull);
+      expect(ClipLink.detect('192.168.1.1:70000'), isNull);
+      expect(ClipLink.detect('localhost:65535')?.kind, ClipLinkKind.web);
+      expect(ClipLink.detect('123 Église St')?.kind, ClipLinkKind.map);
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);
