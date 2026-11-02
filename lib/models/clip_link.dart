@@ -170,7 +170,11 @@ class ClipLink {
     // elsewhere: song.link has nothing to resolve for `open.spotify.com/`.
     final hasPath = uri.pathSegments.any((s) => s.isNotEmpty);
     for (final (kind, name, matches) in _webServices) {
-      if (kind == ClipLinkKind.music && !hasPath) continue;
+      // Nor is a video site's: youtube.com/ is not something to watch.
+      if ((kind == ClipLinkKind.music || kind == ClipLinkKind.video) &&
+          !hasPath) {
+        continue;
+      }
       if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
     }
     return ClipLink._(ClipLinkKind.web, uri, site);
@@ -403,7 +407,8 @@ class ClipLink {
     final app = _appSchemes[scheme];
     if (app == null) return null;
     final uri = Uri.tryParse(text);
-    if (uri == null || text.length == colon + 1) return null;
+    // A scheme with nothing after it (`zoommtg://`) opens nothing.
+    if (uri == null || (uri.host.isEmpty && uri.path.isEmpty)) return null;
     if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
     if (_navigationRoutes[scheme] case final routes?) {
       final route = '${uri.host}${uri.path}'.toLowerCase().replaceAll(
@@ -452,7 +457,7 @@ class ClipLink {
     r'^[a-z0-9-]+(\.[a-z0-9-]+)*'
     r'\.([a-z]{2}|com|org|net|edu|gov|mil|int|info|biz|dev|app|cloud|tech|'
     'site|online|xyz|page|run|live|host|systems|services|network|software)'
-    r':\d{2,5}([/?#]\S*)?$',
+    r':\d{1,5}([/?#]\S*)?$',
     caseSensitive: false,
   );
 
@@ -889,7 +894,13 @@ class ClipLink {
   /// browser, which does nothing useful with it. Windows has Phone Link and
   /// macOS has FaceTime, both of which place the call on a paired phone.
   bool canOpenOn(String platform) =>
-      !(kind == ClipLinkKind.phone && platform == 'linux');
+      !(kind == ClipLinkKind.phone && platform == 'linux') &&
+      // Apps that exist only on Apple devices: elsewhere nothing opens them.
+      !(_appleOnlySchemes.contains(uri.scheme) &&
+          platform != 'macos' &&
+          platform != 'ios');
+
+  static const _appleOnlySchemes = {'things', 'drafts', 'bear', 'facetime'};
 
   /// The second thing to do with it on [platform], or null where there is
   /// none:

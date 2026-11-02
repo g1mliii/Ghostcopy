@@ -864,6 +864,24 @@ void main() {
       );
     });
 
+    test('Apple-only apps, video home pages, empty app links, short ports', () {
+      final things = ClipLink.detect('things:///show?id=today')!;
+      expect(things.canOpenOn('macos'), isTrue);
+      expect(things.canOpenOn('ios'), isTrue);
+      for (final platform in ['windows', 'android', 'linux']) {
+        expect(things.canOpenOn(platform), isFalse, reason: platform);
+      }
+      expect(ClipLink.detect('https://youtube.com/')?.kind, ClipLinkKind.web);
+      expect(
+        ClipLink.detect('https://youtube.com/watch?v=abc')?.kind,
+        ClipLinkKind.video,
+      );
+      expect(ClipLink.detect('zoommtg://'), isNull);
+      expect(ClipLink.detect('spotify://'), isNull);
+      expect(ClipLink.detect('example.com:8/status')?.kind, ClipLinkKind.web);
+      expect(ClipLink.detect('main.c:8'), isNull);
+    });
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);
