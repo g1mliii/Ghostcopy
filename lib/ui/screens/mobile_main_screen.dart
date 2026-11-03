@@ -22,6 +22,7 @@ import '../device_type_icon.dart';
 import '../layout/side_safe_area.dart';
 import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
+import '../theme/appearance.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
@@ -810,8 +811,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   @override
-  Widget build(BuildContext context) =>
-      SideSafeArea(child: _buildContent(context));
+  Widget build(BuildContext context) {
+    // Rebuild explicit palette colors when the application's theme changes.
+    Theme.of(context);
+    return SideSafeArea(child: _buildContent(context));
+  }
 
   Widget _buildContent(BuildContext context) {
     final shareProgress = _viewModel.shareProgress;
@@ -854,12 +858,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         surfaceTintColor: Colors.transparent,
         // AppBar derives its own overlay style from the background colour,
         // which would undo the transparent status bar set in main(). Pin it so
-        // the header's colour shows through the cutout strip with dark
-        // glyphs over it.
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.dark,
-          statusBarBrightness: Brightness.light,
+        // the header's colour shows through with matching system glyphs.
+        systemOverlayStyle: appearanceOverlayStyle(
+          isLight: GhostColors.isLight,
         ),
         toolbarHeight: 62,
         titleSpacing: GhostSpacing.gutter,

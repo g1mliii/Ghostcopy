@@ -167,8 +167,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   }
 
   @override
-  Widget build(BuildContext context) =>
-      SideSafeArea(child: _buildPage(context));
+  Widget build(BuildContext context) {
+    // Rebuild explicit palette colors when the application's theme changes.
+    Theme.of(context);
+    return SideSafeArea(child: _buildPage(context));
+  }
 
   Widget _buildPage(BuildContext context) {
     return Scaffold(

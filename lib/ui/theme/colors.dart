@@ -1,15 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/settings_service.dart';
+import 'appearance.dart';
+
 /// Shared palette with white mobile surfaces and dark desktop surfaces.
 class GhostColors {
   GhostColors._();
 
-  /// Mobile uses the light palette, including shared dialogs and sheets.
+  /// Mobile resolves its saved override against the current system brightness.
   static bool get isLight =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.android);
+          defaultTargetPlatform == TargetPlatform.android) &&
+      switch (appAppearance.value) {
+        AppThemeMode.light => true,
+        AppThemeMode.dark => false,
+        AppThemeMode.system =>
+          WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+              Brightness.light,
+      };
 
   static Color get background =>
       isLight ? const Color(0xFFF2F2F7) : const Color(0xFF0F0F13);

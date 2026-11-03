@@ -23,10 +23,12 @@ import '../account_deletion_text.dart';
 import '../device_type_icon.dart';
 import '../layout/side_safe_area.dart';
 import '../platform_adaptive.dart';
+import '../theme/appearance.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../widgets/adaptive_switch.dart';
+import '../widgets/appearance_setting.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
@@ -793,8 +795,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      SideSafeArea(child: _buildPage(context));
+  Widget build(BuildContext context) {
+    // Rebuild explicit palette colors when the application's theme changes.
+    Theme.of(context);
+    return SideSafeArea(child: _buildPage(context));
+  }
 
   Widget _buildPage(BuildContext context) {
     return Scaffold(
@@ -809,10 +814,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         titleSpacing: GhostSpacing.gutter,
         // Match the main screen: AppBar would otherwise pick its own overlay
         // style from the background colour and re-opaque the status bar.
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.dark,
-          statusBarBrightness: Brightness.light,
+        systemOverlayStyle: appearanceOverlayStyle(
+          isLight: GhostColors.isLight,
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -847,6 +850,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
             scrollCacheExtent: const ScrollCacheExtent.pixels(300),
             children: [
+              _buildSectionHeader('Appearance'),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: GhostSpacing.gutter,
+                ),
+                child: AppearanceSetting(settings: widget.settingsService),
+              ),
+              const SizedBox(height: GhostSpacing.sectionLoose),
+
               // Features section (moved to top)
               _buildSectionHeader('Features'),
               _buildFeaturesSection(),
@@ -1305,10 +1317,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                   textAlign: TextAlign.end,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: GhostColors.actionText,
-                  ),
+                  style: TextStyle(fontSize: 12, color: GhostColors.actionText),
                 ),
               ),
             ],

@@ -26,8 +26,6 @@
 	     the share extension. CUSTOM_GROUP_ID is set on both targets. -->
 	<key>AppGroupId</key>
 	<string>$(CUSTOM_GROUP_ID)</string>
-	<key>UIUserInterfaceStyle</key>
-	<string>Light</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	
