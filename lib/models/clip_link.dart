@@ -316,7 +316,9 @@ class ClipLink {
   /// commands. VS Code and Cursor are in for `file` links only - opening a
   /// file at a line - since their other links hand the URI to extensions,
   /// which clone repositories and more ([_editorSchemes]). Note and to-do
-  /// apps are in for their navigation routes only ([_navigationRoutes]).
+  /// apps, and Telegram (whose `tg://proxy` and `tg://socks` reconfigure the
+  /// app's connection), are in for their navigation routes only
+  /// ([_navigationRoutes]).
   static const _appSchemes = <String, (ClipLinkKind, String)>{
     'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
     'zoomus': (ClipLinkKind.meeting, 'Zoom'),
@@ -365,6 +367,7 @@ class ClipLink {
     'things': {'id', 'query', 'filter'},
     'todoist': {'id'},
     'craftdocs': {'blockId', 'spaceId'},
+    'tg': {'domain', 'post', 'thread', 'comment', 'channel', 'invite'},
   };
   static final _teamsMeetingPath = RegExp(
     '/l/(meetup-join|meeting|call)/',
@@ -417,6 +420,7 @@ class ClipLink {
     'things': {'show', 'search'},
     'todoist': {'task', 'project', 'today', 'upcoming', 'inbox'},
     'craftdocs': {'open'},
+    'tg': {'resolve', 'privatepost', 'join'},
   };
 
   static ClipLink? _appLink(String text) {
@@ -483,7 +487,12 @@ class ClipLink {
   /// `main.dart:120`, `app.py:42`: a file and line, as compilers and stack
   /// traces write them, has the same shape as a host and port.
   static final _fileAndLine = RegExp(
-    r'\.(dart|py|js|jsx|ts|tsx|mjs|cjs|kt|kts|java|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|cs|go|rs|rb|php|lua|sh|zig|scala|ex|exs|json|ya?ml|toml|xml|html?|css|scss|txt|md|log):\d',
+    r'\.(dart|py|js|jsx|ts|tsx|mjs|cjs|kt|kts|java|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|cs|go|rs|rb|php|lua|sh|zig|scala|ex|exs|json|ya?ml|toml|xml|html?|css|scss|txt|md|log|'
+    // Extensions that are also country codes: Perl, OCaml, Terraform,
+    // Makefile fragments, GDScript, Crystal, SystemVerilog, ReasonML,
+    // ActionScript, BitBake, Apps Script, LiveScript, Nushell, Smalltalk,
+    // TableGen.
+    r'pl|pm|ml|mk|tf|gd|cr|sv|re|as|bb|gs|ls|nu|st|td):\d',
     caseSensitive: false,
   );
   static final _addressEnd = RegExp('[:/?#]');
@@ -570,8 +579,11 @@ class ClipLink {
       'Sideroad|Concession|Gate|Heights|Hill|Park';
   static final _streetLine = RegExp(
     r'^(?:(?:unit|suite|apt|#)\s*\w+[,\s]+)?\d+[a-z]?(?:-\d+)?\s+'
-    // Street words may start with any letter: `123 Église St`.
-    r"(?:[\p{L}0-9][\p{L}\p{N}_'.-]*\s+){0,4}(?:"
+    // Street words may start with any letter: `123 Église St`. At least one,
+    // and none of the little words a sentence is made of: `3 in a row`,
+    // `2 for the road`, `1 more way` and `15 GB Drive` are not streets.
+    '(?:(?!(?:a|an|in|on|at|of|for|to|and|or|more|per|by|is|are|was|my|'
+    r"your|our|this|that|[kmgt]b)\s)[\p{L}0-9][\p{L}\p{N}_'.-]*\s+){1,4}(?:"
     '$_streetTypes'
     r')\.?(?:\s+(?:N|S|E|W|NE|NW|SE|SW|North|South|East|West))?'
     r'(?:$|[,\n]|\s+(?:unit|suite|apt|#))',
@@ -579,8 +591,15 @@ class ClipLink {
     unicode: true,
   );
   static final _frenchStreet = RegExp(
-    r'^\d+[a-z]?,?\s+(?:rue|avenue|av\.?|boulevard|boul\.?|chemin|ch\.?|route|rang|mont[ée]e|place|all[ée]e|impasse|quai|cours)\s+\S',
+    r'^\d+[a-z]?,?\s+(?:rue|avenue|av\.?|boulevard|boul\.?|chemin|ch\.?|route|rang|mont[ée]e|place|all[ée]e|impasse|quai|cours)\s+(\S+)',
     caseSensitive: false,
+  );
+  // What follows the street type in a French address: a name (`rue
+  // Sherbrooke`), a number (`route 138`) or a particle (`rue de la Paix`) -
+  // not an English word, as in `2 place settings` or `1 route change`.
+  static final _frenchStreetName = RegExp(
+    r"^(?:\p{Lu}|\d|(?:de|du|des|la|le|les)$|[ld]['’])",
+    unicode: true,
   );
   static final _continentalStreet = RegExp(
     r"^[\wÀ-ÿ'.-]+(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])",
@@ -588,8 +607,11 @@ class ClipLink {
   );
   static final _houseNumber = RegExp(r'^\d+[a-z]?\b', caseSensitive: false);
   static final _postalCode = RegExp(
-    // Canada, UK, then a US state and ZIP.
-    r'\b([A-Z]\d[A-Z] ?\d[A-Z]\d|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}|[A-Z]{2},? \d{5}(?:-\d{4})?)\b',
+    // Canada, UK, then a US state and ZIP after the city's comma
+    // (`Mountain View, CA 94043`): any two capitals and five digits would
+    // also be `order ID 12345`.
+    r'\b([A-Z]\d[A-Z] ?\d[A-Z]\d|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2})\b|'
+    r',\s*[A-Z]{2},? \d{5}(?:-\d{4})?\b',
   );
 
   /// A street address, on one line or up to four: `123 Main St`,
@@ -619,7 +641,11 @@ class ClipLink {
     final joined = lines.join(', ');
     final street =
         _streetLine.hasMatch(joined) ||
-        _frenchStreet.hasMatch(first) ||
+        (_frenchStreet
+                .firstMatch(first)
+                ?.group(1)
+                ?.contains(_frenchStreetName) ??
+            false) ||
         _continentalStreet.hasMatch(joined);
     final numbered =
         _houseNumber.hasMatch(first) && _postalCode.hasMatch(joined);
@@ -650,9 +676,9 @@ class ClipLink {
   /// A parcel tracking number, as the carrier's own tracking page.
   ///
   /// Only formats that cannot be mistaken for something else: UPS's `1Z`
-  /// numbers and the international postal format (`LM123456789CA`), both
-  /// checked against their check digit, and USPS's 20-22 digit numbers, which
-  /// start 92-95. FedEx and DHL numbers are plain runs of 10-15 digits, the
+  /// numbers, the international postal format (`LM123456789CA`) and USPS's
+  /// 20-22 digit numbers, which start 92-95, all checked against their check
+  /// digit. FedEx and DHL numbers are plain runs of 10-15 digits, the
   /// same as order numbers and codes, so they stay text.
   static ClipLink? _tracking(String text) {
     // Every format below is 13-22 characters: skip upper-casing the rest.
@@ -664,7 +690,7 @@ class ClipLink {
         'UPS',
         Uri.https('www.ups.com', '/track', {'tracknum': number}),
       );
-    } else if (_usps.hasMatch(number)) {
+    } else if (_usps.hasMatch(number) && _uspsCheckDigitOk(number)) {
       parcel = ('USPS', _uspsPage(number));
     } else if (_s10.hasMatch(number) && _s10CheckDigitOk(number)) {
       parcel = switch (number.substring(11)) {
@@ -719,6 +745,18 @@ class ClipLink {
       sum += (i - 2).isEven ? value : value * 2;
     }
     return (10 - sum % 10) % 10 == number.codeUnitAt(17) - 48;
+  }
+
+  /// USPS (IMpb): from the right, leaving out the check digit, every other
+  /// digit three times starting with the first; the check digit brings the
+  /// sum to a ten.
+  static bool _uspsCheckDigitOk(String number) {
+    var sum = 0;
+    for (var i = number.length - 2, weight = 3; i >= 0; i--) {
+      sum += (number.codeUnitAt(i) - 48) * weight;
+      weight = weight == 3 ? 1 : 3;
+    }
+    return (10 - sum % 10) % 10 == number.codeUnitAt(number.length - 1) - 48;
   }
 
   /// UPU S10: weights 8 6 4 2 3 5 9 7 over the serial, eleven minus the sum
@@ -962,9 +1000,15 @@ class ClipLink {
       // Apps that exist only on Apple devices: elsewhere nothing opens them.
       !(_appleOnlySchemes.contains(uri.scheme) &&
           platform != 'macos' &&
-          platform != 'ios');
+          platform != 'ios') &&
+      // Editors that exist only on desktops: a phone has nothing for them.
+      !(_editorSchemes.contains(uri.scheme) &&
+          (platform == 'android' || platform == 'ios'));
 
   static const _appleOnlySchemes = {'things', 'drafts', 'bear', 'facetime'};
+
+  // Detection decoded this path already, so it decodes.
+  String get _telPath => Uri.decodeComponent(uri.path);
 
   /// The second thing to do with it on [platform], or null where there is
   /// none:
@@ -974,34 +1018,71 @@ class ClipLink {
   ///   Linux, which has nothing for `sms:` either.
   /// - A song or album can be found on the other services through song.link,
   ///   which is what makes an Apple Music link useful on a phone with only
-  ///   Spotify, and the other way round.
-  // Detection decoded this path already, so it decodes.
-  String get _telPath => Uri.decodeComponent(uri.path);
-
+  ///   Spotify, and the other way round. Not for podcasts, playlists or
+  ///   artists, which song.link has nothing for.
   ClipLinkAlternate? alternateOn(String platform) {
     if (!canOpenOn(platform)) return null;
-    return switch (kind) {
+    return switch ((
+      kind,
+      kind == ClipLinkKind.music ? _songLinkTarget : null,
+    )) {
       // A local number's `phone-context` says which country and area it is
       // in; `sms:` has no way to carry it, and the number alone could reach
       // someone else. Call keeps it; Text is left out.
       // Decoded, as detection read it: `%3B` is a `;` there too.
-      ClipLinkKind.phone
+      (ClipLinkKind.phone, _)
           when _telPath.toLowerCase().contains(';phone-context=') =>
         null,
-      ClipLinkKind.phone => ClipLinkAlternate(
+      (ClipLinkKind.phone, _) => ClipLinkAlternate(
         ClipLinkAlternateKind.text,
         'Text',
         // The number alone: a tel: link's other parameters (;ext=456) mean
         // nothing to a text.
         Uri(scheme: 'sms', path: _telPath.split(';').first),
       ),
-      ClipLinkKind.music => ClipLinkAlternate(
+      (ClipLinkKind.music, final target?) => ClipLinkAlternate(
         ClipLinkAlternateKind.findElsewhere,
         'Find on other services',
-        Uri.parse('https://song.link/$uri'),
+        Uri.parse('https://song.link/$target'),
       ),
       _ => null,
     };
+  }
+
+  // On the services whose paths name what they lead to: Pandora keeps
+  // tracks under /artist/, and a SoundCloud path is a user's own name.
+  static const _routedMusic = {
+    'Spotify',
+    'Apple Music',
+    'TIDAL',
+    'Deezer',
+    'Amazon Music',
+  };
+  static final _notASong = RegExp(
+    r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?)([/:]|$)',
+  );
+
+  /// The link song.link is given for a song or album, or null for what it
+  /// cannot resolve.
+  ///
+  /// An Apple Music track is the album's link with the track in `?i=`
+  /// (`/album/x/123?i=456`), a query that song.link, which takes the link as
+  /// its own path, can read as its own and resolve the album: it is given as
+  /// the track's own `/song/` link instead.
+  String? get _songLinkTarget {
+    if (service == 'Apple Podcasts' ||
+        (_routedMusic.contains(service) && _notASong.hasMatch(uri.path))) {
+      return null;
+    }
+    final track = uri.queryParameters['i'];
+    if (service == 'Apple Music' && track != null && track.isNotEmpty) {
+      final country = uri.pathSegments.firstOrNull;
+      return Uri.https(
+        'music.apple.com',
+        '/${country != null && country.length == 2 ? country : 'us'}/song/$track',
+      ).toString();
+    }
+    return uri.toString();
   }
 
   /// Whether Open names the app that will open it, once that is known

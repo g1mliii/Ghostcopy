@@ -298,6 +298,14 @@ void main() {
         'line 1\nline 2\nline 3\nline 4\nline 5',
         'Dear Sam,\nThanks for the 3 boxes.\nBest',
         'email me at a@b.co, 12 Main St',
+        '3 in a row',
+        '2 for the road',
+        '1 more way',
+        '15 GB Drive',
+        '3 people in line',
+        '2 place settings',
+        '1 route change',
+        '2 items, order ID 12345',
       ]) {
         expect(
           ClipLink.detect(text)?.kind,
@@ -369,14 +377,13 @@ void main() {
     test('music links, with a way to find them elsewhere', () {
       for (final (url, service) in [
         ('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC', 'Spotify'),
-        ('https://music.apple.com/ca/album/x/123?i=456', 'Apple Music'),
+        ('https://music.apple.com/ca/album/x/123', 'Apple Music'),
         ('https://music.youtube.com/watch?v=abc', 'YouTube Music'),
         ('https://soundcloud.com/artist/track', 'SoundCloud'),
         ('https://tidal.com/browse/track/123', 'TIDAL'),
         ('https://www.deezer.com/track/123', 'Deezer'),
         ('https://music.amazon.ca/albums/B0', 'Amazon Music'),
         ('https://artist.bandcamp.com/album/x', 'Bandcamp'),
-        ('https://podcasts.apple.com/us/podcast/x/id1', 'Apple Podcasts'),
       ]) {
         final link = ClipLink.detect(url);
         expect(link?.kind, ClipLinkKind.music, reason: url);
@@ -387,6 +394,27 @@ void main() {
           'https://song.link/$url',
           reason: url,
         );
+      }
+
+      // An Apple Music track is given to song.link as its /song/ link, not
+      // the album's with the track in a query.
+      expect(
+        ClipLink.detect(
+          'https://music.apple.com/ca/album/x/123?i=456',
+        )!.alternateOn('android')!.uri.toString(),
+        'https://song.link/https://music.apple.com/ca/song/456',
+      );
+      // Nothing for song.link to find: a podcast, a show, a playlist.
+      for (final url in [
+        'https://podcasts.apple.com/us/podcast/x/id1',
+        'https://open.spotify.com/show/abc',
+        'https://open.spotify.com/playlist/abc',
+        'https://music.apple.com/us/artist/x/1',
+        'spotify:user:x:playlist:y',
+      ]) {
+        final link = ClipLink.detect(url)!;
+        expect(link.kind, ClipLinkKind.music, reason: url);
+        expect(link.alternateOn('android'), isNull, reason: url);
       }
 
       final uri = ClipLink.detect('spotify:track:4uLU6hMCjMI75M1A2tKUQC')!;
@@ -419,8 +447,11 @@ void main() {
       expect(ups.actionLabel, 'Track package');
       expect(ClipLink.detect('1z879e930346834440')!.service, 'UPS');
 
-      final usps = ClipLink.detect('9400111899223197428490')!;
+      final usps = ClipLink.detect('9400111202555842332669')!;
       expect(usps.service, 'USPS');
+      // The USPS shape with the wrong check digit: an order or account
+      // number.
+      expect(ClipLink.detect('9400111202555842332660'), isNull);
 
       expect(ClipLink.detect('RR123456785CA')!.service, 'Canada Post');
       expect(ClipLink.detect('LM473124829US')!.service, 'USPS');
@@ -463,9 +494,20 @@ void main() {
         'raycast://extensions/x/y',
         'vscode://vscode.git/clone?url=https://evil.example/r.git',
         'cursor://anysphere.cursor-retrieval/x',
+        'tg://proxy?server=1.2.3.4&port=443&secret=x',
+        'tg://socks?server=1.2.3.4&port=1080',
       ]) {
         expect(ClipLink.detect(text), isNull, reason: text);
       }
+      expect(
+        ClipLink.detect('tg://resolve?domain=telegram')!.service,
+        'Telegram',
+      );
+      // Editors that have no phone app.
+      final editor = ClipLink.detect('vscode://file/home/u/a.dart')!;
+      expect(editor.canOpenOn('macos'), isTrue);
+      expect(editor.canOpenOn('android'), isFalse);
+      expect(editor.canOpenOn('ios'), isFalse);
     });
 
     test('local and dev addresses open in the browser', () {
@@ -486,6 +528,10 @@ void main() {
       // A file and line, and a four-part version or public address.
       expect(ClipLink.detect('main.dart:123'), isNull);
       expect(ClipLink.detect('app.py:42'), isNull);
+      // Extensions that are also country codes.
+      expect(ClipLink.detect('main.tf:12'), isNull);
+      expect(ClipLink.detect('script.pl:42'), isNull);
+      expect(ClipLink.detect('lib.ml:10'), isNull);
       expect(ClipLink.detect('1.0.10.27'), isNull);
       expect(ClipLink.detect('8.8.8.8'), isNull);
       expect(ClipLink.detect('8.8.8.8:53')!.kind, ClipLinkKind.web);
