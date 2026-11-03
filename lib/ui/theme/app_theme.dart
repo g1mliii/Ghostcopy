@@ -98,7 +98,7 @@ class AppTheme {
         // Text Button
         textButtonTheme: TextButtonThemeData(
           style: TextButton.styleFrom(
-            foregroundColor: GhostColors.primary,
+            foregroundColor: GhostColors.actionText,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             textStyle: const TextStyle(
               fontSize: 14,

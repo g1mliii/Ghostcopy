@@ -14,9 +14,10 @@ import 'package:ghostcopy/ui/theme/typography.dart';
 ///
 /// Run: flutter test --update-goldens test/golden/mobile_visual_test.dart
 void main() {
+  final android = TargetPlatformVariant.only(TargetPlatform.android);
   testWidgets('mobile send screen chrome', (tester) async {
     tester.view
-      ..physicalSize = const Size(1080, 1600)
+      ..physicalSize = const Size(1200, 1600)
       ..devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
@@ -243,7 +244,7 @@ void main() {
     // To look at the current design:
     //   flutter test --update-goldens test/golden/mobile_visual_test.dart
     // then open test/golden/mobile_send_screen.png
-  }, skip: true);
+  }, skip: !autoUpdateGoldenFiles, variant: android);
 }
 
 Widget _chip(String label, IconData icon, bool selected) {

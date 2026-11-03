@@ -24,6 +24,7 @@ class GhostColors {
       isLight ? const Color(0xFFEEEEFF) : const Color(0xFF292D55);
   static Color get accentText =>
       isLight ? const Color(0xFF484FB5) : const Color(0xFFAEB4FF);
+  static Color get actionText => isLight ? accentText : primary;
   static const accentBorder = Color(0xFF555EA6);
   static const accentDisabled = Color(0x99555CCB);
   static Color get border =>

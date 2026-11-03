@@ -1305,9 +1305,9 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                   textAlign: TextAlign.end,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: GhostColors.primary,
+                    color: GhostColors.actionText,
                   ),
                 ),
               ),
@@ -1445,11 +1445,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 color: GhostColors.primary,
                 size: 20,
               ),
-              title: const Text(
+              title: Text(
                 'Restore from Backup',
                 style: TextStyle(
                   fontSize: 14,
-                  color: GhostColors.primary,
+                  color: GhostColors.actionText,
                   fontWeight: FontWeight.w500,
                 ),
               ),

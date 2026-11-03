@@ -591,7 +591,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         child: Text(
           'Forgot Password?',
           style: GhostTypography.caption.copyWith(
-            color: GhostColors.primary,
+            color: GhostColors.actionText,
             decoration: TextDecoration.underline,
           ),
         ),
@@ -1229,10 +1229,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text(
-                        'OK',
-                        style: TextStyle(color: GhostColors.primary),
-                      ),
+                      child: const Text('OK'),
                     ),
                   ],
                 ),

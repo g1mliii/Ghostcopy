@@ -13,7 +13,7 @@
     <!-- GhostColors.background. The splash and the window behind the Flutter
          UI both use it, so there is no lighter frame on either side of the
          first frame. -->
-    <color name="ghost_background">#FF0F0F13</color>
+    <color name="ghost_background">#FFF2F2F7</color>
 
     <!-- Adaptive icon background layer, behind the indigo ghost: white, and
          near-black in values-night/ for launchers that follow the system
