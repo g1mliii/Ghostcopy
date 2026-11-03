@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/command_line_tool_service.dart';
+import 'package:path/path.dart' as path;
 
 void main() {
   late Directory root;
@@ -11,8 +12,14 @@ void main() {
 
   setUp(() {
     root = Directory.systemTemp.createTempSync('ghostcopy_cli_');
-    helper = '${root.path}/GhostCopy.app/Contents/Helpers/ghostcopy';
-    link = '${root.path}/bin/ghostcopy';
+    helper = path.join(
+      root.path,
+      'GhostCopy.app',
+      'Contents',
+      'Helpers',
+      'ghostcopy',
+    );
+    link = path.join(root.path, 'bin', 'ghostcopy');
     calls = [];
   });
 
@@ -31,7 +38,7 @@ void main() {
           if (!succeed) {
             return ProcessResult(0, 1, '', 'User canceled. (-128)');
           }
-          Directory('${root.path}/bin').createSync(recursive: true);
+          Directory(path.join(root.path, 'bin')).createSync(recursive: true);
           Link(link).createSync(linkTo ?? helper);
           return ProcessResult(0, 0, '', '');
         },
@@ -73,7 +80,11 @@ void main() {
 
       final call = calls.single;
       expect(call.first, '/usr/bin/osascript');
-      expect(call.sublist(call.length - 3), [helper, link, '${root.path}/bin']);
+      expect(call.sublist(call.length - 3), [
+        helper,
+        link,
+        path.join(root.path, 'bin'),
+      ]);
       final script = call.where((part) => part != '-e').take(4).join('\n');
       expect(script, isNot(contains(root.path)));
       expect(script, contains('with administrator privileges'));
