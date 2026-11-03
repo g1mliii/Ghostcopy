@@ -2500,12 +2500,12 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   }
 
   Future<void> _openLink(ClipLink link, {bool alternate = false}) async {
+    // Read before the launch: the row can be disposed by a history refresh
+    // or the window closing while it is out, and widget is gone then.
+    final notifications = widget.notificationService;
     final failed = await openClipLink(link, alternate: alternate);
     if (failed != null) {
-      widget.notificationService?.showToast(
-        message: failed,
-        type: NotificationType.error,
-      );
+      notifications?.showToast(message: failed, type: NotificationType.error);
     }
   }
 

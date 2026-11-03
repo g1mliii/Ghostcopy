@@ -92,7 +92,10 @@ class ClipLink {
   // A decimal (`3.14159265`, `12345.67`) or a number grouped in thousands
   // with dots (`1.000.000`, `12.345.678`): one dot, or a short lead group
   // followed only by groups of three, which no dotted phone number is.
-  static final _decimalNumber = RegExp(r'^\d+\.\d+$|^\d{1,2}(\.\d{3}){2,}$');
+  // Not a local number written 3.4 (`555.1234`), which is one dot too.
+  static final _decimalNumber = RegExp(
+    r'^(?!\d{3}\.\d{4}$)\d+\.\d+$|^\d{1,2}(\.\d{3}){2,}$',
+  );
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.

@@ -146,8 +146,13 @@ class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
     }
   }
 
+  /// Which [_resolve] is the latest: an earlier lookup still out when a
+  /// refresh starts must not land after it and put the old app back.
+  int _request = 0;
+
   void _resolve() {
     _resolvedAt = clock.now();
+    final request = ++_request;
     final service = LinkHandlerService.instance;
     final link = widget.link;
     unawaited(
@@ -155,7 +160,10 @@ class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
         // The service hands back one instance per app, so an unchanged
         // answer - a refresh after maxAge - rebuilds nothing. Compare with
         // the displayed handler, even if another row refreshed the cache.
-        if (!mounted || widget.link.uri != link.uri || handler == _handler) {
+        if (!mounted ||
+            request != _request ||
+            widget.link.uri != link.uri ||
+            handler == _handler) {
           return;
         }
         setState(() => _handler = handler);

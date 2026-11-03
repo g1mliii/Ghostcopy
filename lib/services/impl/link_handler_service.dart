@@ -203,7 +203,12 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
     if (entry == null) return null;
 
     final keys = parseDesktopEntry(await entry.readAsString());
-    final name = keys['Name'];
+    // The name the user's desktop shows, in their language.
+    final name = localizedEntryValue(
+      keys,
+      'Name',
+      environment ?? Platform.environment,
+    );
     if (name == null || name.isEmpty) return null;
     final icon = _iconFile(keys['Icon'], dataDirs);
     return LinkHandler(name: name, icon: icon == null ? null : FileImage(icon));

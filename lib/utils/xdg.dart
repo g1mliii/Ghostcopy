@@ -29,7 +29,8 @@ List<String> xdgDataDirs([Map<String, String>? environment]) {
   ];
 }
 
-/// The unlocalised keys of a desktop entry's `[Desktop Entry]` group.
+/// The keys of a desktop entry's `[Desktop Entry]` group, localised ones
+/// (`Name[fr]`) included under their full key.
 Map<String, String> parseDesktopEntry(String contents) {
   final keys = <String, String>{};
   var inEntry = false;
@@ -43,9 +44,32 @@ Map<String, String> parseDesktopEntry(String contents) {
     final equals = line.indexOf('=');
     if (equals <= 0) continue;
     final key = line.substring(0, equals).trim();
-    // Name[fr] and the like: the plain key is what every entry has.
-    if (key.contains('[')) continue;
     keys.putIfAbsent(key, () => line.substring(equals + 1).trim());
   }
   return keys;
+}
+
+/// [key] in the language of [environment]'s locale, as the desktop shows
+/// it: `Name[fr_CA]`, then `Name[fr]`, then plain `Name` - the lookup the
+/// Desktop Entry spec gives, minus the rarely used encoding and modifier.
+String? localizedEntryValue(
+  Map<String, String> keys,
+  String key,
+  Map<String, String> environment,
+) {
+  final locale = [
+    environment['LC_ALL'],
+    environment['LC_MESSAGES'],
+    environment['LANG'],
+  ].firstWhere((v) => v != null && v.isNotEmpty, orElse: () => null);
+  if (locale != null && locale != 'C' && locale != 'POSIX') {
+    // fr_CA.UTF-8@euro -> fr_CA, then fr.
+    final tag = locale.split('.').first.split('@').first;
+    final lang = tag.split('_').first;
+    for (final candidate in {tag, lang}) {
+      final value = keys['$key[$candidate]'];
+      if (value != null && value.isNotEmpty) return value;
+    }
+  }
+  return keys[key];
 }

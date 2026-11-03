@@ -106,6 +106,7 @@ void main() {
       );
       expect(ClipLink.detect('0800-123456')!.kind, ClipLinkKind.phone);
       expect(ClipLink.detect('555-1234')!.kind, ClipLinkKind.phone);
+      expect(ClipLink.detect('555.1234')!.kind, ClipLinkKind.phone);
       // A tel: href spaced for reading, as pages often write it.
       expect(
         ClipLink.detect('tel:+1 416 555 0199')!.uri.toString(),

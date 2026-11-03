@@ -316,6 +316,33 @@ Name=New Window
     expect(service.calls, CachingLinkHandlerService.maxEntries + 2);
   });
 
+  test('desktop entry names follow the locale', () {
+    final keys = parseDesktopEntry('''
+[Desktop Entry]
+Name=Text Editor
+Name[fr]=Éditeur de texte
+Name[pt_BR]=Editor de texto
+''');
+    expect(
+      localizedEntryValue(keys, 'Name', {'LANG': 'fr_FR.UTF-8'}),
+      'Éditeur de texte',
+    );
+    expect(
+      localizedEntryValue(keys, 'Name', {'LANG': 'pt_BR.UTF-8'}),
+      'Editor de texto',
+    );
+    expect(
+      localizedEntryValue(keys, 'Name', {'LANG': 'de_DE.UTF-8'}),
+      'Text Editor',
+    );
+    expect(localizedEntryValue(keys, 'Name', {'LANG': 'C'}), 'Text Editor');
+    expect(
+      localizedEntryValue(keys, 'Name', {'LC_ALL': 'fr_CA', 'LANG': 'en_US'}),
+      'Éditeur de texte',
+    );
+    expect(localizedEntryValue(keys, 'Name', {}), 'Text Editor');
+  });
+
   test('xdgDataDirs follows the spec', () {
     expect(xdgDataDirs({'HOME': '/home/u'}), [
       '/home/u/.local/share',
