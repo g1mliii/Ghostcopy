@@ -116,7 +116,8 @@ class ClipLink {
     final text = content.trim();
     if (text.isEmpty || text.length > maxLength) return null;
     // An address is the one kind that spans lines.
-    if (text.contains('\n')) return _address(text);
+    // A tracking number printed in groups can wrap too.
+    if (text.contains('\n')) return _address(text) ?? _groupedTracking(text);
     // Coordinates, phone numbers and addresses are the kinds written with
     // spaces in them - and tracking numbers, which carriers print in groups
     // (`RR 123 456 785 CA`, `1Z 999 AA1 01 2345 678 4`).
@@ -261,7 +262,12 @@ class ClipLink {
               u.path.contains('/join/') ||
               u.path.contains('j.php')),
     ),
-    (ClipLinkKind.meeting, 'FaceTime', (h, u) => h == 'facetime.apple.com'),
+    // An invitation, not the FaceTime site itself.
+    (
+      ClipLinkKind.meeting,
+      'FaceTime',
+      (h, u) => h == 'facetime.apple.com' && _pathStarts(u, '/join'),
+    ),
     (
       ClipLinkKind.meeting,
       'Whereby',
@@ -279,7 +285,11 @@ class ClipLink {
       'Spotify',
       (h, u) => h == 'open.spotify.com' || h == 'spotify.link',
     ),
-    (ClipLinkKind.music, 'Apple Music', (h, u) => h == 'music.apple.com'),
+    (
+      ClipLinkKind.music,
+      'Apple Music',
+      (h, u) => h == 'music.apple.com' || h == 'classical.music.apple.com',
+    ),
     (ClipLinkKind.music, 'Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
     (ClipLinkKind.music, 'YouTube Music', (h, u) => h == 'music.youtube.com'),
     (ClipLinkKind.music, 'SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
@@ -327,6 +337,7 @@ class ClipLink {
     'zoomus': (ClipLinkKind.meeting, 'Zoom'),
     'msteams': (ClipLinkKind.meeting, 'Microsoft Teams'),
     'facetime': (ClipLinkKind.meeting, 'FaceTime'),
+    'facetime-audio': (ClipLinkKind.meeting, 'FaceTime'),
     'spotify': (ClipLinkKind.music, 'Spotify'),
     'obsidian': (ClipLinkKind.app, 'Obsidian'),
     'notion': (ClipLinkKind.app, 'Notion'),
@@ -472,7 +483,7 @@ class ClipLink {
   }
 
   static final _localHost = RegExp(
-    r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa))(:\d{1,5})?([/?#]\S*)?$',
+    r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa|localhost)|\[[0-9a-f:.]+\])(:\d{1,5})?([/?#]\S*)?$',
     caseSensitive: false,
   );
   // The top-level domain is a country code or a common generic one, so a
@@ -521,6 +532,9 @@ class ClipLink {
       if (octets.any((o) => o > 255)) return null;
       final bare = address.length == text.length;
       if (bare && !isLocalUnicastIPv4(octets)) return null;
+      // Multicast, broadcast and the reserved blocks serve no page, port or
+      // path or not; a public address with one is still a server.
+      if (isNonPublicIPv4(octets) && !isLocalUnicastIPv4(octets)) return null;
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
@@ -605,7 +619,9 @@ class ClipLink {
     unicode: true,
   );
   static final _continentalStreet = RegExp(
-    r"^[\wÀ-ÿ'.-]+(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])",
+    // Up to two words before the name that carries the type: `Alte
+    // Dorfstraße 5`, `Am Alten Weg 3`.
+    r"^(?:[\wÀ-ÿ'.-]+\s+){0,2}[\wÀ-ÿ'.-]+(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])",
     caseSensitive: false,
   );
   static final _houseNumber = RegExp(r'^\d+[a-z]?\b', caseSensitive: false);
@@ -1008,7 +1024,13 @@ class ClipLink {
       !(_editorSchemes.contains(uri.scheme) &&
           (platform == 'android' || platform == 'ios'));
 
-  static const _appleOnlySchemes = {'things', 'drafts', 'bear', 'facetime'};
+  static const _appleOnlySchemes = {
+    'things',
+    'drafts',
+    'bear',
+    'facetime',
+    'facetime-audio',
+  };
 
   // Detection decoded this path already, so it decodes.
   String get _telPath => Uri.decodeComponent(uri.path);
@@ -1075,6 +1097,13 @@ class ClipLink {
   String? get _songLinkTarget {
     if (service == 'Apple Podcasts' ||
         (_routedMusic.contains(service) && _notASong.hasMatch(uri.path))) {
+      return null;
+    }
+    // YouTube Music albums are playlists whose id starts OLAK5uy; any other
+    // playlist is someone's list, which song.link does not resolve.
+    if (service == 'YouTube Music' &&
+        _pathStarts(uri, '/playlist') &&
+        !(uri.queryParameters['list'] ?? '').startsWith('OLAK5uy')) {
       return null;
     }
     final track = uri.queryParameters['i'];

@@ -1131,6 +1131,58 @@ void main() {
       expect(ClipLink.detect('main.c:8'), isNull);
     });
 
+    test(
+      'Classical, FaceTime, local hosts, wrapped tracking, YouTube playlists',
+      () {
+        expect(
+          ClipLink.detect(
+            'https://classical.music.apple.com/us/album/1',
+          )?.service,
+          'Apple Music',
+        );
+        expect(
+          ClipLink.detect('https://facetime.apple.com/join#v=1&p=abc')?.kind,
+          ClipLinkKind.meeting,
+        );
+        expect(
+          ClipLink.detect('https://facetime.apple.com/')?.kind,
+          isNot(ClipLinkKind.meeting),
+        );
+        final audio = ClipLink.detect('facetime-audio:user@example.com')!;
+        expect(audio.kind, ClipLinkKind.meeting);
+        expect(audio.canOpenOn('ios'), isTrue);
+        expect(audio.canOpenOn('android'), isFalse);
+        for (final text in [
+          '[::1]:3000',
+          '[fd00::1]:8080/admin',
+          'tenant.localhost:3000',
+        ]) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+        }
+        for (final text in ['224.0.0.1:8080', '255.255.255.255/status']) {
+          expect(ClipLink.detect(text), isNull, reason: text);
+        }
+        expect(ClipLink.detect('8.8.8.8:53/x')?.kind, ClipLinkKind.web);
+        expect(
+          ClipLink.detect('EC 080 250\n821 GB')?.kind,
+          ClipLinkKind.tracking,
+        );
+        expect(
+          ClipLink.detect(
+            'https://music.youtube.com/playlist?list=PLabc',
+          )!.alternateOn('android'),
+          isNull,
+        );
+        expect(
+          ClipLink.detect(
+            'https://music.youtube.com/playlist?list=OLAK5uyabc',
+          )!.alternateOn('android'),
+          isNotNull,
+        );
+        expect(ClipLink.detect('Alte Dorfstraße 5')?.kind, ClipLinkKind.map);
+      },
+    );
+
     test('DMS minutes and seconds must be under 60', () {
       expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
       expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);
