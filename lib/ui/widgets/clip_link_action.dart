@@ -216,7 +216,8 @@ class ClipLinkGlyph extends StatelessWidget {
             // A file that has gone since it was found (an app uninstalled
             // while the history is open) falls back rather than drawing a
             // broken image.
-            errorBuilder: (context, error, stackTrace) => generic(),
+            errorBuilder: (context, error, stackTrace) =>
+                generic(semanticLabel: link.kindLabel),
           );
         }
         return generic(semanticLabel: link.kindLabel);

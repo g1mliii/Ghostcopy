@@ -2281,6 +2281,9 @@ class _HistoryRowState extends State<_HistoryRow> {
     return Container(
       width: GhostSpacing.thumbSize,
       height: GhostSpacing.thumbSize,
+      // Loosens the tile's tight constraints for its child, or an app icon
+      // ignores its appIconSize and is stretched to fill the whole tile.
+      alignment: Alignment.center,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: GhostColors.surfaceLight,
