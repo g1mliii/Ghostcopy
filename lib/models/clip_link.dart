@@ -54,6 +54,12 @@ class ClipLink {
   // A US Social Security number. No phone numbering plan is written 3-2-4.
   static final _ssn = RegExp(r'^\d{3}-\d{2}-\d{4}$');
   static final _isbn10Format = RegExp(r'^\d+[- ]\d+[- ]\d+[- ]\d$');
+  // A US ZIP+4 code (`94043-1351`), as copied from an address form.
+  static final _zipPlus4 = RegExp(r'^\d{5}-\d{4}$');
+  // A decimal (`3.14159265`, `12345.67`) or a number grouped in thousands
+  // with dots (`1.000.000`, `12.345.678`): one dot, or a short lead group
+  // followed only by groups of three, which no dotted phone number is.
+  static final _decimalNumber = RegExp(r'^\d+\.\d+$|^\d{1,2}(\.\d{3}){2,}$');
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.
@@ -75,8 +81,15 @@ class ClipLink {
     if (text.isEmpty || text.length > maxLength || text.contains('\n')) {
       return null;
     }
-    // Phone numbers are the only kind written with spaces in them.
-    if (text.contains(_whitespace)) return _phone(text);
+    // Phone numbers are the only kind written with spaces in them - and a
+    // `tel:` href as a page wrote it, spaced for reading
+    // (`tel:+1 416 555 0199`): not a valid URI, but plainly a number.
+    if (text.contains(_whitespace)) {
+      if (text.toLowerCase().startsWith('tel:')) {
+        return _phone(text.substring(4), explicit: true);
+      }
+      return _phone(text);
+    }
 
     final lower = text.toLowerCase();
     if (lower.startsWith('mailto:')) return _mailto(text);
@@ -116,8 +129,13 @@ class ClipLink {
     final host = uri.host.toLowerCase();
     // A name with a dot, localhost, or an IPv6 literal (`[2001:db8::1]`,
     // which Uri.host gives without its brackets).
+    // A trailing dot (`example.com.`) is a fully qualified name, but the dot
+    // has to separate labels: `www.` alone, or `.com`, is not a site.
+    final name = host.endsWith('.') ? host.substring(0, host.length - 1) : host;
     final validHost =
-        host.contains('.') || host == 'localhost' || host.contains(':');
+        (name.contains('.') && !name.startsWith('.')) ||
+        host == 'localhost' ||
+        host.contains(':');
     if (host.isEmpty || !validHost) return null;
     final place = _MapPlace.fromWeb(uri);
     if (place != null) {
@@ -165,7 +183,10 @@ class ClipLink {
   static ClipLink? _phone(String text, {bool explicit = false}) {
     final number = text.trim().replaceAll(_noBreakSpace, ' ');
     if (!_phoneChars.hasMatch(number)) return null;
-    if (_ipv4.hasMatch(number) ||
+    // No number is written with a leading minus: that is a negative
+    // quantity or a longitude (`-122.4194`).
+    if (number.startsWith('-') ||
+        _ipv4.hasMatch(number) ||
         _date.hasMatch(number) ||
         _ssn.hasMatch(number)) {
       return null;
@@ -200,6 +221,9 @@ class ClipLink {
       // So is a range (`1000-2000`): two long groups and a dash. A number
       // written that way starts with a trunk 0 (`0800-123456`).
       if (_range.hasMatch(number)) return null;
+      if (_zipPlus4.hasMatch(number) || _decimalNumber.hasMatch(number)) {
+        return null;
+      }
     }
     final dialled = international ? '+$digits' : digits;
     return ClipLink._(
