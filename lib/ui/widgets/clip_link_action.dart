@@ -7,7 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
-import '../../services/impl/crash_reporting_service.dart';
+import '../../services/crash_reporting_service.dart';
 import '../../services/impl/link_handler_service.dart';
 import '../../services/link_handler_service.dart';
 import '../../utils/target_device_type.dart';

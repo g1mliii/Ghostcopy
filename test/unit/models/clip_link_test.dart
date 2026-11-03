@@ -239,10 +239,190 @@ void main() {
   });
 
   group('from review', () {
+    test('regional maps.google hosts keep their map action', () {
+      for (final host in [
+        'maps.google.com',
+        'maps.google.co.uk',
+        'maps.google.com.au',
+        'maps.google.ca',
+      ]) {
+        final link = ClipLink.detect('https://$host/?q=London')!;
+        expect(link.kind, ClipLinkKind.map, reason: host);
+        expect(link.label, 'London');
+        expect(link.actionLabel, 'Open in Maps');
+        expect(link.openUri('android'), link.uri);
+      }
+      for (final host in [
+        'maps.google.co.uk.evil',
+        'maps.google.com.au.evil',
+        'maps.evilgoogle.co.uk',
+        'maps.evil.google.com',
+      ]) {
+        expect(
+          ClipLink.detect('https://$host/maps/search/London')!.kind,
+          ClipLinkKind.web,
+          reason: host,
+        );
+      }
+      expect(
+        ClipLink.detect('https://www.google.co.uk/?q=London')!.kind,
+        ClipLinkKind.web,
+      );
+    });
+
+    test('email dots and domain hyphens must be inside their components', () {
+      for (final address in [
+        'first..last@example.com',
+        '.first@example.com',
+        'first.@example.com',
+        'user@-example.com',
+        'user@example-.com',
+        'user@sub.-example.com',
+        'user@sub-.example.com',
+        'user@example..com',
+        'user@example.xn--abc-',
+      ]) {
+        expect(ClipLink.detect(address), isNull, reason: address);
+        expect(ClipLink.detect('mailto:$address'), isNull, reason: address);
+        expect(
+          ClipLink.detect('mailto:valid@example.com,$address'),
+          isNull,
+          reason: address,
+        );
+      }
+      for (final address in [
+        'first.last+tag@sub-domain.example.com',
+        'a_b%tag@example.co.uk',
+        'user@xn--80a1acny.xn--p1ai',
+        'a@b.co',
+      ]) {
+        expect(ClipLink.detect(address)?.kind, ClipLinkKind.email);
+        expect(
+          ClipLink.detect('mailto:${Uri.encodeComponent(address)}')?.kind,
+          ClipLinkKind.email,
+        );
+      }
+      expect(ClipLink.detect('mailto:first%2E%2Elast@example.com'), isNull);
+    });
+
+    test('Android retains Look Around as a panorama', () {
+      final link = ClipLink.detect(
+        'https://maps.apple.com/look-around?coordinate=48.8584,2.2945',
+      )!;
+      final opened = link.openUri('android');
+      expect(opened.scheme, 'https');
+      expect(opened.host, 'www.google.com');
+      expect(opened.path, '/maps/@');
+      expect(opened.queryParameters, {
+        'api': '1',
+        'map_action': 'pano',
+        'viewpoint': '48.8584,2.2945',
+      });
+      for (final platform in ['ios', 'macos', 'windows', 'linux']) {
+        expect(link.openUri(platform), link.uri);
+      }
+      // An address or Apple place ID cannot provide a Street View viewpoint.
+      for (final query in [
+        'address=Eiffel%20Tower',
+        'place-id=IBE1F65094A7A13B1',
+        'coordinate=invalid&address=Eiffel%20Tower',
+      ]) {
+        final unresolved = ClipLink.detect(
+          'https://maps.apple.com/look-around?$query',
+        )!;
+        expect(unresolved.openUri('android'), unresolved.uri);
+      }
+    });
+
+    test('Android retains route stops and supported avoid preferences', () {
+      final route = ClipLink.detect(
+        'https://maps.apple.com/directions?source=A&destination=C'
+        '&waypoint=B&mode=driving&avoid=tolls',
+      )!;
+      expect(route.openUri('android').queryParameters, {
+        'api': '1',
+        'origin': 'A',
+        'destination': 'C',
+        'travelmode': 'driving',
+        'waypoints': 'B',
+        'avoid': 'tolls',
+      });
+
+      final multiple = ClipLink.detect(
+        'https://maps.apple.com/directions?destination=End'
+        '&waypoint=First%20Stop&waypoint=34.99,-106.61&waypoint='
+        '&avoid=tolls,stairs&avoid=highways&avoid=tolls',
+      )!;
+      expect(multiple.openUri('android').queryParameters, {
+        'api': '1',
+        'destination': 'End',
+        'waypoints': 'First Stop|34.99,-106.61',
+        'avoid': 'tolls,highways',
+      });
+      expect(multiple.openUri('ios'), multiple.uri);
+
+      final unsupported = ClipLink.detect(
+        'https://maps.apple.com/directions?destination=End'
+        '&waypoint=&avoid=stairs,busy-roads',
+      )!;
+      expect(unsupported.openUri('android').queryParameters, {
+        'api': '1',
+        'destination': 'End',
+      });
+    });
+
+    test('Android rewrites an Apple frame with only a center', () {
+      final frame = ClipLink.detect(
+        'https://maps.apple.com/frame?center=40.753035,-73.981846',
+      )!;
+      expect(frame.kind, ClipLinkKind.map);
+      expect(frame.openUri('android').toString(), 'geo:40.753035,-73.981846');
+      expect(frame.openUri('ios'), frame.uri);
+    });
+
+    test('labeled geo queries retain the pin and label on Apple devices', () {
+      for (final input in [
+        'geo:0,0?q=34.99,-106.61(Treasure)',
+        'geo:51.5,-0.12?q=34.99%2C-106.61%28Treasure%29',
+      ]) {
+        final pin = ClipLink.detect(input)!;
+        expect(pin.label, 'Treasure');
+        expect(pin.openUri('android'), pin.uri);
+        for (final platform in ['ios', 'macos']) {
+          final opened = pin.openUri(platform);
+          expect(opened.queryParameters, {
+            'q': 'Treasure',
+            'll': '34.99,-106.61',
+          });
+        }
+      }
+      final escaped = ClipLink.detect(
+        'geo:0,0?q=0,0%28A%20%26%20B%20%28home%29%29',
+      )!;
+      expect(escaped.openUri('ios').queryParameters, {
+        'q': 'A & B (home)',
+        'll': '0,0',
+      });
+      final unlabeled = ClipLink.detect('geo:0,0?q=34.99,-106.61()')!;
+      expect(unlabeled.openUri('ios').queryParameters, {'ll': '34.99,-106.61'});
+    });
+
+    test('formatted ISBN-10 identifiers are not phone numbers', () {
+      for (final isbn in ['0-306-40615-2', '0 306 40615 2', '1-4028-9462-7']) {
+        expect(ClipLink.detect(isbn), isNull, reason: isbn);
+      }
+      // A checksum mismatch and ordinary phone grouping must still work.
+      expect(ClipLink.detect('0-306-40615-3')?.kind, ClipLinkKind.phone);
+      expect(ClipLink.detect('416-555-0199')?.kind, ClipLinkKind.phone);
+      expect(ClipLink.detect('tel:0-306-40615-2')?.kind, ClipLinkKind.phone);
+      expect(ClipLink.detect('+0-306-40615-2')?.kind, ClipLinkKind.phone);
+    });
+
     test('Android keeps Apple place coordinates with an ambiguous label', () {
       for (final url in [
         'https://maps.apple.com/?q=Home&ll=37.33,-122.03',
         'https://maps.apple.com/place?name=Home&coordinate=37.33,-122.03',
+        'https://maps.apple.com/?q=Home&ll=37.33,-122.03&sll=51.507984,-0.128015',
       ]) {
         final link = ClipLink.detect(url)!;
         final opened = link.openUri('android');
@@ -402,13 +582,17 @@ void main() {
     });
 
     test('an Apple Maps search keeps its centre on Android', () {
-      final search = ClipLink.detect(
+      for (final url in [
         'https://maps.apple.com/search?query=pizza&center=51.507984,-0.128015',
-      )!;
-      expect(
-        search.openUri('android').toString(),
-        'geo:51.507984,-0.128015?q=pizza',
-      );
+        'https://maps.apple.com/?q=pizza&sll=51.507984,-0.128015',
+      ]) {
+        final search = ClipLink.detect(url)!;
+        expect(
+          search.openUri('android').toString(),
+          'geo:51.507984,-0.128015?q=pizza',
+          reason: url,
+        );
+      }
     });
 
     test('a geo: search without coordinates stays an API search', () {

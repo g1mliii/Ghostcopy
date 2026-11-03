@@ -2246,7 +2246,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                   ClipLinkTooltip(
                     link: link,
                     child: IconButton(
-                      onPressed: () => _openLink(context, link),
+                      onPressed: () => unawaited(_openLink(context, link)),
                       icon: const Icon(Icons.open_in_new_rounded, size: 18),
                       color: GhostColors.accentText,
                       constraints: const BoxConstraints(
