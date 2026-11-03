@@ -120,11 +120,12 @@ class ClipLink {
     if (text.contains('\n')) return _address(text) ?? _groupedTracking(text);
     // Coordinates, phone numbers and addresses are the kinds written with
     // spaces in them - and tracking numbers, which carriers print in groups
-    // (`RR 123 456 785 CA`, `1Z 999 AA1 01 2345 678 4`).
+    // (`RR 123 456 785 CA`, `1Z 999 AA1 01 2345 678 4`) - and a `tel:` href
+    // as a page wrote it, spaced for reading (`tel:+1 416 555 0199`): not a
+    // valid URI, but plainly a number.
+    final lower = text.toLowerCase();
     if (text.contains(_whitespace)) {
-      // A `tel:` href as a page wrote it, spaced for reading
-      // (`tel:+1 416 555 0199`): not a valid URI, but plainly a number.
-      if (text.toLowerCase().startsWith('tel:')) {
+      if (lower.startsWith('tel:')) {
         return _phone(text.substring(4), explicit: true);
       }
       return _coordinates(text) ??
@@ -133,7 +134,6 @@ class ClipLink {
           _groupedTracking(text);
     }
 
-    final lower = text.toLowerCase();
     if (lower.startsWith('mailto:')) return _mailto(text);
     if (lower.startsWith('tel:')) {
       // Through Uri, which turns a stray `%` into `%25`, rather than
@@ -182,7 +182,7 @@ class ClipLink {
         (name.contains('.') && !name.startsWith('.')) ||
         host == 'localhost' ||
         host.contains(':');
-    if (host.isEmpty || !validHost) return null;
+    if (!validHost) return null;
     final place = _MapPlace.fromWeb(uri);
     if (place != null) {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
@@ -842,19 +842,14 @@ class ClipLink {
     }
     final digits = number.replaceAll(_nonDigit, '');
     if (digits.length < 7 || digits.length > 15) return null;
-    // A payment card number written in groups (`3782 822463 10005`, an
-    // American Express number) has the characters of a phone number too; the
-    // card's Luhn check digit tells it apart. Only from 13 digits up, where
-    // cards start and national phone numbers have mostly stopped.
-    if (!explicit &&
-        !number.startsWith('+') &&
-        digits.length >= 13 &&
-        _luhnValid(digits)) {
-      return null;
-    }
     final international = number.startsWith('+');
     if (!explicit && !international) {
       if (digits.length == number.length) return null;
+      // A payment card number written in groups (`3782 822463 10005`, an
+      // American Express number) has the characters of a phone number too;
+      // the card's Luhn check digit tells it apart. Only from 13 digits up,
+      // where cards start and national phone numbers have mostly stopped.
+      if (digits.length >= 13 && _luhnValid(digits)) return null;
       // An ISBN-13 (`978-0-306-40615-7`) is a dashed run of 13 digits too.
       if (digits.length == 13 &&
           (digits.startsWith('978') || digits.startsWith('979'))) {
@@ -927,10 +922,10 @@ class ClipLink {
             });
           }
           if (_appleDirections(uri) case final directions?) return directions;
+          if (place.hasLocation) return place.toGeo();
         }
-        // geo: as sent: Android handles it, zoom (?z=) and uncertainty
-        // (;u=) included, which a rebuilt URI would drop.
-        if (apple && place.hasLocation) return place.toGeo();
+      // geo: as sent: Android handles it, zoom (?z=) and uncertainty
+      // (;u=) included, which a rebuilt URI would drop.
       case 'macos':
         if (apple &&
             !place.isShortLink &&
@@ -1231,14 +1226,13 @@ class _MapPlace {
 
     final segments = uri.pathSegments;
     if (_googleShortHosts.contains(host)) {
-      if (host == 'goo.gl' && (segments.isEmpty || segments.first != 'maps')) {
+      if (host == 'goo.gl' && segments.firstOrNull != 'maps') {
         return null;
       }
       return const _MapPlace(_MapSource.google, isShortLink: true);
     }
     if (!_googleHost.hasMatch(host)) return null;
-    if (!host.startsWith('maps.') &&
-        (segments.isEmpty || segments.first != 'maps')) {
+    if (!host.startsWith('maps.') && segments.firstOrNull != 'maps') {
       return null;
     }
 
@@ -1295,13 +1289,13 @@ class _MapPlace {
         );
       }
     }
-    final hasQuery = query != null && query.trim().isNotEmpty;
+    final hasQuery = query != null && query.isNotEmpty;
     // geo:0,0 is the "no coordinate, search instead" form.
     final realLatLng = latLng == '0,0' ? null : latLng;
     if (realLatLng == null && !hasQuery) return null;
     return _MapPlace(
       _MapSource.geo,
-      query: hasQuery ? query.trim() : null,
+      query: hasQuery ? query : null,
       latLng: realLatLng,
     );
   }

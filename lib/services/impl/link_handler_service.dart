@@ -65,8 +65,9 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
     });
     _lookups[key] = (at: now, handler: handler);
     while (_lookups.length > maxEntries) {
-      _resolved.remove(_lookups.keys.first);
-      _lookups.remove(_lookups.keys.first);
+      final oldest = _lookups.keys.first;
+      _resolved.remove(oldest);
+      _lookups.remove(oldest);
     }
     return handler;
   }
@@ -181,7 +182,9 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
   @override
   String cacheKeyFor(Uri uri) => uri.scheme;
 
-  static const _iconSizes = ['256x256', '128x128', '96x96', '64x64', '48x48'];
+  // Nearest the glyph first: it is drawn at 32px, so 64px covers a 2x
+  // screen, and a 256px icon decoded for it is 16 times the pixels.
+  static const _iconSizes = ['64x64', '96x96', '128x128', '48x48', '256x256'];
 
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {
@@ -194,7 +197,8 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
     final desktopId = result.stdout.toString().trim();
     if (!desktopId.endsWith('.desktop')) return null;
 
-    final dataDirs = xdgDataDirs(environment);
+    final env = environment ?? Platform.environment;
+    final dataDirs = xdgDataDirs(env);
     final entry = [
       for (final dir in dataDirs)
         for (final relative in desktopEntryPaths(desktopId))
@@ -204,11 +208,7 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
 
     final keys = parseDesktopEntry(await entry.readAsString());
     // The name the user's desktop shows, in their language.
-    final name = localizedEntryValue(
-      keys,
-      'Name',
-      environment ?? Platform.environment,
-    );
+    final name = localizedEntryValue(keys, 'Name', env);
     if (name == null || name.isEmpty) return null;
     final icon = _iconFile(keys['Icon'], dataDirs);
     return LinkHandler(name: name, icon: icon == null ? null : FileImage(icon));

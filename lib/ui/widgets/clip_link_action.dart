@@ -128,7 +128,7 @@ class ClipLinkHandlerBuilder extends StatefulWidget {
 
 class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
   LinkHandler? _handler;
-  DateTime _resolvedAt = clock.now();
+  late DateTime _resolvedAt;
 
   @override
   void initState() {
@@ -160,10 +160,7 @@ class _ClipLinkHandlerBuilderState extends State<ClipLinkHandlerBuilder> {
         // The service hands back one instance per app, so an unchanged
         // answer - a refresh after maxAge - rebuilds nothing. Compare with
         // the displayed handler, even if another row refreshed the cache.
-        if (!mounted ||
-            request != _request ||
-            widget.link.uri != link.uri ||
-            handler == _handler) {
+        if (!mounted || request != _request || handler == _handler) {
           return;
         }
         setState(() => _handler = handler);
