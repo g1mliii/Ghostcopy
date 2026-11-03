@@ -106,6 +106,11 @@ void main() {
       );
       expect(ClipLink.detect('0800-123456')!.kind, ClipLinkKind.phone);
       expect(ClipLink.detect('555-1234')!.kind, ClipLinkKind.phone);
+      // A tel: href spaced for reading, as pages often write it.
+      expect(
+        ClipLink.detect('tel:+1 416 555 0199')!.uri.toString(),
+        'tel:+14165550199',
+      );
       expect(
         ClipLink.detect('tel:%2B14165550199')!.uri.toString(),
         'tel:+14165550199',
@@ -126,6 +131,15 @@ void main() {
         '1000-2000', // a range
         'tel:%', // a stray escape must not throw while a row builds
         'tel:%zz',
+        '-122.4194', // a longitude
+        '-1234567', // a negative quantity
+        '3.14159265', // a decimal
+        '12345.67',
+        '1.000.000', // thousands grouped with dots
+        '12.345.678',
+        '94043-1351', // a ZIP+4 code
+        'www.', // no site after the prefix
+        'https://.com',
       ]) {
         expect(ClipLink.detect(text), isNull, reason: text);
       }
