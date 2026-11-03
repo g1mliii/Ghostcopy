@@ -1109,7 +1109,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 Icons.person_outline,
                 size: 13,
                 color: GhostColors.textMuted,
@@ -1372,7 +1372,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               decoration: InputDecoration(
                 hintText: 'Paste or type your content...',
-                hintStyle: const TextStyle(color: GhostColors.textMuted),
+                hintStyle: TextStyle(color: GhostColors.textMuted),
                 filled: true,
                 fillColor: GhostColors.surfaceLight,
                 border: OutlineInputBorder(
@@ -1637,7 +1637,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 else if (result?.error != null)
                   Text(
                     result!.error!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: GhostColors.errorLight,
                     ),
@@ -1837,7 +1837,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 ],
               ),
             ),
-            const Divider(height: 1, color: GhostColors.surface),
+            Divider(height: 1, color: GhostColors.surface),
             // Settings content - now using SettingsPanel widget
             Expanded(
               child: SettingsPanel(
@@ -1937,7 +1937,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 ],
               ),
             ),
-            const Divider(height: 1, color: GhostColors.surface),
+            Divider(height: 1, color: GhostColors.surface),
             // Auth form - now using AuthPanel widget
             Expanded(
               child: AuthPanel(
@@ -2226,7 +2226,7 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
             ],
           ),
         ),
-        const Divider(height: 1, color: GhostColors.surface),
+        Divider(height: 1, color: GhostColors.surface),
         // Search bar
         _HistorySearchBar(
           controller: _searchController,
@@ -2262,7 +2262,7 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                                 'Settings to unlock it'
                           : '$locked clips are encrypted - enter your '
                                 'passphrase in Settings to unlock them',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: GhostColors.textSecondary,
                         fontSize: 11,
                       ),
@@ -2307,14 +2307,14 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                                 locked == 1
                                     ? '1 encrypted clip'
                                     : '$locked encrypted clips',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: GhostColors.textPrimary,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                               const SizedBox(height: 6),
-                              const Text(
+                              Text(
                                 'Enter your passphrase in Settings to unlock '
                                 'them. It is never sent to the server, so it '
                                 'has to be entered on each device.',
@@ -2333,7 +2333,7 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                         _searchQuery.isNotEmpty
                             ? 'No results found'
                             : 'No clipboard history yet',
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: GhostColors.textMuted,
                           fontSize: 13,
                         ),
@@ -2413,14 +2413,11 @@ class _HistorySearchBarState extends State<_HistorySearchBar> {
       child: TextField(
         controller: widget.controller,
         onChanged: widget.onChanged,
-        style: const TextStyle(color: GhostColors.textPrimary, fontSize: 13),
+        style: TextStyle(color: GhostColors.textPrimary, fontSize: 13),
         decoration: InputDecoration(
           hintText: 'Search clips...',
-          hintStyle: const TextStyle(
-            color: GhostColors.textMuted,
-            fontSize: 13,
-          ),
-          prefixIcon: const Icon(
+          hintStyle: TextStyle(color: GhostColors.textMuted, fontSize: 13),
+          prefixIcon: Icon(
             Icons.search,
             size: 18,
             color: GhostColors.textMuted,
@@ -2513,7 +2510,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       widget.item.content,
       maxLines: _isExpanded ? null : 2,
       overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 13, color: GhostColors.textPrimary),
+      style: TextStyle(fontSize: 13, color: GhostColors.textPrimary),
     );
   }
 
@@ -2557,7 +2554,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
           widget.item.content,
           maxLines: _isExpanded ? null : 2,
           overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12,
             color: GhostColors.textSecondary,
             fontStyle: FontStyle.italic,
@@ -2780,7 +2777,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   const SizedBox(width: 4),
                   Text(
                     widget.device,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: GhostColors.textMuted,
                     ),
@@ -2818,7 +2815,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       ),
                     ),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     '\u2022',
                     style: TextStyle(
                       fontSize: 11,
@@ -2828,7 +2825,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   const SizedBox(width: 8),
                   Text(
                     widget.timeAgo,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: GhostColors.textMuted,
                     ),

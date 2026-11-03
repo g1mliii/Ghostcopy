@@ -23,7 +23,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.darkTheme,
+        theme: AppTheme.platformTheme,
         home: Scaffold(
           backgroundColor: GhostColors.background,
           appBar: AppBar(
@@ -70,7 +70,7 @@ void main() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
                       child: Text(
                         'Paste or type something…',
@@ -81,7 +81,7 @@ void main() {
                       ),
                     ),
                     const SizedBox(height: 40),
-                    const Divider(height: 1, color: GhostColors.border),
+                    Divider(height: 1, color: GhostColors.border),
                     Padding(
                       // 14 here plus Material's 2dp inset inside a zero-padding
                       // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
@@ -152,7 +152,7 @@ void main() {
                     style: GhostTypography.headline.copyWith(fontSize: 15),
                   ),
                   const SizedBox(width: 7),
-                  const Text(
+                  Text(
                     '3 recent',
                     style: TextStyle(
                       fontSize: 12,
@@ -173,7 +173,7 @@ void main() {
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 alignment: Alignment.centerLeft,
-                child: const Row(
+                child: Row(
                   children: [
                     Icon(
                       Icons.search_rounded,
@@ -204,14 +204,14 @@ void main() {
                   child: Column(
                     children: [
                       _row('Some copied text from the desktop app', null),
-                      const Divider(
+                      Divider(
                         height: 1,
                         indent: 16,
                         endIndent: 16,
                         color: GhostColors.border,
                       ),
                       _row('report.pdf', Icons.picture_as_pdf),
-                      const Divider(
+                      Divider(
                         height: 1,
                         indent: 16,
                         endIndent: 16,
@@ -312,13 +312,13 @@ Widget _row(String preview, IconData? fileIcon) {
                   preview,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     color: GhostColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 7),
-                const Wrap(
+                Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 5,
                   children: [
@@ -367,11 +367,7 @@ Widget _row(String preview, IconData? fileIcon) {
               ],
             ),
           ),
-          const Icon(
-            Icons.copy_rounded,
-            size: 18,
-            color: GhostColors.textMuted,
-          ),
+          Icon(Icons.copy_rounded, size: 18, color: GhostColors.textMuted),
           const SizedBox(width: 12),
         ],
       ),

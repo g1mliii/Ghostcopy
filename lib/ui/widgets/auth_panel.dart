@@ -306,7 +306,7 @@ class _AuthPanelState extends State<AuthPanel> {
   Widget _buildEmailField() {
     return TextField(
       controller: _emailController,
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         labelText: 'Email',
         isDense: true,
         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
@@ -329,7 +329,7 @@ class _AuthPanelState extends State<AuthPanel> {
   Widget _buildPasswordField() {
     return TextField(
       controller: _passwordController,
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         labelText: 'Password',
         isDense: true,
         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
@@ -457,7 +457,7 @@ class _AuthPanelState extends State<AuthPanel> {
   Widget _buildAlternativeSignIn() {
     return Row(
       children: [
-        const Expanded(child: Divider(color: GhostColors.surface)),
+        Expanded(child: Divider(color: GhostColors.surface)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: RepaintBoundary(
@@ -473,7 +473,7 @@ class _AuthPanelState extends State<AuthPanel> {
             ),
           ),
         ),
-        const Expanded(child: Divider(color: GhostColors.surface)),
+        Expanded(child: Divider(color: GhostColors.surface)),
       ],
     );
   }

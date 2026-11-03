@@ -811,8 +811,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         // style from the background colour and re-opaque the status bar.
         systemOverlayStyle: const SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
-          statusBarBrightness: Brightness.dark,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -933,7 +933,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
             title: Text(
               user?.email ?? 'Anonymous User',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: GhostColors.textPrimary,
@@ -941,14 +941,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
             subtitle: Text(
               isAnonymous ? 'Temporary account' : 'Signed in',
-              style: const TextStyle(
-                fontSize: 12,
-                color: GhostColors.textMuted,
-              ),
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
             ),
           ),
 
-          const Divider(height: 1, color: GhostColors.border),
+          Divider(height: 1, color: GhostColors.border),
 
           // Anonymous users need a route back to sign-in. Signing out drops the
           // user onto a fresh temporary account, and the welcome screen is only
@@ -961,15 +958,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 color: GhostColors.primary,
                 size: 20,
               ),
-              title: const Text(
+              title: Text(
                 'Sign In or Create Account',
                 style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Scan a QR code from another device, or use email',
                 style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
               ),
-              trailing: const Icon(
+              trailing: Icon(
                 Icons.chevron_right,
                 color: GhostColors.textMuted,
                 size: 20,
@@ -1004,7 +1001,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 'Delete Account',
                 style: TextStyle(fontSize: 14, color: Colors.red.shade400),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Permanently delete your account and all your clips',
                 style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
               ),
@@ -1036,7 +1033,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               ),
             )
           : _devices.isEmpty
-          ? const Padding(
+          ? Padding(
               padding: EdgeInsets.all(32),
               child: Center(
                 child: Text(
@@ -1060,7 +1057,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _devices.length,
               separatorBuilder: (context, index) =>
-                  const Divider(height: 1, color: GhostColors.border),
+                  Divider(height: 1, color: GhostColors.border),
               itemBuilder: (context, index) {
                 final device = _devices[index];
                 final isCurrent =
@@ -1101,7 +1098,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                                     device.displayName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
                                       color: GhostColors.textPrimary,
@@ -1136,7 +1133,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                             const SizedBox(height: 2),
                             Text(
                               platformLabel(device.deviceType),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
                                 color: GhostColors.textMuted,
                               ),
@@ -1243,7 +1240,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             value: _autoShortenUrls,
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
-          const Divider(height: 1, color: GhostColors.border),
+          Divider(height: 1, color: GhostColors.border),
           _buildDefaultDevicesTile(),
         ],
       ),
@@ -1285,7 +1282,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             children: [
               const Icon(Icons.devices, color: GhostColors.primary, size: 20),
               const SizedBox(width: 16),
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Default devices',
                   style: TextStyle(
@@ -1317,7 +1314,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ],
           ),
           const SizedBox(height: 4),
-          const Padding(
+          Padding(
             padding: EdgeInsets.only(left: 36),
             child: Text(
               'Where shared files and auto-send go.',
@@ -1385,11 +1382,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       leading: Icon(icon, color: GhostColors.primary, size: 20),
       title: Text(
         title,
-        style: const TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+        style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+        style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
       ),
       trailing: AdaptiveSwitch(value: value, onChanged: onChanged),
       // The whole row toggles, which SwitchListTile gave for free.
@@ -1429,7 +1426,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 ? null
                 : _handleScreenshotProtectionChange,
           ),
-          const Divider(height: 1, color: GhostColors.border),
+          Divider(height: 1, color: GhostColors.border),
           // Encryption toggle
           _settingSwitch(
             icon: Icons.lock_outline,
@@ -1441,7 +1438,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
           // Explicit "Restore" button if has backup but currently disabled
           if (!_encryptionEnabled && _hasBackup) ...[
-            const Divider(height: 1, color: GhostColors.border),
+            Divider(height: 1, color: GhostColors.border),
             ListTile(
               leading: const Icon(
                 Icons.restore,
@@ -1456,7 +1453,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Unlock history using your existing passphrase',
                 style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
               ),
@@ -1520,7 +1517,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             color: GhostColors.primary,
           ),
         ),
-        title: const Text(
+        title: Text(
           'GhostCopy',
           style: TextStyle(
             fontSize: 14,
@@ -1530,11 +1527,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
         subtitle: Text(
           _appVersion.isEmpty ? 'Loading...' : _appVersion,
-          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         // Signals that the row does something now. It used to be inert, which
         // left About looking like a dead end.
-        trailing: const Icon(
+        trailing: Icon(
           Icons.open_in_new_rounded,
           size: 18,
           color: GhostColors.textMuted,

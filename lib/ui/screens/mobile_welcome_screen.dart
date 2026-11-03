@@ -685,7 +685,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   Widget _buildDivider() {
     return Row(
       children: [
-        const Expanded(child: Divider(color: GhostColors.surface)),
+        Expanded(child: Divider(color: GhostColors.surface)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
@@ -695,7 +695,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             ),
           ),
         ),
-        const Expanded(child: Divider(color: GhostColors.surface)),
+        Expanded(child: Divider(color: GhostColors.surface)),
       ],
     );
   }
@@ -751,7 +751,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
               return AlertDialog(
                 backgroundColor: GhostColors.surface,
-                title: const Text(
+                title: Text(
                   'Enter PIN',
                   style: TextStyle(color: GhostColors.textPrimary),
                 ),
@@ -773,7 +773,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                       keyboardType: TextInputType.number,
                       maxLength: 6,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: GhostColors.textPrimary,
                         fontSize: 24,
                         letterSpacing: 8,
@@ -783,7 +783,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                         counterText: '',
                         errorText: error,
                         hintText: '000000',
-                        hintStyle: const TextStyle(
+                        hintStyle: TextStyle(
                           color: GhostColors.textMuted,
                           letterSpacing: 8,
                         ),

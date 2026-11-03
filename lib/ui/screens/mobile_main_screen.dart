@@ -409,11 +409,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 Icons.content_paste_outlined,
                 color: GhostColors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'Paste from clipboard',
                 style: TextStyle(color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Image, file or rich text you copied',
                 style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
               ),
@@ -424,11 +424,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 Icons.add_photo_alternate_outlined,
                 color: GhostColors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'Image',
                 style: TextStyle(color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Pick from your gallery',
                 style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
               ),
@@ -439,11 +439,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 Icons.insert_drive_file_outlined,
                 color: GhostColors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'File',
                 style: TextStyle(color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Any file up to 10MB',
                 style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
               ),
@@ -854,12 +854,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         surfaceTintColor: Colors.transparent,
         // AppBar derives its own overlay style from the background colour,
         // which would undo the transparent status bar set in main(). Pin it so
-        // the header's colour shows through the cutout strip with light
+        // the header's colour shows through the cutout strip with dark
         // glyphs over it.
         systemOverlayStyle: const SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
-          statusBarBrightness: Brightness.dark,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
         ),
         toolbarHeight: 62,
         titleSpacing: GhostSpacing.gutter,
@@ -1124,11 +1124,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ),
           ),
         ),
-        const VerticalDivider(
-          width: 1,
-          thickness: 1,
-          color: GhostColors.border,
-        ),
+        VerticalDivider(width: 1, thickness: 1, color: GhostColors.border),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _viewModel.handleRefresh,
@@ -1392,11 +1388,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       maxLines: expand ? null : 5,
                       textAlignVertical: TextAlignVertical.top,
                       keyboardType: TextInputType.multiline,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         color: GhostColors.textPrimary,
                       ),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         hintText: 'Paste or type something…',
                         hintStyle: TextStyle(color: GhostColors.textMuted),
                         contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
@@ -1425,7 +1421,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 ),
               ),
             ),
-            const Divider(height: 1, color: GhostColors.border),
+            Divider(height: 1, color: GhostColors.border),
             _buildComposerToolbar(),
             if (sendError != null)
               Padding(
@@ -1437,7 +1433,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 ),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.error_outline_rounded,
                       size: 15,
                       color: GhostColors.errorLight,
@@ -1451,7 +1447,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         // message wrapping freely overflowed the column.
                         maxLines: expand ? 2 : null,
                         overflow: expand ? TextOverflow.ellipsis : null,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           color: GhostColors.errorLight,
                         ),
@@ -1576,11 +1572,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       onTap: () => _viewModel.loadDevices(),
       child: Row(
         children: [
-          const Icon(
-            Icons.error_outline,
-            size: 14,
-            color: GhostColors.errorLight,
-          ),
+          Icon(Icons.error_outline, size: 14, color: GhostColors.errorLight),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
@@ -1694,7 +1686,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         ],
                       ),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right,
                       color: GhostColors.textMuted,
                       size: 20,
@@ -1855,7 +1847,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 children: [
                   for (var index = 0; index < items.length; index++) ...[
                     if (index > 0)
-                      const Divider(
+                      Divider(
                         height: 1,
                         indent: 16,
                         endIndent: 16,
@@ -1880,11 +1872,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         cursorOpacityAnimates: false,
         onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
         onChanged: _viewModel.filterHistoryDebounced,
-        style: const TextStyle(fontSize: 16, color: GhostColors.textPrimary),
+        style: TextStyle(fontSize: 16, color: GhostColors.textPrimary),
         decoration: InputDecoration(
           hintText: 'Search clips…',
-          hintStyle: const TextStyle(color: GhostColors.textMuted),
-          prefixIcon: const Icon(
+          hintStyle: TextStyle(color: GhostColors.textMuted),
+          prefixIcon: Icon(
             Icons.search_rounded,
             size: 18,
             color: GhostColors.textMuted,
@@ -1908,11 +1900,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-            borderSide: const BorderSide(color: GhostColors.border),
+            borderSide: BorderSide(color: GhostColors.border),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-            borderSide: const BorderSide(color: GhostColors.border),
+            borderSide: BorderSide(color: GhostColors.border),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
@@ -2307,7 +2299,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                         // read cramped on a tablet, where the row is wide and
                         // the text has room it was not using; the line height
                         // matters as much as the size for the two-line case.
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           height: 1.35,
                           color: GhostColors.textPrimary,
@@ -2397,20 +2389,14 @@ class _HistoryRowState extends State<_HistoryRow> {
         ),
         Text(
           platformLabel(item.deviceType),
-          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        const Text(
-          '•',
           style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
+        Text('•', style: TextStyle(fontSize: 12, color: GhostColors.textMuted)),
         Text(
           timeago.format(item.createdAt, locale: 'en_short'),
-          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        const Text(
-          '→',
           style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
+        Text('→', style: TextStyle(fontSize: 12, color: GhostColors.textMuted)),
         // Destination is drawn the same way as the source - icon then label -
         // so both ends of the arrow read as the same kind of thing. It was
         // previously a bare word, which made "Windows → All devices" look like
@@ -2425,7 +2411,7 @@ class _HistoryRowState extends State<_HistoryRow> {
           // generic icon only when a clip WAS targeted, so absence had to mean
           // "went everywhere" - which no missing icon can communicate.
           _targetLabel(item.targetDeviceTypes),
-          style: const TextStyle(fontSize: 12, color: GhostColors.accentText),
+          style: TextStyle(fontSize: 12, color: GhostColors.accentText),
         ),
       ],
     );
@@ -2510,7 +2496,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                           ScrollViewKeyboardDismissBehavior.onDrag,
                       child: SelectableText(
                         widget.item.content,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           color: GhostColors.textPrimary,
                         ),

@@ -250,7 +250,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
                     Flexible(
                       child: Text(
                         widget.message,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
                           letterSpacing: 0.2,

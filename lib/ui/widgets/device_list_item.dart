@@ -166,7 +166,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                                 maxLength:
                                     255 -
                                     widget.device.registrationSuffix.length,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 13,
                                   color: GhostColors.textPrimary,
                                   fontWeight: FontWeight.w600,
@@ -198,7 +198,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                                         widget.device.displayName,
                                         overflow: TextOverflow.ellipsis,
                                         maxLines: 1,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 13,
                                           color: GhostColors.textPrimary,
                                           fontWeight: FontWeight.w600,
@@ -243,21 +243,21 @@ class _DeviceListItemState extends State<DeviceListItem> {
                       Text(
                         widget.device.deviceType[0].toUpperCase() +
                             widget.device.deviceType.substring(1),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
                       ),
                       Text(
                         ' · ',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
                       ),
                       Text(
                         _getRelativeTime(),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),

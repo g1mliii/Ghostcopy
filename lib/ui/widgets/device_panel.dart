@@ -138,7 +138,7 @@ class _DevicePanelState extends State<DevicePanel> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'YOUR DEVICES',
                 style: TextStyle(
                   fontSize: 11,
@@ -187,7 +187,7 @@ class _DevicePanelState extends State<DevicePanel> {
                   Expanded(
                     child: Text(
                       _error!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         color: GhostColors.textSecondary,
                       ),
@@ -203,7 +203,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Icon(
                     Icons.devices_other,
@@ -260,7 +260,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(

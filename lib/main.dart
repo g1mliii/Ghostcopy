@@ -73,6 +73,7 @@ import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/theme/colors.dart';
 import 'ui/tray_menu_lifecycle.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
@@ -856,14 +857,20 @@ Future<void> _appMain(
     // top and its content still begins below the cutout.
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
+      SystemUiOverlayStyle(
         // Transparent, not coloured: the AppBar behind it supplies the colour.
         statusBarColor: Colors.transparent,
-        // Light glyphs, because everything behind them is the dark theme.
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark, // iOS reads this one
+        // Match system glyphs to the platform palette.
+        statusBarIconBrightness: GhostColors.isLight
+            ? Brightness.dark
+            : Brightness.light,
+        statusBarBrightness: GhostColors.isLight
+            ? Brightness.light
+            : Brightness.dark,
         systemNavigationBarColor: Colors.transparent,
-        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: GhostColors.isLight
+            ? Brightness.dark
+            : Brightness.light,
         systemNavigationBarContrastEnforced: false,
       ),
     );
@@ -1505,7 +1512,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
     return MaterialApp(
       navigatorKey: _navigatorKey,
       title: 'GhostCopy',
-      theme: AppTheme.darkTheme,
+      theme: AppTheme.platformTheme,
       // No overscroll stretch or glow anywhere in the app.
       scrollBehavior: Adaptive.scrollBehavior,
       debugShowCheckedModeBanner: false,
