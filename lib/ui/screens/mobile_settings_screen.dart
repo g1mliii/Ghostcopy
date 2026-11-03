@@ -1585,8 +1585,12 @@ class _DefaultDeviceChip extends StatelessWidget {
             color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
+              // surfaceLight all but vanishes against the white light-mode
+              // card, so the unselected outline uses the hairline there.
               color: isSelected
                   ? GhostColors.primary
+                  : GhostColors.isLight
+                  ? GhostColors.border
                   : GhostColors.surfaceLight,
             ),
           ),
