@@ -964,7 +964,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// [_minCollapsedPageHeight] plus room for whatever else is showing.
   ///
-  /// The page is a fixed height, so everything in it but the composer's text
+  /// The page height is capped, so everything in it but the composer's text
   /// field has to fit under it, or the field is squeezed to nothing and the
   /// column overflows. The allowances are generous on purpose: too much only
   /// scrolls the page a little with the keyboard up, too little overflows.
@@ -1051,24 +1051,33 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     // and then scrolls inside itself. The controls follow
                     // straight under it, as in any compose screen.
                     //
-                    // A fixed height - the viewport's, or more when that is too
-                    // short - rather than SliverFillRemaining, which sizes to
-                    // its child's intrinsic height: that is the full height of
-                    // the composer's TEXT, so a long paste grew the box past the
-                    // screen instead of scrolling inside it. The viewport is
-                    // what is above the keyboard, so with it up the composer's
-                    // cap shrinks and its text scrolls; on a small phone the
-                    // floor makes the page scroll rather than squash the
-                    // composer below a few lines.
+                    // A capped height - the viewport's, or more when that is
+                    // too short - rather than SliverFillRemaining, which sizes
+                    // to its child's intrinsic height: that is the full height
+                    // of the composer's TEXT, so a long paste grew the box past
+                    // the screen instead of scrolling inside it. The viewport
+                    // is what is above the keyboard, so with it up the
+                    // composer's cap shrinks and its text scrolls; on a small
+                    // phone the floor makes the page scroll rather than squash
+                    // the composer below a few lines.
+                    //
+                    // A cap, not a fixed height: the page is as tall as what is
+                    // on it. A fixed floor-high box left a short composer with
+                    // blank page under the history heading to scroll into,
+                    // whenever the floor beat the viewport - keyboard up on a
+                    // small phone, landscape, or large text.
                     SliverToBoxAdapter(
-                      child: SizedBox(
-                        height: math.max(
-                          viewport.maxHeight,
-                          _collapsedPageFloor(context),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: math.max(
+                            viewport.maxHeight,
+                            _collapsedPageFloor(context),
+                          ),
                         ),
                         child: Padding(
                           padding: singleColumnPadding,
                           child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: page,
                           ),
@@ -1307,26 +1316,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   /// The composer: one surface holding the text field, any staged
-  /// attachment, and the attach control.
-  ///
-  /// Previously a card containing a separately-bordered text field, which read
-  /// as a card inside a card, under a "Paste & Send" heading that only
-  /// restated the placeholder below it. The heading is gone and the field is
-  /// borderless in every state - including focus, which inherited a 2px
-  /// primary outline from the theme and lit the whole box up bright purple.
-  /// Focus is now shown by the surface border alone.
-  /// The composer: one surface holding the text field, any staged
   /// attachment, and a toolbar.
   ///
   /// Previously a card containing a separately-bordered text field - a card
   /// inside a card - under a "Paste & Send" heading that only restated the
   /// placeholder below it. The field is borderless in EVERY state: setting
   /// only `border` left focusedBorder falling back to the theme's 2px primary
-  /// outline, which lit the whole box up on focus.
-  /// The composer. It sizes to its text: three lines empty, growing as text
-  /// is added. Normally it stops at five lines and scrolls; with [grow] - in
-  /// a column that bounds it - it keeps growing to the height it is given,
-  /// the field taking all of it but the toolbar, and scrolls from there.
+  /// outline, which lit the whole box up on focus. Focus is shown by the
+  /// surface border alone.
+  ///
+  /// It sizes to its text: three lines empty, growing as text is added.
+  /// Normally it stops at five lines and scrolls; with [grow] - in a column
+  /// that bounds it - it keeps growing with its text up to the height it is
+  /// given, and scrolls from there.
   Widget _buildPasteArea({bool grow = false}) {
     final sendError = _viewModel.sendErrorMessage;
     final hasAttachment =
@@ -1453,7 +1455,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     Expanded(
                       child: Text(
                         sendError,
-                        // Collapsed, the page is a fixed height and
+                        // Collapsed, the page height is capped and
                         // _collapsedPageFloor allows this two lines; a longer
                         // message wrapping freely overflowed the column.
                         maxLines: grow ? 2 : null,
