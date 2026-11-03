@@ -118,11 +118,13 @@ void HotkeyManagerWindowsPlugin::Unregister(
       std::get<flutter::EncodableMap>(*method_call.arguments());
   std::string identifier =
       std::get<std::string>(args.at(flutter::EncodableValue("identifier")));
-  int32_t hotkey_id = hotkey_id_map_.at(identifier);
-  ::UnregisterHotKey(
-      ::GetAncestor(registrar_->GetView()->GetNativeWindow(), GA_ROOT),
-      hotkey_id);
-  hotkey_id_map_.erase(identifier);
+  auto entry = hotkey_id_map_.find(identifier);
+  if (entry != hotkey_id_map_.end()) {
+    ::UnregisterHotKey(
+        ::GetAncestor(registrar_->GetView()->GetNativeWindow(), GA_ROOT),
+        entry->second);
+    hotkey_id_map_.erase(entry);
+  }
   result->Success(flutter::EncodableValue(true));
 }
 

@@ -217,7 +217,6 @@ class _HotkeyCapture extends State<HotkeyCapture> {
       _isRecording = !_isRecording;
       if (!_isRecording) {
         // User canceled
-
         _resetModifiers();
       }
     });

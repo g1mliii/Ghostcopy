@@ -221,6 +221,38 @@ void main() {
     },
   );
 
+  testWidgets('send shortcut does not resend a copy auto-sent while waiting', (
+    tester,
+  ) async {
+    clipboardValue = ClipboardContent.text('copied');
+    when(
+      settings.getAutoSendTargetDevices,
+    ).thenAnswer((_) async => {'android'});
+    final inserted = Completer<void>();
+    when(() => repository.insert(any())).thenAnswer((call) async {
+      await inserted.future;
+      return call.positionalArguments.first as ClipboardItem;
+    });
+    service.startClipboardMonitoring();
+    await tester.pump(const Duration(seconds: 5));
+    verify(() => repository.insert(any())).called(1); // auto-send in flight
+    final manualSend = service.sendCurrentClipboard();
+    inserted.complete();
+    await tester.pump();
+    await manualSend;
+    verifyNever(() => repository.insert(any()));
+    service.stopClipboardMonitoring();
+  });
+
+  test('send shortcut reports an empty clipboard', () async {
+    await service.sendCurrentClipboard();
+    verify(
+      () => notifier.showToast(
+        message: 'Clipboard is empty. Copy something first.',
+      ),
+    ).called(1);
+  });
+
   testWidgets('slow clipboard reads do not overlap timer ticks', (
     tester,
   ) async {

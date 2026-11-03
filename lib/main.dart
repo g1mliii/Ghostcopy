@@ -1618,7 +1618,7 @@ void _invokeHotkeyCallback() {
 /// Throws [UnsupportedHotkeyException] if the key cannot be registered; the
 /// previous registration is left in place in that case, and nothing is saved.
 Future<void> applyHotkey(HotKey hotkey) => _queueHotkeyUpdate(() async {
-  if (hotkey == _activeSendHotkey) throw UnsupportedHotkeyException(hotkey.key);
+  if (hotkey == _activeSendHotkey) throw HotkeyInUseException(hotkey);
   final hotkeyService = locator<IHotkeyService>();
 
   // Register first: if the new combo is rejected, the old one must survive and
@@ -1657,36 +1657,46 @@ Future<void> _queueHotkeyUpdate(Future<void> Function() update) {
 Future<void> _registerDesktopShortcuts() => _queueHotkeyUpdate(() async {
   await _registerSavedHotkey();
   if (locator<IHotkeyService>().managedBySystem) return;
+  // A failure here is often transient - another app holding the combination
+  // at login, or the Spotlight shortcut having fallen back onto it - so the
+  // saved shortcut is kept and retried on the next launch, as the Spotlight
+  // one is. Settings shows only what is actually registered.
   try {
     final saved = await locator<ISettingsService>().getSendHotkey();
-    if (saved == null) return;
-    try {
-      await _registerSendHotkey(saved);
-    } on Exception {
-      await locator<ISettingsService>().setSendHotkey(null);
-      rethrow;
-    }
+    if (saved != null) await _registerSendHotkey(saved);
   } on Exception catch (e) {
     debugPrint('[Hotkey] Could not restore send shortcut: $e');
   }
 });
 
 Future<void> _registerSendHotkey(HotKey? hotkey) async {
-  if (hotkey == _activeHotkey) throw UnsupportedHotkeyException(hotkey!.key);
+  if (hotkey != null && hotkey == _activeHotkey) {
+    throw HotkeyInUseException(hotkey);
+  }
   final service = locator<IHotkeyService>();
   final previous = _activeSendHotkey;
   if (previous == hotkey) return;
   if (hotkey != null) {
     await service.registerHotkey(hotkey, _invokeSendClipboard);
   }
-  if (previous != null) await service.unregisterHotkey(previous);
+  if (previous != null) {
+    try {
+      await service.unregisterHotkey(previous);
+    } on Object {
+      // Leave exactly one send shortcut live: the one still recorded.
+      if (hotkey != null) await service.unregisterHotkey(hotkey);
+      rethrow;
+    }
+  }
   _activeSendHotkey = hotkey;
 }
 
-/// Wait for pending OS registrations before displaying the active send shortcut.
-Future<HotKey?> registeredSendHotkey() async {
+/// The shortcuts actually registered with the OS, once pending registrations
+/// have settled - not the saved ones, which a conflict at login can leave
+/// unregistered.
+Future<({HotKey spotlight, HotKey? send})> registeredHotkeys() async {
   await _hotkeyUpdates;
-  return _activeSendHotkey;
+  return (spotlight: _activeHotkey, send: _activeSendHotkey);
 }
 
 /// Apply or clear the global send shortcut.

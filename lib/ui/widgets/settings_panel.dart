@@ -250,11 +250,13 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Future<void> _loadHotkey() async {
     if (widget.hotkeyService == null) return;
 
-    final saved = await widget.settingsService.getHotkey();
-    final send = await registeredSendHotkey();
+    // Registered rather than saved: a saved shortcut another app held at
+    // login is not live, and showing it would also make re-choosing it a
+    // no-op in [_handleHotkeyChanged].
+    final registered = await registeredHotkeys();
     if (!mounted) return;
-    _sendHotkey = send;
-    _currentHotkey = saved ?? defaultHotkey;
+    _sendHotkey = registered.send;
+    _currentHotkey = registered.spotlight;
     scheduleRebuild();
   }
 
@@ -1604,6 +1606,16 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     try {
       await applySendHotkey(key);
       if (mounted) setState(() => _sendHotkey = key);
+    } on HotkeyInUseException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${formatHotkey(key!)} already opens GhostCopy. '
+            'Choose another combination.',
+          ),
+        ),
+      );
     } on Exception {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1627,6 +1639,18 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
     try {
       await applyHotkey(newHotkey);
+    } on HotkeyInUseException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${formatHotkey(newHotkey)} already sends the clipboard. '
+            'Your previous shortcut is still active.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
     } on UnsupportedHotkeyException {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -133,17 +133,11 @@ static FlMethodResponse* hkm_unregister(_HotkeyManagerLinuxPlugin* self,
                                         FlValue* args) {
   const char* identifier =
       fl_value_get_string(fl_value_lookup_string(args, "identifier"));
-  const char* keystring;
-
-  std::string val = identifier;
-  auto result = std::find_if(hotkey_id_map.begin(), hotkey_id_map.end(),
-                             [val](const auto& e) { return e.first == val; });
-
-  if (result != hotkey_id_map.end())
-    keystring = result->second.c_str();
-
-  keybinder_unbind(keystring, handle_key_down);
-  hotkey_id_map.erase(identifier);
+  auto result = hotkey_id_map.find(identifier);
+  if (result != hotkey_id_map.end()) {
+    keybinder_unbind(result->second.c_str(), handle_key_down);
+    hotkey_id_map.erase(result);
+  }
 
   return FL_METHOD_RESPONSE(
       fl_method_success_response_new(fl_value_new_bool(true)));
