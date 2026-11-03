@@ -2547,6 +2547,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
           child: ClipLinkGlyph(
             link: link,
             size: 15,
+            appIconSize: 16,
             color: GhostColors.primaryAlpha80,
           ),
         ),
@@ -2686,7 +2687,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
               children: [
                 const Icon(Icons.open_in_new, size: 16),
                 const SizedBox(width: 12),
-                Text(link.actionLabel),
+                ClipLinkActionText(link: link),
               ],
             ),
           ),
@@ -2798,8 +2799,8 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   Expanded(child: _buildContentPreview()),
                   if (_link case final link? when canOpenClipLink(link)) ...[
                     const SizedBox(width: 8),
-                    Tooltip(
-                      message: link.actionLabel,
+                    ClipLinkTooltip(
+                      link: link,
                       child: InkResponse(
                         onTap: () => unawaited(_openLink(link)),
                         radius: 14,
