@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
@@ -44,16 +45,14 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
   Future<LinkHandler?> handlerFor(ClipLink link) {
     final uri = link.openUri(platform);
     final key = cacheKeyFor(uri);
-    final now = DateTime.now();
+    final now = clock.now();
     if (_lookups.remove(key) case final lookup?
         when now.difference(lookup.at) <= maxAge) {
       _lookups[key] = lookup;
       return lookup.handler;
     }
     final handler = _lookUpSafely(uri).then((found) {
-      final shared = found == null
-          ? null
-          : _byName.putIfAbsent(found.name, () => found);
+      final shared = found == null ? null : _shareHandler(found);
       // Only while the lookup is still wanted: one evicted meanwhile stays
       // out, so the two maps stay bounded together.
       if (_lookups.containsKey(key)) {
@@ -68,6 +67,23 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
       _lookups.remove(_lookups.keys.first);
     }
     return handler;
+  }
+
+  LinkHandler _shareHandler(LinkHandler found) {
+    final previous = _byName[found.name];
+    final icon = found.icon;
+    final previousIcon = previous?.icon;
+    // Native lookups return fresh byte arrays. Reuse the decoded image when
+    // the pixels are unchanged, but let a missing or updated icon recover.
+    if (previous != null &&
+        (icon == previousIcon ||
+            (icon is MemoryImage &&
+                previousIcon is MemoryImage &&
+                icon.scale == previousIcon.scale &&
+                listEquals(icon.bytes, previousIcon.bytes)))) {
+      return previous;
+    }
+    return _byName[found.name] = found;
   }
 
   @override

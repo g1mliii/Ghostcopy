@@ -68,8 +68,9 @@ class ClipLink {
   static final _email = RegExp(
     // The last label is letters, or punycode for a non-Latin top-level
     // domain (`xn--p1ai`).
-    r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*'
-    r'\.([A-Za-z]{2,}|xn--[A-Za-z0-9-]+)$',
+    r'^[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@'
+    r'(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
+    r'(?:[A-Za-z]{2,}|xn--[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)$',
   );
   static final _phoneChars = RegExp(r'^\+?[0-9()\-. ]+$');
   // No-break and narrow no-break spaces: what a number copied from a web
@@ -85,6 +86,7 @@ class ClipLink {
   static final _range = RegExp(r'^[1-9]\d+00-[1-9]\d+00$');
   // A US Social Security number. No phone numbering plan is written 3-2-4.
   static final _ssn = RegExp(r'^\d{3}-\d{2}-\d{4}$');
+  static final _isbn10Format = RegExp(r'^\d+[- ]\d+[- ]\d+[- ]\d$');
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
 
   /// The link this clip is, or null when it is not one.
@@ -782,6 +784,13 @@ class ClipLink {
           (digits.startsWith('978') || digits.startsWith('979'))) {
         return null;
       }
+      // ISBN-10 has four groups and a modulo-11 check digit. Keep ordinary
+      // phone grouping, explicit tel: links and international numbers.
+      if (digits.length == 10 &&
+          _isbn10Format.hasMatch(number) &&
+          _isbn10Valid(digits)) {
+        return null;
+      }
       // So is a range (`1000-2000`): two long groups and a dash. A number
       // written that way starts with a trunk 0 (`0800-123456`).
       if (_range.hasMatch(number)) return null;
@@ -827,6 +836,17 @@ class ClipLink {
     switch (platform) {
       case 'android':
         if (apple) {
+          if (uri.path == '/look-around') {
+            // Preserve the panorama intent. Apple-only place IDs and
+            // addresses cannot supply a Street View viewpoint.
+            final coordinates = place.latLng;
+            if (coordinates == null) return uri;
+            return Uri.https('www.google.com', '/maps/@', {
+              'api': '1',
+              'map_action': 'pano',
+              'viewpoint': coordinates,
+            });
+          }
           if (_appleDirections(uri) case final directions?) return directions;
         }
         // geo: as sent: Android handles it, zoom (?z=) and uncertainty
@@ -868,12 +888,33 @@ class ClipLink {
       'cycling' => 'bicycling',
       _ => null,
     };
+    final waypoints = (uri.queryParametersAll['waypoint'] ?? const <String>[])
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    // Apple repeats waypoint parameters; Google joins them with pipes.
+    // Only tolls and highways are avoid preferences shared by both formats.
+    final avoid = (uri.queryParametersAll['avoid'] ?? const <String>[])
+        .expand((value) => value.split(','))
+        .map((value) => value.trim())
+        .where((value) => const {'tolls', 'highways'}.contains(value))
+        .toSet();
     return Uri.https('www.google.com', '/maps/dir/', {
       'api': '1',
       if (!fromHere) 'origin': origin,
       'destination': destination,
       'travelmode': ?mode,
+      if (waypoints.isNotEmpty) 'waypoints': waypoints.join('|'),
+      if (avoid.isNotEmpty) 'avoid': avoid.join(','),
     });
+  }
+
+  static bool _isbn10Valid(String digits) {
+    var sum = 0;
+    for (var i = 0; i < digits.length; i++) {
+      sum += (digits.codeUnitAt(i) - 48) * (10 - i);
+    }
+    return sum % 11 == 0;
   }
 
   static bool _luhnValid(String digits) {
@@ -997,20 +1038,21 @@ class _MapPlace {
   /// `lat,lng`, as both Apple's `ll` and `geo:` write it.
   final String? latLng;
 
-  /// Where a search is centred, not a place: Apple's `center` on a
-  /// `/search` link. A pin at [latLng] is labelled with [query]; a search
-  /// for [query] near [center] finds whatever is there.
+  /// Where a search is centred, not a place: Apple's classic `sll` or
+  /// `center` on a `/search` link. A pin at [latLng] is labelled with [query];
+  /// a search for [query] near [center] finds whatever is there.
   final String? center;
 
   /// `maps.apple/p/...` or `maps.app.goo.gl/...`: only the redirect knows the
   /// place.
   final bool isShortLink;
 
-  bool get hasLocation => query != null || latLng != null;
+  bool get hasLocation => query != null || latLng != null || center != null;
 
   String get label =>
       query ??
       latLng ??
+      center ??
       switch (source) {
         _MapSource.apple => 'Apple Maps',
         _MapSource.google => 'Google Maps',
@@ -1022,7 +1064,7 @@ class _MapPlace {
   // google.com.au) - not any host that starts google., which
   // google.com.evil does.
   static final _googleHost = RegExp(
-    r'^(www\.)?google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$',
+    r'^(www\.|maps\.)?google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$',
   );
 
   static _MapPlace? fromWeb(Uri uri) {
@@ -1044,10 +1086,8 @@ class _MapPlace {
           'daddr',
           'saddr',
         ]),
-        latLng: _latLngOrNull(
-          params['ll'] ?? params['coordinate'] ?? params['sll'],
-        ),
-        center: _latLngOrNull(params['center']),
+        latLng: _latLngOrNull(params['ll'] ?? params['coordinate']),
+        center: _latLngOrNull(params['center'] ?? params['sll']),
       );
     }
     if (host == 'maps.apple') {
@@ -1061,9 +1101,8 @@ class _MapPlace {
       }
       return const _MapPlace(_MapSource.google, isShortLink: true);
     }
-    final googleHost = host == 'maps.google.com' || _googleHost.hasMatch(host);
-    if (!googleHost) return null;
-    if (host != 'maps.google.com' &&
+    if (!_googleHost.hasMatch(host)) return null;
+    if (!host.startsWith('maps.') &&
         (segments.isEmpty || segments.first != 'maps')) {
       return null;
     }
@@ -1106,7 +1145,21 @@ class _MapPlace {
       coords = '${parts[0]},${parts[1]}';
     }
     final latLng = _latLngOrNull(coords);
-    final query = uri.queryParameters['q'];
+    final query = uri.queryParameters['q']?.trim();
+    // Android's q=lat,lng(label) selects a pin independently of the geo:
+    // path, which may be 0,0 or the map's search center.
+    final labelStart = query?.indexOf('(') ?? -1;
+    if (query != null && labelStart > 0 && query.endsWith(')')) {
+      final pin = _latLngOrNull(query.substring(0, labelStart));
+      if (pin != null) {
+        final label = query.substring(labelStart + 1, query.length - 1).trim();
+        return _MapPlace(
+          _MapSource.geo,
+          query: label.isEmpty ? null : label,
+          latLng: pin,
+        );
+      }
+    }
     final hasQuery = query != null && query.trim().isNotEmpty;
     // geo:0,0 is the "no coordinate, search instead" form.
     final realLatLng = latLng == '0,0' ? null : latLng;
