@@ -4,7 +4,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/command_line_tool_service.dart';
 import 'package:path/path.dart' as path;
 
+/// Windows creates a symlink only with Developer Mode on or from an elevated
+/// shell, and the tests that make one throw ERROR_PRIVILEGE_NOT_HELD without
+/// it. Returns the skip reason then, null wherever links can be made.
+String? _symlinksUnavailable() {
+  if (!Platform.isWindows) return null;
+  final probe = Directory.systemTemp.createTempSync('ghostcopy_link_probe_');
+  try {
+    Link(path.join(probe.path, 'link')).createSync(probe.path);
+    return null;
+  } on FileSystemException {
+    return 'Creating a symlink needs Developer Mode or an elevated shell';
+  } finally {
+    probe.deleteSync(recursive: true);
+  }
+}
+
 void main() {
+  final noSymlinks = _symlinksUnavailable();
   late Directory root;
   late String helper;
   late String link;
@@ -38,8 +55,7 @@ void main() {
           if (!succeed) {
             return ProcessResult(0, 1, '', 'User canceled. (-128)');
           }
-          Directory(path.join(root.path, 'bin')).createSync(recursive: true);
-          Link(link).createSync(linkTo ?? helper);
+          Link(link).createSync(linkTo ?? helper, recursive: true);
           return ProcessResult(0, 0, '', '');
         },
       );
@@ -58,13 +74,13 @@ void main() {
       bundleHelper();
       Link(link).createSync(helper, recursive: true);
       expect(await build().state(), CommandLineToolState.installed);
-    });
+    }, skip: noSymlinks);
 
     test('is not installed when the link points at another copy', () async {
       bundleHelper();
       Link(link).createSync('/Applications/Old.app/ghostcopy', recursive: true);
       expect(await build().state(), CommandLineToolState.notInstalled);
-    });
+    }, skip: noSymlinks);
 
     test('is not installed when a plain file holds the name', () async {
       bundleHelper();
@@ -88,7 +104,7 @@ void main() {
       final script = call.where((part) => part != '-e').take(4).join('\n');
       expect(script, isNot(contains(root.path)));
       expect(script, contains('with administrator privileges'));
-    });
+    }, skip: noSymlinks);
 
     test('reports a cancelled password prompt as not installed', () async {
       bundleHelper();
@@ -100,6 +116,6 @@ void main() {
     test('is false when the link made does not point at this app', () async {
       bundleHelper();
       expect(await build(linkTo: '/elsewhere').install(), isFalse);
-    });
+    }, skip: noSymlinks);
   });
 }
