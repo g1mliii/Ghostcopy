@@ -2493,8 +2493,11 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     if (oldWidget.device != widget.device) {
       _deviceLower = widget.device.toLowerCase();
     }
-    if (oldWidget.item.content != widget.item.content ||
-        oldWidget.item.contentType != widget.item.contentType) {
+    // A history refresh hands every row a new item with equal text: the
+    // identity check skips comparing that text character by character.
+    if (!identical(oldWidget.item, widget.item) &&
+        (oldWidget.item.content != widget.item.content ||
+            oldWidget.item.contentType != widget.item.contentType)) {
       _link = clipLinkFor(widget.item);
     }
   }
