@@ -51,11 +51,13 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
       _lookups[key] = lookup;
       return lookup.handler;
     }
-    final handler = _lookUpSafely(uri).then((found) {
+    late final Future<LinkHandler?> handler;
+    handler = _lookUpSafely(uri).then((found) {
       final shared = found == null ? null : _shareHandler(found);
-      // Only while the lookup is still wanted: one evicted meanwhile stays
-      // out, so the two maps stay bounded together.
-      if (_lookups.containsKey(key)) {
+      // Only while this lookup is still the one wanted: one evicted
+      // meanwhile stays out, so the two maps stay bounded together, and one
+      // superseded by a refresh does not overwrite the newer answer.
+      if (identical(_lookups[key]?.handler, handler)) {
         _resolved.remove(key);
         _resolved[key] = shared;
       }
