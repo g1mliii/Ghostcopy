@@ -96,11 +96,7 @@ void main() {
 
       final call = calls.single;
       expect(call.first, '/usr/bin/osascript');
-      expect(call.sublist(call.length - 3), [
-        helper,
-        link,
-        path.join(root.path, 'bin'),
-      ]);
+      expect(call.sublist(call.length - 3), [helper, link, path.dirname(link)]);
       final script = call.where((part) => part != '-e').take(4).join('\n');
       expect(script, isNot(contains(root.path)));
       expect(script, contains('with administrator privileges'));
