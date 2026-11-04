@@ -1197,6 +1197,10 @@ void main() {
           ClipLink.detect('https://teams.live.com/meet/9876543210')?.kind,
           ClipLinkKind.meeting,
         );
+        expect(
+          ClipLink.detect('https://whereby.com/team-standup/')?.kind,
+          ClipLinkKind.meeting,
+        );
         for (final text in [
           'https://acme.webex.com/meet/',
           'https://acme.webex.com/join/',
@@ -1208,6 +1212,7 @@ void main() {
           'https://teams.microsoft.com/l/meetup-join-notes',
           'https://facetime.apple.com/joinery',
           'https://facetime.apple.com/join',
+          'https://facetime.apple.com/join/unrelated#v=1&p=abc',
           'https://meet.google.com/abc-defg-hij-notes',
           'https://meet.google.com/abc-defg-hij/unrelated',
         ]) {
@@ -1251,6 +1256,9 @@ void main() {
           'https://music.apple.com/us/browse',
           'https://www.deezer.com/search/beatles',
           'https://tidal.com/browse/mix/abc',
+          'https://music.apple.com/us/playlist/album/pl.abc',
+          'https://soundcloud.com/forss',
+          'https://soundcloud.com/forss/likes',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),
@@ -1270,6 +1278,8 @@ void main() {
           'https://open.spotify.com/intl-de/track/abc',
           'spotify:album:abc',
           'https://artist.bandcamp.com/track/song',
+          'https://www.deezer.com/us/album/302127',
+          'https://on.soundcloud.com/AbCd',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),

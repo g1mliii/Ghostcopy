@@ -223,6 +223,13 @@ class ClipLink {
   static bool _hostIs(String host, String domain) =>
       host == domain || host.endsWith('.$domain');
 
+  /// [uri]'s path segments without the empty ones a trailing (or doubled)
+  /// slash leaves: `/room/` is `[room]`.
+  static List<String> _segments(Uri uri) => [
+    for (final s in uri.pathSegments)
+      if (s.isNotEmpty) s,
+  ];
+
   static bool _pathStarts(Uri uri, String prefix) =>
       uri.path.toLowerCase().startsWith(prefix);
 
@@ -305,7 +312,10 @@ class ClipLink {
           h == 'facetime.apple.com' &&
           // The invitation itself rides in the fragment: /join#v=1&p=...
           u.fragment.isNotEmpty &&
-          u.pathSegments.firstOrNull?.toLowerCase() == 'join',
+          switch (_segments(u)) {
+            [final only] => only.toLowerCase() == 'join',
+            _ => false,
+          },
     ),
     (
       ClipLinkKind.meeting,
@@ -315,9 +325,10 @@ class ClipLink {
       (h, u) =>
           _hostIs(h, 'whereby.com') &&
           !_wherebySites.contains(h) &&
-          u.pathSegments.length == 1 &&
-          u.pathSegments.first.isNotEmpty &&
-          !_wherebyPages.contains(u.pathSegments.first.toLowerCase()),
+          switch (_segments(u)) {
+            [final room] => !_wherebyPages.contains(room.toLowerCase()),
+            _ => false,
+          },
     ),
     (
       ClipLinkKind.music,
@@ -1171,7 +1182,39 @@ class ClipLink {
     'Bandcamp',
   };
   static const _shortMusicHosts = {'spotify.link', 'deezer.page.link'};
-  static final _trackOrAlbum = RegExp('(^|[/:])(tracks?|albums?|song)[/:]');
+
+  /// The segments before a music service's route: a storefront country
+  /// (`/us/`), Spotify's `/intl-de/`, TIDAL's `/browse/`.
+  static final _routePrefix = RegExp(
+    r'^([a-z]{2}(-[a-z]{2})?|intl-[a-z]{2}|browse)$',
+  );
+  static const _itemRoutes = {'track', 'tracks', 'album', 'albums', 'song'};
+
+  /// Whether [path]'s route - its first segment past any [_routePrefix] - is
+  /// a track or an album, not merely a segment named so further along
+  /// (`/us/playlist/album/pl.abc`, a playlist titled "album").
+  static bool _isTrackOrAlbum(String path) => _itemRoutes.contains(
+    path
+        .split(_routeSeparator)
+        .where((s) => s.isNotEmpty)
+        .map((s) => s.toLowerCase())
+        .skipWhile(_routePrefix.hasMatch)
+        .firstOrNull,
+  );
+  static final _routeSeparator = RegExp('[/:]');
+
+  /// A SoundCloud user's own pages, beside their tracks at `/<user>/<track>`.
+  static const _soundCloudPages = {
+    'sets',
+    'tracks',
+    'albums',
+    'popular-tracks',
+    'likes',
+    'reposts',
+    'followers',
+    'following',
+    'comments',
+  };
 
   /// The link song.link is given for a song or album, or null for what it
   /// cannot resolve.
@@ -1186,14 +1229,19 @@ class ClipLink {
     // song.link resolves. Short links are given the benefit of the doubt.
     if (_routedMusic.contains(service) &&
         !_shortMusicHosts.contains(uri.host) &&
-        !_trackOrAlbum.hasMatch(uri.path)) {
+        !_isTrackOrAlbum(uri.path)) {
       return null;
     }
-    if (service == 'Apple Podcasts' ||
-        // A SoundCloud set is a playlist, which song.link does not resolve.
-        (service == 'SoundCloud' &&
-            uri.pathSegments.elementAtOrNull(1) == 'sets')) {
-      return null;
+    if (service == 'Apple Podcasts') return null;
+    // A SoundCloud track is /<user>/<track>: not a profile (/<user>), nor a
+    // set, which is a playlist, nor the user's other pages. Its short links
+    // say nothing in the path.
+    if (service == 'SoundCloud' && uri.host != 'on.soundcloud.com') {
+      final segments = _segments(uri);
+      if (segments.length < 2 ||
+          _soundCloudPages.contains(segments[1].toLowerCase())) {
+        return null;
+      }
     }
     // On YouTube Music, a song (/watch) or an album: its /browse/MPREb page,
     // or a playlist whose id starts OLAK5uy. Any other playlist is someone's
