@@ -1266,6 +1266,8 @@ void main() {
           'https://soundcloud.com/forss/likes',
           'https://open.spotify.com/track',
           'https://www.deezer.com/album/',
+          'https://music.youtube.com/watch',
+          'https://music.youtube.com/watchlater?v=abc',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),

@@ -230,9 +230,6 @@ class ClipLink {
       if (s.isNotEmpty) s,
   ];
 
-  static bool _pathStarts(Uri uri, String prefix) =>
-      uri.path.toLowerCase().startsWith(prefix);
-
   /// A Teams invitation in its older form: `/l/meetup-join/<id>`.
   static bool _teamsInvite(Uri uri) => switch (uri.pathSegments) {
     ['l', final route, final id, ...] =>
@@ -1252,10 +1249,14 @@ class ClipLink {
     // or a playlist whose id starts OLAK5uy. Any other playlist is someone's
     // list, and a channel an artist, neither of which song.link resolves.
     if (service == 'YouTube Music' &&
-        !(_pathStarts(uri, '/watch') ||
-            _pathStarts(uri, '/browse/mpreb') ||
-            (_pathStarts(uri, '/playlist') &&
-                (uri.queryParameters['list'] ?? '').startsWith('OLAK5uy')))) {
+        !switch ([for (final s in _segments(uri)) s.toLowerCase()]) {
+          ['watch'] => (uri.queryParameters['v'] ?? '').isNotEmpty,
+          ['browse', final id] => id.startsWith('mpreb'),
+          ['playlist'] => (uri.queryParameters['list'] ?? '').startsWith(
+            'OLAK5uy',
+          ),
+          _ => false,
+        }) {
       return null;
     }
     final track = uri.queryParameters['i'];
