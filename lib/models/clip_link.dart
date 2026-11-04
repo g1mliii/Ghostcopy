@@ -217,7 +217,8 @@ class ClipLink {
 
   static final _aboutSite = RegExp(
     '^(help|support|developers?|docs|blog|status|community|press|newsroom|'
-    r'investors?|careers|jobs|artists|creators|partners|ads|business|api)\.',
+    'investors?|careers|jobs|artists|creators|partners|ads|business|'
+    r'api(-v\d+)?)\.',
   );
 
   static bool _hostIs(String host, String domain) =>
@@ -1200,9 +1201,9 @@ class ClipLink {
   };
 
   /// The segments before a music service's route: a storefront country
-  /// (`/us/`), Spotify's `/intl-de/`, TIDAL's `/browse/`.
+  /// (`/us/`), Spotify's `/intl-de/` and `/embed/`, TIDAL's `/browse/`.
   static final _routePrefix = RegExp(
-    r'^([a-z]{2}(-[a-z]{2})?|intl-[a-z]{2}|browse)$',
+    r'^([a-z]{2}(-[a-z]{2})?|intl-[a-z]{2}|browse|embed)$',
     caseSensitive: false,
   );
   static const _itemRoutes = {'track', 'tracks', 'album', 'albums', 'song'};

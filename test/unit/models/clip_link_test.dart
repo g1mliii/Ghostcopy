@@ -1235,6 +1235,7 @@ void main() {
             ClipLinkKind.music,
           ),
           ('https://api.soundcloud.com/tracks/123', ClipLinkKind.music),
+          ('https://api-v2.soundcloud.com/tracks/123', ClipLinkKind.music),
         ]) {
           expect(ClipLink.detect(text)?.kind, isNot(kind), reason: text);
         }
@@ -1309,6 +1310,7 @@ void main() {
         }
         for (final text in [
           'https://open.spotify.com/intl-de/track/abc',
+          'https://open.spotify.com/embed/track/0Lr4kGOYn9l83EjuK6cZFQ',
           'spotify:album:abc',
           'https://artist.bandcamp.com/track/song',
           'https://www.deezer.com/us/album/302127',
