@@ -1046,26 +1046,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 slivers: [
                   if (_historyCollapsed)
                     // History folded away: the composer grows with its text
-                    // into the room history left, up to what is left of the
-                    // screen after the chips, Send and the history heading,
-                    // and then scrolls inside itself. The controls follow
-                    // straight under it, as in any compose screen.
+                    // up to what the screen above the keyboard leaves after
+                    // the chips, Send and the history heading, then scrolls
+                    // inside itself, with the controls straight under it.
                     //
-                    // A capped height - the viewport's, or more when that is
-                    // too short - rather than SliverFillRemaining, which sizes
-                    // to its child's intrinsic height: that is the full height
-                    // of the composer's TEXT, so a long paste grew the box past
-                    // the screen instead of scrolling inside it. The viewport
-                    // is what is above the keyboard, so with it up the
-                    // composer's cap shrinks and its text scrolls; on a small
-                    // phone the floor makes the page scroll rather than squash
-                    // the composer below a few lines.
-                    //
-                    // A cap, not a fixed height: the page is as tall as what is
-                    // on it. A fixed floor-high box left a short composer with
-                    // blank page under the history heading to scroll into,
-                    // whenever the floor beat the viewport - keyboard up on a
-                    // small phone, landscape, or large text.
+                    // The page is capped at the viewport - or the floor, when
+                    // that is taller, so a small phone scrolls the page
+                    // rather than squash the composer - but only as tall as
+                    // what is on it, so there is no blank page to scroll
+                    // into. Not SliverFillRemaining: that sizes to the
+                    // composer's full text height, so a long paste grew past
+                    // the screen instead of scrolling inside the box.
                     SliverToBoxAdapter(
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
