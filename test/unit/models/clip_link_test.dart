@@ -1198,6 +1198,30 @@ void main() {
           ClipLinkKind.meeting,
         );
         for (final text in [
+          'https://acme.webex.com/meet/',
+          'https://acme.webex.com/join/',
+          'https://acme.webex.com/acme/j.php-notes',
+          'https://meet.google.com/abc-defg-hij-notes',
+          'https://meet.google.com/abc-defg-hij/unrelated',
+        ]) {
+          expect(
+            ClipLink.detect(text)?.kind,
+            isNot(ClipLinkKind.meeting),
+            reason: text,
+          );
+        }
+        for (final text in [
+          'https://acme.webex.com/meet/jdoe',
+          'https://acme.webex.com/acme/j.php?MTID=m123',
+          'https://meet.google.com/abc-defg-hij/',
+        ]) {
+          expect(
+            ClipLink.detect(text)?.kind,
+            ClipLinkKind.meeting,
+            reason: text,
+          );
+        }
+        for (final text in [
           '192.0.2.1:8080',
           '198.51.100.1/status',
           '203.0.113.1:80',

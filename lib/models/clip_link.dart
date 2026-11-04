@@ -206,7 +206,9 @@ class ClipLink {
 
   // A meeting code, or Classroom's stable /lookup/<id> link to a class's
   // current meeting.
-  static final _meetCode = RegExp(r'^/([a-z]{3}-[a-z]{4}-[a-z]{3}|lookup/\w+)');
+  static final _meetCode = RegExp(
+    r'^/([a-z]{3}-[a-z]{4}-[a-z]{3}|lookup/\w+)/?$',
+  );
   // Amazon's own storefront domains, not any suffix after `amazon.`
   // (`music.amazon.attacker.com`).
   static final _amazonMusic = RegExp(
@@ -223,6 +225,21 @@ class ClipLink {
 
   static bool _pathStarts(Uri uri, String prefix) =>
       uri.path.toLowerCase().startsWith(prefix);
+
+  /// A Webex invitation: `<site>/j.php?MTID=...`, or a personal room at
+  /// `/meet/<name>` or `/join/<name>`.
+  static bool _webexMeeting(Uri uri) {
+    final s = [for (final p in uri.pathSegments) p.toLowerCase()];
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] == 'j.php') return true;
+      if ((s[i] == 'meet' || s[i] == 'join') &&
+          i + 1 < s.length &&
+          s[i + 1].isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /// Whether [uri]'s path is [route] and then an id: `/meet/<id>`, not a
   /// bare `/meet/`.
@@ -269,11 +286,7 @@ class ClipLink {
     (
       ClipLinkKind.meeting,
       'Webex',
-      (h, u) =>
-          _hostIs(h, 'webex.com') &&
-          (u.path.contains('/meet/') ||
-              u.path.contains('/join/') ||
-              u.path.contains('j.php')),
+      (h, u) => _hostIs(h, 'webex.com') && _webexMeeting(u),
     ),
     // An invitation, not the FaceTime site itself.
     (
