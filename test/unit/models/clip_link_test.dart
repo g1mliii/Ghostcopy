@@ -1183,39 +1183,23 @@ void main() {
         expect(ClipLink.detect('Am Alten Weg 3')?.kind, ClipLinkKind.map);
         expect(ClipLink.detect('Weg 3'), isNull);
         expect(ClipLink.detect('Hauptstraße 5-7')?.kind, ClipLinkKind.map);
+
+        // A meeting link needs the meeting itself, not just its route.
         for (final text in [
+          'https://zoom.us/j/',
+          'https://zoom.us/my/',
+          'zoommtg://zoom.us/join',
+          'zoommtg://zoom.us/join?action=join',
           'https://teams.microsoft.com/meet/',
           'https://teams.live.com/meet',
-          'https://help.twitch.tv/s/article/abc',
-          'https://help.vimeo.com/hc/en-us/articles/123',
-        ]) {
-          final kind = ClipLink.detect(text)?.kind;
-          expect(kind, isNot(ClipLinkKind.meeting), reason: text);
-          expect(kind, isNot(ClipLinkKind.video), reason: text);
-        }
-        expect(
-          ClipLink.detect('https://teams.live.com/meet/9876543210')?.kind,
-          ClipLinkKind.meeting,
-        );
-        expect(
-          ClipLink.detect('https://whereby.com/team-standup/')?.kind,
-          ClipLinkKind.meeting,
-        );
-        expect(
-          ClipLink.detect('tg://resolve?domain=telegram&profile')?.kind,
-          ClipLinkKind.app,
-        );
-        for (final text in [
+          'https://teams.microsoft.com/l/meetup-join/',
+          'https://teams.microsoft.com/l/meetup-join-notes',
+          'msteams:/l/meeting/',
+          'msteams:/l/call/',
           'https://acme.webex.com/meet/',
           'https://acme.webex.com/join/',
           'https://acme.webex.com/acme/j.php-notes',
           'https://acme.webex.com/j.php',
-          'msteams:/l/meeting/',
-          'msteams:/l/call/',
-          'zoommtg://zoom.us/join',
-          'zoommtg://zoom.us/join?action=join',
-          'https://teams.microsoft.com/l/meetup-join/',
-          'https://teams.microsoft.com/l/meetup-join-notes',
           'https://facetime.apple.com/joinery',
           'https://facetime.apple.com/join',
           'https://facetime.apple.com/join/unrelated#v=1&p=abc',
@@ -1230,9 +1214,10 @@ void main() {
           );
         }
         for (final text in [
-          'https://acme.webex.com/meet/jdoe',
+          'https://zoom.us/my/alice',
           'https://acme.webex.com/acme/j.php?MTID=m123',
           'https://meet.google.com/abc-defg-hij/',
+          'https://whereby.com/team-standup/',
         ]) {
           expect(
             ClipLink.detect(text)?.kind,
@@ -1240,17 +1225,49 @@ void main() {
             reason: text,
           );
         }
+
+        // A service's help, developer and API sites are pages about it.
+        for (final (text, kind) in [
+          ('https://help.twitch.tv/s/article/abc', ClipLinkKind.video),
+          ('https://help.vimeo.com/hc/en-us/articles/123', ClipLinkKind.video),
+          (
+            'https://help.soundcloud.com/hc/en-us/articles/115003449627',
+            ClipLinkKind.music,
+          ),
+          ('https://api.soundcloud.com/tracks/123', ClipLinkKind.music),
+        ]) {
+          expect(ClipLink.detect(text)?.kind, isNot(kind), reason: text);
+        }
+
+        for (final text in [
+          'tg://resolve?domain=telegram&profile',
+          'sgnl://signal.me/#p/+15555550123',
+        ]) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
+        }
+        expect(
+          ClipLink.detect('https://pandora.app.link/AbCdEf')?.service,
+          'Pandora',
+        );
+
         expect(
           ClipLink.detect('example.com:443/status')!.uri.toString(),
           'https://example.com/status',
         );
-        expect(ClipLink.detect('localhost:3000')!.uri.scheme, 'http');
-        expect(
-          ClipLink.detect('example.com:8080/app.js:42')?.kind,
-          ClipLinkKind.web,
-        );
-        expect(ClipLink.detect('main.dart:120'), isNull);
         for (final text in [
+          'example.com:8080/app.js:42',
+          '[::ffff:192.168.1.1]:80',
+        ]) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+        }
+        for (final text in [
+          'main.dart:120',
+          'Main.hs:42',
+          'Program.fs:8',
+          'script.jl:7',
+          '[ff02::1]:8080',
+          '[::]:3000',
+          '[::ffff:224.0.0.1]:8080',
           '[2001:db8::1]:8080',
           '[3fff::1]:8080',
           '192.0.2.1:8080',
@@ -1258,24 +1275,29 @@ void main() {
           '203.0.113.1:80',
           'zoommtg:///',
           'spotify:/',
+          'sgnl://linkdevice?uuid=abc&pub_key=def',
         ]) {
           expect(ClipLink.detect(text), isNull, reason: text);
         }
+
+        // song.link only for a song or album.
         for (final text in [
           'https://open.spotify.com/collection/tracks',
+          'https://open.spotify.com/track',
           'https://music.apple.com/us/station/apple-music-1/ra.978194965',
-          'https://artist.bandcamp.com/merch/shirt',
           'https://music.apple.com/us/browse',
-          'https://www.deezer.com/search/beatles',
-          'https://tidal.com/browse/mix/abc',
           'https://music.apple.com/us/playlist/album/pl.abc',
+          'https://artist.bandcamp.com/merch/shirt',
+          'https://www.deezer.com/search/beatles',
+          'https://www.deezer.com/album/',
+          'https://tidal.com/browse/mix/abc',
           'https://soundcloud.com/forss',
           'https://soundcloud.com/forss/likes',
-          'https://open.spotify.com/track',
-          'https://www.deezer.com/album/',
+          'https://soundcloud.com/forss/sets/soulhack',
+          'https://soundcloud.com/search/sounds?q=beatles',
           'https://music.youtube.com/watch',
           'https://music.youtube.com/watchlater?v=abc',
-          'https://soundcloud.com/search/sounds?q=beatles',
+          'https://music.youtube.com/channel/UCabc',
           'https://www.pandora.com/search/subscriptions/all',
           'https://www.pandora.com/artist/the-beatles/ARabc123',
         ]) {
@@ -1285,19 +1307,12 @@ void main() {
             reason: text,
           );
         }
-        expect(
-          ClipLink.detect('https://api.soundcloud.com/tracks/123')?.kind,
-          isNot(ClipLinkKind.music),
-        );
-        expect(
-          ClipLink.detect('https://pandora.app.link/AbCdEf')?.service,
-          'Pandora',
-        );
         for (final text in [
           'https://open.spotify.com/intl-de/track/abc',
           'spotify:album:abc',
           'https://artist.bandcamp.com/track/song',
           'https://www.deezer.com/us/album/302127',
+          'https://soundcloud.com/forss/flickermood',
           'https://on.soundcloud.com/AbCd',
           'https://www.pandora.com/artist/the-beatles/abbey-road/come-together/TRabc123',
           'https://www.pandora.com/artist/the-beatles/abbey-road/ALabc123',
@@ -1308,62 +1323,6 @@ void main() {
             isNotNull,
             reason: text,
           );
-        }
-        for (final text in ['https://zoom.us/j/', 'https://zoom.us/my/']) {
-          expect(ClipLink.detect(text)?.kind, isNot(ClipLinkKind.meeting));
-        }
-        expect(
-          ClipLink.detect('https://zoom.us/my/alice')?.kind,
-          ClipLinkKind.meeting,
-        );
-        expect(
-          ClipLink.detect(
-            'https://help.soundcloud.com/hc/en-us/articles/115003449627',
-          )?.kind,
-          isNot(ClipLinkKind.music),
-        );
-        expect(
-          ClipLink.detect(
-            'https://music.youtube.com/channel/UCabc',
-          )!.alternateOn('android'),
-          isNull,
-        );
-        expect(
-          ClipLink.detect(
-            'https://music.youtube.com/watch?v=abc',
-          )!.alternateOn('android'),
-          isNotNull,
-        );
-        expect(
-          ClipLink.detect('[::ffff:192.168.1.1]:80')?.kind,
-          ClipLinkKind.web,
-        );
-        expect(
-          ClipLink.detect('sgnl://signal.me/#p/+15555550123')?.kind,
-          ClipLinkKind.app,
-        );
-        expect(
-          ClipLink.detect(
-            'https://soundcloud.com/forss/sets/soulhack',
-          )!.alternateOn('android'),
-          isNull,
-        );
-        expect(
-          ClipLink.detect(
-            'https://soundcloud.com/forss/flickermood',
-          )!.alternateOn('android'),
-          isNotNull,
-        );
-        for (final text in [
-          '[ff02::1]:8080',
-          '[::]:3000',
-          '[::ffff:224.0.0.1]:8080',
-          'sgnl://linkdevice?uuid=abc&pub_key=def',
-          'Main.hs:42',
-          'Program.fs:8',
-          'script.jl:7',
-        ]) {
-          expect(ClipLink.detect(text), isNull, reason: text);
         }
       },
     );

@@ -188,15 +188,15 @@ class ClipLink {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
     }
     final site = host.startsWith('www.') ? host.substring(4) : host;
-    // A music service's home page is a page, not something to play or find
-    // elsewhere: song.link has nothing to resolve for `open.spotify.com/`.
-    final hasPath = uri.pathSegments.any((s) => s.isNotEmpty);
+    // A music or video service's home page is a page, not something to play
+    // or find elsewhere: song.link has nothing to resolve for
+    // `open.spotify.com/`, and youtube.com/ is not something to watch. Nor
+    // are its help, developer and company sites (help.twitch.tv,
+    // artists.spotify.com), which are pages about the service.
+    final media = _segments(uri).isNotEmpty && !_aboutSite.hasMatch(site);
     for (final (kind, name, matches) in _webServices) {
-      // Nor is a video site's: youtube.com/ is not something to watch.
-      // Nor are its help, developer and company sites (help.twitch.tv,
-      // artists.spotify.com), which are pages about the service.
       if ((kind == ClipLinkKind.music || kind == ClipLinkKind.video) &&
-          (!hasPath || _aboutSite.hasMatch(site))) {
+          !media) {
         continue;
       }
       if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
@@ -230,6 +230,12 @@ class ClipLink {
       if (s.isNotEmpty) s,
   ];
 
+  /// [_segments], lowercased, for matching routes.
+  static List<String> _lowerSegments(Uri uri) => [
+    for (final s in uri.pathSegments)
+      if (s.isNotEmpty) s.toLowerCase(),
+  ];
+
   /// [uri]'s fragment read as a query: `#v=1&p=...` - empty if it is not one.
   static Map<String, String> _fragmentParameters(Uri uri) {
     try {
@@ -239,36 +245,29 @@ class ClipLink {
     }
   }
 
-  /// A Teams invitation in its older form: `/l/meetup-join/<id>`.
-  static bool _teamsInvite(Uri uri) => switch (uri.pathSegments) {
-    ['l', final route, final id, ...] =>
-      route.toLowerCase() == 'meetup-join' && id.isNotEmpty,
-    _ => false,
-  };
-
   /// A Webex invitation: `<site>/j.php?MTID=...`, or a personal room at
   /// `/meet/<name>` or `/join/<name>`.
   static bool _webexMeeting(Uri uri) {
-    final s = [for (final p in uri.pathSegments) p.toLowerCase()];
+    final s = _lowerSegments(uri);
     for (var i = 0; i < s.length; i++) {
       if (s[i] == 'j.php') {
         return (uri.queryParameters['MTID'] ?? '').isNotEmpty;
       }
-      if ((s[i] == 'meet' || s[i] == 'join') &&
-          i + 1 < s.length &&
-          s[i + 1].isNotEmpty) {
-        return true;
-      }
+      if ((s[i] == 'meet' || s[i] == 'join') && i + 1 < s.length) return true;
     }
     return false;
   }
 
-  /// Whether [uri]'s path is [route] and then an id: `/meet/<id>`, not a
-  /// bare `/meet/`.
-  static bool _idAfter(Uri uri, String route) => switch (uri.pathSegments) {
-    [final r, final id, ...] => r.toLowerCase() == route && id.isNotEmpty,
-    _ => false,
-  };
+  /// Whether [uri]'s path starts with the segments of [route] and then an
+  /// id: `/meet/<id>`, not a bare `/meet/`.
+  static bool _idAfter(Uri uri, List<String> route) {
+    final s = uri.pathSegments;
+    if (s.length <= route.length || s[route.length].isEmpty) return false;
+    for (var i = 0; i < route.length; i++) {
+      if (s[i].toLowerCase() != route[i]) return false;
+    }
+    return true;
+  }
 
   /// Web links that belong to a service with an app of its own. Checked in
   /// order, so YouTube Music is music before YouTube is video.
@@ -280,10 +279,10 @@ class ClipLink {
       (h, u) =>
           // Zoom, and Zoom for Government.
           (_hostIs(h, 'zoom.us') || _hostIs(h, 'zoomgov.com')) &&
-          switch ([for (final s in u.pathSegments) s.toLowerCase()]) {
-            ['j' || 'my' || 'w' || 's', final id, ...] => id.isNotEmpty,
+          switch (_lowerSegments(u)) {
+            ['j' || 'my' || 'w' || 's', _, ...] => true,
             // The Zoom Web App: /wc/<meeting>/join.
-            ['wc', final id, ..., 'join'] => id.isNotEmpty,
+            ['wc', _, ..., 'join'] => true,
             _ => false,
           },
     ),
@@ -299,11 +298,12 @@ class ClipLink {
           (h == 'teams.microsoft.com' &&
               // Older invitations, and the shorter /meet/<id>?p=... ones
               // new meetings get.
-              (_teamsInvite(u) || _idAfter(u, 'meet'))) ||
-          (h == 'teams.live.com' && _idAfter(u, 'meet')) ||
+              (_idAfter(u, const ['l', 'meetup-join']) ||
+                  _idAfter(u, const ['meet']))) ||
+          (h == 'teams.live.com' && _idAfter(u, const ['meet'])) ||
           // US government clouds: GCC High and DoD.
           ((h == 'gov.teams.microsoft.us' || h == 'dod.teams.microsoft.us') &&
-              _teamsInvite(u)),
+              _idAfter(u, const ['l', 'meetup-join'])),
     ),
     (
       ClipLinkKind.meeting,
@@ -525,19 +525,15 @@ class ClipLink {
     final app = _appSchemes[scheme];
     if (app == null) return null;
     final uri = Uri.tryParse(text);
+    if (uri == null) return null;
+    final hostPath = '${uri.host}${uri.path}';
+    final route = hostPath.replaceAll(_edgeSlashes, '');
     // A scheme with nothing after it (`zoommtg://`, `spotify:/`) opens
     // nothing.
-    if (uri == null ||
-        '${uri.host}${uri.path}'.replaceAll(_edgeSlashes, '').isEmpty) {
-      return null;
-    }
+    if (route.isEmpty) return null;
     if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
     if (_navigation[scheme] case (:final routes, params: final allowed)?) {
-      final route = '${uri.host}${uri.path}'.toLowerCase().replaceAll(
-        _edgeSlashes,
-        '',
-      );
-      if (!routes.contains(route)) return null;
+      if (!routes.contains(route.toLowerCase())) return null;
       // A navigation route can still be told to act - Drafts' `open` runs
       // `action=` on the draft it opens, Bear's `open-note` pins it with
       // `pin=yes`, and every x-callback-url route follows `x-success=` to
@@ -550,8 +546,7 @@ class ClipLink {
     var (kind, name) = app;
     // Teams links go to chats, channels, files and tabs as well as meetings;
     // only a meeting or call link is joined.
-    if (scheme == 'msteams' &&
-        !_teamsMeetingPath.hasMatch('${uri.host}${uri.path}')) {
+    if (scheme == 'msteams' && !_teamsMeetingPath.hasMatch(hostPath)) {
       kind = ClipLinkKind.app;
     }
     // A Zoom link joins the meeting its confno names; without one it only
@@ -615,7 +610,7 @@ class ClipLink {
         (!_hostWithPort.hasMatch(text) ||
             // Only the host and port can be a file and line: after them,
             // `/app.js:42` is plainly the URL's own path.
-            _fileAndLine.hasMatch(text.split(_pathStart).first))) {
+            _fileAndLine.hasMatch(_authority(text)))) {
       return null;
     }
     if (match?.group(2) != null) {
@@ -627,33 +622,16 @@ class ClipLink {
       // too - but never multicast, broadcast or the reserved blocks, which
       // serve no page either way.
       final bare = address.length == text.length;
-      if (!isLocalUnicastIPv4(octets) && (bare || isNonPublicIPv4(octets))) {
+      if (!isLocalUnicastIPv4(octets) && (bare || isReservedIPv4(octets))) {
         return null;
       }
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
-    // A bracketed IPv6 address: never the unspecified `::` or multicast
-    // (ff00::/8), which no browser opens a page on.
-    if (uri.host.contains(':')) {
-      final bytes = Uri.parseIPv6Address(uri.host.split('%').first);
-      if (bytes[0] == 0xff || bytes.every((b) => b == 0)) return null;
-      // Documentation: 2001:db8::/32 and 3fff::/20.
-      if ((bytes[0] == 0x20 &&
-              bytes[1] == 0x01 &&
-              bytes[2] == 0x0d &&
-              bytes[3] == 0xb8) ||
-          (bytes[0] == 0x3f && bytes[1] == 0xff && bytes[2] < 0x10)) {
-        return null;
-      }
-      // IPv4-mapped (::ffff:0:0/96): the IPv4 address's own rules.
-      if (bytes.take(10).every((b) => b == 0) &&
-          bytes[10] == 0xff &&
-          bytes[11] == 0xff &&
-          isNonPublicIPv4(bytes.sublist(12)) &&
-          !isLocalUnicastIPv4(bytes.sublist(12))) {
-        return null;
-      }
+    // A bracketed IPv6 address, unless it is one that serves no page.
+    if (uri.host.contains(':') &&
+        isUnservableIPv6(Uri.parseIPv6Address(uri.host.split('%').first))) {
+      return null;
     }
     // Five digits reach 99999; a port runs 1-65535, 0 being reserved.
     if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
@@ -661,6 +639,14 @@ class ClipLink {
     final target = uri.port == 443 ? uri.replace(scheme: 'https') : uri;
     return ClipLink._(ClipLinkKind.web, target, uri.host);
   }
+
+  /// [text] up to its path, query or fragment: the host and port.
+  static String _authority(String text) {
+    final end = text.indexOf(_pathStart);
+    return end < 0 ? text : text.substring(0, end);
+  }
+
+  static final _pathStart = RegExp('[/?#]');
 
   static final _trailingZeros = RegExp(r'\.?0+$');
   static final _decimalCoordinates = RegExp(
@@ -1193,9 +1179,9 @@ class ClipLink {
     }
   }
 
-  // The services whose paths name what they lead to - not Pandora, which
-  // keeps tracks under /artist/, nor SoundCloud, whose paths are a user's own
-  // names - and their short-link hosts, whose paths say nothing.
+  // The services whose paths name what they lead to: /track/<id>,
+  // /album/<id>. Not Pandora, which keeps tracks under /artist/, nor
+  // SoundCloud, whose paths are a user's own names.
   static const _routedMusic = {
     'Spotify',
     'Apple Music',
@@ -1204,29 +1190,37 @@ class ClipLink {
     'Amazon Music',
     'Bandcamp',
   };
-  static const _shortMusicHosts = {'spotify.link', 'deezer.page.link'};
+
+  /// Short-link hosts, whose paths say nothing about what they lead to.
+  static const _shortMusicHosts = {
+    'spotify.link',
+    'deezer.page.link',
+    'on.soundcloud.com',
+    'pandora.app.link',
+  };
 
   /// The segments before a music service's route: a storefront country
   /// (`/us/`), Spotify's `/intl-de/`, TIDAL's `/browse/`.
   static final _routePrefix = RegExp(
     r'^([a-z]{2}(-[a-z]{2})?|intl-[a-z]{2}|browse)$',
+    caseSensitive: false,
   );
   static const _itemRoutes = {'track', 'tracks', 'album', 'albums', 'song'};
 
   /// Whether [path]'s route - its first segment past any [_routePrefix] - is
-  /// a track or an album, not merely a segment named so further along
-  /// (`/us/playlist/album/pl.abc`, a playlist titled "album")...
-  /// ...and then names one: `/track/<id>`, not a bare `/track`.
+  /// a track or an album and then names one: `/track/<id>`, not a bare
+  /// `/track`, nor a segment named so further along
+  /// (`/us/playlist/album/pl.abc`, a playlist titled "album"). Split on `:`
+  /// too, for `spotify:album:<id>`.
   static bool _isTrackOrAlbum(String path) => switch (path
       .split(_routeSeparator)
       .where((s) => s.isNotEmpty)
-      .skipWhile((s) => _routePrefix.hasMatch(s.toLowerCase()))
+      .skipWhile(_routePrefix.hasMatch)
       .toList()) {
     [final route, _, ...] => _itemRoutes.contains(route.toLowerCase()),
     _ => false,
   };
   static final _routeSeparator = RegExp('[/:]');
-  static final _pathStart = RegExp('[/?#]');
 
   /// SoundCloud's own pages, where a user's name would otherwise be.
   static const _soundCloudSite = {
@@ -1259,6 +1253,35 @@ class ClipLink {
     'comments',
   };
 
+  /// Whether [uri], on its music service, leads to a song or an album.
+  bool get _namesSongOrAlbum => switch (service) {
+    'Apple Podcasts' => false,
+    // /<user>/<track>: not a profile (/<user>), nor a set, which is a
+    // playlist, nor the user's other pages or SoundCloud's own.
+    'SoundCloud' => switch (_lowerSegments(uri)) {
+      [final user, final track, ...] =>
+        !_soundCloudSite.contains(user) && !_soundCloudPages.contains(track),
+      _ => false,
+    },
+    // Under its artist, ending in its id: /artist/<artist>/<album>/AL...,
+    // /artist/<artist>/<album>/<track>/TR....
+    'Pandora' => switch (_segments(uri)) {
+      [final artist, ..., final id] =>
+        artist.toLowerCase() == 'artist' && _pandoraItem.hasMatch(id),
+      _ => false,
+    },
+    // A song (/watch) or an album: its /browse/MPREb page, or a playlist
+    // whose id starts OLAK5uy. Any other playlist is someone's list.
+    'YouTube Music' => switch (_lowerSegments(uri)) {
+      ['watch'] => (uri.queryParameters['v'] ?? '').isNotEmpty,
+      ['browse', final id] => id.startsWith('mpreb'),
+      ['playlist'] => (uri.queryParameters['list'] ?? '').startsWith('OLAK5uy'),
+      _ => false,
+    },
+    final name? when _routedMusic.contains(name) => _isTrackOrAlbum(uri.path),
+    _ => true,
+  };
+
   /// The link song.link is given for a song or album, or null for what it
   /// cannot resolve.
   ///
@@ -1267,48 +1290,10 @@ class ClipLink {
   /// its own path, can read as its own and resolve the album: it is given as
   /// the track's own `/song/` link instead.
   String? get _songLinkTarget {
-    // On those services, a link to anything but a track or album - Liked
-    // Songs, a search, a radio station, a Mix, an artist's merch - is nothing
+    // A link to anything but a song or album - Liked Songs, a search, a
+    // radio station, a Mix, a profile, an artist's merch - is nothing
     // song.link resolves. Short links are given the benefit of the doubt.
-    if (_routedMusic.contains(service) &&
-        !_shortMusicHosts.contains(uri.host) &&
-        !_isTrackOrAlbum(uri.path)) {
-      return null;
-    }
-    if (service == 'Apple Podcasts') return null;
-    // A SoundCloud track is /<user>/<track>: not a profile (/<user>), nor a
-    // set, which is a playlist, nor the user's other pages. Its short links
-    // say nothing in the path.
-    if (service == 'SoundCloud' && uri.host != 'on.soundcloud.com') {
-      final segments = _segments(uri);
-      if (segments.length < 2 ||
-          _soundCloudSite.contains(segments[0].toLowerCase()) ||
-          _soundCloudPages.contains(segments[1].toLowerCase())) {
-        return null;
-      }
-    }
-    // A Pandora album or track sits under its artist and ends in its id:
-    // /artist/<artist>/<album>/AL..., /artist/<artist>/<album>/<track>/TR....
-    // Its share links say nothing in the path.
-    if (service == 'Pandora' && uri.host != 'pandora.app.link') {
-      final segments = _segments(uri);
-      if (segments.firstOrNull?.toLowerCase() != 'artist' ||
-          !_pandoraItem.hasMatch(segments.last)) {
-        return null;
-      }
-    }
-    // On YouTube Music, a song (/watch) or an album: its /browse/MPREb page,
-    // or a playlist whose id starts OLAK5uy. Any other playlist is someone's
-    // list, and a channel an artist, neither of which song.link resolves.
-    if (service == 'YouTube Music' &&
-        !switch ([for (final s in _segments(uri)) s.toLowerCase()]) {
-          ['watch'] => (uri.queryParameters['v'] ?? '').isNotEmpty,
-          ['browse', final id] => id.startsWith('mpreb'),
-          ['playlist'] => (uri.queryParameters['list'] ?? '').startsWith(
-            'OLAK5uy',
-          ),
-          _ => false,
-        }) {
+    if (!_shortMusicHosts.contains(uri.host) && !_namesSongOrAlbum) {
       return null;
     }
     final track = uri.queryParameters['i'];

@@ -210,11 +210,8 @@ class WebhookService implements IWebhookService {
       if (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80) return true;
       // IPv4-mapped ::ffff:a.b.c.d - judge the embedded IPv4, or an internal
       // target could be reached simply by writing it in IPv6 form.
-      final isV4Mapped =
-          bytes.take(10).every((b) => b == 0) &&
-          bytes[10] == 0xFF &&
-          bytes[11] == 0xFF;
-      if (isV4Mapped) return isNonPublicIPv4(bytes.sublist(12));
+      final v4 = ipv4Mapped(bytes);
+      if (v4 != null) return isNonPublicIPv4(v4);
     }
 
     return false;
