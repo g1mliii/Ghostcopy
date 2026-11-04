@@ -1670,9 +1670,7 @@ Future<void> _registerDesktopShortcuts() => _queueHotkeyUpdate(() async {
 });
 
 Future<void> _registerSendHotkey(HotKey? hotkey) async {
-  if (hotkey != null && hotkey == _activeHotkey) {
-    throw HotkeyInUseException(hotkey);
-  }
+  if (hotkey == _activeHotkey) throw HotkeyInUseException(_activeHotkey);
   final service = locator<IHotkeyService>();
   final previous = _activeSendHotkey;
   if (previous == hotkey) return;

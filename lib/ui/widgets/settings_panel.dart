@@ -1607,25 +1607,22 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
       await applySendHotkey(key);
       if (mounted) setState(() => _sendHotkey = key);
     } on HotkeyInUseException {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${formatHotkey(key!)} already opens GhostCopy. '
-            'Choose another combination.',
-          ),
-        ),
+      _showShortcutError(
+        '${formatHotkey(key!)} already opens GhostCopy. '
+        'Choose another combination.',
       );
     } on Exception {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not apply send shortcut. Try another combination.',
-          ),
-        ),
+      _showShortcutError(
+        'Could not apply send shortcut. Try another combination.',
       );
     }
+  }
+
+  void _showShortcutError(String message, {Color? background}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: background),
+    );
   }
 
   /// Apply a newly captured hotkey: register it, persist it, and only then
@@ -1639,40 +1636,21 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
     try {
       await applyHotkey(newHotkey);
-    } on HotkeyInUseException {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${formatHotkey(newHotkey)} already sends the clipboard. '
-            'Your previous shortcut is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    } on UnsupportedHotkeyException {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${formatHotkey(newHotkey)} cannot be used as a shortcut. '
-            'Your previous shortcut is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
+    } on UnsupportedHotkeyException catch (e) {
+      final why = e is HotkeyInUseException
+          ? 'already sends the clipboard'
+          : 'cannot be used as a shortcut';
+      _showShortcutError(
+        '${formatHotkey(newHotkey)} $why. '
+        'Your previous shortcut is still active.',
+        background: Colors.red,
       );
       return;
     } on Object catch (e) {
       debugPrint('Failed to apply hotkey: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not change the shortcut. Your previous one is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
+      _showShortcutError(
+        'Could not change the shortcut. Your previous one is still active.',
+        background: Colors.red,
       );
       return;
     }

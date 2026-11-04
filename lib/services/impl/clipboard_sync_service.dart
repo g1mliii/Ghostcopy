@@ -1108,8 +1108,11 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       _lastMonitoredClipboard = contentHash;
 
-      // Rate limiting
+      // A press sends the copy even if it was sent before - unless a send of
+      // it finished while this press waited.
       if (manual && _sendsCompleted == sendsBefore) _lastSentContentHash = '';
+
+      // Rate limiting
       if (!manual && _lastSendTime != null) {
         final timeSinceLastSend = DateTime.now().difference(_lastSendTime!);
         if (timeSinceLastSend < _minSendInterval) {
@@ -1125,12 +1128,10 @@ class ClipboardSyncService implements IClipboardSyncService {
         var detection = await _securityService.detectSensitiveDataAsync(text);
         if (!detection.isSensitive && manual && clipboardContent.hasHtml) {
           // The stored markup and the text it renders can expose different secrets.
-          final readable = readableHtml = htmlToPlainText(
-            clipboardContent.html!,
-          );
-          if (readable != text) {
+          readableHtml = htmlToPlainText(clipboardContent.html!);
+          if (readableHtml != text) {
             detection = await _securityService.detectSensitiveDataAsync(
-              readable,
+              readableHtml,
             );
           }
         }
@@ -1181,12 +1182,15 @@ class ClipboardSyncService implements IClipboardSyncService {
           ),
           message: (targets) => 'Sent HTML to $targets',
           failureMessage: 'Could not send HTML',
-          // The readable text was already derived and screened above.
+          // The readable text, when it was derived and screened above;
+          // otherwise the HTML, which is converted and screened only if an
+          // integration is on.
           afterInsert: (context) => _fireIntegrations(
-            content: readableHtml ?? htmlToPlainText(clipboardContent.html!),
+            content: readableHtml ?? clipboardContent.html!,
             deviceType: context.deviceType,
             direction: 'sent',
-            screened: true,
+            isHtml: readableHtml == null,
+            screened: readableHtml != null,
           ),
         );
       } else if (clipboardContent.hasText) {
