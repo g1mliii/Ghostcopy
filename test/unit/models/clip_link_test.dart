@@ -124,7 +124,6 @@ void main() {
         '123456',
         '2026-10-30',
         '30/10/2026',
-        '192.168.1.10',
         '1.2.3',
         '4111 1111 1111 1111', // a card number has too many digits
         '+12', // too few
@@ -251,6 +250,305 @@ void main() {
     expect(phone.canOpenOn('linux'), isFalse);
     expect(phone.canOpenOn('windows'), isTrue);
     expect(ClipLink.detect('https://example.com')!.canOpenOn('linux'), isTrue);
+  });
+
+  group('more kinds', () {
+    test('street addresses open as a maps search', () {
+      for (final (text, label) in [
+        ('123 Main St', '123 Main St'),
+        (
+          '1600 Amphitheatre Pkwy, Mountain View, CA 94043',
+          '1600 Amphitheatre Pkwy, Mountain View, CA 94043',
+        ),
+        ('290 Bremner Blvd\nToronto, ON M5V 3L9', '290 Bremner Blvd'),
+        ('221B Baker Street\nLondon NW1 6XE', '221B Baker Street'),
+        (
+          '350 rue Sherbrooke Ouest, Montréal',
+          '350 rue Sherbrooke Ouest, Montréal',
+        ),
+        ('Friedrichstraße 43', 'Friedrichstraße 43'),
+        ('Hauptstraße 5, 10115 Berlin', 'Hauptstraße 5, 10115 Berlin'),
+        ('Unit 4, 55 Queen St E', 'Unit 4, 55 Queen St E'),
+        ('10 Downing Street', '10 Downing Street'),
+      ]) {
+        final link = ClipLink.detect(text);
+        expect(link?.kind, ClipLinkKind.map, reason: text);
+        expect(link!.label, label, reason: text);
+        expect(link.uri.scheme, 'geo');
+      }
+      final multi = ClipLink.detect('290 Bremner Blvd\nToronto, ON M5V 3L9')!;
+      expect(
+        multi.openUri('android').toString(),
+        'geo:0,0?q=290+Bremner+Blvd%2C+Toronto%2C+ON+M5V+3L9',
+      );
+      expect(
+        multi.openUri('windows').queryParameters['query'],
+        '290 Bremner Blvd, Toronto, ON M5V 3L9',
+      );
+      expect(
+        multi.openUri('ios').queryParameters['q'],
+        '290 Bremner Blvd, Toronto, ON M5V 3L9',
+      );
+    });
+
+    test('things that are not addresses stay text', () {
+      for (final text in [
+        'meet me at 5',
+        '5 people went to the big party on Main St last night',
+        'Shopping list\nmilk\neggs',
+        'line 1\nline 2\nline 3\nline 4\nline 5',
+        'Dear Sam,\nThanks for the 3 boxes.\nBest',
+        'email me at a@b.co, 12 Main St',
+        '3 in a row',
+        '2 for the road',
+        '1 more way',
+        '15 GB Drive',
+        '3 people in line',
+        '2 place settings',
+        '1 route change',
+        '2 items, order ID 12345',
+      ]) {
+        expect(
+          ClipLink.detect(text)?.kind,
+          isNot(ClipLinkKind.map),
+          reason: text,
+        );
+      }
+    });
+
+    test('coordinates, decimal and degrees', () {
+      final decimal = ClipLink.detect('43.64263, -79.38712')!;
+      expect(decimal.kind, ClipLinkKind.map);
+      expect(decimal.uri.toString(), 'geo:43.64263,-79.38712');
+      expect(decimal.openUri('android').toString(), 'geo:43.64263,-79.38712');
+
+      final dms = ClipLink.detect('43°38\'33.5"N 79°23\'13.6"W')!;
+      expect(dms.kind, ClipLinkKind.map);
+      expect(dms.uri.toString(), 'geo:43.642639,-79.387111');
+
+      // Two ordinary numbers, or out of range.
+      expect(ClipLink.detect('1.5, 2.5'), isNull);
+      expect(ClipLink.detect('95.12345, 10.12345'), isNull);
+    });
+
+    test('phone numbers can be texted too', () {
+      final phone = ClipLink.detect('+1 416 555 0199')!;
+      final text = phone.alternateOn('macos')!;
+      expect(text.kind, ClipLinkAlternateKind.text);
+      expect(text.label, 'Text');
+      expect(text.uri.toString(), 'sms:+14165550199');
+      expect(phone.alternateOn('linux'), isNull);
+      expect(
+        ClipLink.detect('https://example.com')!.alternateOn('macos'),
+        isNull,
+      );
+    });
+
+    test('meeting links', () {
+      for (final (url, service) in [
+        ('https://us02web.zoom.us/j/81234567890?pwd=abc', 'Zoom'),
+        ('https://zoom.us/j/81234567890', 'Zoom'),
+        ('https://meet.google.com/abc-defg-hij', 'Google Meet'),
+        (
+          'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0',
+          'Microsoft Teams',
+        ),
+        ('https://teams.live.com/meet/9876543210', 'Microsoft Teams'),
+        ('https://acme.webex.com/meet/jdoe', 'Webex'),
+        ('https://facetime.apple.com/join#v=1&p=abc', 'FaceTime'),
+        ('zoommtg://zoom.us/join?confno=81234567890', 'Zoom'),
+        ('msteams:/l/meetup-join/19%3ameeting_abc', 'Microsoft Teams'),
+      ]) {
+        final link = ClipLink.detect(url);
+        expect(link?.kind, ClipLinkKind.meeting, reason: url);
+        expect(link!.service, service, reason: url);
+        expect(link.actionLabel, 'Join meeting');
+      }
+      // A Zoom page that is not a meeting.
+      expect(
+        ClipLink.detect('https://zoom.us/pricing')!.kind,
+        ClipLinkKind.web,
+      );
+      expect(
+        ClipLink.detect('https://meet.google.com/')!.kind,
+        ClipLinkKind.web,
+      );
+    });
+
+    test('music links, with a way to find them elsewhere', () {
+      for (final (url, service) in [
+        ('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC', 'Spotify'),
+        ('https://music.apple.com/ca/album/x/123', 'Apple Music'),
+        ('https://music.youtube.com/watch?v=abc', 'YouTube Music'),
+        ('https://soundcloud.com/artist/track', 'SoundCloud'),
+        ('https://tidal.com/browse/track/123', 'TIDAL'),
+        ('https://www.deezer.com/track/123', 'Deezer'),
+        ('https://music.amazon.ca/albums/B0', 'Amazon Music'),
+        ('https://artist.bandcamp.com/album/x', 'Bandcamp'),
+      ]) {
+        final link = ClipLink.detect(url);
+        expect(link?.kind, ClipLinkKind.music, reason: url);
+        expect(link!.service, service, reason: url);
+        expect(link.actionLabel, 'Open in $service');
+        expect(
+          link.alternateOn('android')!.uri.toString(),
+          'https://song.link/$url',
+          reason: url,
+        );
+      }
+
+      // An Apple Music track is given to song.link as its /song/ link, not
+      // the album's with the track in a query.
+      expect(
+        ClipLink.detect(
+          'https://music.apple.com/ca/album/x/123?i=456',
+        )!.alternateOn('android')!.uri.toString(),
+        'https://song.link/https://music.apple.com/ca/song/456',
+      );
+      // Nothing for song.link to find: a podcast, a show, a playlist.
+      for (final url in [
+        'https://podcasts.apple.com/us/podcast/x/id1',
+        'https://open.spotify.com/show/abc',
+        'https://open.spotify.com/playlist/abc',
+        'https://music.apple.com/us/artist/x/1',
+        'spotify:user:x:playlist:y',
+      ]) {
+        final link = ClipLink.detect(url)!;
+        expect(link.kind, ClipLinkKind.music, reason: url);
+        expect(link.alternateOn('android'), isNull, reason: url);
+      }
+
+      final uri = ClipLink.detect('spotify:track:4uLU6hMCjMI75M1A2tKUQC')!;
+      expect(uri.kind, ClipLinkKind.music);
+      expect(
+        uri.uri.toString(),
+        'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC',
+      );
+    });
+
+    test('video links', () {
+      for (final (url, service) in [
+        ('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'YouTube'),
+        ('https://youtu.be/dQw4w9WgXcQ', 'YouTube'),
+        ('https://vimeo.com/123456', 'Vimeo'),
+        ('https://www.twitch.tv/somebody', 'Twitch'),
+        ('https://www.tiktok.com/@user/video/1', 'TikTok'),
+      ]) {
+        final link = ClipLink.detect(url);
+        expect(link?.kind, ClipLinkKind.video, reason: url);
+        expect(link!.actionLabel, 'Watch on $service');
+      }
+    });
+
+    test('tracking numbers, checked against their check digit', () {
+      final ups = ClipLink.detect('1Z879E930346834440')!;
+      expect(ups.kind, ClipLinkKind.tracking);
+      expect(ups.service, 'UPS');
+      expect(ups.uri.queryParameters['tracknum'], '1Z879E930346834440');
+      expect(ups.actionLabel, 'Track package');
+      expect(ClipLink.detect('1z879e930346834440')!.service, 'UPS');
+
+      final usps = ClipLink.detect('9400111202555842332669')!;
+      expect(usps.service, 'USPS');
+      // The USPS shape with the wrong check digit: an order or account
+      // number.
+      expect(ClipLink.detect('9400111202555842332660'), isNull);
+
+      expect(ClipLink.detect('RR123456785CA')!.service, 'Canada Post');
+      expect(ClipLink.detect('LM473124829US')!.service, 'USPS');
+      expect(ClipLink.detect('RA123456785GB')!.service, 'Royal Mail');
+      expect(ClipLink.detect('RA123456785AU')!.service, 'Australia Post');
+      expect(ClipLink.detect('RA123456785DE')!.service, 'Post');
+
+      // Wrong check digit, or the right shape for nothing in particular.
+      expect(ClipLink.detect('1Z879E930346834441'), isNull);
+      expect(ClipLink.detect('RA123456780DE'), isNull);
+      expect(ClipLink.detect('123456789012'), isNull);
+    });
+
+    test('links into apps, and only known ones', () {
+      final obsidian = ClipLink.detect(
+        'obsidian://open?vault=Notes&file=Inbox',
+      )!;
+      expect(obsidian.kind, ClipLinkKind.app);
+      expect(obsidian.service, 'Obsidian');
+      expect(obsidian.actionLabel, 'Open in Obsidian');
+      expect(
+        ClipLink.detect('slack://channel?team=T1&id=C1')!.service,
+        'Slack',
+      );
+      expect(
+        ClipLink.detect('vscode://file/home/u/a.dart')!.service,
+        'VS Code',
+      );
+
+      for (final text in [
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+        'intent://scan/#Intent;scheme=zxing;end',
+        'ms-msdt:/id PCWDiagnostic',
+        'search-ms:query=x',
+        'obsidian:',
+        'notascheme://x',
+        'shortcuts://run-shortcut?name=Wipe',
+        'steam://install/570',
+        'raycast://extensions/x/y',
+        'vscode://vscode.git/clone?url=https://evil.example/r.git',
+        'cursor://anysphere.cursor-retrieval/x',
+        'tg://proxy?server=1.2.3.4&port=443&secret=x',
+        'tg://socks?server=1.2.3.4&port=1080',
+      ]) {
+        expect(ClipLink.detect(text), isNull, reason: text);
+      }
+      expect(
+        ClipLink.detect('tg://resolve?domain=telegram')!.service,
+        'Telegram',
+      );
+      // Editors that have no phone app.
+      final editor = ClipLink.detect('vscode://file/home/u/a.dart')!;
+      expect(editor.canOpenOn('macos'), isTrue);
+      expect(editor.canOpenOn('android'), isFalse);
+      expect(editor.canOpenOn('ios'), isFalse);
+    });
+
+    test('local and dev addresses open in the browser', () {
+      for (final (text, url) in [
+        ('localhost:3000', 'http://localhost:3000'),
+        ('192.168.1.1', 'http://192.168.1.1'),
+        ('10.0.0.5:8080/admin', 'http://10.0.0.5:8080/admin'),
+        ('printer.local', 'http://printer.local'),
+        ('nas.lan:5000', 'http://nas.lan:5000'),
+        ('example.com:8443', 'http://example.com:8443'),
+      ]) {
+        final link = ClipLink.detect(text);
+        expect(link?.kind, ClipLinkKind.web, reason: text);
+        expect(link!.uri.toString(), url);
+      }
+      expect(ClipLink.detect('999.1.1.1'), isNull);
+      expect(ClipLink.detect('1.2.3.4.5'), isNull);
+      // A file and line, and a four-part version or public address.
+      expect(ClipLink.detect('main.dart:123'), isNull);
+      expect(ClipLink.detect('app.py:42'), isNull);
+      // Extensions that are also country codes.
+      expect(ClipLink.detect('main.tf:12'), isNull);
+      expect(ClipLink.detect('script.pl:42'), isNull);
+      expect(ClipLink.detect('lib.ml:10'), isNull);
+      expect(ClipLink.detect('1.0.10.27'), isNull);
+      expect(ClipLink.detect('8.8.8.8'), isNull);
+      expect(ClipLink.detect('8.8.8.8:53')!.kind, ClipLinkKind.web);
+      for (final private in [
+        '10.0.0.1',
+        '172.20.1.1',
+        '127.0.0.1',
+        '100.101.102.103',
+      ]) {
+        expect(
+          ClipLink.detect(private)?.kind,
+          ClipLinkKind.web,
+          reason: private,
+        );
+      }
+    });
   });
 
   group('from review', () {
@@ -476,6 +774,10 @@ void main() {
       final link = ClipLink.detect('tel:+1-201-555-0123;ext=456')!;
       expect(link.kind, ClipLinkKind.phone);
       expect(link.uri.toString(), 'tel:+1-201-555-0123;ext=456');
+      expect(
+        link.alternateOn('android')!.uri.toString(),
+        'sms:+1-201-555-0123',
+      );
       expect(ClipLink.detect('tel:12;ext=4'), isNull);
     });
 
@@ -621,6 +923,429 @@ void main() {
       expect(ClipLink.detect('3782 822463 10005'), isNull);
       // A long international number still is.
       expect(ClipLink.detect('+44 20 7946 0958 123')?.kind, ClipLinkKind.phone);
+    });
+  });
+
+  group('from review, more kinds', () {
+    test('only real Amazon domains are Amazon Music', () {
+      expect(
+        ClipLink.detect('https://music.amazon.attacker.com/track')?.service,
+        isNot('Amazon Music'),
+      );
+      expect(
+        ClipLink.detect('https://music.amazon.co.uk/albums/B0')?.service,
+        'Amazon Music',
+      );
+    });
+
+    test('app links that perform actions stay text', () {
+      for (final text in [
+        'drafts://x-callback-url/runAction?action=Delete',
+        'bear://x-callback-url/trash?id=1',
+        'things:///add?title=x',
+        'todoist://addtask?content=x',
+        'obsidian://new?vault=Notes&name=x',
+        'craftdocs://createdocument?spaceId=1',
+      ]) {
+        expect(
+          ClipLink.detect(text)?.kind,
+          isNot(ClipLinkKind.app),
+          reason: text,
+        );
+      }
+      for (final text in [
+        'drafts://open?uuid=1',
+        'bear://x-callback-url/open-note?id=1',
+        'things:///show?id=today',
+        'todoist://today',
+        'obsidian://open?vault=Notes&file=Inbox',
+        'craftdocs://open?blockId=1&spaceId=2',
+      ]) {
+        expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
+      }
+    });
+
+    test('navigation routes that are told to act stay text', () {
+      for (final text in [
+        'drafts://open?uuid=1&action=Delete',
+        'bear://x-callback-url/open-note?id=1&x-success=shortcuts://run',
+        'drafts://x-callback-url/open?uuid=1&x-error=bear://x',
+        'bear://x-callback-url/open-note?id=1&pin=yes',
+      ]) {
+        expect(
+          ClipLink.detect(text)?.kind,
+          isNot(ClipLinkKind.app),
+          reason: text,
+        );
+      }
+    });
+
+    test("Whereby's own pages are not meetings", () {
+      expect(
+        ClipLink.detect('https://whereby.com/information/tos')?.kind,
+        isNot(ClipLinkKind.meeting),
+      );
+      expect(
+        ClipLink.detect('https://whereby.com/pricing')?.kind,
+        isNot(ClipLinkKind.meeting),
+      );
+      expect(
+        ClipLink.detect('https://whereby.com/team-standup')?.kind,
+        ClipLinkKind.meeting,
+      );
+    });
+
+    test('a file and line is not a host and port', () {
+      for (final text in [
+        'schema.sql:42',
+        'Component.vue:80',
+        'build.gradle:12',
+      ]) {
+        expect(ClipLink.detect(text), isNull, reason: text);
+      }
+      expect(
+        ClipLink.detect('staging.example.com:8443/admin')?.kind,
+        ClipLinkKind.web,
+      );
+      expect(ClipLink.detect('example.io:3000')?.kind, ClipLinkKind.web);
+    });
+
+    test('more from review', () {
+      // Multicast and broadcast are not machines to open a page on.
+      expect(ClipLink.detect('224.0.0.1'), isNull);
+      expect(ClipLink.detect('255.255.255.255'), isNull);
+      expect(ClipLink.detect('192.168.1.1')?.kind, ClipLinkKind.web);
+      // An encoded `;` is still a parameter delimiter for Text.
+      final encoded = ClipLink.detect('tel:5550123%3Bphone-context=+1-201')!;
+      expect(encoded.kind, ClipLinkKind.phone);
+      expect(encoded.alternateOn('android'), isNull);
+      // Parcelforce numbers go to Parcelforce.
+      expect(ClipLink.detect('EC080250821GB')!.uri.host, 'www.parcelforce.com');
+      // A Teams chat is the app; a meeting link is a meeting.
+      expect(
+        ClipLink.detect(
+          'msteams://teams.microsoft.com/l/chat/0/0?users=a@example.com',
+        )?.kind,
+        ClipLinkKind.app,
+      );
+      expect(
+        ClipLink.detect(
+          'msteams://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0',
+        )?.kind,
+        ClipLinkKind.meeting,
+      );
+    });
+
+    test('Teams /meet/ links, ports past 65535, accented street names', () {
+      expect(
+        ClipLink.detect(
+          'https://teams.microsoft.com/meet/22503094877696?p=abc',
+        )?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(ClipLink.detect('localhost:99999'), isNull);
+      expect(ClipLink.detect('192.168.1.1:70000'), isNull);
+      expect(ClipLink.detect('localhost:65535')?.kind, ClipLinkKind.web);
+      expect(ClipLink.detect('123 Église St')?.kind, ClipLinkKind.map);
+    });
+
+    test('music home pages are pages; Classroom Meet links are meetings', () {
+      final home = ClipLink.detect('https://open.spotify.com/')!;
+      expect(home.kind, ClipLinkKind.web);
+      expect(home.alternateOn('android'), isNull);
+      expect(
+        ClipLink.detect('https://open.spotify.com/track/abc')?.kind,
+        ClipLinkKind.music,
+      );
+      expect(
+        ClipLink.detect('https://meet.google.com/lookup/abcdef123')?.kind,
+        ClipLinkKind.meeting,
+      );
+    });
+
+    test('port 0, Zoom Web App, government Teams, query-only local URLs', () {
+      expect(ClipLink.detect('localhost:0'), isNull);
+      expect(ClipLink.detect('192.168.1.1:0'), isNull);
+      expect(
+        ClipLink.detect('https://zoom.us/wc/123456789/join')?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(
+        ClipLink.detect(
+          'https://gov.teams.microsoft.us/l/meetup-join/19%3ax/0',
+        )?.kind,
+        ClipLinkKind.meeting,
+      );
+      for (final text in [
+        'localhost:3000?debug=1',
+        'printer.local?admin=1',
+        '192.168.1.1#status',
+      ]) {
+        expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+      }
+    });
+
+    test('Whereby rooms on a Business subdomain', () {
+      expect(
+        ClipLink.detect('https://company.whereby.com/team-standup')?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(
+        ClipLink.detect('https://support.whereby.com/articles')?.kind,
+        isNot(ClipLinkKind.meeting),
+      );
+    });
+
+    test('tracking numbers written in groups', () {
+      final s10 = ClipLink.detect('EC 080 250 821 GB')!;
+      expect(s10.kind, ClipLinkKind.tracking);
+      expect(s10.uri.host, 'www.parcelforce.com');
+      // Only digits and letters in groups; anything else stays text.
+      expect(ClipLink.detect('EC-080-250-821-GB'), isNull);
+      // However it was spaced.
+      expect(
+        ClipLink.detect('EC\u00A0080\u00A0250  821\u00A0GB')?.kind,
+        ClipLinkKind.tracking,
+      );
+    });
+
+    test('Apple-only apps, video home pages, empty app links, short ports', () {
+      final things = ClipLink.detect('things:///show?id=today')!;
+      expect(things.canOpenOn('macos'), isTrue);
+      expect(things.canOpenOn('ios'), isTrue);
+      for (final platform in ['windows', 'android', 'linux']) {
+        expect(things.canOpenOn(platform), isFalse, reason: platform);
+      }
+      expect(ClipLink.detect('https://youtube.com/')?.kind, ClipLinkKind.web);
+      expect(
+        ClipLink.detect('https://youtube.com/watch?v=abc')?.kind,
+        ClipLinkKind.video,
+      );
+      expect(
+        ClipLink.detect('https://cacb.zoomgov.com/j/1617514241')?.kind,
+        ClipLinkKind.meeting,
+      );
+      expect(ClipLink.detect('zoommtg://'), isNull);
+      expect(ClipLink.detect('spotify://'), isNull);
+      expect(ClipLink.detect('example.com:8/status')?.kind, ClipLinkKind.web);
+      expect(ClipLink.detect('main.c:8'), isNull);
+    });
+
+    test(
+      'Classical, FaceTime, local hosts, wrapped tracking, YouTube playlists',
+      () {
+        expect(
+          ClipLink.detect(
+            'https://classical.music.apple.com/us/album/1',
+          )?.service,
+          'Apple Music',
+        );
+        expect(
+          ClipLink.detect('https://facetime.apple.com/join#v=1&p=abc')?.kind,
+          ClipLinkKind.meeting,
+        );
+        expect(
+          ClipLink.detect('https://facetime.apple.com/')?.kind,
+          isNot(ClipLinkKind.meeting),
+        );
+        final audio = ClipLink.detect('facetime-audio:user@example.com')!;
+        expect(audio.kind, ClipLinkKind.meeting);
+        expect(audio.canOpenOn('ios'), isTrue);
+        expect(audio.canOpenOn('android'), isFalse);
+        for (final text in [
+          '[::1]:3000',
+          '[fd00::1]:8080/admin',
+          'tenant.localhost:3000',
+        ]) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+        }
+        for (final text in ['224.0.0.1:8080', '255.255.255.255/status']) {
+          expect(ClipLink.detect(text), isNull, reason: text);
+        }
+        expect(ClipLink.detect('8.8.8.8:53/x')?.kind, ClipLinkKind.web);
+        expect(
+          ClipLink.detect('EC 080 250\n821 GB')?.kind,
+          ClipLinkKind.tracking,
+        );
+        expect(
+          ClipLink.detect(
+            'https://music.youtube.com/playlist?list=PLabc',
+          )!.alternateOn('android'),
+          isNull,
+        );
+        expect(
+          ClipLink.detect(
+            'https://music.youtube.com/playlist?list=OLAK5uyabc',
+          )!.alternateOn('android'),
+          isNotNull,
+        );
+        expect(ClipLink.detect('Alte Dorfstraße 5')?.kind, ClipLinkKind.map);
+        expect(ClipLink.detect('Am Alten Weg 3')?.kind, ClipLinkKind.map);
+        expect(ClipLink.detect('Weg 3'), isNull);
+        expect(ClipLink.detect('Hauptstraße 5-7')?.kind, ClipLinkKind.map);
+
+        // A meeting link needs the meeting itself, not just its route.
+        for (final text in [
+          'https://zoom.us/j/',
+          'https://zoom.us/my/',
+          'zoommtg://zoom.us/join',
+          'zoommtg://zoom.us/join?action=join',
+          'https://teams.microsoft.com/meet/',
+          'https://teams.live.com/meet',
+          'https://teams.microsoft.com/l/meetup-join/',
+          'https://teams.microsoft.com/l/meetup-join-notes',
+          'msteams:/l/meeting/',
+          'msteams:/l/call/',
+          'https://acme.webex.com/meet/',
+          'https://acme.webex.com/join/',
+          'https://acme.webex.com/acme/j.php-notes',
+          'https://acme.webex.com/j.php',
+          'https://facetime.apple.com/joinery',
+          'https://facetime.apple.com/join',
+          'https://facetime.apple.com/join/unrelated#v=1&p=abc',
+          'https://facetime.apple.com/join#notes',
+          'https://meet.google.com/abc-defg-hij-notes',
+          'https://meet.google.com/abc-defg-hij/unrelated',
+        ]) {
+          expect(
+            ClipLink.detect(text)?.kind,
+            isNot(ClipLinkKind.meeting),
+            reason: text,
+          );
+        }
+        for (final text in [
+          'https://zoom.us/my/alice',
+          'https://acme.webex.com/acme/j.php?MTID=m123',
+          'https://meet.google.com/abc-defg-hij/',
+          'https://whereby.com/team-standup/',
+        ]) {
+          expect(
+            ClipLink.detect(text)?.kind,
+            ClipLinkKind.meeting,
+            reason: text,
+          );
+        }
+
+        // A service's help, developer and API sites are pages about it.
+        for (final (text, kind) in [
+          ('https://help.twitch.tv/s/article/abc', ClipLinkKind.video),
+          ('https://help.vimeo.com/hc/en-us/articles/123', ClipLinkKind.video),
+          (
+            'https://help.soundcloud.com/hc/en-us/articles/115003449627',
+            ClipLinkKind.music,
+          ),
+          ('https://api.soundcloud.com/tracks/123', ClipLinkKind.music),
+          ('https://api-v2.soundcloud.com/tracks/123', ClipLinkKind.music),
+        ]) {
+          expect(ClipLink.detect(text)?.kind, isNot(kind), reason: text);
+        }
+
+        for (final text in [
+          'tg://resolve?domain=telegram&profile',
+          'sgnl://signal.me/#p/+15555550123',
+        ]) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
+        }
+        expect(
+          ClipLink.detect('https://pandora.app.link/AbCdEf')?.service,
+          'Pandora',
+        );
+
+        expect(
+          ClipLink.detect('example.com:443/status')!.uri.toString(),
+          'https://example.com/status',
+        );
+        for (final text in [
+          'example.com:8080/app.js:42',
+          '[::ffff:192.168.1.1]:80',
+        ]) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+        }
+        for (final text in [
+          'main.dart:120',
+          'Main.hs:42',
+          'Program.fs:8',
+          'script.jl:7',
+          '[ff02::1]:8080',
+          '[::]:3000',
+          '[::ffff:224.0.0.1]:8080',
+          '[2001:db8::1]:8080',
+          '[3fff::1]:8080',
+          '192.0.2.1:8080',
+          '198.51.100.1/status',
+          '203.0.113.1:80',
+          'zoommtg:///',
+          'spotify:/',
+          'sgnl://linkdevice?uuid=abc&pub_key=def',
+        ]) {
+          expect(ClipLink.detect(text), isNull, reason: text);
+        }
+
+        // song.link only for a song or album.
+        for (final text in [
+          'https://open.spotify.com/collection/tracks',
+          'https://open.spotify.com/track',
+          'https://music.apple.com/us/station/apple-music-1/ra.978194965',
+          'https://music.apple.com/us/browse',
+          'https://music.apple.com/us/playlist/album/pl.abc',
+          'https://artist.bandcamp.com/merch/shirt',
+          'https://www.deezer.com/search/beatles',
+          'https://www.deezer.com/album/',
+          'https://tidal.com/browse/mix/abc',
+          'https://soundcloud.com/forss',
+          'https://soundcloud.com/forss/likes',
+          'https://soundcloud.com/forss/sets/soulhack',
+          'https://soundcloud.com/search/sounds?q=beatles',
+          'https://music.youtube.com/watch',
+          'https://music.youtube.com/watchlater?v=abc',
+          'https://music.youtube.com/channel/UCabc',
+          'https://www.pandora.com/search/subscriptions/all',
+          'https://www.pandora.com/artist/the-beatles/ARabc123',
+        ]) {
+          expect(
+            ClipLink.detect(text)!.alternateOn('android'),
+            isNull,
+            reason: text,
+          );
+        }
+        for (final text in [
+          'https://open.spotify.com/intl-de/track/abc',
+          'https://open.spotify.com/embed/track/0Lr4kGOYn9l83EjuK6cZFQ',
+          'spotify:album:abc',
+          'https://artist.bandcamp.com/track/song',
+          'https://www.deezer.com/us/album/302127',
+          'https://soundcloud.com/forss/flickermood',
+          'https://on.soundcloud.com/AbCd',
+          'https://www.pandora.com/artist/the-beatles/abbey-road/come-together/TRabc123',
+          'https://www.pandora.com/artist/the-beatles/abbey-road/ALabc123',
+          'https://pandora.app.link/AbCdEf',
+        ]) {
+          expect(
+            ClipLink.detect(text)!.alternateOn('android'),
+            isNotNull,
+            reason: text,
+          );
+        }
+      },
+    );
+
+    test('DMS minutes and seconds must be under 60', () {
+      expect(ClipLink.detect('43°99\'00"N 79°23\'00"W'), isNull);
+      expect(ClipLink.detect('43°38\'60"N 79°23\'00"W'), isNull);
+    });
+
+    test('0,0 coordinates are a placeholder, not a place', () {
+      expect(ClipLink.detect('0.000, 0.000'), isNull);
+    });
+
+    test('no Text for a number with a phone context', () {
+      final local = ClipLink.detect('tel:5550123;phone-context=+1-201')!;
+      expect(local.kind, ClipLinkKind.phone);
+      expect(local.alternateOn('android'), isNull);
+      expect(
+        ClipLink.detect('tel:+12015550123;ext=4')!.alternateOn('android'),
+        isNotNull,
+      );
     });
   });
 }

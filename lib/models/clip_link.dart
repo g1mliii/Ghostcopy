@@ -1,8 +1,35 @@
+import '../utils/ip_address.dart';
+
 /// What kind of openable thing a clip is.
-enum ClipLinkKind { web, map, email, phone }
+enum ClipLinkKind {
+  web,
+  map,
+  email,
+  phone,
+  meeting,
+  music,
+  video,
+  tracking,
+  app,
+}
+
+/// Which second thing a [ClipLinkAlternate] does.
+enum ClipLinkAlternateKind { text, findElsewhere }
+
+/// A second thing to do with a link, beside opening it: text a phone number,
+/// find a song on another service.
+class ClipLinkAlternate {
+  const ClipLinkAlternate(this.kind, this.label, this.uri);
+
+  final ClipLinkAlternateKind kind;
+  final String label;
+  final Uri uri;
+}
 
 /// A text clip that is, in its entirety, something the receiving device can
-/// open: a web page, a place, an email address or a phone number.
+/// open: a web page, a place or street address, an email address, a phone
+/// number, a meeting, a song or video, a parcel to track, or a link into an
+/// app.
 ///
 /// Whole-clip only. A paragraph that happens to contain a URL stays a
 /// paragraph - the row would otherwise have to pick one of several links, and
@@ -14,12 +41,18 @@ enum ClipLinkKind { web, map, email, phone }
 /// opens in a browser tab on Android unless it is turned into a `geo:` URI
 /// first.
 class ClipLink {
-  const ClipLink._(this.kind, this.uri, this.label);
+  const ClipLink._(this.kind, this.uri, this.label, {this.service});
 
   final ClipLinkKind kind;
 
+  /// The service or app a link belongs to, where the kind has one: "Zoom",
+  /// "Spotify", "YouTube", "UPS", "Obsidian".
+  final String? service;
+
   /// The link as sent, with a scheme added where the clip had none
-  /// (`www.example.com`, a bare address, a formatted phone number).
+  /// (`www.example.com`, a bare address, a formatted phone number), or the
+  /// link a clip that is not one stands for: `geo:` for a street address or
+  /// coordinates, the carrier's page for a tracking number.
   final Uri uri;
 
   /// Short text naming what the link points at: the site's host, the place,
@@ -81,18 +114,24 @@ class ClipLink {
 
   static ClipLink? _detect(String content) {
     final text = content.trim();
-    if (text.isEmpty || text.length > maxLength || text.contains('\n')) {
-      return null;
-    }
-    // Phone numbers are the only kind written with spaces in them - and a
-    // `tel:` href as a page wrote it, spaced for reading
-    // (`tel:+1 416 555 0199`): not a valid URI, but plainly a number.
+    if (text.isEmpty || text.length > maxLength) return null;
+    // Addresses, and tracking numbers printed in groups, are the kinds that
+    // can span lines.
+    if (text.contains('\n')) return _address(text) ?? _groupedTracking(text);
+    // Coordinates, phone numbers and addresses are the kinds written with
+    // spaces in them - and tracking numbers, which carriers print in groups
+    // (`RR 123 456 785 CA`, `1Z 999 AA1 01 2345 678 4`) - and a `tel:` href
+    // as a page wrote it, spaced for reading (`tel:+1 416 555 0199`): not a
+    // valid URI, but plainly a number.
     final lower = text.toLowerCase();
     if (text.contains(_whitespace)) {
       if (lower.startsWith('tel:')) {
         return _phone(text.substring(4), explicit: true);
       }
-      return _phone(text);
+      return _coordinates(text) ??
+          _phone(text) ??
+          _address(text) ??
+          _groupedTracking(text);
     }
 
     if (lower.startsWith('mailto:')) return _mailto(text);
@@ -123,7 +162,11 @@ class ClipLink {
         text,
       );
     }
-    return _phone(text);
+    return _coordinates(text) ??
+        _tracking(text) ??
+        _appLink(text) ??
+        _localAddress(text) ??
+        _phone(text);
   }
 
   static ClipLink? _http(String text) {
@@ -145,7 +188,720 @@ class ClipLink {
       return ClipLink._(ClipLinkKind.map, uri, place.label);
     }
     final site = host.startsWith('www.') ? host.substring(4) : host;
+    // A music or video service's home page is a page, not something to play
+    // or find elsewhere: song.link has nothing to resolve for
+    // `open.spotify.com/`, and youtube.com/ is not something to watch. Nor
+    // are its help, developer and company sites (help.twitch.tv,
+    // artists.spotify.com), which are pages about the service.
+    final media = _segments(uri).isNotEmpty && !_aboutSite.hasMatch(site);
+    for (final (kind, name, matches) in _webServices) {
+      if ((kind == ClipLinkKind.music || kind == ClipLinkKind.video) &&
+          !media) {
+        continue;
+      }
+      if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
+    }
     return ClipLink._(ClipLinkKind.web, uri, site);
+  }
+
+  // A meeting code, or Classroom's stable /lookup/<id> link to a class's
+  // current meeting.
+  static final _meetCode = RegExp(
+    r'^/([a-z]{3}-[a-z]{4}-[a-z]{3}|lookup/\w+)/?$',
+  );
+  // Amazon's own storefront domains, not any suffix after `amazon.`
+  // (`music.amazon.attacker.com`).
+  static final _amazonMusic = RegExp(
+    r'^music\.amazon\.(com|ca|de|fr|it|es|in|co\.uk|co\.jp|com\.au|com\.br|com\.mx)$',
+  );
+
+  static final _aboutSite = RegExp(
+    '^(help|support|developers?|docs|blog|status|community|press|newsroom|'
+    'investors?|careers|jobs|artists|creators|partners|ads|business|'
+    r'api(-v\d+)?)\.',
+  );
+
+  static bool _hostIs(String host, String domain) =>
+      host == domain || host.endsWith('.$domain');
+
+  /// [uri]'s path segments without the empty ones a trailing (or doubled)
+  /// slash leaves: `/room/` is `[room]`.
+  static List<String> _segments(Uri uri) => [
+    for (final s in uri.pathSegments)
+      if (s.isNotEmpty) s,
+  ];
+
+  /// [_segments], lowercased, for matching routes.
+  static List<String> _lowerSegments(Uri uri) => [
+    for (final s in uri.pathSegments)
+      if (s.isNotEmpty) s.toLowerCase(),
+  ];
+
+  /// [uri]'s fragment read as a query: `#v=1&p=...` - empty if it is not one.
+  static Map<String, String> _fragmentParameters(Uri uri) {
+    try {
+      return Uri.splitQueryString(uri.fragment);
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  /// A Webex invitation: `<site>/j.php?MTID=...`, or a personal room at
+  /// `/meet/<name>` or `/join/<name>`.
+  static bool _webexMeeting(Uri uri) {
+    final s = _lowerSegments(uri);
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] == 'j.php') {
+        return (uri.queryParameters['MTID'] ?? '').isNotEmpty;
+      }
+      if ((s[i] == 'meet' || s[i] == 'join') && i + 1 < s.length) return true;
+    }
+    return false;
+  }
+
+  /// Whether [uri]'s path starts with the segments of [route] and then an
+  /// id: `/meet/<id>`, not a bare `/meet/`.
+  static bool _idAfter(Uri uri, List<String> route) {
+    final s = uri.pathSegments;
+    if (s.length <= route.length || s[route.length].isEmpty) return false;
+    for (var i = 0; i < route.length; i++) {
+      if (s[i].toLowerCase() != route[i]) return false;
+    }
+    return true;
+  }
+
+  /// Web links that belong to a service with an app of its own. Checked in
+  /// order, so YouTube Music is music before YouTube is video.
+  static final List<(ClipLinkKind, String, bool Function(String host, Uri uri))>
+  _webServices = [
+    (
+      ClipLinkKind.meeting,
+      'Zoom',
+      (h, u) =>
+          // Zoom, and Zoom for Government.
+          (_hostIs(h, 'zoom.us') || _hostIs(h, 'zoomgov.com')) &&
+          switch (_lowerSegments(u)) {
+            ['j' || 'my' || 'w' || 's', _, ...] => true,
+            // The Zoom Web App: /wc/<meeting>/join.
+            ['wc', _, ..., 'join'] => true,
+            _ => false,
+          },
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Google Meet',
+      (h, u) => h == 'meet.google.com' && _meetCode.hasMatch(u.path),
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Microsoft Teams',
+      (h, u) =>
+          (h == 'teams.microsoft.com' &&
+              // Older invitations, and the shorter /meet/<id>?p=... ones
+              // new meetings get.
+              (_idAfter(u, const ['l', 'meetup-join']) ||
+                  _idAfter(u, const ['meet']))) ||
+          (h == 'teams.live.com' && _idAfter(u, const ['meet'])) ||
+          // US government clouds: GCC High and DoD.
+          ((h == 'gov.teams.microsoft.us' || h == 'dod.teams.microsoft.us') &&
+              _idAfter(u, const ['l', 'meetup-join'])),
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Webex',
+      (h, u) => _hostIs(h, 'webex.com') && _webexMeeting(u),
+    ),
+    // An invitation, not the FaceTime site itself.
+    (
+      ClipLinkKind.meeting,
+      'FaceTime',
+      (h, u) =>
+          h == 'facetime.apple.com' &&
+          // The invitation itself rides in the fragment: /join#v=1&p=...
+          (_fragmentParameters(u)['p'] ?? '').isNotEmpty &&
+          switch (_segments(u)) {
+            [final only] => only.toLowerCase() == 'join',
+            _ => false,
+          },
+    ),
+    (
+      ClipLinkKind.meeting,
+      'Whereby',
+      // whereby.com, or a Business account's own subdomain
+      // (company.whereby.com) - not Whereby's own help and docs sites.
+      (h, u) =>
+          _hostIs(h, 'whereby.com') &&
+          !_wherebySites.contains(h) &&
+          switch (_segments(u)) {
+            [final room] => !_wherebyPages.contains(room.toLowerCase()),
+            _ => false,
+          },
+    ),
+    (
+      ClipLinkKind.music,
+      'Spotify',
+      (h, u) => h == 'open.spotify.com' || h == 'spotify.link',
+    ),
+    (
+      ClipLinkKind.music,
+      'Apple Music',
+      (h, u) => h == 'music.apple.com' || h == 'classical.music.apple.com',
+    ),
+    (ClipLinkKind.music, 'Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
+    (ClipLinkKind.music, 'YouTube Music', (h, u) => h == 'music.youtube.com'),
+    (ClipLinkKind.music, 'SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
+    (
+      ClipLinkKind.music,
+      'TIDAL',
+      (h, u) => h == 'tidal.com' || h == 'listen.tidal.com',
+    ),
+    (
+      ClipLinkKind.music,
+      'Deezer',
+      (h, u) => _hostIs(h, 'deezer.com') || h == 'deezer.page.link',
+    ),
+    (ClipLinkKind.music, 'Amazon Music', (h, u) => _amazonMusic.hasMatch(h)),
+    (ClipLinkKind.music, 'Bandcamp', (h, u) => _hostIs(h, 'bandcamp.com')),
+    (
+      ClipLinkKind.music,
+      'Pandora',
+      // pandora.app.link is where the app's Copy Link points.
+      (h, u) => _hostIs(h, 'pandora.com') || h == 'pandora.app.link',
+    ),
+    (
+      ClipLinkKind.video,
+      'YouTube',
+      (h, u) => h == 'youtube.com' || h == 'm.youtube.com' || h == 'youtu.be',
+    ),
+    (ClipLinkKind.video, 'Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
+    (ClipLinkKind.video, 'Twitch', (h, u) => _hostIs(h, 'twitch.tv')),
+    (ClipLinkKind.video, 'TikTok', (h, u) => _hostIs(h, 'tiktok.com')),
+  ];
+
+  /// Custom-scheme links into apps, by scheme.
+  ///
+  /// An allowlist, never "any scheme": a clip is text from anywhere, and some
+  /// schemes do far more than open an app - `javascript:`, `file:`,
+  /// Android's `intent:`, and Windows protocol handlers like `ms-msdt:` that
+  /// have been the way into remote-code exploits. These are apps that only
+  /// navigate to something inside themselves.
+  ///
+  /// Left out for doing more than that in one tap: `shortcuts:` runs a
+  /// shortcut, `steam:` installs and launches games, `raycast:` runs
+  /// commands. VS Code and Cursor are in for `file` links only - opening a
+  /// file at a line - since their other links hand the URI to extensions,
+  /// which clone repositories and more ([_editorSchemes]). Note and to-do
+  /// apps, Telegram (whose `tg://proxy` and `tg://socks` reconfigure the
+  /// app's connection) and Signal (whose `sgnl://linkdevice` links another
+  /// device to the account) are in for their navigation routes only
+  /// ([_navigation]).
+  static const _appSchemes = <String, (ClipLinkKind, String)>{
+    'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
+    'zoomus': (ClipLinkKind.meeting, 'Zoom'),
+    'msteams': (ClipLinkKind.meeting, 'Microsoft Teams'),
+    'facetime': (ClipLinkKind.meeting, 'FaceTime'),
+    'facetime-audio': (ClipLinkKind.meeting, 'FaceTime'),
+    'spotify': (ClipLinkKind.music, 'Spotify'),
+    'obsidian': (ClipLinkKind.app, 'Obsidian'),
+    'notion': (ClipLinkKind.app, 'Notion'),
+    'slack': (ClipLinkKind.app, 'Slack'),
+    'discord': (ClipLinkKind.app, 'Discord'),
+    'figma': (ClipLinkKind.app, 'Figma'),
+    'vscode': (ClipLinkKind.app, 'VS Code'),
+    'vscode-insiders': (ClipLinkKind.app, 'VS Code Insiders'),
+    'cursor': (ClipLinkKind.app, 'Cursor'),
+    'linear': (ClipLinkKind.app, 'Linear'),
+    'tg': (ClipLinkKind.app, 'Telegram'),
+    'whatsapp': (ClipLinkKind.app, 'WhatsApp'),
+    'sgnl': (ClipLinkKind.app, 'Signal'),
+    'things': (ClipLinkKind.app, 'Things'),
+    'todoist': (ClipLinkKind.app, 'Todoist'),
+    'bear': (ClipLinkKind.app, 'Bear'),
+    'craftdocs': (ClipLinkKind.app, 'Craft'),
+    'drafts': (ClipLinkKind.app, 'Drafts'),
+  };
+
+  static final _edgeSlashes = RegExp(r'^/+|/+$');
+
+  static final _teamsMeetingPath = RegExp(
+    '/l/(meetup-join|meeting|call)/[^/]',
+    caseSensitive: false,
+  );
+
+  static const _wherebySites = {
+    'support.whereby.com',
+    'docs.whereby.com',
+    'help.whereby.com',
+    'blog.whereby.com',
+    'status.whereby.com',
+    'embedded.whereby.com',
+  };
+
+  /// Whereby's own site, beside its rooms (`whereby.com/<room>`).
+  static const _wherebyPages = {
+    'information',
+    'user',
+    'org',
+    'login',
+    'signup',
+    'pricing',
+    'blog',
+    'careers',
+    'download',
+    'embedded',
+    'about',
+    'contact',
+    'product',
+    'features',
+    'security',
+    'terms',
+    'privacy',
+  };
+  static const _editorSchemes = {'vscode', 'vscode-insiders', 'cursor'};
+
+  /// Apps whose links also *do* things - run an action, add a task, trash a
+  /// note - by route, and the routes that only open something. A link on
+  /// any other route stays text. `drafts://x-callback-url/runAction` would
+  /// otherwise run whatever that action does, from a synced clip.
+  static const _navigation =
+      <String, ({Set<String> routes, Set<String> params})>{
+        'obsidian': (
+          routes: {'open', 'search'},
+          params: {'vault', 'file', 'path', 'query'},
+        ),
+        'drafts': (routes: {'open', 'x-callback-url/open'}, params: {'uuid'}),
+        'bear': (
+          routes: {
+            'x-callback-url/open-note',
+            'x-callback-url/open-tag',
+            'x-callback-url/search',
+          },
+          params: {
+            'id',
+            'title',
+            'header',
+            'term',
+            'name',
+            'tag',
+            'exclude_trashed',
+            'new_window',
+            'float',
+            'show_window',
+            'open_note',
+          },
+        ),
+        'things': (
+          routes: {'show', 'search'},
+          params: {'id', 'query', 'filter'},
+        ),
+        'todoist': (
+          routes: {'task', 'project', 'today', 'upcoming', 'inbox'},
+          params: {'id'},
+        ),
+        'craftdocs': (routes: {'open'}, params: {'blockId', 'spaceId'}),
+        'tg': (
+          routes: {'resolve', 'privatepost', 'join'},
+          params: {
+            'domain',
+            'post',
+            'thread',
+            'comment',
+            'channel',
+            'invite',
+            'profile',
+          },
+        ),
+        // A chat, a group invite or a sticker pack, each confirmed in the
+        // app - not `linkdevice`, which links another device to the account.
+        'sgnl': (
+          routes: {'signal.me', 'signal.group', 'addstickers'},
+          params: {'pack_id', 'pack_key'},
+        ),
+      };
+
+  static ClipLink? _appLink(String text) {
+    final colon = text.indexOf(':');
+    if (colon <= 0) return null;
+    final scheme = text.substring(0, colon).toLowerCase();
+    final app = _appSchemes[scheme];
+    if (app == null) return null;
+    final uri = Uri.tryParse(text);
+    if (uri == null) return null;
+    final hostPath = '${uri.host}${uri.path}';
+    final route = hostPath.replaceAll(_edgeSlashes, '');
+    // A scheme with nothing after it (`zoommtg://`, `spotify:/`) opens
+    // nothing.
+    if (route.isEmpty) return null;
+    if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
+    if (_navigation[scheme] case (:final routes, params: final allowed)?) {
+      if (!routes.contains(route.toLowerCase())) return null;
+      // A navigation route can still be told to act - Drafts' `open` runs
+      // `action=` on the draft it opens, Bear's `open-note` pins it with
+      // `pin=yes`, and every x-callback-url route follows `x-success=` to
+      // another URL. So only the parameters that say what to open are let
+      // through.
+      if (uri.queryParameters.keys.any((key) => !allowed.contains(key))) {
+        return null;
+      }
+    }
+    var (kind, name) = app;
+    // Teams links go to chats, channels, files and tabs as well as meetings;
+    // only a meeting or call link is joined.
+    if (scheme == 'msteams' && !_teamsMeetingPath.hasMatch(hostPath)) {
+      kind = ClipLinkKind.app;
+    }
+    // A Zoom link joins the meeting its confno names; without one it only
+    // opens Zoom.
+    if ((scheme == 'zoommtg' || scheme == 'zoomus') &&
+        (uri.queryParameters['confno'] ?? '').isEmpty) {
+      kind = ClipLinkKind.app;
+    }
+    var target = uri;
+    // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
+    // opens the app where it is installed and the web player where it is not.
+    if (scheme == 'spotify') {
+      final parts = uri.path.split(':');
+      if (parts.length == 2 && parts.every((p) => p.isNotEmpty)) {
+        target = Uri.https('open.spotify.com', '/${parts[0]}/${parts[1]}');
+      }
+    }
+    return ClipLink._(kind, target, name, service: name);
+  }
+
+  static final _localHost = RegExp(
+    r'^(localhost|\d{1,3}(\.\d{1,3}){3}|[a-z0-9-]+(\.[a-z0-9-]+)*\.(local|lan|home|internal|home\.arpa|localhost)|\[[0-9a-f:.]+\])(:\d{1,5})?([/?#]\S*)?$',
+    caseSensitive: false,
+  );
+  // The top-level domain is a country code or a common generic one, so a
+  // file and line with an extension outside [_fileAndLine]'s list
+  // (`schema.sql:42`, `Component.vue:80`) does not read as a host. A country
+  // code that is also an extension (`.rs`, `.py`, `.md`) is ruled out there.
+  static final _hostWithPort = RegExp(
+    r'^[a-z0-9-]+(\.[a-z0-9-]+)*'
+    r'\.([a-z]{2}|com|org|net|edu|gov|mil|int|info|biz|dev|app|cloud|tech|'
+    'site|online|xyz|page|run|live|host|systems|services|network|software)'
+    r':\d{1,5}([/?#]\S*)?$',
+    caseSensitive: false,
+  );
+
+  /// `main.dart:120`, `app.py:42`: a file and line, as compilers and stack
+  /// traces write them, has the same shape as a host and port.
+  static final _fileAndLine = RegExp(
+    r'\.(dart|py|js|jsx|ts|tsx|mjs|cjs|kt|kts|java|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|cs|go|rs|rb|php|lua|sh|zig|scala|ex|exs|json|ya?ml|toml|xml|html?|css|scss|txt|md|log|'
+    // Two-letter extensions, which [_hostWithPort] would otherwise read as
+    // a country-code domain: Perl, OCaml, Terraform, Makefile fragments,
+    // GDScript, Crystal, SystemVerilog, ReasonML, ActionScript, BitBake,
+    // Apps Script, LiveScript, Nushell, Smalltalk, TableGen, Haskell, F#,
+    // Julia, Visual Basic, Emacs Lisp, Haxe, Puppet, Verilog headers.
+    r'pl|pm|ml|mk|tf|gd|cr|sv|re|as|bb|gs|ls|nu|st|td|hs|fs|jl|vb|el|hx|pp|vh):\d',
+    caseSensitive: false,
+  );
+
+  /// A machine on the network, written without `http://`: `localhost:3000`,
+  /// `192.168.1.1`, `printer.local`, `nas.lan:5000/admin`. Router pages and
+  /// dev servers are copied like this, and only a browser opens them.
+  ///
+  /// A bare IPv4 address, with no port or path, only when it is a private
+  /// one (a router, a NAS, this machine): `1.0.10.27` is as likely to be a
+  /// four-part version number as an address, and a public server is not
+  /// usually reached by typing its address into a browser.
+  static ClipLink? _localAddress(String text) {
+    final match = _localHost.firstMatch(text);
+    if (match == null &&
+        (!_hostWithPort.hasMatch(text) ||
+            // Only the host and port can be a file and line: after them,
+            // `/app.js:42` is plainly the URL's own path.
+            _fileAndLine.hasMatch(_authority(text)))) {
+      return null;
+    }
+    if (match?.group(2) != null) {
+      // An IPv4 address: four octets, each a byte.
+      final address = match!.group(1)!;
+      final octets = address.split('.').map(int.parse).toList();
+      if (octets.any((o) => o > 255)) return null;
+      // Bare, only a local machine. With a port or path, a public server
+      // too - but never multicast, broadcast or the reserved blocks, which
+      // serve no page either way.
+      final bare = address.length == text.length;
+      if (!isLocalUnicastIPv4(octets) && (bare || isReservedIPv4(octets))) {
+        return null;
+      }
+    }
+    final uri = Uri.tryParse('http://$text');
+    if (uri == null || uri.host.isEmpty) return null;
+    // A bracketed IPv6 address, unless it is one that serves no page.
+    if (uri.host.contains(':') &&
+        isUnservableIPv6(Uri.parseIPv6Address(uri.host.split('%').first))) {
+      return null;
+    }
+    // Five digits reach 99999; a port runs 1-65535, 0 being reserved.
+    if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
+    // Port 443 is TLS: plain http to it fails.
+    final target = uri.port == 443 ? uri.replace(scheme: 'https') : uri;
+    return ClipLink._(ClipLinkKind.web, target, uri.host);
+  }
+
+  /// [text] up to its path, query or fragment: the host and port.
+  static String _authority(String text) {
+    final end = text.indexOf(_pathStart);
+    return end < 0 ? text : text.substring(0, end);
+  }
+
+  static final _pathStart = RegExp('[/?#]');
+
+  static final _trailingZeros = RegExp(r'\.?0+$');
+  static final _decimalCoordinates = RegExp(
+    r'^(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})$',
+  );
+  static final _dmsCoordinates = RegExp(
+    r'''^(\d{1,2})°\s*(\d{1,2})['′]\s*(\d{1,2}(?:\.\d+)?)["″]\s*([NS])[\s,]+(\d{1,3})°\s*(\d{1,2})['′]\s*(\d{1,2}(?:\.\d+)?)["″]\s*([EW])$''',
+    caseSensitive: false,
+  );
+
+  /// Coordinates as maps apps copy them: `43.64263, -79.38712` (Google Maps'
+  /// right-click) or `43°38'33.5"N 79°23'13.6"W` (its place card). At least
+  /// three decimals each, so a pair of ordinary numbers is not a place.
+  static ClipLink? _coordinates(String text) {
+    double? lat;
+    double? lng;
+    final decimal = _decimalCoordinates.firstMatch(text);
+    if (decimal != null) {
+      lat = double.parse(decimal.group(1)!);
+      lng = double.parse(decimal.group(2)!);
+    } else if (_dmsCoordinates.firstMatch(text) case final dms?) {
+      // Minutes and seconds run 0-59; `43°99'` is not a place.
+      for (final at in [2, 3, 6, 7]) {
+        if (double.parse(dms.group(at)!) >= 60) return null;
+      }
+      double degrees(int at) =>
+          double.parse(dms.group(at)!) +
+          double.parse(dms.group(at + 1)!) / 60 +
+          double.parse(dms.group(at + 2)!) / 3600;
+      lat = degrees(1) * (dms.group(4)!.toUpperCase() == 'S' ? -1 : 1);
+      lng = degrees(5) * (dms.group(8)!.toUpperCase() == 'W' ? -1 : 1);
+    }
+    if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) {
+      return null;
+    }
+    // `geo:0,0` means "no coordinate, search instead", and 0,0 is open sea:
+    // a copied `0.000, 0.000` is a placeholder, not a place.
+    if (lat == 0 && lng == 0) return null;
+    String fixed(double v) =>
+        v.toStringAsFixed(6).replaceFirst(_trailingZeros, '');
+    return ClipLink._(
+      ClipLinkKind.map,
+      Uri.parse('geo:${fixed(lat)},${fixed(lng)}'),
+      text,
+    );
+  }
+
+  static const _streetTypes =
+      'St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|'
+      'Ct|Court|Pl|Place|Pkwy|Parkway|Hwy|Highway|Cres|Crescent|Ter|Terrace|'
+      'Cir|Circle|Sq|Square|Trl|Trail|Row|Close|Gardens|Mews|Grove|Line|'
+      'Sideroad|Concession|Gate|Heights|Hill|Park';
+  static final _streetLine = RegExp(
+    r'^(?:(?:unit|suite|apt|#)\s*\w+[,\s]+)?\d+[a-z]?(?:-\d+)?\s+'
+    // Street words may start with any letter: `123 Église St`. At least one,
+    // and none of the little words a sentence is made of: `3 in a row`,
+    // `2 for the road`, `1 more way` and `15 GB Drive` are not streets.
+    '(?:(?!(?:a|an|in|on|at|of|for|to|and|or|more|per|by|is|are|was|my|'
+    r"your|our|this|that|[kmgt]b)\s)[\p{L}0-9][\p{L}\p{N}_'.-]*\s+){1,4}(?:"
+    '$_streetTypes'
+    r')\.?(?:\s+(?:N|S|E|W|NE|NW|SE|SW|North|South|East|West))?'
+    r'(?:$|[,\n]|\s+(?:unit|suite|apt|#))',
+    caseSensitive: false,
+    unicode: true,
+  );
+  static final _frenchStreet = RegExp(
+    r'^\d+[a-z]?,?\s+(?:rue|avenue|av\.?|boulevard|boul\.?|chemin|ch\.?|route|rang|mont[ée]e|place|all[ée]e|impasse|quai|cours)\s+(\S+)',
+    caseSensitive: false,
+  );
+  // What follows the street type in a French address: a name (`rue
+  // Sherbrooke`), a number (`route 138`) or a particle (`rue de la Paix`) -
+  // not an English word, as in `2 place settings` or `1 route change`.
+  static final _frenchStreetName = RegExp(
+    r"^(?:\p{Lu}|\d|(?:de|du|des|la|le|les)$|[ld]['’])",
+    unicode: true,
+  );
+  static final _continentalStreet = RegExp(
+    // Up to two words before the name that carries the type: `Alte
+    // Dorfstraße 5`, `Am Alten Weg 3`.
+    // The type is joined to the name (`Dorfstraße`) or, after at least one
+    // other word, a word of its own (`Am Alten Weg`); alone, `Weg 3` is too
+    // little to go on.
+    r"^(?:(?:[\wÀ-ÿ'.-]+\s+){0,2}[\wÀ-ÿ'.-]+|(?:[\wÀ-ÿ'.-]+\s+){1,2})"
+    r'(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:-\d+)?(?:$|[,\n])',
+    caseSensitive: false,
+  );
+  static final _houseNumber = RegExp(r'^\d+[a-z]?\b', caseSensitive: false);
+  static final _postalCode = RegExp(
+    // Canada, UK, then a US state and ZIP after the city's comma
+    // (`Mountain View, CA 94043`): any two capitals and five digits would
+    // also be `order ID 12345`.
+    r'\b([A-Z]\d[A-Z] ?\d[A-Z]\d|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2})\b|'
+    r',\s*[A-Z]{2},? \d{5}(?:-\d{4})?\b',
+  );
+
+  /// A street address, on one line or up to four: `123 Main St`,
+  /// `1600 Amphitheatre Pkwy, Mountain View, CA 94043`, `350 rue Sherbrooke`,
+  /// `Friedrichstraße 43`, `221B Baker Street\nLondon NW1 6XE`.
+  ///
+  /// A continental street needs its type in the name (-straße, -weg,
+  /// -straat...). One without, like `Unter den Linden 77`, is words and then
+  /// a number, which is also `Room 12` and `Chapter 3`, so it stays text.
+  ///
+  /// A best guess, and deliberately one that leans towards yes: the cost of a
+  /// wrong one is an Open in Maps button on a clip that did not need it. The
+  /// first line has to read as a street - a house number and a street type
+  /// (St, Ave, rue, Straße...) - or start with a number and be followed by a
+  /// postal code. Anything with an `@` or `://` in it is something else.
+  static ClipLink? _address(String text) {
+    if (text.length > 300 || text.contains('@') || text.contains('://')) {
+      return null;
+    }
+    final lines = [
+      for (final line in text.split('\n'))
+        if (line.trim().isNotEmpty) line.trim(),
+    ];
+    if (lines.isEmpty || lines.length > 4) return null;
+    if (lines.any((line) => line.length > 120)) return null;
+    final first = lines.first;
+    final joined = lines.join(', ');
+    final street =
+        _streetLine.hasMatch(joined) ||
+        (_frenchStreet
+                .firstMatch(first)
+                ?.group(1)
+                ?.contains(_frenchStreetName) ??
+            false) ||
+        _continentalStreet.hasMatch(joined);
+    final numbered =
+        _houseNumber.hasMatch(first) && _postalCode.hasMatch(joined);
+    if (!street && !numbered) return null;
+    return ClipLink._(
+      ClipLinkKind.map,
+      Uri(scheme: 'geo', path: '0,0', queryParameters: {'q': joined}),
+      first,
+    );
+  }
+
+  static final _ups = RegExp(r'^1Z[0-9A-Z]{16}$');
+  static final _usps = RegExp(r'^9[2-5]\d{18,20}$');
+  static final _groupedId = RegExp(r'^[A-Za-z0-9]+( [A-Za-z0-9]+)+$');
+  static final _whitespaceRun = RegExp(r'\s+');
+
+  /// A tracking number printed in groups, with whatever spacing it was
+  /// copied with - no-break spaces from a PDF, doubled spaces.
+  static ClipLink? _groupedTracking(String text) {
+    final spaced = text.replaceAll(_whitespaceRun, ' ');
+    if (!_groupedId.hasMatch(spaced)) return null;
+    return _tracking(spaced.replaceAll(' ', ''));
+  }
+
+  static final _parcelforce = RegExp('^(E[A-E]|CP)');
+  static final _s10 = RegExp(r'^[A-Z]{2}\d{9}[A-Z]{2}$');
+
+  /// A parcel tracking number, as the carrier's own tracking page.
+  ///
+  /// Only formats that cannot be mistaken for something else: UPS's `1Z`
+  /// numbers, the international postal format (`LM123456789CA`) and USPS's
+  /// 20-22 digit numbers, which start 92-95, all checked against their check
+  /// digit. FedEx and DHL numbers are plain runs of 10-15 digits, the
+  /// same as order numbers and codes, so they stay text.
+  static ClipLink? _tracking(String text) {
+    // Every format below is 13-22 characters: skip upper-casing the rest.
+    if (text.length < 13 || text.length > 22) return null;
+    final number = text.toUpperCase();
+    final (String, Uri)? parcel;
+    if (_ups.hasMatch(number) && _upsCheckDigitOk(number)) {
+      parcel = (
+        'UPS',
+        Uri.https('www.ups.com', '/track', {'tracknum': number}),
+      );
+    } else if (_usps.hasMatch(number) && _uspsCheckDigitOk(number)) {
+      parcel = ('USPS', _uspsPage(number));
+    } else if (_s10.hasMatch(number) && _s10CheckDigitOk(number)) {
+      parcel = switch (number.substring(11)) {
+        'CA' => (
+          'Canada Post',
+          Uri.parse(
+            'https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor=$number',
+          ),
+        ),
+        'US' => ('USPS', _uspsPage(number)),
+        // Parcelforce's services share Royal Mail's GB suffix, and Royal
+        // Mail's tracker does not show them: EA-EE and CP.
+        'GB' when _parcelforce.hasMatch(number) => (
+          'Parcelforce',
+          Uri.https('www.parcelforce.com', '/track-trace', {
+            'trackNumber': number,
+          }),
+        ),
+        'GB' => (
+          'Royal Mail',
+          Uri.parse(
+            'https://www.royalmail.com/track-your-item#/tracking-results/$number',
+          ),
+        ),
+        'AU' => (
+          'Australia Post',
+          Uri.https('auspost.com.au', '/mypost/track/details/$number'),
+        ),
+        // Every other postal service: a tracker that knows them all.
+        _ => ('Post', Uri.parse('https://t.17track.net/en#nums=$number')),
+      };
+    } else {
+      return null;
+    }
+    final (carrier, page) = parcel;
+    return ClipLink._(ClipLinkKind.tracking, page, number, service: carrier);
+  }
+
+  static Uri _uspsPage(String number) => Uri.https(
+    'tools.usps.com',
+    '/go/TrackConfirmAction',
+    {'tLabels': number},
+  );
+
+  /// UPS: the 15 characters after `1Z`, letters as `(code - 63) % 10`, odd
+  /// places once and even places twice; the last digit brings it to a ten.
+  static bool _upsCheckDigitOk(String number) {
+    var sum = 0;
+    for (var i = 2; i < 17; i++) {
+      final c = number.codeUnitAt(i);
+      final value = c >= 48 && c <= 57 ? c - 48 : (c - 63) % 10;
+      sum += (i - 2).isEven ? value : value * 2;
+    }
+    return (10 - sum % 10) % 10 == number.codeUnitAt(17) - 48;
+  }
+
+  /// USPS (IMpb): from the right, leaving out the check digit, every other
+  /// digit three times starting with the first; the check digit brings the
+  /// sum to a ten.
+  static bool _uspsCheckDigitOk(String number) {
+    var sum = 0;
+    for (var i = number.length - 2, weight = 3; i >= 0; i--) {
+      sum += (number.codeUnitAt(i) - 48) * weight;
+      weight = weight == 3 ? 1 : 3;
+    }
+    return (10 - sum % 10) % 10 == number.codeUnitAt(number.length - 1) - 48;
+  }
+
+  /// UPU S10: weights 8 6 4 2 3 5 9 7 over the serial, eleven minus the sum
+  /// mod 11, with 10 written 0 and 11 written 5.
+  static bool _s10CheckDigitOk(String number) {
+    const weights = [8, 6, 4, 2, 3, 5, 9, 7];
+    var sum = 0;
+    for (var i = 0; i < 8; i++) {
+      sum += (number.codeUnitAt(2 + i) - 48) * weights[i];
+    }
+    final check = switch (11 - sum % 11) {
+      10 => 0,
+      11 => 5,
+      final digit => digit,
+    };
+    return check == number.codeUnitAt(10) - 48;
   }
 
   static ClipLink? _mailto(String text) {
@@ -364,7 +1120,204 @@ class ClipLink {
   /// browser, which does nothing useful with it. Windows has Phone Link and
   /// macOS has FaceTime, both of which place the call on a paired phone.
   bool canOpenOn(String platform) =>
-      !(kind == ClipLinkKind.phone && platform == 'linux');
+      !(kind == ClipLinkKind.phone && platform == 'linux') &&
+      // Apps that exist only on Apple devices: elsewhere nothing opens them.
+      !(_appleOnlySchemes.contains(uri.scheme) &&
+          platform != 'macos' &&
+          platform != 'ios') &&
+      // Editors that exist only on desktops: a phone has nothing for them.
+      !(_editorSchemes.contains(uri.scheme) &&
+          (platform == 'android' || platform == 'ios'));
+
+  static const _appleOnlySchemes = {
+    'things',
+    'drafts',
+    'bear',
+    'facetime',
+    'facetime-audio',
+  };
+
+  // Detection decoded this path already, so it decodes.
+  String get _telPath => Uri.decodeComponent(uri.path);
+
+  /// The second thing to do with it on [platform], or null where there is
+  /// none:
+  ///
+  /// - A phone number can be texted as well as called (`sms:`; Messages on
+  ///   a Mac, Phone Link on Windows) - wherever it can be called, so not on
+  ///   Linux, which has nothing for `sms:` either.
+  /// - A song or album can be found on the other services through song.link,
+  ///   which is what makes an Apple Music link useful on a phone with only
+  ///   Spotify, and the other way round. Not for podcasts, playlists or
+  ///   artists, which song.link has nothing for.
+  ClipLinkAlternate? alternateOn(String platform) {
+    if (!canOpenOn(platform)) return null;
+    switch (kind) {
+      case ClipLinkKind.phone:
+        // Decoded, as detection read it: `%3B` is a `;` there too.
+        final path = _telPath;
+        // A local number's `phone-context` says which country and area it
+        // is in; `sms:` has no way to carry it, and the number alone could
+        // reach someone else. Call keeps it; Text is left out.
+        if (path.toLowerCase().contains(';phone-context=')) return null;
+        // The number alone: a tel: link's other parameters (;ext=456) mean
+        // nothing to a text.
+        return ClipLinkAlternate(
+          ClipLinkAlternateKind.text,
+          'Text',
+          Uri(scheme: 'sms', path: path.split(';').first),
+        );
+      case ClipLinkKind.music:
+        final target = _songLinkTarget;
+        if (target == null) return null;
+        return ClipLinkAlternate(
+          ClipLinkAlternateKind.findElsewhere,
+          'Find on other services',
+          Uri.parse('https://song.link/$target'),
+        );
+      default:
+        return null;
+    }
+  }
+
+  // The services whose paths name what they lead to: /track/<id>,
+  // /album/<id>. Not Pandora, which keeps tracks under /artist/, nor
+  // SoundCloud, whose paths are a user's own names.
+  static const _routedMusic = {
+    'Spotify',
+    'Apple Music',
+    'TIDAL',
+    'Deezer',
+    'Amazon Music',
+    'Bandcamp',
+  };
+
+  /// Short-link hosts, whose paths say nothing about what they lead to.
+  static const _shortMusicHosts = {
+    'spotify.link',
+    'deezer.page.link',
+    'on.soundcloud.com',
+    'pandora.app.link',
+  };
+
+  /// The segments before a music service's route: a storefront country
+  /// (`/us/`), Spotify's `/intl-de/` and `/embed/`, TIDAL's `/browse/`.
+  static final _routePrefix = RegExp(
+    r'^([a-z]{2}(-[a-z]{2})?|intl-[a-z]{2}|browse|embed)$',
+    caseSensitive: false,
+  );
+  static const _itemRoutes = {'track', 'tracks', 'album', 'albums', 'song'};
+
+  /// Whether [path]'s route - its first segment past any [_routePrefix] - is
+  /// a track or an album and then names one: `/track/<id>`, not a bare
+  /// `/track`, nor a segment named so further along
+  /// (`/us/playlist/album/pl.abc`, a playlist titled "album"). Split on `:`
+  /// too, for `spotify:album:<id>`.
+  static bool _isTrackOrAlbum(String path) => switch (path
+      .split(_routeSeparator)
+      .where((s) => s.isNotEmpty)
+      .skipWhile(_routePrefix.hasMatch)
+      .toList()) {
+    [final route, _, ...] => _itemRoutes.contains(route.toLowerCase()),
+    _ => false,
+  };
+  static final _routeSeparator = RegExp('[/:]');
+
+  /// SoundCloud's own pages, where a user's name would otherwise be.
+  static const _soundCloudSite = {
+    'search',
+    'discover',
+    'stream',
+    'you',
+    'charts',
+    'upload',
+    'settings',
+    'messages',
+    'notifications',
+    'people',
+    'tags',
+    'pages',
+    'stations',
+  };
+  static final _pandoraItem = RegExp(r'^(AL|TR)[A-Za-z0-9]+$');
+
+  /// A SoundCloud user's own pages, beside their tracks at `/<user>/<track>`.
+  static const _soundCloudPages = {
+    'sets',
+    'tracks',
+    'albums',
+    'popular-tracks',
+    'likes',
+    'reposts',
+    'followers',
+    'following',
+    'comments',
+  };
+
+  /// Whether [uri], on its music service, leads to a song or an album.
+  bool get _namesSongOrAlbum => switch (service) {
+    'Apple Podcasts' => false,
+    // /<user>/<track>: not a profile (/<user>), nor a set, which is a
+    // playlist, nor the user's other pages or SoundCloud's own.
+    'SoundCloud' => switch (_lowerSegments(uri)) {
+      [final user, final track, ...] =>
+        !_soundCloudSite.contains(user) && !_soundCloudPages.contains(track),
+      _ => false,
+    },
+    // Under its artist, ending in its id: /artist/<artist>/<album>/AL...,
+    // /artist/<artist>/<album>/<track>/TR....
+    'Pandora' => switch (_segments(uri)) {
+      [final artist, ..., final id] =>
+        artist.toLowerCase() == 'artist' && _pandoraItem.hasMatch(id),
+      _ => false,
+    },
+    // A song (/watch) or an album: its /browse/MPREb page, or a playlist
+    // whose id starts OLAK5uy. Any other playlist is someone's list.
+    'YouTube Music' => switch (_lowerSegments(uri)) {
+      ['watch'] => (uri.queryParameters['v'] ?? '').isNotEmpty,
+      ['browse', final id] => id.startsWith('mpreb'),
+      ['playlist'] => (uri.queryParameters['list'] ?? '').startsWith('OLAK5uy'),
+      _ => false,
+    },
+    final name? when _routedMusic.contains(name) => _isTrackOrAlbum(uri.path),
+    _ => true,
+  };
+
+  /// The link song.link is given for a song or album, or null for what it
+  /// cannot resolve.
+  ///
+  /// An Apple Music track is the album's link with the track in `?i=`
+  /// (`/album/x/123?i=456`), a query that song.link, which takes the link as
+  /// its own path, can read as its own and resolve the album: it is given as
+  /// the track's own `/song/` link instead.
+  String? get _songLinkTarget {
+    // A link to anything but a song or album - Liked Songs, a search, a
+    // radio station, a Mix, a profile, an artist's merch - is nothing
+    // song.link resolves. Short links are given the benefit of the doubt.
+    if (!_shortMusicHosts.contains(uri.host) && !_namesSongOrAlbum) {
+      return null;
+    }
+    final track = uri.queryParameters['i'];
+    if (service == 'Apple Music' && track != null && track.isNotEmpty) {
+      final country = uri.pathSegments.firstOrNull;
+      return Uri.https(
+        'music.apple.com',
+        '/${country != null && country.length == 2 ? country : 'us'}/song/$track',
+      ).toString();
+    }
+    return uri.toString();
+  }
+
+  /// Whether Open names the app that will open it, once that is known
+  /// ("Open in Google Maps"). Calls, meetings and parcels keep their own
+  /// verb: "Join meeting" and "Track package" say more than "Open in Zoom" or
+  /// "Open in Safari" would.
+  bool get namesHandler => switch (kind) {
+    ClipLinkKind.phone ||
+    ClipLinkKind.meeting ||
+    ClipLinkKind.tracking => false,
+    _ => true,
+  };
 
   /// What the button that opens it says.
   String get actionLabel => switch (kind) {
@@ -372,6 +1325,11 @@ class ClipLink {
     ClipLinkKind.map => 'Open in Maps',
     ClipLinkKind.email => 'Write email',
     ClipLinkKind.phone => 'Call',
+    ClipLinkKind.meeting => 'Join meeting',
+    ClipLinkKind.music => 'Open in $service',
+    ClipLinkKind.video => 'Watch on $service',
+    ClipLinkKind.tracking => 'Track package',
+    ClipLinkKind.app => 'Open in $service',
   };
 
   /// A short noun for the kind, for the meta line and screen readers.
@@ -380,6 +1338,11 @@ class ClipLink {
     ClipLinkKind.map => 'Map',
     ClipLinkKind.email => 'Email',
     ClipLinkKind.phone => 'Phone',
+    ClipLinkKind.meeting => 'Meeting',
+    ClipLinkKind.music => 'Music',
+    ClipLinkKind.video => 'Video',
+    ClipLinkKind.tracking => 'Package',
+    ClipLinkKind.app => 'App link',
   };
 }
 
