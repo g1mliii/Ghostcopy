@@ -1238,6 +1238,11 @@ void main() {
           'https://example.com/status',
         );
         expect(ClipLink.detect('localhost:3000')!.uri.scheme, 'http');
+        expect(
+          ClipLink.detect('example.com:8080/app.js:42')?.kind,
+          ClipLinkKind.web,
+        );
+        expect(ClipLink.detect('main.dart:120'), isNull);
         for (final text in [
           '[2001:db8::1]:8080',
           '[3fff::1]:8080',
@@ -1259,6 +1264,8 @@ void main() {
           'https://music.apple.com/us/playlist/album/pl.abc',
           'https://soundcloud.com/forss',
           'https://soundcloud.com/forss/likes',
+          'https://open.spotify.com/track',
+          'https://www.deezer.com/album/',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),

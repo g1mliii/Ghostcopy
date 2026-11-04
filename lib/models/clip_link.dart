@@ -592,7 +592,10 @@ class ClipLink {
   static ClipLink? _localAddress(String text) {
     final match = _localHost.firstMatch(text);
     if (match == null &&
-        (!_hostWithPort.hasMatch(text) || _fileAndLine.hasMatch(text))) {
+        (!_hostWithPort.hasMatch(text) ||
+            // Only the host and port can be a file and line: after them,
+            // `/app.js:42` is plainly the URL's own path.
+            _fileAndLine.hasMatch(text.split(_pathStart).first))) {
       return null;
     }
     if (match?.group(2) != null) {
@@ -1192,16 +1195,18 @@ class ClipLink {
 
   /// Whether [path]'s route - its first segment past any [_routePrefix] - is
   /// a track or an album, not merely a segment named so further along
-  /// (`/us/playlist/album/pl.abc`, a playlist titled "album").
-  static bool _isTrackOrAlbum(String path) => _itemRoutes.contains(
-    path
-        .split(_routeSeparator)
-        .where((s) => s.isNotEmpty)
-        .map((s) => s.toLowerCase())
-        .skipWhile(_routePrefix.hasMatch)
-        .firstOrNull,
-  );
+  /// (`/us/playlist/album/pl.abc`, a playlist titled "album")...
+  /// ...and then names one: `/track/<id>`, not a bare `/track`.
+  static bool _isTrackOrAlbum(String path) => switch (path
+      .split(_routeSeparator)
+      .where((s) => s.isNotEmpty)
+      .skipWhile((s) => _routePrefix.hasMatch(s.toLowerCase()))
+      .toList()) {
+    [final route, _, ...] => _itemRoutes.contains(route.toLowerCase()),
+    _ => false,
+  };
   static final _routeSeparator = RegExp('[/:]');
+  static final _pathStart = RegExp('[/?#]');
 
   /// A SoundCloud user's own pages, beside their tracks at `/<user>/<track>`.
   static const _soundCloudPages = {
