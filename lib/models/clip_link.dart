@@ -230,6 +230,15 @@ class ClipLink {
       if (s.isNotEmpty) s,
   ];
 
+  /// [uri]'s fragment read as a query: `#v=1&p=...` - empty if it is not one.
+  static Map<String, String> _fragmentParameters(Uri uri) {
+    try {
+      return Uri.splitQueryString(uri.fragment);
+    } on FormatException {
+      return const {};
+    }
+  }
+
   /// A Teams invitation in its older form: `/l/meetup-join/<id>`.
   static bool _teamsInvite(Uri uri) => switch (uri.pathSegments) {
     ['l', final route, final id, ...] =>
@@ -308,7 +317,7 @@ class ClipLink {
       (h, u) =>
           h == 'facetime.apple.com' &&
           // The invitation itself rides in the fragment: /join#v=1&p=...
-          u.fragment.isNotEmpty &&
+          (_fragmentParameters(u)['p'] ?? '').isNotEmpty &&
           switch (_segments(u)) {
             [final only] => only.toLowerCase() == 'join',
             _ => false,
@@ -491,7 +500,15 @@ class ClipLink {
         'craftdocs': (routes: {'open'}, params: {'blockId', 'spaceId'}),
         'tg': (
           routes: {'resolve', 'privatepost', 'join'},
-          params: {'domain', 'post', 'thread', 'comment', 'channel', 'invite'},
+          params: {
+            'domain',
+            'post',
+            'thread',
+            'comment',
+            'channel',
+            'invite',
+            'profile',
+          },
         ),
         // A chat, a group invite or a sticker pack, each confirmed in the
         // app - not `linkdevice`, which links another device to the account.

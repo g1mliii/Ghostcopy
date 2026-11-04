@@ -1201,6 +1201,10 @@ void main() {
           ClipLink.detect('https://whereby.com/team-standup/')?.kind,
           ClipLinkKind.meeting,
         );
+        expect(
+          ClipLink.detect('tg://resolve?domain=telegram&profile')?.kind,
+          ClipLinkKind.app,
+        );
         for (final text in [
           'https://acme.webex.com/meet/',
           'https://acme.webex.com/join/',
@@ -1213,6 +1217,7 @@ void main() {
           'https://facetime.apple.com/joinery',
           'https://facetime.apple.com/join',
           'https://facetime.apple.com/join/unrelated#v=1&p=abc',
+          'https://facetime.apple.com/join#notes',
           'https://meet.google.com/abc-defg-hij-notes',
           'https://meet.google.com/abc-defg-hij/unrelated',
         ]) {
