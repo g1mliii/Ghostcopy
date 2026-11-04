@@ -73,6 +73,8 @@ import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/theme/appearance.dart';
+import 'ui/theme/colors.dart';
 import 'ui/tray_menu_lifecycle.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
@@ -704,6 +706,7 @@ Future<void> _appMain(
       ClipboardRepository.initializeDeviceName(),
       settingsService.initialize(),
     ]);
+    appAppearance.value = await settingsService.getThemeMode();
     debugPrint('[App] ✅ Settings service initialized for mobile');
     // Before runApp: MyApp.initState reads it synchronously to decide whether
     // the welcome screen shows. The prefs instance is already loaded above.
@@ -856,16 +859,7 @@ Future<void> _appMain(
     // top and its content still begins below the cutout.
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        // Transparent, not coloured: the AppBar behind it supplies the colour.
-        statusBarColor: Colors.transparent,
-        // Light glyphs, because everything behind them is the dark theme.
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark, // iOS reads this one
-        systemNavigationBarColor: Colors.transparent,
-        systemNavigationBarIconBrightness: Brightness.light,
-        systemNavigationBarContrastEnforced: false,
-      ),
+      appearanceOverlayStyle(isLight: GhostColors.isLight),
     );
 
     runApp(
@@ -1502,16 +1496,23 @@ class _MyAppState extends State<MyApp> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: _navigatorKey,
-      title: 'GhostCopy',
-      theme: AppTheme.darkTheme,
-      // No overscroll stretch or glow anywhere in the app.
-      scrollBehavior: Adaptive.scrollBehavior,
-      debugShowCheckedModeBanner: false,
-      // Keep the Navigator full-width for iOS edge-back gestures. Mobile
-      // screens apply horizontal safe areas inside their route content.
-      home: _buildHome(),
+    return AppearanceBuilder(
+      builder: (context) => MaterialApp(
+        navigatorKey: _navigatorKey,
+        title: 'GhostCopy',
+        theme: AppTheme.platformTheme,
+        themeAnimationDuration: Duration.zero,
+        builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+          value: appearanceOverlayStyle(isLight: GhostColors.isLight),
+          child: child!,
+        ),
+        // No overscroll stretch or glow anywhere in the app.
+        scrollBehavior: Adaptive.scrollBehavior,
+        debugShowCheckedModeBanner: false,
+        // Keep the Navigator full-width for iOS edge-back gestures. Mobile
+        // screens apply horizontal safe areas inside their route content.
+        home: _buildHome(),
+      ),
     );
   }
 

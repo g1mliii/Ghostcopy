@@ -1,76 +1,65 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// GhostCopy color palette - dark theme with glassmorphism
+import '../../services/settings_service.dart';
+import 'appearance.dart';
+
+/// Shared palette with white mobile surfaces and dark desktop surfaces.
 class GhostColors {
-  // Private constructor to prevent instantiation
   GhostColors._();
 
-  // Background layers: the redesign handoff's ramp, de-greened.
-  //
-  // The handoff values (#0E0F13 / #18191F / #22232B) look better than flat
-  // neutral grey because the blue channel sits 4-9 above red, which keeps
-  // large dark areas from going muddy. That cool depth is worth having.
-  //
-  // What was NOT worth having is their green channel, which sits one above red
-  // at every step. Green carries ~72% of perceived luminance against blue's
-  // ~7%, so that +1 dominated what the eye actually saw and the whole ramp
-  // read as green rather than as the blue the numbers suggest.
-  //
-  // So: green pinned to red, blue left alone. Same cool character as the
-  // handoff, no cast, and luma held within 0.4 of the original at every step
-  // (15.1->15.3, 25.2->25.4, 35.4->35.6) so nothing shifts in lightness.
-  static const background = Color(0xFF0F0F13);
-  static const surface = Color(0xFF19191F); // Card surfaces
-  static const surfaceLight = Color(0xFF23232B); // Elevated surfaces
+  /// Mobile resolves its saved override against the current system brightness.
+  static bool get isLight =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android) &&
+      switch (appAppearance.value) {
+        AppThemeMode.light => true,
+        AppThemeMode.dark => false,
+        AppThemeMode.system =>
+          WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+              Brightness.light,
+      };
 
-  // Accent colors
-  static const primary = Color(0xFF6670FF); // Purple-blue accent
+  static Color get background =>
+      isLight ? const Color(0xFFF2F2F7) : const Color(0xFF0F0F13);
+  static Color get surface => isLight ? Colors.white : _darkSurface;
+  static const _darkSurface = Color(0xFF19191F);
+  static Color get surfaceLight =>
+      isLight ? const Color(0xFFEAEAF0) : const Color(0xFF23232B);
 
-  /// Hover fill for an already-selected control, and the fill of the auth
-  /// panel's primary button.
-  ///
-  /// Was 0xFF4752C4 - Discord's dark blurple, exactly - and the last literal
-  /// match left after `primary` moved off 0xFF5865F2. This is the same darker
-  /// primary that [accentDisabled] is built from, so the palette carries one
-  /// dark accent rather than two that differ by three per channel. White on it
-  /// is 5.56:1, comfortably past AA, and darker than [primary] as a hover of a
-  /// selected control should be.
+  static const primary = Color(0xFF6670FF);
   static const primaryHover = Color(0xFF555CCB);
-  static const success = Color(0xFF3BA55C); // Green for confirmations
+  static Color get successText => isLight ? const Color(0xFF216337) : success;
+  static Color get warningText => isLight ? const Color(0xFF8A5700) : warning;
+  static Color get errorText => isLight ? const Color(0xFFBA1A1A) : error;
 
-  /// Fill for a SELECTED control (chips, toggles). A tint rather than the full
-  /// accent, so the Send button stays the only saturated purple on screen.
-  static const accentSoft = Color(0xFF292D55);
-
-  /// Text and icons on [accentSoft], and for accent-coloured metadata. Light
-  /// enough to stay legible on the soft fill, which white is not.
-  static const accentText = Color(0xFFAEB4FF);
-
-  /// Border for a selected or focused control.
+  static const success = Color(0xFF3BA55C);
+  static Color get accentSoft =>
+      isLight ? const Color(0xFFEEEEFF) : const Color(0xFF292D55);
+  static Color get accentText =>
+      isLight ? const Color(0xFF484FB5) : const Color(0xFFAEB4FF);
+  static Color get actionText => isLight ? const Color(0xFF484FB5) : primary;
   static const accentBorder = Color(0xFF555EA6);
-
-  /// Disabled primary button.
   static const accentDisabled = Color(0x99555CCB);
+  static Color get border =>
+      isLight ? const Color(0xFFD1D1D6) : const Color(0xFF32323C);
+  static Color get textPrimary =>
+      isLight ? const Color(0xFF1C1C1E) : const Color(0xFFF5F6FA);
+  static Color get textSecondary =>
+      isLight ? const Color(0xFF636366) : const Color(0xFFB9BBBE);
+  static Color get textMuted => isLight ? _lightMuted : _darkMuted;
+  static const _lightMuted = Color(0xFF68686C);
+  static const _darkMuted = Color(0xFF989CA9);
 
-  /// Hairline between grouped rows and around surfaces. An opaque grey rather
-  /// than the translucent glassBorder, so stacked rows in a grouped list do
-  /// not accumulate brightness where they meet. De-greened alongside the ramp
-  /// above: the handoff's #30323C with green pinned to red.
-  static const border = Color(0xFF32323C);
-
-  // Text
-  static const textPrimary = Color(0xFFF5F6FA);
-  static const textSecondary = Color(0xFFB9BBBE);
-  static const textMuted = Color(0xFF989CA9);
-
-  // Semantic colors for status/alerts
-  static const warning = Color(0xFFFFB020); // Amber-like for warnings
-  static const warningLight = Color(0xFFFFD54F); // Lighter warning
-  static const error = Color(0xFFEF5350); // Red for errors
-  static const errorLight = Color(0xFFFF8A80); // Lighter error text
-
-  // Glassmorphism
-  static const glassBorder = Color(0x33FFFFFF); // 20% white
+  static const warning = Color(0xFFFFB020);
+  static const error = Color(0xFFEF5350);
+  static Color get errorLight =>
+      isLight ? const Color(0xFFBA1A1A) : const Color(0xFFFF8A80);
+  static Color get glassBorder =>
+      isLight ? _lightGlassBorder : _darkGlassBorder;
+  static const _lightGlassBorder = Color(0x1F000000);
+  static const _darkGlassBorder = Color(0x33FFFFFF);
 
   // Cached primary alpha variants (avoid creating new Color objects per build)
   static final primaryAlpha10 = primary.withValues(alpha: 0.1);
@@ -85,17 +74,37 @@ class GhostColors {
   // Cached success alpha variants
   static final successAlpha20 = success.withValues(alpha: 0.2);
 
-  // Cached surface alpha variants (used in hover states, overlays)
-  static final surfaceAlpha50 = surface.withValues(alpha: 0.5);
-  static final surfaceAlpha70 = surface.withValues(alpha: 0.7);
-  static final surfaceAlpha85 = surface.withValues(alpha: 0.85);
-  static final surfaceAlpha95 = surface.withValues(alpha: 0.95);
+  /// A palette colour at [alpha], made once per palette rather than on
+  /// every access: (light, dark).
+  static (Color, Color) _alphaPair(Color light, Color dark, double alpha) =>
+      (light.withValues(alpha: alpha), dark.withValues(alpha: alpha));
+  static Color _pick((Color, Color) pair) => isLight ? pair.$1 : pair.$2;
 
-  // Cached textMuted alpha variants (used in placeholders, disabled states)
-  static final textMutedAlpha30 = textMuted.withValues(alpha: 0.3);
-  static final textMutedAlpha50 = textMuted.withValues(alpha: 0.5);
-  static final textMutedAlpha60 = textMuted.withValues(alpha: 0.6);
-  static final textMutedAlpha70 = textMuted.withValues(alpha: 0.7);
+  static final _surfaceAlpha50 = _alphaPair(Colors.white, _darkSurface, 0.5);
+  static final _surfaceAlpha70 = _alphaPair(Colors.white, _darkSurface, 0.7);
+  static final _surfaceAlpha85 = _alphaPair(Colors.white, _darkSurface, 0.85);
+  static final _surfaceAlpha95 = _alphaPair(Colors.white, _darkSurface, 0.95);
+  static final _textMutedAlpha30 = _alphaPair(_lightMuted, _darkMuted, 0.3);
+  static final _textMutedAlpha50 = _alphaPair(_lightMuted, _darkMuted, 0.5);
+  static final _textMutedAlpha60 = _alphaPair(_lightMuted, _darkMuted, 0.6);
+  static final _textMutedAlpha70 = _alphaPair(_lightMuted, _darkMuted, 0.7);
+  static final _glassBorderAlpha30 = _alphaPair(
+    _lightGlassBorder,
+    _darkGlassBorder,
+    0.3,
+  );
+
+  // Surface alpha variants (used in hover states, overlays)
+  static Color get surfaceAlpha50 => _pick(_surfaceAlpha50);
+  static Color get surfaceAlpha70 => _pick(_surfaceAlpha70);
+  static Color get surfaceAlpha85 => _pick(_surfaceAlpha85);
+  static Color get surfaceAlpha95 => _pick(_surfaceAlpha95);
+
+  // Placeholder and disabled text variants
+  static Color get textMutedAlpha30 => _pick(_textMutedAlpha30);
+  static Color get textMutedAlpha50 => _pick(_textMutedAlpha50);
+  static Color get textMutedAlpha60 => _pick(_textMutedAlpha60);
+  static Color get textMutedAlpha70 => _pick(_textMutedAlpha70);
 
   // Cached error alpha variants
   static final errorAlpha10 = error.withValues(alpha: 0.1);
@@ -107,13 +116,7 @@ class GhostColors {
   static final whiteAlpha60 = Colors.white.withValues(alpha: 0.6);
   static final whiteAlpha70 = Colors.white.withValues(alpha: 0.7);
 
-  /// Pressed-state overlay for touch.
-  ///
-  /// Black, not a tint. Every surface in this app is already dark, so an
-  /// additive overlay of any colour lightens them - which is the white flash
-  /// Material's default ripple produces and the reason splashes were turned
-  /// off here in the first place. Darkening reads as the control being pushed
-  /// in, and matches what iOS does natively, where a pressed control dims.
+  /// Dims a control while pressed on touch platforms.
   static final blackAlpha18 = Colors.black.withValues(alpha: 0.18);
   static final blackAlpha50 = Colors.black.withValues(alpha: 0.5);
   static final redAlpha10 = Colors.red.withValues(alpha: 0.1);
@@ -121,6 +124,6 @@ class GhostColors {
   static final redDarkAlpha20 = Colors.red.shade900.withValues(alpha: 0.2);
   static final redLightAlpha30 = Colors.red.shade400.withValues(alpha: 0.3);
 
-  // Cached glassBorder alpha variant
-  static final glassBorderAlpha30 = glassBorder.withValues(alpha: 0.3);
+  // Glass border alpha variant
+  static Color get glassBorderAlpha30 => _pick(_glassBorderAlpha30);
 }

@@ -9,11 +9,7 @@ import 'theme/colors.dart';
 
 /// Platform adaptations for iOS.
 ///
-/// GhostCopy keeps one branded dark look on every platform on purpose - it is a
-/// utility, not a stock Material app, so the visual design does not read as
-/// "an Android app" on iOS. What iOS users do notice is *interaction*: the
-/// gestures and feedback that are muscle memory. These helpers cover that
-/// without forking the UI into two trees.
+/// Shared branded controls with platform gestures and feedback.
 class Adaptive {
   const Adaptive._();
 
@@ -205,7 +201,7 @@ class Adaptive {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                   color: GhostColors.textPrimary,
@@ -216,7 +212,7 @@ class Adaptive {
         ),
         content: Text(
           message,
-          style: const TextStyle(fontSize: 14, color: GhostColors.textMuted),
+          style: TextStyle(fontSize: 14, color: GhostColors.textMuted),
         ),
         actions: [
           TextButton(

@@ -23,10 +23,12 @@ import '../account_deletion_text.dart';
 import '../device_type_icon.dart';
 import '../layout/side_safe_area.dart';
 import '../platform_adaptive.dart';
+import '../theme/appearance.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../widgets/adaptive_switch.dart';
+import '../widgets/appearance_setting.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
@@ -793,8 +795,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      SideSafeArea(child: _buildPage(context));
+  Widget build(BuildContext context) {
+    // Rebuild explicit palette colors when the application's theme changes.
+    Theme.of(context);
+    return SideSafeArea(child: _buildPage(context));
+  }
 
   Widget _buildPage(BuildContext context) {
     return Scaffold(
@@ -809,10 +814,8 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         titleSpacing: GhostSpacing.gutter,
         // Match the main screen: AppBar would otherwise pick its own overlay
         // style from the background colour and re-opaque the status bar.
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
-          statusBarBrightness: Brightness.dark,
+        systemOverlayStyle: appearanceOverlayStyle(
+          isLight: GhostColors.isLight,
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -847,6 +850,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
             scrollCacheExtent: const ScrollCacheExtent.pixels(300),
             children: [
+              _buildSectionHeader('Appearance'),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: GhostSpacing.gutter,
+                ),
+                child: AppearanceSetting(settings: widget.settingsService),
+              ),
+              const SizedBox(height: GhostSpacing.sectionLoose),
+
               // Features section (moved to top)
               _buildSectionHeader('Features'),
               _buildFeaturesSection(),
@@ -933,7 +945,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
             title: Text(
               user?.email ?? 'Anonymous User',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: GhostColors.textPrimary,
@@ -941,14 +953,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             ),
             subtitle: Text(
               isAnonymous ? 'Temporary account' : 'Signed in',
-              style: const TextStyle(
-                fontSize: 12,
-                color: GhostColors.textMuted,
-              ),
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
             ),
           ),
 
-          const Divider(height: 1, color: GhostColors.border),
+          Divider(height: 1, color: GhostColors.border),
 
           // Anonymous users need a route back to sign-in. Signing out drops the
           // user onto a fresh temporary account, and the welcome screen is only
@@ -961,15 +970,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 color: GhostColors.primary,
                 size: 20,
               ),
-              title: const Text(
+              title: Text(
                 'Sign In or Create Account',
                 style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Scan a QR code from another device, or use email',
                 style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
               ),
-              trailing: const Icon(
+              trailing: Icon(
                 Icons.chevron_right,
                 color: GhostColors.textMuted,
                 size: 20,
@@ -980,10 +989,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           // Sign out button (only for authenticated users)
           if (!isAnonymous)
             ListTile(
-              leading: Icon(Icons.logout, color: Colors.red.shade400, size: 20),
+              leading: Icon(
+                Icons.logout,
+                color: GhostColors.errorText,
+                size: 20,
+              ),
               title: Text(
                 'Sign Out',
-                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
+                style: TextStyle(fontSize: 14, color: GhostColors.errorText),
               ),
               onTap: _handleSignOut,
             ),
@@ -994,17 +1007,17 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           if (!isAnonymous)
             ListTile(
               leading: _deletingAccount
-                  ? Adaptive.progressIndicator(color: Colors.red.shade400)
+                  ? Adaptive.progressIndicator(color: GhostColors.errorText)
                   : Icon(
                       Icons.delete_forever_outlined,
-                      color: Colors.red.shade400,
+                      color: GhostColors.errorText,
                       size: 20,
                     ),
               title: Text(
                 'Delete Account',
-                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
+                style: TextStyle(fontSize: 14, color: GhostColors.errorText),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Permanently delete your account and all your clips',
                 style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
               ),
@@ -1036,7 +1049,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               ),
             )
           : _devices.isEmpty
-          ? const Padding(
+          ? Padding(
               padding: EdgeInsets.all(32),
               child: Center(
                 child: Text(
@@ -1060,7 +1073,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _devices.length,
               separatorBuilder: (context, index) =>
-                  const Divider(height: 1, color: GhostColors.border),
+                  Divider(height: 1, color: GhostColors.border),
               itemBuilder: (context, index) {
                 final device = _devices[index];
                 final isCurrent =
@@ -1101,7 +1114,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                                     device.displayName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
                                       color: GhostColors.textPrimary,
@@ -1121,12 +1134,12 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                                       ),
                                       borderRadius: BorderRadius.circular(4),
                                     ),
-                                    child: const Text(
+                                    child: Text(
                                       'This device',
                                       style: TextStyle(
                                         fontSize: 10,
                                         fontWeight: FontWeight.w600,
-                                        color: GhostColors.success,
+                                        color: GhostColors.successText,
                                       ),
                                     ),
                                   ),
@@ -1136,7 +1149,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                             const SizedBox(height: 2),
                             Text(
                               platformLabel(device.deviceType),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
                                 color: GhostColors.textMuted,
                               ),
@@ -1154,7 +1167,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                           child: IconButton(
                             icon: Icon(
                               Icons.delete_outline,
-                              color: Colors.red.shade400,
+                              color: GhostColors.errorText,
                               size: 20,
                             ),
                             tooltip: 'Remove device',
@@ -1243,7 +1256,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             value: _autoShortenUrls,
             onChanged: _urlShortenerLoading ? null : _handleUrlShorteningToggle,
           ),
-          const Divider(height: 1, color: GhostColors.border),
+          Divider(height: 1, color: GhostColors.border),
           _buildDefaultDevicesTile(),
         ],
       ),
@@ -1285,7 +1298,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             children: [
               const Icon(Icons.devices, color: GhostColors.primary, size: 20),
               const SizedBox(width: 16),
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Default devices',
                   style: TextStyle(
@@ -1308,16 +1321,13 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                   textAlign: TextAlign.end,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: GhostColors.primary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: GhostColors.actionText),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          const Padding(
+          Padding(
             padding: EdgeInsets.only(left: 36),
             child: Text(
               'Where shared files and auto-send go.',
@@ -1385,11 +1395,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
       leading: Icon(icon, color: GhostColors.primary, size: 20),
       title: Text(
         title,
-        style: const TextStyle(fontSize: 14, color: GhostColors.textPrimary),
+        style: TextStyle(fontSize: 14, color: GhostColors.textPrimary),
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+        style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
       ),
       trailing: AdaptiveSwitch(value: value, onChanged: onChanged),
       // The whole row toggles, which SwitchListTile gave for free.
@@ -1429,7 +1439,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                 ? null
                 : _handleScreenshotProtectionChange,
           ),
-          const Divider(height: 1, color: GhostColors.border),
+          Divider(height: 1, color: GhostColors.border),
           // Encryption toggle
           _settingSwitch(
             icon: Icons.lock_outline,
@@ -1441,22 +1451,22 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
           // Explicit "Restore" button if has backup but currently disabled
           if (!_encryptionEnabled && _hasBackup) ...[
-            const Divider(height: 1, color: GhostColors.border),
+            Divider(height: 1, color: GhostColors.border),
             ListTile(
               leading: const Icon(
                 Icons.restore,
                 color: GhostColors.primary,
                 size: 20,
               ),
-              title: const Text(
+              title: Text(
                 'Restore from Backup',
                 style: TextStyle(
                   fontSize: 14,
-                  color: GhostColors.primary,
+                  color: GhostColors.actionText,
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Unlock history using your existing passphrase',
                 style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
               ),
@@ -1520,7 +1530,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
             color: GhostColors.primary,
           ),
         ),
-        title: const Text(
+        title: Text(
           'GhostCopy',
           style: TextStyle(
             fontSize: 14,
@@ -1530,11 +1540,11 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         ),
         subtitle: Text(
           _appVersion.isEmpty ? 'Loading...' : _appVersion,
-          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
+          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
         // Signals that the row does something now. It used to be inert, which
         // left About looking like a dead end.
-        trailing: const Icon(
+        trailing: Icon(
           Icons.open_in_new_rounded,
           size: 18,
           color: GhostColors.textMuted,
@@ -1579,8 +1589,12 @@ class _DefaultDeviceChip extends StatelessWidget {
             color: isSelected ? GhostColors.primaryAlpha20 : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
+              // surfaceLight all but vanishes against the white light-mode
+              // card, so the unselected outline uses the hairline there.
               color: isSelected
                   ? GhostColors.primary
+                  : GhostColors.isLight
+                  ? GhostColors.border
                   : GhostColors.surfaceLight,
             ),
           ),
