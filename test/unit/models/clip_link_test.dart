@@ -1212,6 +1212,8 @@ void main() {
           'https://acme.webex.com/j.php',
           'msteams:/l/meeting/',
           'msteams:/l/call/',
+          'zoommtg://zoom.us/join',
+          'zoommtg://zoom.us/join?action=join',
           'https://teams.microsoft.com/l/meetup-join/',
           'https://teams.microsoft.com/l/meetup-join-notes',
           'https://facetime.apple.com/joinery',

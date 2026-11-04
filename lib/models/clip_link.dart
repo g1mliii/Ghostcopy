@@ -554,6 +554,12 @@ class ClipLink {
         !_teamsMeetingPath.hasMatch('${uri.host}${uri.path}')) {
       kind = ClipLinkKind.app;
     }
+    // A Zoom link joins the meeting its confno names; without one it only
+    // opens Zoom.
+    if ((scheme == 'zoommtg' || scheme == 'zoomus') &&
+        (uri.queryParameters['confno'] ?? '').isEmpty) {
+      kind = ClipLinkKind.app;
+    }
     var target = uri;
     // spotify:track:<id> is also https://open.spotify.com/track/<id>, which
     // opens the app where it is installed and the web player where it is not.
