@@ -115,8 +115,8 @@ class ClipLink {
   static ClipLink? _detect(String content) {
     final text = content.trim();
     if (text.isEmpty || text.length > maxLength) return null;
-    // An address is the one kind that spans lines.
-    // A tracking number printed in groups can wrap too.
+    // Addresses, and tracking numbers printed in groups, are the kinds that
+    // can span lines.
     if (text.contains('\n')) return _address(text) ?? _groupedTracking(text);
     // Coordinates, phone numbers and addresses are the kinds written with
     // spaces in them - and tracking numbers, which carriers print in groups
@@ -331,7 +331,7 @@ class ClipLink {
   /// which clone repositories and more ([_editorSchemes]). Note and to-do
   /// apps, and Telegram (whose `tg://proxy` and `tg://socks` reconfigure the
   /// app's connection), are in for their navigation routes only
-  /// ([_navigationRoutes]).
+  /// ([_navigation]).
   static const _appSchemes = <String, (ClipLinkKind, String)>{
     'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
     'zoomus': (ClipLinkKind.meeting, 'Zoom'),
@@ -360,29 +360,6 @@ class ClipLink {
 
   static final _edgeSlashes = RegExp(r'^/+|/+$');
 
-  /// The query parameters each [_navigationRoutes] app may carry: the ones
-  /// that pick what to open, and nothing that changes it.
-  static const _navigationParams = <String, Set<String>>{
-    'obsidian': {'vault', 'file', 'path', 'query'},
-    'drafts': {'uuid'},
-    'bear': {
-      'id',
-      'title',
-      'header',
-      'term',
-      'name',
-      'tag',
-      'exclude_trashed',
-      'new_window',
-      'float',
-      'show_window',
-      'open_note',
-    },
-    'things': {'id', 'query', 'filter'},
-    'todoist': {'id'},
-    'craftdocs': {'blockId', 'spaceId'},
-    'tg': {'domain', 'post', 'thread', 'comment', 'channel', 'invite'},
-  };
   static final _teamsMeetingPath = RegExp(
     '/l/(meetup-join|meeting|call)/',
     caseSensitive: false,
@@ -423,19 +400,47 @@ class ClipLink {
   /// note - by route, and the routes that only open something. A link on
   /// any other route stays text. `drafts://x-callback-url/runAction` would
   /// otherwise run whatever that action does, from a synced clip.
-  static const _navigationRoutes = <String, Set<String>>{
-    'obsidian': {'open', 'search'},
-    'drafts': {'open', 'x-callback-url/open'},
-    'bear': {
-      'x-callback-url/open-note',
-      'x-callback-url/open-tag',
-      'x-callback-url/search',
-    },
-    'things': {'show', 'search'},
-    'todoist': {'task', 'project', 'today', 'upcoming', 'inbox'},
-    'craftdocs': {'open'},
-    'tg': {'resolve', 'privatepost', 'join'},
-  };
+  static const _navigation =
+      <String, ({Set<String> routes, Set<String> params})>{
+        'obsidian': (
+          routes: {'open', 'search'},
+          params: {'vault', 'file', 'path', 'query'},
+        ),
+        'drafts': (routes: {'open', 'x-callback-url/open'}, params: {'uuid'}),
+        'bear': (
+          routes: {
+            'x-callback-url/open-note',
+            'x-callback-url/open-tag',
+            'x-callback-url/search',
+          },
+          params: {
+            'id',
+            'title',
+            'header',
+            'term',
+            'name',
+            'tag',
+            'exclude_trashed',
+            'new_window',
+            'float',
+            'show_window',
+            'open_note',
+          },
+        ),
+        'things': (
+          routes: {'show', 'search'},
+          params: {'id', 'query', 'filter'},
+        ),
+        'todoist': (
+          routes: {'task', 'project', 'today', 'upcoming', 'inbox'},
+          params: {'id'},
+        ),
+        'craftdocs': (routes: {'open'}, params: {'blockId', 'spaceId'}),
+        'tg': (
+          routes: {'resolve', 'privatepost', 'join'},
+          params: {'domain', 'post', 'thread', 'comment', 'channel', 'invite'},
+        ),
+      };
 
   static ClipLink? _appLink(String text) {
     final colon = text.indexOf(':');
@@ -447,7 +452,7 @@ class ClipLink {
     // A scheme with nothing after it (`zoommtg://`) opens nothing.
     if (uri == null || (uri.host.isEmpty && uri.path.isEmpty)) return null;
     if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
-    if (_navigationRoutes[scheme] case final routes?) {
+    if (_navigation[scheme] case (:final routes, params: final allowed)?) {
       final route = '${uri.host}${uri.path}'.toLowerCase().replaceAll(
         _edgeSlashes,
         '',
@@ -458,7 +463,6 @@ class ClipLink {
       // `pin=yes`, and every x-callback-url route follows `x-success=` to
       // another URL. So only the parameters that say what to open are let
       // through.
-      final allowed = _navigationParams[scheme]!;
       if (uri.queryParameters.keys.any((key) => !allowed.contains(key))) {
         return null;
       }
@@ -509,7 +513,6 @@ class ClipLink {
     r'pl|pm|ml|mk|tf|gd|cr|sv|re|as|bb|gs|ls|nu|st|td):\d',
     caseSensitive: false,
   );
-  static final _addressEnd = RegExp('[:/?#]');
 
   /// A machine on the network, written without `http://`: `localhost:3000`,
   /// `192.168.1.1`, `printer.local`, `nas.lan:5000/admin`. Router pages and
@@ -527,14 +530,16 @@ class ClipLink {
     }
     if (match?.group(2) != null) {
       // An IPv4 address: four octets, each a byte.
-      final address = text.split(_addressEnd).first;
+      final address = match!.group(1)!;
       final octets = address.split('.').map(int.parse).toList();
       if (octets.any((o) => o > 255)) return null;
+      // Bare, only a local machine. With a port or path, a public server
+      // too - but never multicast, broadcast or the reserved blocks, which
+      // serve no page either way.
       final bare = address.length == text.length;
-      if (bare && !isLocalUnicastIPv4(octets)) return null;
-      // Multicast, broadcast and the reserved blocks serve no page, port or
-      // path or not; a public address with one is still a server.
-      if (isNonPublicIPv4(octets) && !isLocalUnicastIPv4(octets)) return null;
+      if (!isLocalUnicastIPv4(octets) && (bare || isNonPublicIPv4(octets))) {
+        return null;
+      }
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
@@ -1042,31 +1047,32 @@ class ClipLink {
   ///   artists, which song.link has nothing for.
   ClipLinkAlternate? alternateOn(String platform) {
     if (!canOpenOn(platform)) return null;
-    return switch ((
-      kind,
-      kind == ClipLinkKind.music ? _songLinkTarget : null,
-    )) {
-      // A local number's `phone-context` says which country and area it is
-      // in; `sms:` has no way to carry it, and the number alone could reach
-      // someone else. Call keeps it; Text is left out.
-      // Decoded, as detection read it: `%3B` is a `;` there too.
-      (ClipLinkKind.phone, _)
-          when _telPath.toLowerCase().contains(';phone-context=') =>
-        null,
-      (ClipLinkKind.phone, _) => ClipLinkAlternate(
-        ClipLinkAlternateKind.text,
-        'Text',
+    switch (kind) {
+      case ClipLinkKind.phone:
+        // Decoded, as detection read it: `%3B` is a `;` there too.
+        final path = _telPath;
+        // A local number's `phone-context` says which country and area it
+        // is in; `sms:` has no way to carry it, and the number alone could
+        // reach someone else. Call keeps it; Text is left out.
+        if (path.toLowerCase().contains(';phone-context=')) return null;
         // The number alone: a tel: link's other parameters (;ext=456) mean
         // nothing to a text.
-        Uri(scheme: 'sms', path: _telPath.split(';').first),
-      ),
-      (ClipLinkKind.music, final target?) => ClipLinkAlternate(
-        ClipLinkAlternateKind.findElsewhere,
-        'Find on other services',
-        Uri.parse('https://song.link/$target'),
-      ),
-      _ => null,
-    };
+        return ClipLinkAlternate(
+          ClipLinkAlternateKind.text,
+          'Text',
+          Uri(scheme: 'sms', path: path.split(';').first),
+        );
+      case ClipLinkKind.music:
+        final target = _songLinkTarget;
+        if (target == null) return null;
+        return ClipLinkAlternate(
+          ClipLinkAlternateKind.findElsewhere,
+          'Find on other services',
+          Uri.parse('https://song.link/$target'),
+        );
+      default:
+        return null;
+    }
   }
 
   // On the services whose paths name what they lead to: Pandora keeps
