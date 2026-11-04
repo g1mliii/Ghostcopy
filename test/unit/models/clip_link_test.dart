@@ -1183,6 +1183,45 @@ void main() {
         expect(ClipLink.detect('Am Alten Weg 3')?.kind, ClipLinkKind.map);
         expect(ClipLink.detect('Weg 3'), isNull);
         expect(ClipLink.detect('Hauptstraße 5-7')?.kind, ClipLinkKind.map);
+        for (final text in [
+          'https://teams.microsoft.com/meet/',
+          'https://teams.live.com/meet',
+          'https://help.twitch.tv/s/article/abc',
+          'https://help.vimeo.com/hc/en-us/articles/123',
+        ]) {
+          final kind = ClipLink.detect(text)?.kind;
+          expect(kind, isNot(ClipLinkKind.meeting), reason: text);
+          expect(kind, isNot(ClipLinkKind.video), reason: text);
+        }
+        expect(
+          ClipLink.detect('https://teams.live.com/meet/9876543210')?.kind,
+          ClipLinkKind.meeting,
+        );
+        for (final text in [
+          '192.0.2.1:8080',
+          '198.51.100.1/status',
+          '203.0.113.1:80',
+          'zoommtg:///',
+          'spotify:/',
+        ]) {
+          expect(ClipLink.detect(text), isNull, reason: text);
+        }
+        expect(
+          ClipLink.detect(
+            'https://open.spotify.com/collection/tracks',
+          )!.alternateOn('android'),
+          isNull,
+        );
+        for (final text in [
+          'https://open.spotify.com/intl-de/track/abc',
+          'spotify:album:abc',
+        ]) {
+          expect(
+            ClipLink.detect(text)!.alternateOn('android'),
+            isNotNull,
+            reason: text,
+          );
+        }
         for (final text in ['https://zoom.us/j/', 'https://zoom.us/my/']) {
           expect(ClipLink.detect(text)?.kind, isNot(ClipLinkKind.meeting));
         }

@@ -193,8 +193,10 @@ class ClipLink {
     final hasPath = uri.pathSegments.any((s) => s.isNotEmpty);
     for (final (kind, name, matches) in _webServices) {
       // Nor is a video site's: youtube.com/ is not something to watch.
+      // Nor are its help, developer and company sites (help.twitch.tv,
+      // artists.spotify.com), which are pages about the service.
       if ((kind == ClipLinkKind.music || kind == ClipLinkKind.video) &&
-          !hasPath) {
+          (!hasPath || _aboutSite.hasMatch(site))) {
         continue;
       }
       if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
@@ -211,11 +213,23 @@ class ClipLink {
     r'^music\.amazon\.(com|ca|de|fr|it|es|in|co\.uk|co\.jp|com\.au|com\.br|com\.mx)$',
   );
 
+  static final _aboutSite = RegExp(
+    '^(help|support|developers?|docs|blog|status|community|press|newsroom|'
+    r'investors?|careers|jobs|artists|creators|partners|ads|business)\.',
+  );
+
   static bool _hostIs(String host, String domain) =>
       host == domain || host.endsWith('.$domain');
 
   static bool _pathStarts(Uri uri, String prefix) =>
       uri.path.toLowerCase().startsWith(prefix);
+
+  /// Whether [uri]'s path is [route] and then an id: `/meet/<id>`, not a
+  /// bare `/meet/`.
+  static bool _idAfter(Uri uri, String route) => switch (uri.pathSegments) {
+    [final r, final id, ...] => r.toLowerCase() == route && id.isNotEmpty,
+    _ => false,
+  };
 
   /// Web links that belong to a service with an app of its own. Checked in
   /// order, so YouTube Music is music before YouTube is video.
@@ -246,9 +260,8 @@ class ClipLink {
           (h == 'teams.microsoft.com' &&
               // Older invitations, and the shorter /meet/<id>?p=... ones
               // new meetings get.
-              (u.path.contains('/l/meetup-join') ||
-                  u.path.startsWith('/meet/'))) ||
-          (h == 'teams.live.com' && _pathStarts(u, '/meet')) ||
+              (u.path.contains('/l/meetup-join') || _idAfter(u, 'meet'))) ||
+          (h == 'teams.live.com' && _idAfter(u, 'meet')) ||
           // US government clouds: GCC High and DoD.
           ((h == 'gov.teams.microsoft.us' || h == 'dod.teams.microsoft.us') &&
               u.path.contains('/l/meetup-join')),
@@ -292,17 +305,7 @@ class ClipLink {
     ),
     (ClipLinkKind.music, 'Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
     (ClipLinkKind.music, 'YouTube Music', (h, u) => h == 'music.youtube.com'),
-    (
-      ClipLinkKind.music,
-      'SoundCloud',
-      // Not help. or developers., which are pages about SoundCloud.
-      (h, u) => const {
-        'soundcloud.com',
-        'www.soundcloud.com',
-        'm.soundcloud.com',
-        'on.soundcloud.com',
-      }.contains(h),
-    ),
+    (ClipLinkKind.music, 'SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
     (
       ClipLinkKind.music,
       'TIDAL',
@@ -466,8 +469,12 @@ class ClipLink {
     final app = _appSchemes[scheme];
     if (app == null) return null;
     final uri = Uri.tryParse(text);
-    // A scheme with nothing after it (`zoommtg://`) opens nothing.
-    if (uri == null || (uri.host.isEmpty && uri.path.isEmpty)) return null;
+    // A scheme with nothing after it (`zoommtg://`, `spotify:/`) opens
+    // nothing.
+    if (uri == null ||
+        '${uri.host}${uri.path}'.replaceAll(_edgeSlashes, '').isEmpty) {
+      return null;
+    }
     if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
     if (_navigation[scheme] case (:final routes, params: final allowed)?) {
       final route = '${uri.host}${uri.path}'.toLowerCase().replaceAll(
@@ -1120,6 +1127,7 @@ class ClipLink {
     'Deezer',
     'Amazon Music',
   };
+  static final _spotifyItem = RegExp('(^|[/:])(track|album)[/:]');
   static final _notASong = RegExp(
     r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?)([/:]|$)',
   );
@@ -1132,6 +1140,14 @@ class ClipLink {
   /// its own path, can read as its own and resolve the album: it is given as
   /// the track's own `/song/` link instead.
   String? get _songLinkTarget {
+    // A Spotify link to anything but a track or album - Liked Songs, a
+    // search, a genre page - is nothing song.link resolves. Its short links
+    // say nothing in the path, so are given the benefit of the doubt.
+    if (service == 'Spotify' &&
+        uri.host != 'spotify.link' &&
+        !_spotifyItem.hasMatch(uri.path)) {
+      return null;
+    }
     if (service == 'Apple Podcasts' ||
         (_routedMusic.contains(service) && _notASong.hasMatch(uri.path)) ||
         // A SoundCloud set is a playlist, which song.link does not resolve.
