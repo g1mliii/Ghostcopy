@@ -227,12 +227,12 @@ class ClipLink {
       (h, u) =>
           // Zoom, and Zoom for Government.
           (_hostIs(h, 'zoom.us') || _hostIs(h, 'zoomgov.com')) &&
-          (_pathStarts(u, '/j/') ||
-              _pathStarts(u, '/my/') ||
-              // The Zoom Web App: /wc/<meeting>/join.
-              (_pathStarts(u, '/wc/') && u.path.endsWith('/join')) ||
-              _pathStarts(u, '/w/') ||
-              _pathStarts(u, '/s/')),
+          switch ([for (final s in u.pathSegments) s.toLowerCase()]) {
+            ['j' || 'my' || 'w' || 's', final id, ...] => id.isNotEmpty,
+            // The Zoom Web App: /wc/<meeting>/join.
+            ['wc', final id, ..., 'join'] => id.isNotEmpty,
+            _ => false,
+          },
     ),
     (
       ClipLinkKind.meeting,
@@ -292,7 +292,17 @@ class ClipLink {
     ),
     (ClipLinkKind.music, 'Apple Podcasts', (h, u) => h == 'podcasts.apple.com'),
     (ClipLinkKind.music, 'YouTube Music', (h, u) => h == 'music.youtube.com'),
-    (ClipLinkKind.music, 'SoundCloud', (h, u) => _hostIs(h, 'soundcloud.com')),
+    (
+      ClipLinkKind.music,
+      'SoundCloud',
+      // Not help. or developers., which are pages about SoundCloud.
+      (h, u) => const {
+        'soundcloud.com',
+        'www.soundcloud.com',
+        'm.soundcloud.com',
+        'on.soundcloud.com',
+      }.contains(h),
+    ),
     (
       ClipLinkKind.music,
       'TIDAL',
@@ -652,7 +662,7 @@ class ClipLink {
     // other word, a word of its own (`Am Alten Weg`); alone, `Weg 3` is too
     // little to go on.
     r"^(?:(?:[\wÀ-ÿ'.-]+\s+){0,2}[\wÀ-ÿ'.-]+|(?:[\wÀ-ÿ'.-]+\s+){1,2})"
-    r'(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])',
+    r'(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:-\d+)?(?:$|[,\n])',
     caseSensitive: false,
   );
   static final _houseNumber = RegExp(r'^\d+[a-z]?\b', caseSensitive: false);
@@ -1129,11 +1139,14 @@ class ClipLink {
             uri.pathSegments.elementAtOrNull(1) == 'sets')) {
       return null;
     }
-    // YouTube Music albums are playlists whose id starts OLAK5uy; any other
-    // playlist is someone's list, which song.link does not resolve.
+    // On YouTube Music, a song (/watch) or an album: its /browse/MPREb page,
+    // or a playlist whose id starts OLAK5uy. Any other playlist is someone's
+    // list, and a channel an artist, neither of which song.link resolves.
     if (service == 'YouTube Music' &&
-        _pathStarts(uri, '/playlist') &&
-        !(uri.queryParameters['list'] ?? '').startsWith('OLAK5uy')) {
+        !(_pathStarts(uri, '/watch') ||
+            _pathStarts(uri, '/browse/mpreb') ||
+            (_pathStarts(uri, '/playlist') &&
+                (uri.queryParameters['list'] ?? '').startsWith('OLAK5uy')))) {
       return null;
     }
     final track = uri.queryParameters['i'];

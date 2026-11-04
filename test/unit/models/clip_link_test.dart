@@ -1182,6 +1182,32 @@ void main() {
         expect(ClipLink.detect('Alte Dorfstraße 5')?.kind, ClipLinkKind.map);
         expect(ClipLink.detect('Am Alten Weg 3')?.kind, ClipLinkKind.map);
         expect(ClipLink.detect('Weg 3'), isNull);
+        expect(ClipLink.detect('Hauptstraße 5-7')?.kind, ClipLinkKind.map);
+        for (final text in ['https://zoom.us/j/', 'https://zoom.us/my/']) {
+          expect(ClipLink.detect(text)?.kind, isNot(ClipLinkKind.meeting));
+        }
+        expect(
+          ClipLink.detect('https://zoom.us/my/alice')?.kind,
+          ClipLinkKind.meeting,
+        );
+        expect(
+          ClipLink.detect(
+            'https://help.soundcloud.com/hc/en-us/articles/115003449627',
+          )?.kind,
+          isNot(ClipLinkKind.music),
+        );
+        expect(
+          ClipLink.detect(
+            'https://music.youtube.com/channel/UCabc',
+          )!.alternateOn('android'),
+          isNull,
+        );
+        expect(
+          ClipLink.detect(
+            'https://music.youtube.com/watch?v=abc',
+          )!.alternateOn('android'),
+          isNotNull,
+        );
         expect(
           ClipLink.detect('[::ffff:192.168.1.1]:80')?.kind,
           ClipLinkKind.web,
