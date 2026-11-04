@@ -1201,6 +1201,10 @@ void main() {
           'https://acme.webex.com/meet/',
           'https://acme.webex.com/join/',
           'https://acme.webex.com/acme/j.php-notes',
+          'https://acme.webex.com/j.php',
+          'https://teams.microsoft.com/l/meetup-join/',
+          'https://teams.microsoft.com/l/meetup-join-notes',
+          'https://facetime.apple.com/joinery',
           'https://meet.google.com/abc-defg-hij-notes',
           'https://meet.google.com/abc-defg-hij/unrelated',
         ]) {
@@ -1230,11 +1234,19 @@ void main() {
         ]) {
           expect(ClipLink.detect(text), isNull, reason: text);
         }
+        for (final text in [
+          'https://open.spotify.com/collection/tracks',
+          'https://music.apple.com/us/station/apple-music-1/ra.978194965',
+        ]) {
+          expect(
+            ClipLink.detect(text)!.alternateOn('android'),
+            isNull,
+            reason: text,
+          );
+        }
         expect(
-          ClipLink.detect(
-            'https://open.spotify.com/collection/tracks',
-          )!.alternateOn('android'),
-          isNull,
+          ClipLink.detect('https://api.soundcloud.com/tracks/123')?.kind,
+          isNot(ClipLinkKind.music),
         );
         for (final text in [
           'https://open.spotify.com/intl-de/track/abc',

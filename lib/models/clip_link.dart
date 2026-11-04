@@ -217,7 +217,7 @@ class ClipLink {
 
   static final _aboutSite = RegExp(
     '^(help|support|developers?|docs|blog|status|community|press|newsroom|'
-    r'investors?|careers|jobs|artists|creators|partners|ads|business)\.',
+    r'investors?|careers|jobs|artists|creators|partners|ads|business|api)\.',
   );
 
   static bool _hostIs(String host, String domain) =>
@@ -226,12 +226,21 @@ class ClipLink {
   static bool _pathStarts(Uri uri, String prefix) =>
       uri.path.toLowerCase().startsWith(prefix);
 
+  /// A Teams invitation in its older form: `/l/meetup-join/<id>`.
+  static bool _teamsInvite(Uri uri) => switch (uri.pathSegments) {
+    ['l', final route, final id, ...] =>
+      route.toLowerCase() == 'meetup-join' && id.isNotEmpty,
+    _ => false,
+  };
+
   /// A Webex invitation: `<site>/j.php?MTID=...`, or a personal room at
   /// `/meet/<name>` or `/join/<name>`.
   static bool _webexMeeting(Uri uri) {
     final s = [for (final p in uri.pathSegments) p.toLowerCase()];
     for (var i = 0; i < s.length; i++) {
-      if (s[i] == 'j.php') return true;
+      if (s[i] == 'j.php') {
+        return (uri.queryParameters['MTID'] ?? '').isNotEmpty;
+      }
       if ((s[i] == 'meet' || s[i] == 'join') &&
           i + 1 < s.length &&
           s[i + 1].isNotEmpty) {
@@ -277,11 +286,11 @@ class ClipLink {
           (h == 'teams.microsoft.com' &&
               // Older invitations, and the shorter /meet/<id>?p=... ones
               // new meetings get.
-              (u.path.contains('/l/meetup-join') || _idAfter(u, 'meet'))) ||
+              (_teamsInvite(u) || _idAfter(u, 'meet'))) ||
           (h == 'teams.live.com' && _idAfter(u, 'meet')) ||
           // US government clouds: GCC High and DoD.
           ((h == 'gov.teams.microsoft.us' || h == 'dod.teams.microsoft.us') &&
-              u.path.contains('/l/meetup-join')),
+              _teamsInvite(u)),
     ),
     (
       ClipLinkKind.meeting,
@@ -292,7 +301,9 @@ class ClipLink {
     (
       ClipLinkKind.meeting,
       'FaceTime',
-      (h, u) => h == 'facetime.apple.com' && _pathStarts(u, '/join'),
+      (h, u) =>
+          h == 'facetime.apple.com' &&
+          u.pathSegments.firstOrNull?.toLowerCase() == 'join',
     ),
     (
       ClipLinkKind.meeting,
@@ -1142,7 +1153,7 @@ class ClipLink {
   };
   static final _spotifyItem = RegExp('(^|[/:])(track|album)[/:]');
   static final _notASong = RegExp(
-    r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?)([/:]|$)',
+    r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?|stations?|radio)([/:]|$)',
   );
 
   /// The link song.link is given for a song or album, or null for what it
