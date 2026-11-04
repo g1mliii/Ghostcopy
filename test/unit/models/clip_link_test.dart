@@ -1182,9 +1182,31 @@ void main() {
         expect(ClipLink.detect('Alte Dorfstraße 5')?.kind, ClipLinkKind.map);
         expect(ClipLink.detect('Am Alten Weg 3')?.kind, ClipLinkKind.map);
         expect(ClipLink.detect('Weg 3'), isNull);
+        expect(
+          ClipLink.detect('[::ffff:192.168.1.1]:80')?.kind,
+          ClipLinkKind.web,
+        );
+        expect(
+          ClipLink.detect('sgnl://signal.me/#p/+15555550123')?.kind,
+          ClipLinkKind.app,
+        );
+        expect(
+          ClipLink.detect(
+            'https://soundcloud.com/forss/sets/soulhack',
+          )!.alternateOn('android'),
+          isNull,
+        );
+        expect(
+          ClipLink.detect(
+            'https://soundcloud.com/forss/flickermood',
+          )!.alternateOn('android'),
+          isNotNull,
+        );
         for (final text in [
           '[ff02::1]:8080',
           '[::]:3000',
+          '[::ffff:224.0.0.1]:8080',
+          'sgnl://linkdevice?uuid=abc&pub_key=def',
           'Main.hs:42',
           'Program.fs:8',
           'script.jl:7',

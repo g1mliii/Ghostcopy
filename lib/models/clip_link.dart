@@ -329,8 +329,9 @@ class ClipLink {
   /// commands. VS Code and Cursor are in for `file` links only - opening a
   /// file at a line - since their other links hand the URI to extensions,
   /// which clone repositories and more ([_editorSchemes]). Note and to-do
-  /// apps, and Telegram (whose `tg://proxy` and `tg://socks` reconfigure the
-  /// app's connection), are in for their navigation routes only
+  /// apps, Telegram (whose `tg://proxy` and `tg://socks` reconfigure the
+  /// app's connection) and Signal (whose `sgnl://linkdevice` links another
+  /// device to the account) are in for their navigation routes only
   /// ([_navigation]).
   static const _appSchemes = <String, (ClipLinkKind, String)>{
     'zoommtg': (ClipLinkKind.meeting, 'Zoom'),
@@ -439,6 +440,12 @@ class ClipLink {
         'tg': (
           routes: {'resolve', 'privatepost', 'join'},
           params: {'domain', 'post', 'thread', 'comment', 'channel', 'invite'},
+        ),
+        // A chat, a group invite or a sticker pack, each confirmed in the
+        // app - not `linkdevice`, which links another device to the account.
+        'sgnl': (
+          routes: {'signal.me', 'signal.group', 'addstickers'},
+          params: {'pack_id', 'pack_key'},
         ),
       };
 
@@ -549,6 +556,14 @@ class ClipLink {
     if (uri.host.contains(':')) {
       final bytes = Uri.parseIPv6Address(uri.host.split('%').first);
       if (bytes[0] == 0xff || bytes.every((b) => b == 0)) return null;
+      // IPv4-mapped (::ffff:0:0/96): the IPv4 address's own rules.
+      if (bytes.take(10).every((b) => b == 0) &&
+          bytes[10] == 0xff &&
+          bytes[11] == 0xff &&
+          isNonPublicIPv4(bytes.sublist(12)) &&
+          !isLocalUnicastIPv4(bytes.sublist(12))) {
+        return null;
+      }
     }
     // Five digits reach 99999; a port runs 1-65535, 0 being reserved.
     if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
@@ -1108,7 +1123,10 @@ class ClipLink {
   /// the track's own `/song/` link instead.
   String? get _songLinkTarget {
     if (service == 'Apple Podcasts' ||
-        (_routedMusic.contains(service) && _notASong.hasMatch(uri.path))) {
+        (_routedMusic.contains(service) && _notASong.hasMatch(uri.path)) ||
+        // A SoundCloud set is a playlist, which song.link does not resolve.
+        (service == 'SoundCloud' &&
+            uri.pathSegments.elementAtOrNull(1) == 'sets')) {
       return null;
     }
     // YouTube Music albums are playlists whose id starts OLAK5uy; any other
