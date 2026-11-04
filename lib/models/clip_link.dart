@@ -506,11 +506,12 @@ class ClipLink {
   /// traces write them, has the same shape as a host and port.
   static final _fileAndLine = RegExp(
     r'\.(dart|py|js|jsx|ts|tsx|mjs|cjs|kt|kts|java|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|cs|go|rs|rb|php|lua|sh|zig|scala|ex|exs|json|ya?ml|toml|xml|html?|css|scss|txt|md|log|'
-    // Extensions that are also country codes: Perl, OCaml, Terraform,
-    // Makefile fragments, GDScript, Crystal, SystemVerilog, ReasonML,
-    // ActionScript, BitBake, Apps Script, LiveScript, Nushell, Smalltalk,
-    // TableGen.
-    r'pl|pm|ml|mk|tf|gd|cr|sv|re|as|bb|gs|ls|nu|st|td):\d',
+    // Two-letter extensions, which [_hostWithPort] would otherwise read as
+    // a country-code domain: Perl, OCaml, Terraform, Makefile fragments,
+    // GDScript, Crystal, SystemVerilog, ReasonML, ActionScript, BitBake,
+    // Apps Script, LiveScript, Nushell, Smalltalk, TableGen, Haskell, F#,
+    // Julia, Visual Basic, Emacs Lisp, Haxe, Puppet, Verilog headers.
+    r'pl|pm|ml|mk|tf|gd|cr|sv|re|as|bb|gs|ls|nu|st|td|hs|fs|jl|vb|el|hx|pp|vh):\d',
     caseSensitive: false,
   );
 
@@ -543,6 +544,12 @@ class ClipLink {
     }
     final uri = Uri.tryParse('http://$text');
     if (uri == null || uri.host.isEmpty) return null;
+    // A bracketed IPv6 address: never the unspecified `::` or multicast
+    // (ff00::/8), which no browser opens a page on.
+    if (uri.host.contains(':')) {
+      final bytes = Uri.parseIPv6Address(uri.host.split('%').first);
+      if (bytes[0] == 0xff || bytes.every((b) => b == 0)) return null;
+    }
     // Five digits reach 99999; a port runs 1-65535, 0 being reserved.
     if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
     return ClipLink._(ClipLinkKind.web, uri, uri.host);
@@ -626,7 +633,11 @@ class ClipLink {
   static final _continentalStreet = RegExp(
     // Up to two words before the name that carries the type: `Alte
     // Dorfstraße 5`, `Am Alten Weg 3`.
-    r"^(?:[\wÀ-ÿ'.-]+\s+){0,2}[\wÀ-ÿ'.-]+(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])",
+    // The type is joined to the name (`Dorfstraße`) or, after at least one
+    // other word, a word of its own (`Am Alten Weg`); alone, `Weg 3` is too
+    // little to go on.
+    r"^(?:(?:[\wÀ-ÿ'.-]+\s+){0,2}[\wÀ-ÿ'.-]+|(?:[\wÀ-ÿ'.-]+\s+){1,2})"
+    r'(?:stra(?:ß|ss)e|str\.|weg|platz|allee|gasse|laan|straat|gatan|vej|veien)\s+\d+[a-z]?(?:$|[,\n])',
     caseSensitive: false,
   );
   static final _houseNumber = RegExp(r'^\d+[a-z]?\b', caseSensitive: false);

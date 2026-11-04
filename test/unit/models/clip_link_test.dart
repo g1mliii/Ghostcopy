@@ -1180,6 +1180,17 @@ void main() {
           isNotNull,
         );
         expect(ClipLink.detect('Alte Dorfstraße 5')?.kind, ClipLinkKind.map);
+        expect(ClipLink.detect('Am Alten Weg 3')?.kind, ClipLinkKind.map);
+        expect(ClipLink.detect('Weg 3'), isNull);
+        for (final text in [
+          '[ff02::1]:8080',
+          '[::]:3000',
+          'Main.hs:42',
+          'Program.fs:8',
+          'script.jl:7',
+        ]) {
+          expect(ClipLink.detect(text), isNull, reason: text);
+        }
       },
     );
 
