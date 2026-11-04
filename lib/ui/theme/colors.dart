@@ -30,6 +30,10 @@ class GhostColors {
 
   static const primary = Color(0xFF6670FF);
   static const primaryHover = Color(0xFF555CCB);
+  static Color get successText => isLight ? const Color(0xFF216337) : success;
+  static Color get warningText => isLight ? const Color(0xFF8A5700) : warning;
+  static Color get errorText => isLight ? const Color(0xFFBA1A1A) : error;
+
   static const success = Color(0xFF3BA55C);
   static Color get accentSoft =>
       isLight ? const Color(0xFFEEEEFF) : const Color(0xFF292D55);
@@ -45,7 +49,7 @@ class GhostColors {
   static Color get textSecondary =>
       isLight ? const Color(0xFF636366) : const Color(0xFFB9BBBE);
   static Color get textMuted => isLight ? _lightMuted : _darkMuted;
-  static const _lightMuted = Color(0xFF6C6C70);
+  static const _lightMuted = Color(0xFF68686C);
   static const _darkMuted = Color(0xFF989CA9);
 
   static const warning = Color(0xFFFFB020);

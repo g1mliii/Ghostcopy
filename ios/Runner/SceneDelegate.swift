@@ -17,6 +17,38 @@ import UIKit
 @objc class SceneDelegate: FlutterSceneDelegate {
   private var blurView: UIVisualEffectView?
 
+  override func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    super.scene(scene, willConnectTo: session, options: connectionOptions)
+    applyAppearance()
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(applyAppearance),
+      name: UserDefaults.didChangeNotification, object: nil
+    )
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+  }
+
+  // The OS launch storyboard precedes app code. This controls the live window
+  // and native sheets as soon as the scene connects, then follows saved changes.
+  @objc private func applyAppearance() {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { [weak self] in self?.applyAppearance() }
+      return
+    }
+    switch UserDefaults.standard.string(forKey: "flutter.theme_mode") {
+    case "light": window?.overrideUserInterfaceStyle = .light
+    case "dark": window?.overrideUserInterfaceStyle = .dark
+    default: window?.overrideUserInterfaceStyle = .unspecified
+    }
+    window?.backgroundColor = UIColor(named: "GhostBackground")
+  }
+
   // MARK: - Privacy blur
 
   /// Whether the user wants the app switcher preview hidden.

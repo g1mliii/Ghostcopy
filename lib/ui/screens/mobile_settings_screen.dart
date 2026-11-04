@@ -989,10 +989,14 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           // Sign out button (only for authenticated users)
           if (!isAnonymous)
             ListTile(
-              leading: Icon(Icons.logout, color: Colors.red.shade400, size: 20),
+              leading: Icon(
+                Icons.logout,
+                color: GhostColors.errorText,
+                size: 20,
+              ),
               title: Text(
                 'Sign Out',
-                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
+                style: TextStyle(fontSize: 14, color: GhostColors.errorText),
               ),
               onTap: _handleSignOut,
             ),
@@ -1003,15 +1007,15 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
           if (!isAnonymous)
             ListTile(
               leading: _deletingAccount
-                  ? Adaptive.progressIndicator(color: Colors.red.shade400)
+                  ? Adaptive.progressIndicator(color: GhostColors.errorText)
                   : Icon(
                       Icons.delete_forever_outlined,
-                      color: Colors.red.shade400,
+                      color: GhostColors.errorText,
                       size: 20,
                     ),
               title: Text(
                 'Delete Account',
-                style: TextStyle(fontSize: 14, color: Colors.red.shade400),
+                style: TextStyle(fontSize: 14, color: GhostColors.errorText),
               ),
               subtitle: Text(
                 'Permanently delete your account and all your clips',
@@ -1130,12 +1134,12 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                                       ),
                                       borderRadius: BorderRadius.circular(4),
                                     ),
-                                    child: const Text(
+                                    child: Text(
                                       'This device',
                                       style: TextStyle(
                                         fontSize: 10,
                                         fontWeight: FontWeight.w600,
-                                        color: GhostColors.success,
+                                        color: GhostColors.successText,
                                       ),
                                     ),
                                   ),
@@ -1163,7 +1167,7 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
                           child: IconButton(
                             icon: Icon(
                               Icons.delete_outline,
-                              color: Colors.red.shade400,
+                              color: GhostColors.errorText,
                               size: 20,
                             ),
                             tooltip: 'Remove device',

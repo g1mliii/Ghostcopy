@@ -56,6 +56,33 @@ void main() {
           greaterThanOrEqualTo(4.5),
         );
       }
+      if (mobile) {
+        for (final pair in [
+          (
+            theme.inputDecorationTheme.hintStyle!.color!,
+            theme.inputDecorationTheme.fillColor!,
+          ),
+          (GhostColors.textMuted, GhostColors.surfaceLight),
+          (GhostColors.warningText, GhostColors.surface),
+          (GhostColors.errorText, GhostColors.surface),
+          (
+            GhostColors.successText,
+            Color.alphaBlend(
+              GhostColors.success.withValues(alpha: 0.2),
+              GhostColors.surface,
+            ),
+          ),
+        ]) {
+          final luminances = [
+            pair.$1.computeLuminance(),
+            pair.$2.computeLuminance(),
+          ]..sort();
+          expect(
+            (luminances.last + 0.05) / (luminances.first + 0.05),
+            greaterThanOrEqualTo(4.5),
+          );
+        }
+      }
       debugDefaultTargetPlatformOverride = null;
     });
   }
