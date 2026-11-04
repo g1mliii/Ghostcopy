@@ -303,6 +303,8 @@ class ClipLink {
       'FaceTime',
       (h, u) =>
           h == 'facetime.apple.com' &&
+          // The invitation itself rides in the fragment: /join#v=1&p=...
+          u.fragment.isNotEmpty &&
           u.pathSegments.firstOrNull?.toLowerCase() == 'join',
     ),
     (
@@ -602,6 +604,14 @@ class ClipLink {
     if (uri.host.contains(':')) {
       final bytes = Uri.parseIPv6Address(uri.host.split('%').first);
       if (bytes[0] == 0xff || bytes.every((b) => b == 0)) return null;
+      // Documentation: 2001:db8::/32 and 3fff::/20.
+      if ((bytes[0] == 0x20 &&
+              bytes[1] == 0x01 &&
+              bytes[2] == 0x0d &&
+              bytes[3] == 0xb8) ||
+          (bytes[0] == 0x3f && bytes[1] == 0xff && bytes[2] < 0x10)) {
+        return null;
+      }
       // IPv4-mapped (::ffff:0:0/96): the IPv4 address's own rules.
       if (bytes.take(10).every((b) => b == 0) &&
           bytes[10] == 0xff &&
@@ -613,7 +623,9 @@ class ClipLink {
     }
     // Five digits reach 99999; a port runs 1-65535, 0 being reserved.
     if (uri.hasPort && (uri.port < 1 || uri.port > 65535)) return null;
-    return ClipLink._(ClipLinkKind.web, uri, uri.host);
+    // Port 443 is TLS: plain http to it fails.
+    final target = uri.port == 443 ? uri.replace(scheme: 'https') : uri;
+    return ClipLink._(ClipLinkKind.web, target, uri.host);
   }
 
   static final _trailingZeros = RegExp(r'\.?0+$');
@@ -1147,19 +1159,19 @@ class ClipLink {
     }
   }
 
-  // On the services whose paths name what they lead to: Pandora keeps
-  // tracks under /artist/, and a SoundCloud path is a user's own name.
+  // The services whose paths name what they lead to - not Pandora, which
+  // keeps tracks under /artist/, nor SoundCloud, whose paths are a user's own
+  // names - and their short-link hosts, whose paths say nothing.
   static const _routedMusic = {
     'Spotify',
     'Apple Music',
     'TIDAL',
     'Deezer',
     'Amazon Music',
+    'Bandcamp',
   };
-  static final _trackOrAlbum = RegExp('(^|[/:])(track|album|song)[/:]');
-  static final _notASong = RegExp(
-    r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?|stations?|radio)([/:]|$)',
-  );
+  static const _shortMusicHosts = {'spotify.link', 'deezer.page.link'};
+  static final _trackOrAlbum = RegExp('(^|[/:])(tracks?|albums?|song)[/:]');
 
   /// The link song.link is given for a song or album, or null for what it
   /// cannot resolve.
@@ -1169,18 +1181,15 @@ class ClipLink {
   /// its own path, can read as its own and resolve the album: it is given as
   /// the track's own `/song/` link instead.
   String? get _songLinkTarget {
-    // A Spotify, Apple Music or Bandcamp link to anything but a track or
-    // album - Liked Songs, Browse, an artist's merch - is nothing song.link
-    // resolves. Spotify's short links say nothing in the path, so are given
-    // the benefit of the doubt.
-    if ((service == 'Bandcamp' ||
-            service == 'Apple Music' ||
-            (service == 'Spotify' && uri.host != 'spotify.link')) &&
+    // On those services, a link to anything but a track or album - Liked
+    // Songs, a search, a radio station, a Mix, an artist's merch - is nothing
+    // song.link resolves. Short links are given the benefit of the doubt.
+    if (_routedMusic.contains(service) &&
+        !_shortMusicHosts.contains(uri.host) &&
         !_trackOrAlbum.hasMatch(uri.path)) {
       return null;
     }
     if (service == 'Apple Podcasts' ||
-        (_routedMusic.contains(service) && _notASong.hasMatch(uri.path)) ||
         // A SoundCloud set is a playlist, which song.link does not resolve.
         (service == 'SoundCloud' &&
             uri.pathSegments.elementAtOrNull(1) == 'sets')) {

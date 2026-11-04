@@ -1207,6 +1207,7 @@ void main() {
           'https://teams.microsoft.com/l/meetup-join/',
           'https://teams.microsoft.com/l/meetup-join-notes',
           'https://facetime.apple.com/joinery',
+          'https://facetime.apple.com/join',
           'https://meet.google.com/abc-defg-hij-notes',
           'https://meet.google.com/abc-defg-hij/unrelated',
         ]) {
@@ -1227,7 +1228,14 @@ void main() {
             reason: text,
           );
         }
+        expect(
+          ClipLink.detect('example.com:443/status')!.uri.toString(),
+          'https://example.com/status',
+        );
+        expect(ClipLink.detect('localhost:3000')!.uri.scheme, 'http');
         for (final text in [
+          '[2001:db8::1]:8080',
+          '[3fff::1]:8080',
           '192.0.2.1:8080',
           '198.51.100.1/status',
           '203.0.113.1:80',
@@ -1241,6 +1249,8 @@ void main() {
           'https://music.apple.com/us/station/apple-music-1/ra.978194965',
           'https://artist.bandcamp.com/merch/shirt',
           'https://music.apple.com/us/browse',
+          'https://www.deezer.com/search/beatles',
+          'https://tidal.com/browse/mix/abc',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),
