@@ -1237,6 +1237,7 @@ void main() {
         for (final text in [
           'https://open.spotify.com/collection/tracks',
           'https://music.apple.com/us/station/apple-music-1/ra.978194965',
+          'https://artist.bandcamp.com/merch/shirt',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),
@@ -1251,6 +1252,7 @@ void main() {
         for (final text in [
           'https://open.spotify.com/intl-de/track/abc',
           'spotify:album:abc',
+          'https://artist.bandcamp.com/track/song',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),

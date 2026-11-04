@@ -1151,7 +1151,7 @@ class ClipLink {
     'Deezer',
     'Amazon Music',
   };
-  static final _spotifyItem = RegExp('(^|[/:])(track|album)[/:]');
+  static final _trackOrAlbum = RegExp('(^|[/:])(track|album)[/:]');
   static final _notASong = RegExp(
     r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?|stations?|radio)([/:]|$)',
   );
@@ -1164,12 +1164,13 @@ class ClipLink {
   /// its own path, can read as its own and resolve the album: it is given as
   /// the track's own `/song/` link instead.
   String? get _songLinkTarget {
-    // A Spotify link to anything but a track or album - Liked Songs, a
-    // search, a genre page - is nothing song.link resolves. Its short links
-    // say nothing in the path, so are given the benefit of the doubt.
-    if (service == 'Spotify' &&
-        uri.host != 'spotify.link' &&
-        !_spotifyItem.hasMatch(uri.path)) {
+    // A Spotify or Bandcamp link to anything but a track or album - Liked
+    // Songs, a search, an artist's merch - is nothing song.link resolves.
+    // Spotify's short links say nothing in the path, so are given the
+    // benefit of the doubt.
+    if ((service == 'Bandcamp' ||
+            (service == 'Spotify' && uri.host != 'spotify.link')) &&
+        !_trackOrAlbum.hasMatch(uri.path)) {
       return null;
     }
     if (service == 'Apple Podcasts' ||
