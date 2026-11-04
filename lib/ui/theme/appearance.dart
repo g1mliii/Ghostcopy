@@ -53,14 +53,15 @@ class _AppearanceBuilderState extends State<AppearanceBuilder>
 }
 
 /// Transparent system bars with glyphs matching the app's brightness.
-SystemUiOverlayStyle appearanceOverlayStyle({required bool isLight}) =>
-    SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: isLight ? Brightness.dark : Brightness.light,
-      statusBarBrightness: isLight ? Brightness.light : Brightness.dark,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarIconBrightness: isLight
-          ? Brightness.dark
-          : Brightness.light,
-      systemNavigationBarContrastEnforced: false,
-    );
+SystemUiOverlayStyle appearanceOverlayStyle({required bool isLight}) {
+  // Dark glyphs on a light app, light glyphs on a dark one.
+  final glyphs = isLight ? Brightness.dark : Brightness.light;
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: glyphs,
+    statusBarBrightness: isLight ? Brightness.light : Brightness.dark,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarIconBrightness: glyphs,
+    systemNavigationBarContrastEnforced: false,
+  );
+}
