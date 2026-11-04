@@ -342,7 +342,12 @@ class ClipLink {
     ),
     (ClipLinkKind.music, 'Amazon Music', (h, u) => _amazonMusic.hasMatch(h)),
     (ClipLinkKind.music, 'Bandcamp', (h, u) => _hostIs(h, 'bandcamp.com')),
-    (ClipLinkKind.music, 'Pandora', (h, u) => _hostIs(h, 'pandora.com')),
+    (
+      ClipLinkKind.music,
+      'Pandora',
+      // pandora.app.link is where the app's Copy Link points.
+      (h, u) => _hostIs(h, 'pandora.com') || h == 'pandora.app.link',
+    ),
     (
       ClipLinkKind.video,
       'YouTube',
@@ -399,7 +404,7 @@ class ClipLink {
   static final _edgeSlashes = RegExp(r'^/+|/+$');
 
   static final _teamsMeetingPath = RegExp(
-    '/l/(meetup-join|meeting|call)/',
+    '/l/(meetup-join|meeting|call)/[^/]',
     caseSensitive: false,
   );
 
@@ -1151,7 +1156,7 @@ class ClipLink {
     'Deezer',
     'Amazon Music',
   };
-  static final _trackOrAlbum = RegExp('(^|[/:])(track|album)[/:]');
+  static final _trackOrAlbum = RegExp('(^|[/:])(track|album|song)[/:]');
   static final _notASong = RegExp(
     r'(^|[/:])(shows?|episodes?|podcasts?|playlists?|users?|artists?|stations?|radio)([/:]|$)',
   );
@@ -1164,11 +1169,12 @@ class ClipLink {
   /// its own path, can read as its own and resolve the album: it is given as
   /// the track's own `/song/` link instead.
   String? get _songLinkTarget {
-    // A Spotify or Bandcamp link to anything but a track or album - Liked
-    // Songs, a search, an artist's merch - is nothing song.link resolves.
-    // Spotify's short links say nothing in the path, so are given the
-    // benefit of the doubt.
+    // A Spotify, Apple Music or Bandcamp link to anything but a track or
+    // album - Liked Songs, Browse, an artist's merch - is nothing song.link
+    // resolves. Spotify's short links say nothing in the path, so are given
+    // the benefit of the doubt.
     if ((service == 'Bandcamp' ||
+            service == 'Apple Music' ||
             (service == 'Spotify' && uri.host != 'spotify.link')) &&
         !_trackOrAlbum.hasMatch(uri.path)) {
       return null;

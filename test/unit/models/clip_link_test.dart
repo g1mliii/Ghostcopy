@@ -1202,6 +1202,8 @@ void main() {
           'https://acme.webex.com/join/',
           'https://acme.webex.com/acme/j.php-notes',
           'https://acme.webex.com/j.php',
+          'msteams:/l/meeting/',
+          'msteams:/l/call/',
           'https://teams.microsoft.com/l/meetup-join/',
           'https://teams.microsoft.com/l/meetup-join-notes',
           'https://facetime.apple.com/joinery',
@@ -1238,6 +1240,7 @@ void main() {
           'https://open.spotify.com/collection/tracks',
           'https://music.apple.com/us/station/apple-music-1/ra.978194965',
           'https://artist.bandcamp.com/merch/shirt',
+          'https://music.apple.com/us/browse',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),
@@ -1248,6 +1251,10 @@ void main() {
         expect(
           ClipLink.detect('https://api.soundcloud.com/tracks/123')?.kind,
           isNot(ClipLinkKind.music),
+        );
+        expect(
+          ClipLink.detect('https://pandora.app.link/AbCdEf')?.service,
+          'Pandora',
         );
         for (final text in [
           'https://open.spotify.com/intl-de/track/abc',
