@@ -1268,6 +1268,9 @@ void main() {
           'https://www.deezer.com/album/',
           'https://music.youtube.com/watch',
           'https://music.youtube.com/watchlater?v=abc',
+          'https://soundcloud.com/search/sounds?q=beatles',
+          'https://www.pandora.com/search/subscriptions/all',
+          'https://www.pandora.com/artist/the-beatles/ARabc123',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),
@@ -1289,6 +1292,9 @@ void main() {
           'https://artist.bandcamp.com/track/song',
           'https://www.deezer.com/us/album/302127',
           'https://on.soundcloud.com/AbCd',
+          'https://www.pandora.com/artist/the-beatles/abbey-road/come-together/TRabc123',
+          'https://www.pandora.com/artist/the-beatles/abbey-road/ALabc123',
+          'https://pandora.app.link/AbCdEf',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),

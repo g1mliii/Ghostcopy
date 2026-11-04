@@ -1205,6 +1205,24 @@ class ClipLink {
   static final _routeSeparator = RegExp('[/:]');
   static final _pathStart = RegExp('[/?#]');
 
+  /// SoundCloud's own pages, where a user's name would otherwise be.
+  static const _soundCloudSite = {
+    'search',
+    'discover',
+    'stream',
+    'you',
+    'charts',
+    'upload',
+    'settings',
+    'messages',
+    'notifications',
+    'people',
+    'tags',
+    'pages',
+    'stations',
+  };
+  static final _pandoraItem = RegExp(r'^(AL|TR)[A-Za-z0-9]+$');
+
   /// A SoundCloud user's own pages, beside their tracks at `/<user>/<track>`.
   static const _soundCloudPages = {
     'sets',
@@ -1241,7 +1259,18 @@ class ClipLink {
     if (service == 'SoundCloud' && uri.host != 'on.soundcloud.com') {
       final segments = _segments(uri);
       if (segments.length < 2 ||
+          _soundCloudSite.contains(segments[0].toLowerCase()) ||
           _soundCloudPages.contains(segments[1].toLowerCase())) {
+        return null;
+      }
+    }
+    // A Pandora album or track sits under its artist and ends in its id:
+    // /artist/<artist>/<album>/AL..., /artist/<artist>/<album>/<track>/TR....
+    // Its share links say nothing in the path.
+    if (service == 'Pandora' && uri.host != 'pandora.app.link') {
+      final segments = _segments(uri);
+      if (segments.firstOrNull?.toLowerCase() != 'artist' ||
+          !_pandoraItem.hasMatch(segments.last)) {
         return null;
       }
     }
