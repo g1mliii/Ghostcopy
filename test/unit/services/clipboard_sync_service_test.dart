@@ -197,6 +197,20 @@ void main() {
         .setMockMethodCallHandler(clipboardChangeChannel, null);
   });
 
+  test('send shortcut reports a missing session', () async {
+    when(() => auth.currentUser).thenReturn(null);
+    clipboardValue = ClipboardContent.text('current selection');
+    await service.sendCurrentClipboard();
+    verify(
+      () => notifier.showToast(
+        message:
+            'Clipboard was not sent. Sign in or wait for your session to reconnect.',
+        type: NotificationType.warning,
+      ),
+    ).called(1);
+    verifyNever(() => repository.insert(any()));
+  });
+
   test(
     'send shortcut reads and sends unchanged text with monitoring off',
     () async {

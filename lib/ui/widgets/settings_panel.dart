@@ -94,7 +94,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   String _obsidianVaultPath = '';
   String _obsidianFileName = 'clipboard.md';
   HotKey? _sendHotkey;
-  HotKey _currentHotkey = defaultHotkey;
+  HotKey? _currentHotkey;
 
   // Text controllers
   final _webhookUrlController = TextEditingController();

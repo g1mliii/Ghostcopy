@@ -1128,7 +1128,10 @@ class ClipboardSyncService implements IClipboardSyncService {
         var detection = await _securityService.detectSensitiveDataAsync(text);
         if (!detection.isSensitive && manual && clipboardContent.hasHtml) {
           // The stored markup and the text it renders can expose different secrets.
-          readableHtml = htmlToPlainText(clipboardContent.html!);
+          final html = clipboardContent.html!;
+          readableHtml = html.length > 10240
+              ? await compute<String, String>(htmlToPlainText, html)
+              : htmlToPlainText(html);
           if (readableHtml != text) {
             detection = await _securityService.detectSensitiveDataAsync(
               readableHtml,
@@ -1159,6 +1162,7 @@ class ClipboardSyncService implements IClipboardSyncService {
           clipboardContent.fileBytes!,
           clipboardContent.filename!,
           clipboardContent.mimeType,
+          manual: manual,
         );
       } else if (clipboardContent.hasImage) {
         debugPrint(
@@ -1167,10 +1171,12 @@ class ClipboardSyncService implements IClipboardSyncService {
         await _autoSendImage(
           clipboardContent.imageBytes!,
           clipboardContent.mimeType!,
+          manual: manual,
         );
       } else if (manual && clipboardContent.hasHtml) {
         await _autoSend(
           noun: 'HTML',
+          manual: manual,
           contentHash: contentHash,
           insert: (context) => _clipboardRepository.insertRichText(
             userId: context.userId,
@@ -1290,11 +1296,21 @@ class ClipboardSyncService implements IClipboardSyncService {
     required Future<ClipboardItem> Function(_AutoSendContext context) insert,
     required String Function(String targetText) message,
     required String failureMessage,
+    bool manual = false,
     void Function(_AutoSendContext context)? afterInsert,
   }) async {
     try {
       final userId = _supabaseClient.auth.currentUser?.id;
-      if (userId == null) return;
+      if (userId == null) {
+        if (manual) {
+          _notificationService?.showToast(
+            message:
+                'Clipboard was not sent. Sign in or wait for your session to reconnect.',
+            type: NotificationType.warning,
+          );
+        }
+        return;
+      }
 
       if (contentHash == _lastSentContentHash) {
         debugPrint('[ClipboardSyncService] Skipping duplicate $noun');
@@ -1369,6 +1385,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     await _autoSend(
       noun: 'content',
+      manual: manual,
       contentHash: _calculateContentHash(processedContent),
       insert: (context) => _clipboardRepository.insert(
         ClipboardItem(
@@ -1400,7 +1417,11 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Auto-send image content
-  Future<void> _autoSendImage(Uint8List imageBytes, String mimeType) async {
+  Future<void> _autoSendImage(
+    Uint8List imageBytes,
+    String mimeType, {
+    bool manual = false,
+  }) async {
     final contentType = ContentType.fromMimeType(mimeType);
     if (contentType == null || !contentType.isImage) {
       debugPrint('[ClipboardSyncService] Unsupported image type: $mimeType');
@@ -1411,6 +1432,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     await _autoSend(
       noun: 'image',
+      manual: manual,
       contentHash: _calculateClipboardContentHash(
         ClipboardContent.image(imageBytes, mimeType),
       ),
@@ -1432,8 +1454,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   Future<void> _autoSendFile(
     Uint8List fileBytes,
     String filename,
-    String? mimeType,
-  ) async {
+    String? mimeType, {
+    bool manual = false,
+  }) async {
     final fileTypeInfo = FileTypeService.instance.detectFromBytes(
       fileBytes,
       filename,
@@ -1442,6 +1465,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     await _autoSend(
       noun: 'file',
+      manual: manual,
       contentHash: _calculateClipboardContentHash(
         ClipboardContent.file(fileBytes, filename, mimeType),
       ),

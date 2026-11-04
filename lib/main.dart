@@ -1625,8 +1625,9 @@ Future<void> applyHotkey(HotKey hotkey) => _queueHotkeyUpdate(() async {
   // nothing should be written to settings.
   await hotkeyService.registerHotkey(hotkey, _invokeHotkeyCallback);
 
-  if (hotkey != _activeHotkey) {
-    await hotkeyService.unregisterHotkey(_activeHotkey);
+  final previous = _activeHotkey;
+  if (previous != null && hotkey != previous) {
+    await hotkeyService.unregisterHotkey(previous);
   }
   _activeHotkey = hotkey;
 
@@ -1635,7 +1636,7 @@ Future<void> applyHotkey(HotKey hotkey) => _queueHotkeyUpdate(() async {
 });
 
 /// The shortcut currently registered with the OS.
-HotKey _activeHotkey = defaultHotkey;
+HotKey? _activeHotkey;
 HotKey? _activeSendHotkey;
 
 void _invokeSendClipboard() {
@@ -1670,7 +1671,9 @@ Future<void> _registerDesktopShortcuts() => _queueHotkeyUpdate(() async {
 });
 
 Future<void> _registerSendHotkey(HotKey? hotkey) async {
-  if (hotkey == _activeHotkey) throw HotkeyInUseException(_activeHotkey);
+  if (hotkey != null && hotkey == _activeHotkey) {
+    throw HotkeyInUseException(hotkey);
+  }
   final service = locator<IHotkeyService>();
   final previous = _activeSendHotkey;
   if (previous == hotkey) return;
@@ -1692,7 +1695,7 @@ Future<void> _registerSendHotkey(HotKey? hotkey) async {
 /// The shortcuts actually registered with the OS, once pending registrations
 /// have settled - not the saved ones, which a conflict at login can leave
 /// unregistered.
-Future<({HotKey spotlight, HotKey? send})> registeredHotkeys() async {
+Future<({HotKey? spotlight, HotKey? send})> registeredHotkeys() async {
   await _hotkeyUpdates;
   return (spotlight: _activeHotkey, send: _activeSendHotkey);
 }
