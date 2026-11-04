@@ -9,8 +9,10 @@ import '../hotkey_service.dart';
 /// Compositor-owned global shortcuts, including while XWayland is unfocused.
 /// KDE owns the actual binding; Settings opens its shortcut configuration UI.
 class LinuxHotkeyService implements IHotkeyService {
-  LinuxHotkeyService({DBusClient? client})
+  LinuxHotkeyService({DBusClient? client, this.onSendClipboard})
     : _client = client ?? DBusClient.session();
+
+  final VoidCallback? onSendClipboard;
 
   static const _destination = 'org.freedesktop.portal.Desktop';
   static const _interface = 'org.freedesktop.portal.GlobalShortcuts';
@@ -95,9 +97,12 @@ class LinuxHotkeyService implements IHotkeyService {
           signature: DBusSignature('osta{sv}'),
         ).listen(
           (signal) {
-            if (_disposed || signal.values[1].asString() != 'spotlight') return;
+            if (_disposed) return;
+            final action = signal.values[1].asString();
             for (final binding in _bindings.values.toList()) {
-              if (binding.$1 == signal.values[0]) binding.$2();
+              if (binding.$1 != signal.values[0]) continue;
+              if (action == 'spotlight') binding.$2();
+              if (action == 'send-clipboard') onSendClipboard?.call();
             }
           },
           onError: (Object error) {
@@ -124,6 +129,13 @@ class LinuxHotkeyService implements IHotkeyService {
               'preferred_trigger': DBusString(trigger),
             }),
           ]),
+          if (onSendClipboard != null)
+            DBusStruct([
+              const DBusString('send-clipboard'),
+              DBusDict.stringVariant({
+                'description': const DBusString('Send current clipboard'),
+              }),
+            ]),
         ]),
         const DBusString(''),
       ], {});

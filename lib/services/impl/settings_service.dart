@@ -224,6 +224,24 @@ class SettingsService implements ISettingsService {
     return HotKey.fromStorageString(_prefs!.getString(_keyHotkey));
   }
 
+  static const _keySendHotkey = 'send_clipboard_hotkey';
+
+  @override
+  Future<HotKey?> getSendHotkey() async {
+    _ensureInitialized();
+    return HotKey.fromStorageString(_prefs!.getString(_keySendHotkey));
+  }
+
+  @override
+  Future<void> setSendHotkey(HotKey? hotkey) async {
+    _ensureInitialized();
+    if (hotkey == null) {
+      await _prefs!.remove(_keySendHotkey);
+    } else {
+      await _prefs!.setString(_keySendHotkey, hotkey.toStorageString());
+    }
+  }
+
   @override
   Future<void> setHotkey(HotKey hotkey) async {
     _ensureInitialized();
