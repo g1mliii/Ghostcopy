@@ -22,6 +22,7 @@ import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../../utils/network_errors.dart';
+import '../../utils/platform_label.dart';
 
 /// ViewModel for SpotlightScreen - handles business logic and state
 ///
@@ -890,11 +891,7 @@ class SpotlightViewModel extends ChangeNotifier {
         debugPrint('[SpotlightVM] ↑ Sent text: ${sentText.length} chars');
       }
 
-      final targetText = _selectedPlatforms.isEmpty
-          ? 'all devices'
-          : _selectedPlatforms.length == 1
-          ? _selectedPlatforms.first.toLowerCase()
-          : '${_selectedPlatforms.length} device types';
+      final targetText = sendDestinationLabel(targetDevicesList);
 
       debugPrint('Sent clipboard to $targetText');
 

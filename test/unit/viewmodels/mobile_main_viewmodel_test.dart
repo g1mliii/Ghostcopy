@@ -258,6 +258,32 @@ void main() {
     expect(viewModel.clipboardContent, isNull);
   });
 
+  test('handleSend ignores a second submission during an upload', () async {
+    when(() => authService.currentUserId).thenReturn('user-123');
+    final upload = Completer<ClipboardItem>();
+    when(
+      () => clipboardRepository.insert(any()),
+    ).thenAnswer((_) => upload.future);
+
+    final first = viewModel.handleSend('hello mobile');
+    await viewModel.handleSend('hello mobile');
+    expect(viewModel.isSending, isTrue);
+
+    upload.complete(
+      ClipboardItem(
+        id: '1',
+        userId: 'user-123',
+        content: 'hello mobile',
+        deviceType: 'android',
+        createdAt: DateTime(2026),
+      ),
+    );
+    await first;
+
+    verify(() => clipboardRepository.insert(any())).called(1);
+    expect(viewModel.isSending, isFalse);
+  });
+
   test('handleSend sets validation error for empty text input', () async {
     await viewModel.handleSend('   ');
 
