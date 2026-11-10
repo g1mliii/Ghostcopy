@@ -971,10 +971,29 @@ class SpotlightViewModel extends ChangeNotifier {
   ///
   /// UI callback:
   /// - onCopySuccess: Called after copy (to close history panel)
+  ///
+  /// [windowHidden] is true when the Spotlight was put away as the copy
+  /// began, the ordinary unpinned case. The window closing is the
+  /// confirmation there: a toast raised with no window to draw in becomes a
+  /// system notification, announcing something the user did a moment ago by
+  /// their own click. A failure is the opposite - with the window gone a
+  /// notification is the only place left to say the clipboard was not
+  /// changed.
   Future<void> handleHistoryItemCopy(
     ClipboardItem item, {
     VoidCallback? onCopySuccess,
+    bool windowHidden = false,
   }) async {
+    void fail(String message) {
+      _setError(message);
+      if (windowHidden) {
+        _notificationService.showToast(
+          message: message,
+          type: NotificationType.error,
+        );
+      }
+    }
+
     try {
       // Media is downloaded first, and downloadFile returns null when the
       // storage path is missing, the download fails or decryption does.
@@ -985,7 +1004,7 @@ class SpotlightViewModel extends ChangeNotifier {
           ? await _clipboardRepo.downloadFile(item)
           : null;
       if ((item.isImage || item.isFile) && bytes == null) {
-        _setError(
+        fail(
           _clipboardRepo.lastDownloadWasOffline(item)
               ? offlineFileMessage
               : 'Could not copy - the file could not be downloaded',
@@ -1041,14 +1060,16 @@ class SpotlightViewModel extends ChangeNotifier {
       // dropped this call and staleness quietly stopped working.
       _syncService.updateClipboardModificationTime();
 
-      _notificationService.showToast(
-        message: 'Copied to clipboard',
-        type: NotificationType.success,
-      );
+      if (!windowHidden) {
+        _notificationService.showToast(
+          message: 'Copied to clipboard',
+          type: NotificationType.success,
+        );
+      }
 
       onCopySuccess?.call();
     } on Exception catch (e) {
-      _setError('Failed to copy: $e');
+      fail('Failed to copy: $e');
       debugPrint('[SpotlightVM] Failed to copy history item: $e');
     }
   }

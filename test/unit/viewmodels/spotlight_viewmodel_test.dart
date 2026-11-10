@@ -224,6 +224,62 @@ void main() {
     expect(clipboardSyncService.modificationTimeUpdates, 1);
   });
 
+  group('history copy confirmation', () {
+    late _MockClipboardService clipboard;
+    late SpotlightViewModel copying;
+
+    setUp(() {
+      clipboard = _MockClipboardService();
+      when(() => clipboard.writeText(any())).thenAnswer((_) async {});
+      copying = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        clipboardService: clipboard,
+      );
+      addTearDown(copying.dispose);
+    });
+
+    test('a pinned window confirms the copy with a toast', () async {
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
+
+      expect(notificationService.toasts, [
+        ('Copied to clipboard', NotificationType.success),
+      ]);
+    });
+
+    test('a window hidden by the copy raises no notification', () async {
+      // With no window the toast would be a system notification, for a copy
+      // the user made by clicking a moment ago.
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+        windowHidden: true,
+      );
+
+      verify(() => clipboard.writeText('hello')).called(1);
+      expect(notificationService.toasts, isEmpty);
+      expect(clipboardSyncService.modificationTimeUpdates, 1);
+    });
+
+    test('a failed copy behind a hidden window is still reported', () async {
+      when(
+        () => clipboard.writeText(any()),
+      ).thenThrow(Exception('clipboard busy'));
+
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+        windowHidden: true,
+      );
+
+      expect(notificationService.toasts.single.$2, NotificationType.error);
+      expect(clipboardSyncService.modificationTimeUpdates, 0);
+    });
+  });
+
   test('a failed media download is not counted as a copy', () async {
     // downloadFile answers null for a missing path, a failed download or a
     // failed decrypt. Nothing reaches the clipboard, so smart receive must

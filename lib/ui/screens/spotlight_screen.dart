@@ -1999,11 +1999,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     }
 
     // 2. Perform copy in background
-    // We act as if it succeeded immediately to the user
+    // We act as if it succeeded immediately to the user. With the window
+    // hidden the ViewModel stays quiet on success and reports a failure as a
+    // system notification.
     try {
-      await _viewModel.handleHistoryItemCopy(item);
+      await _viewModel.handleHistoryItemCopy(item, windowHidden: hide);
     } on Exception catch (e) {
-      // If copy fails, we might want to show a system notification since window is hidden
       debugPrint('[Spotlight] Copy failed after hide: $e');
     }
 
