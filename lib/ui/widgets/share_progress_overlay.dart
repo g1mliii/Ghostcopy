@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
+import 'ghost_loading_indicator.dart';
 
 /// Shown over the app while something shared into it is sent.
 ///
@@ -110,11 +110,7 @@ class ShareProgressOverlay extends StatelessWidget {
   }
 
   Widget _buildMark(ShareProgressStage stage) => switch (stage) {
-    ShareProgressStage.sending => Adaptive.progressIndicator(
-      size: 30,
-      strokeWidth: 3,
-      color: GhostColors.primary,
-    ),
+    ShareProgressStage.sending => const GhostLoadingIndicator(size: 30),
     ShareProgressStage.sent => const Icon(
       Icons.check_circle_rounded,
       size: 44,

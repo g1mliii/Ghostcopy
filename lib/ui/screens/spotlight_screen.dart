@@ -42,6 +42,7 @@ import '../viewmodels/spotlight_viewmodel.dart';
 import '../widgets/auth_panel.dart';
 import '../widgets/cached_clipboard_image.dart';
 import '../widgets/file_preview_widget.dart';
+import '../widgets/ghost_loading_indicator.dart';
 import '../widgets/settings_panel.dart';
 
 /// Platform types for device selection
@@ -119,10 +120,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late PausableAnimationController _pausableHistorySlideController;
   late PausableAnimationController _pausableSettingsSlideController;
   late PausableAnimationController _pausableAuthSlideController;
-  late final _HiddenListener _hiddenListener = _HiddenListener(() {
-    _hiddenSinceFocus = true;
-    _viewModel.onSpotlightHidden();
-  });
+  late final ValueNotifier<bool> _loadingMotionEnabled = ValueNotifier(
+    !_lifecycleController.isInTrayMode,
+  );
+  late final _HiddenListener _hiddenListener = _HiddenListener(
+    onHidden: () {
+      _loadingMotionEnabled.value = false;
+      _hiddenSinceFocus = true;
+      _viewModel.onSpotlightHidden();
+    },
+    onShown: () => _loadingMotionEnabled.value = true,
+  );
 
   /// Whether the window went back to the tray since it last had focus. A
   /// pinned window regains focus every time it is clicked into, and the
@@ -460,6 +468,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     } on Exception catch (e) {
       debugPrint('Error removing pausable controllers: $e');
     }
+    _loadingMotionEnabled.dispose();
 
     try {
       // Dispose in reverse order of creation
@@ -1734,41 +1743,47 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         ),
-        child: busy
-            ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (busy)
+              _withLoadingMotion(
+                const GhostLoadingIndicator.compact(color: Colors.white),
               )
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.send, size: 18, color: Colors.white),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Send',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(
-                    '⏎',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.whiteAlpha70,
-                    ),
-                  ),
-                ],
+            else
+              const Icon(Icons.send, size: 18, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(
+              _viewModel.isRestoringDraft
+                  ? 'Restoring draft…'
+                  : busy
+                  ? 'Sending…'
+                  : 'Send',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
               ),
+            ),
+            if (!busy) ...[
+              const SizedBox(width: 16),
+              Text(
+                '⏎',
+                style: TextStyle(fontSize: 12, color: GhostColors.whiteAlpha70),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
+
+  Widget _withLoadingMotion(Widget child) => ValueListenableBuilder<bool>(
+    valueListenable: _loadingMotionEnabled,
+    child: child,
+    builder: (context, enabled, child) =>
+        TickerMode(enabled: enabled, child: child!),
+  );
 
   /// Build error message
   Widget _buildErrorMessage() {
@@ -2043,7 +2058,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       bottom: 0,
       child: SlideTransition(
         position: _historySlideAnimation,
-        child: panelContent,
+        child: _withLoadingMotion(panelContent),
       ),
     );
   }
@@ -2277,7 +2292,7 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
         Expanded(
           child: widget.isLoading
               ? const Center(
-                  child: CircularProgressIndicator(color: GhostColors.primary),
+                  child: GhostLoadingIndicator(label: 'Loading history…'),
                 )
               : _filteredItems.isEmpty
               ? Center(
@@ -2864,15 +2879,16 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
 /// Tells the ViewModel when Spotlight goes back to the tray. A Pausable
 /// because that is the one hook every hideSpotlight goes through.
 class _HiddenListener implements Pausable {
-  _HiddenListener(this._onHidden);
+  _HiddenListener({required this.onHidden, required this.onShown});
 
-  final VoidCallback _onHidden;
-
-  @override
-  void pause() => _onHidden();
+  final VoidCallback onHidden;
+  final VoidCallback onShown;
 
   @override
-  void resume() {}
+  void pause() => onHidden();
+
+  @override
+  void resume() => onShown();
 }
 
 class _HoverableIconButton extends StatefulWidget {
