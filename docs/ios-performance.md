@@ -53,6 +53,82 @@ against the code instead:
   written out as PNG - screenshot-sized.
 - **Scrolling the history.** Not measured.
 
+## Open: typing and history-scroll lag (reported 2026-11-10)
+
+Two reports from use on a real iPhone, neither traced yet:
+
+- **Typing in the composer feels laggy.** Nothing in the composer runs per
+  keystroke in Dart (`onChanged` only clears a send error; the length check is
+  a controller listener), and Sentry holds no iOS hang or slow-frame events
+  for the last 30 days. The table above already shows ~25% of a core while
+  keys are pressed, so the question is whether frames are being missed, and
+  on which thread.
+- **Scrolling the history lags after copying a clip, and recovers after the
+  app sits idle for a while.** Not reproduced from the code. Scrolling was
+  never measured (see above). Still to confirm: whether this is the phone's
+  history list or the desktop history panel.
+
+A TestFlight build cannot be traced: it is distribution-signed, so neither
+DevTools nor Instruments can attach. It is still worth trying there first -
+lag in TestFlight is lag in a release build, not a debug-build artefact.
+
+### Capture
+
+On the Mac, phone plugged in and unlocked. Profile, not debug: a debug build
+is slow enough to invent lag that is not there.
+
+```bash
+flutter devices
+```
+
+```bash
+flutter run --profile -d <device-id>
+```
+
+Open the DevTools link it prints, go to Performance, and turn on "Track
+widget builds". Record each of these as its own short capture, so the frames
+in one cannot be blamed on another:
+
+1. **Typing, short text.** Focus the composer, type two ordinary sentences.
+2. **Typing, long text.** Paste a few thousand characters, then type at the
+   end. Handwriting input is switched off above 2,000 characters, so the two
+   cases take different paths.
+3. **Scroll, before.** Fresh launch, scroll the history up and down for ten
+   seconds without tapping anything.
+4. **Scroll, after a copy.** Tap a text clip to copy it, wait for the toast
+   to go, scroll for ten seconds.
+5. **Scroll, after idle.** Leave the app untouched until scrolling feels
+   normal again, note how long that took, and record ten more seconds.
+
+For each capture note the slow frames (red bars) and whether the time is in
+UI (Dart: build, layout, paint) or Raster (GPU). Select the worst frame and
+export it, or screenshot the flame chart. The difference between captures 3
+and 4 is the one that matters for the scroll report: whatever is on screen or
+running in 4 that is not in 3 is the suspect.
+
+If DevTools shows nothing slow but it still feels wrong, the cost is outside
+Flutter (keyboard, haptics, the pasteboard). Use the `xctrace` recipe below
+with the `Time Profiler` template in place of `Activity Monitor`, against a
+release build signed for development.
+
+### Results
+
+Fill in after capturing.
+
+| Capture | Build | Slow frames | Worst frame (ms) | UI or Raster | What was in the worst frame |
+| --- | --- | --- | --- | --- | --- |
+| 1. Typing, short | | | | | |
+| 2. Typing, long | | | | | |
+| 3. Scroll, before | | | | | |
+| 4. Scroll, after copy | | | | | |
+| 5. Scroll, after idle | | | | | |
+
+Time for scrolling to recover after a copy:
+
+Device and iOS version:
+
+Does it also happen in the TestFlight build:
+
 ## How it was measured
 
 ```bash
