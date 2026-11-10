@@ -561,10 +561,10 @@ class MobileMainViewModel extends ChangeNotifier {
         _realtimeRetryCount = 0;
         _historyError = null;
 
-        // The saved copy is not a baseline for auto-copy: before it existed,
-        // this compared against an empty list at that point, and it still
-        // must - otherwise what counts as "new" would depend on whether the
-        // app was last opened offline.
+        // The saved copy is not a baseline for auto-copy: only a list the
+        // server sent is, so what counts as "new" does not depend on whether
+        // the app was last opened offline. With no baseline nothing is
+        // copied - see arrivedWhileOpen.
         final oldFirstId = _historyIsLive && _historyItems.isNotEmpty
             ? _historyItems.first.id
             : null;
@@ -584,7 +584,11 @@ class MobileMainViewModel extends ChangeNotifier {
         // Mirrors the desktop checks in ClipboardSyncService.
         if (items.isNotEmpty) {
           final latest = items.first;
-          if (oldFirstId == null || latest.id != oldFirstId) {
+          if (arrivedWhileOpen(
+            latest: latest,
+            previousFirstId: oldFirstId,
+            foregroundSince: _foregroundSince,
+          )) {
             final currentDeviceName =
                 ClipboardRepository.getCurrentDeviceName();
             final isFromDifferentDevice =
@@ -631,6 +635,32 @@ class MobileMainViewModel extends ChangeNotifier {
       },
     );
   }
+
+  /// When the app last came to the foreground; null while backgrounded.
+  DateTime? _foregroundSince = DateTime.now();
+
+  /// Whether [latest] is a clip that landed while the user had the app open,
+  /// which is the only time the phone copies one unasked.
+  ///
+  /// Opening the app used to copy whatever was newest: the first list to
+  /// arrive had nothing to compare against, and a resume delivered everything
+  /// sent while the app was away as one "new" row. Either way it replaced
+  /// what the user had just copied elsewhere and opened the app to send. A
+  /// clip from before this foreground session is in the list to tap, and its
+  /// notification still copies it.
+  ///
+  /// The time check also covers deleting the newest clip, which changes the
+  /// first id to an older row that is not an arrival at all.
+  @visibleForTesting
+  static bool arrivedWhileOpen({
+    required ClipboardItem latest,
+    required String? previousFirstId,
+    required DateTime? foregroundSince,
+  }) =>
+      previousFirstId != null &&
+      latest.id != previousFirstId &&
+      foregroundSince != null &&
+      !latest.createdAt.isBefore(foregroundSince);
 
   /// Re-arm the realtime subscription after an error, backing off so a server
   /// outage does not turn into a reconnect loop.
@@ -1652,6 +1682,7 @@ class MobileMainViewModel extends ChangeNotifier {
       '[MobileMainVM] App backgrounded - Pausing Realtime subscription',
     );
     _historySubscription?.pause();
+    _foregroundSince = null;
 
     // Clear sensitive decrypted data from memory when backgrounded
     _decryptedContentCache.clear();
@@ -1669,6 +1700,9 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Called when app returns to foreground
   void onAppResumed() {
     debugPrint('[MobileMainVM] App resumed - Resuming Realtime subscription');
+    // Before the subscription resumes: what it held back while paused was
+    // sent before this moment, and must not count as arriving now.
+    _foregroundSince = DateTime.now();
     _historySubscription?.resume();
 
     // Re-fetch, don't just resume. Push notifications deliberately carry no

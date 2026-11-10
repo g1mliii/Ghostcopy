@@ -292,6 +292,85 @@ void main() {
     expect(viewModel.isSending, isFalse);
   });
 
+  group('auto-copy of an arriving clip', () {
+    final opened = DateTime.utc(2026, 11, 10, 12);
+    ClipboardItem clip(String id, DateTime createdAt) => ClipboardItem(
+      id: id,
+      userId: 'u1',
+      content: 'clip $id',
+      deviceType: 'windows',
+      createdAt: createdAt,
+    );
+    final before = opened.subtract(const Duration(minutes: 3));
+    final after = opened.add(const Duration(seconds: 20));
+
+    test('the first list after opening the app copies nothing', () {
+      expect(
+        MobileMainViewModel.arrivedWhileOpen(
+          latest: clip('9', after),
+          previousFirstId: null,
+          foregroundSince: opened,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a clip sent while the app was away is not copied on resume', () {
+      expect(
+        MobileMainViewModel.arrivedWhileOpen(
+          latest: clip('9', before),
+          previousFirstId: '8',
+          foregroundSince: opened,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a clip that lands while the app is open is copied', () {
+      expect(
+        MobileMainViewModel.arrivedWhileOpen(
+          latest: clip('9', after),
+          previousFirstId: '8',
+          foregroundSince: opened,
+        ),
+        isTrue,
+      );
+    });
+
+    test('nothing is copied while backgrounded', () {
+      expect(
+        MobileMainViewModel.arrivedWhileOpen(
+          latest: clip('9', after),
+          previousFirstId: '8',
+          foregroundSince: null,
+        ),
+        isFalse,
+      );
+    });
+
+    test('deleting the newest clip does not copy the one below it', () {
+      expect(
+        MobileMainViewModel.arrivedWhileOpen(
+          latest: clip('7', before),
+          previousFirstId: '8',
+          foregroundSince: opened,
+        ),
+        isFalse,
+      );
+    });
+
+    test('an unchanged newest clip is not copied again', () {
+      expect(
+        MobileMainViewModel.arrivedWhileOpen(
+          latest: clip('8', after),
+          previousFirstId: '8',
+          foregroundSince: opened,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('history error lifecycle', () {
     ClipboardItem item(String id) => ClipboardItem(
       id: id,
