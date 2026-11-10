@@ -107,7 +107,7 @@ class _TestNotificationService implements INotificationService {
   final List<(String message, NotificationType type)> toasts =
       <(String, NotificationType)>[];
 
-  /// Raised without an overlay, by the headless send-file path.
+  /// Notifications sent directly to the OS.
   final List<(String message, NotificationType type)> systemNotifications =
       <(String, NotificationType)>[];
 
@@ -250,6 +250,7 @@ void main() {
       expect(notificationService.toasts, [
         ('Copied to clipboard', NotificationType.success),
       ]);
+      expect(notificationService.systemNotifications, isEmpty);
     });
 
     test('a window hidden by the copy raises no notification', () async {
@@ -262,20 +263,24 @@ void main() {
 
       verify(() => clipboard.writeText('hello')).called(1);
       expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, isEmpty);
       expect(clipboardSyncService.modificationTimeUpdates, 1);
     });
 
-    test('a failed copy behind a hidden window is still reported', () async {
-      when(
-        () => clipboard.writeText(any()),
-      ).thenThrow(Exception('clipboard busy'));
+    test('a copy exception is reported without its details', () async {
+      when(() => clipboard.writeText(any())).thenThrow(
+        const FileSystemException('Access denied', r'C:\Temp\private.txt'),
+      );
 
       await copying.handleHistoryItemCopy(
         _clipboardItem(id: '1', content: 'hello'),
         windowHidden: true,
       );
 
-      expect(notificationService.toasts.single.$2, NotificationType.error);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, [
+        ('Failed to copy to clipboard', NotificationType.error),
+      ]);
       expect(clipboardSyncService.modificationTimeUpdates, 0);
     });
   });
@@ -311,10 +316,18 @@ void main() {
         contentType: ContentType.imagePng,
         storagePath: 'user-123/img',
       ),
+      windowHidden: true,
     );
 
     expect(clipboardSyncService.modificationTimeUpdates, 0);
     expect(copying.errorMessage, isNotNull);
+    expect(notificationService.toasts, isEmpty);
+    expect(notificationService.systemNotifications, [
+      (
+        'Could not copy - the file could not be downloaded',
+        NotificationType.error,
+      ),
+    ]);
     verifyNever(() => clipboard.writeImage(any()));
   });
 
