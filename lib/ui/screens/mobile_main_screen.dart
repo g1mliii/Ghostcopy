@@ -27,6 +27,7 @@ import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
+import '../widgets/ghost_loading_indicator.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/native_toast.dart';
 import '../widgets/share_progress_overlay.dart';
@@ -940,17 +941,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Adaptive.progressIndicator(
+                  const GhostLoadingIndicator(
                     size: 24,
-                    color: GhostColors.primary,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Preparing to share…',
-                    style: GhostTypography.body.copyWith(
-                      fontSize: 13,
-                      color: GhostColors.textMuted,
-                    ),
+                    label: 'Preparing to share…',
                   ),
                 ],
               ),
@@ -1608,7 +1601,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       child: FilledButton.icon(
         onPressed: _viewModel.isSending ? null : _handleSend,
         icon: _viewModel.isSending
-            ? Adaptive.progressIndicator(size: 18, color: Colors.white)
+            ? const GhostLoadingIndicator.compact(color: Colors.white)
             : const Icon(Icons.send_rounded, size: 18),
         label: Text(_viewModel.isSending ? 'Sending…' : _sendButtonLabel()),
         style: FilledButton.styleFrom(
@@ -1819,13 +1812,10 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         // Suppressed during pull-to-refresh: the indicator the user dragged
         // already reports that reload. See isRefreshing.
         if (_viewModel.historyLoading && !_viewModel.isRefreshing)
-          SizedBox(
+          const SizedBox(
             height: 120,
             child: Center(
-              child: Adaptive.progressIndicator(
-                size: 28,
-                color: GhostColors.primary,
-              ),
+              child: GhostLoadingIndicator(label: 'Loading history…'),
             ),
           )
         else if (_viewModel.historyError != null)
