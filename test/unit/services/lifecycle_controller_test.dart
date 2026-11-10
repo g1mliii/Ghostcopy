@@ -52,7 +52,10 @@ class _RecordingSyncService implements IClipboardSyncService {
   @override
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
     polling = true;
+    pollInterval = interval;
   }
+
+  Duration? pollInterval;
 
   @override
   void stopClipboardMonitoring() {}
@@ -190,6 +193,8 @@ void main() {
         reason: 'idle in tray past the threshold should drop the websocket',
       );
       expect(sync.polling, isTrue);
+      // A desktop has no push: this interval is how late a clip can be.
+      expect(sync.pollInterval, lessThanOrEqualTo(const Duration(minutes: 1)));
       expect(sync.realtimePaused, isTrue);
 
       controller.dispose();

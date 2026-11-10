@@ -84,6 +84,18 @@ class LifecycleController implements ILifecycleController {
   Timer? _inactivityCheckTimer;
   static const Duration _realtimeIdleThreshold = Duration(minutes: 15);
 
+  /// How often an idle desktop asks whether a clip has arrived.
+  ///
+  /// This is the longest a clip can take to reach a desktop that has sat in
+  /// the tray: a desktop has no push, so once realtime is closed the poll is
+  /// the only way in. At five minutes a clip sent from the phone to a PC left
+  /// alone for a quarter of an hour appeared to never arrive - the user gave
+  /// up waiting before the next tick. Each poll reads one id, so asking ten
+  /// times as often is still cheap next to a socket held open all day, and
+  /// the first clip it finds switches back to realtime.
+  @visibleForTesting
+  static const Duration idlePollInterval = Duration(seconds: 30);
+
   // ========== FEATURE FLAG ==========
 
   bool _isHybridModeEnabled = false;
@@ -277,14 +289,17 @@ class LifecycleController implements ILifecycleController {
       return; // Can't switch during sleep/lock
     }
 
-    debugPrint('[Lifecycle] 🟡 Switching to POLLING mode (5 min interval)');
+    debugPrint(
+      '[Lifecycle] 🟡 Switching to POLLING mode '
+      '(${idlePollInterval.inSeconds}s interval)',
+    );
     _connectionMode = ConnectionMode.polling;
     _connectionModeController.add(_connectionMode);
 
     // Stop realtime, start polling
     _clipboardSyncService
       ..pauseRealtime()
-      ..startPolling(interval: const Duration(minutes: 5));
+      ..startPolling(interval: idlePollInterval);
   }
 
   @override

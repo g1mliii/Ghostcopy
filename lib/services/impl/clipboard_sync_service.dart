@@ -1607,7 +1607,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     if (_pollingTimer != null) return; // Already polling
 
     debugPrint(
-      '[ClipboardSync] 🔄 Starting polling mode (${interval.inMinutes} min)',
+      '[ClipboardSync] 🔄 Starting polling mode (${interval.inSeconds}s)',
     );
 
     _pollingTimer = Timer.periodic(interval, (_) async {

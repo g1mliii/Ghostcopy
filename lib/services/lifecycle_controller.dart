@@ -102,7 +102,7 @@ abstract class ILifecycleController {
   /// Switch to realtime mode (WebSocket)
   void switchToRealtime();
 
-  /// Switch to polling mode (HTTP every 5 min)
+  /// Switch to polling mode (HTTP every 30 seconds)
   void switchToPolling();
 
   // ========== POWER STATE (System State) ==========
