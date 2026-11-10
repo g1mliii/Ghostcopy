@@ -1800,9 +1800,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           Icon(Icons.error_outline, size: 16, color: Colors.red.shade400),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              _viewModel.errorMessage!,
-              style: TextStyle(fontSize: 12, color: Colors.red.shade400),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(
+                _viewModel.errorMessage!,
+                style: TextStyle(fontSize: 12, color: Colors.red.shade400),
+              ),
             ),
           ),
         ],

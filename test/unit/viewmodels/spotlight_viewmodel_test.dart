@@ -488,6 +488,30 @@ void main() {
     expect(notificationService.toasts.last.$2, NotificationType.success);
   });
 
+  test('send confirmation names the destination used by the upload', () async {
+    when(() => authService.currentUserId).thenReturn('user-123');
+    final upload = Completer<ClipboardItem>();
+    when(
+      () => clipboardRepository.insert(any()),
+    ).thenAnswer((_) => upload.future);
+
+    viewModel
+      ..togglePlatform('macos')
+      ..updateContent('hello');
+    final sending = viewModel.handleSend();
+    viewModel
+      ..togglePlatform('macos')
+      ..togglePlatform('ios');
+    upload.complete(_clipboardItem(id: '123', content: 'hello'));
+    await sending;
+
+    final item =
+        verify(() => clipboardRepository.insert(captureAny())).captured.single
+            as ClipboardItem;
+    expect(item.targetDeviceTypes, ['macos']);
+    expect(notificationService.toasts.last.$1, 'Sent to macOS');
+  });
+
   test('an offline send says there is no internet connection', () async {
     when(() => authService.currentUserId).thenReturn('user-123');
     when(

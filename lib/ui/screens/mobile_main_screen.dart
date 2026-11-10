@@ -723,48 +723,37 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleSend() async {
-    // Check if sending image or text
-    if (_viewModel.clipboardContent?.hasImage ?? false) {
-      await _viewModel.handleSend(
-        _pasteController.text,
-        onSendSuccess: () {
-          Adaptive.successFeedback();
-          if (mounted) {
-            _pasteController.clear();
-            showGhostToast(
-              context,
-              'Image sent successfully',
-              icon: Icons.image,
-              type: GhostToastType.success,
-            );
-          }
-        },
-      );
-      return;
+    final attachment = _viewModel.clipboardContent;
+    final text = _pasteController.text;
+    if (attachment?.hasImage != true && attachment?.hasFile != true) {
+      final content = text.trim();
+      if (content.isEmpty) {
+        _viewModel.setSendError('Please paste or type content to send');
+        return;
+      }
+
+      final isSensitive = await _viewModel.checkSensitiveData(content);
+      if (!mounted) return;
+      if (isSensitive && !await _showSensitiveDataWarning()) return;
+
+      // Check that the draft still matches the one we checked.
+      if (!mounted ||
+          _pasteController.text != text ||
+          !identical(_viewModel.clipboardContent, attachment)) {
+        return;
+      }
     }
 
-    final content = _pasteController.text.trim();
-    if (content.isEmpty) {
-      _viewModel.setSendError('Please paste or type content to send');
-      return;
-    }
-
-    // Security check
-    final isSensitive = await _viewModel.checkSensitiveData(content);
-    if (isSensitive) {
-      final shouldContinue = await _showSensitiveDataWarning();
-      if (!shouldContinue) return;
-    }
-
+    final destination = sendDestinationLabel(_viewModel.selectedDeviceTypes);
     await _viewModel.handleSend(
-      _pasteController.text,
+      text,
       onSendSuccess: () {
         Adaptive.successFeedback();
         if (mounted) {
-          _pasteController.clear();
+          if (_pasteController.text == text) _pasteController.clear();
           showGhostToast(
             context,
-            'Sent successfully',
+            'Sent to $destination',
             icon: Icons.send,
             type: GhostToastType.success,
           );
@@ -1456,16 +1445,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        sendError,
-                        // Collapsed, the page is a fixed height and
-                        // _collapsedPageFloor allows this two lines; a longer
-                        // message wrapping freely overflowed the column.
-                        maxLines: expand ? 2 : null,
-                        overflow: expand ? TextOverflow.ellipsis : null,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: GhostColors.errorLight,
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          sendError,
+                          // Collapsed, the page is a fixed height and
+                          // _collapsedPageFloor allows this two lines; a longer
+                          // message wrapping freely overflowed the column.
+                          maxLines: expand ? 2 : null,
+                          overflow: expand ? TextOverflow.ellipsis : null,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: GhostColors.errorLight,
+                          ),
                         ),
                       ),
                     ),
@@ -1641,14 +1633,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// Counting "Devices" was wrong for the same reason the chips were: a
   /// selection is a platform, and one platform can cover several machines, so
   /// "Send to 1 Device" was a miscount whenever a type had more than one.
-  String _sendButtonLabel() {
-    final selected = _viewModel.selectedDeviceTypes;
-    if (selected.isEmpty) return 'Send to all devices';
-    if (selected.length == 1) {
-      return 'Send to ${platformLabel(selected.first)}';
-    }
-    return 'Send to ${selected.length} platforms';
-  }
+  String _sendButtonLabel() =>
+      'Send to ${sendDestinationLabel(_viewModel.selectedDeviceTypes)}';
 
   /// Banner shown whenever this device holds clips it cannot decrypt.
   ///
