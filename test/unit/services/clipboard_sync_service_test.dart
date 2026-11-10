@@ -581,17 +581,63 @@ void main() {
       verify(() => repository.getById('1')).called(1);
       verify(() => webhook.sendWebhook(any(), any())).called(1);
 
-      // Idle in the tray: the lifecycle drops realtime for polling.
+      // The tray fallback checks the same row while realtime stays open.
       when(repository.getLatestItemId).thenAnswer((_) async => '1');
-      service
-        ..pauseRealtime()
-        ..startPolling(interval: const Duration(seconds: 1));
+      service.startPolling(interval: const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
       await settle(tester);
 
       verifyNever(() => repository.getById('1'));
       verifyNever(() => webhook.sendWebhook(any(), any()));
       verify(() => clipboard.writeText('clip 1')).called(1);
+      service.stopPolling();
+    });
+
+    testWidgets('a slow poll cannot replay an old clip or rejoin after '
+        'realtime advances', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      final slow = Completer<String?>();
+      when(repository.getLatestItemId).thenAnswer((_) => slow.future);
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+
+      onInsert(
+        PostgresChangePayload(
+          schema: 'public',
+          table: 'clipboard',
+          commitTimestamp: DateTime(2026),
+          eventType: PostgresChangeEvent.insert,
+          newRecord: {'id': 2, 'device_name': 'remote-device'},
+          oldRecord: const {},
+          errors: null,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await settle(tester);
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      slow.complete('1');
+      await settle(tester);
+
+      verifyNever(() => channel.subscribe(any()));
+      verifyNever(() => repository.getById('1'));
+      verify(() => clipboard.writeText('clip 2')).called(1);
+      verifyNever(() => clipboard.writeText('clip 1'));
+
+      // A later tick still catches a clip that the channel really missed.
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+
+      verify(() => channel.subscribe(any())).called(1);
+      verify(() => clipboard.writeText('clip 3')).called(1);
       service.stopPolling();
     });
 
@@ -901,8 +947,7 @@ void main() {
   testWidgets('polling does not deliver a clip realtime already delivered', (
     tester,
   ) async {
-    // The lifecycle controller swaps realtime for polling when idle. The first
-    // poll finds the newest row - the one realtime just handled.
+    // The first fallback poll finds the row realtime just handled.
     when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
     when(repository.getLatestItemId).thenAnswer((_) async => '1');
 

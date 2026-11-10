@@ -224,7 +224,7 @@ void main() {
     });
   });
 
-  test('clipboard activity brings it back to realtime', () {
+  test('tray polling survives a receive and stops when the window opens', () {
     fakeAsync((async) {
       final controller = LifecycleController(
         clipboardSyncService: sync,
@@ -238,8 +238,12 @@ void main() {
       async.elapse(const Duration(minutes: 20));
       expect(controller.connectionMode, ConnectionMode.polling);
 
-      controller.notifyClipboardActivity();
+      sync.onClipboardReceived?.call();
+      expect(controller.connectionMode, ConnectionMode.polling);
+      expect(sync.polling, isTrue);
+      expect(sync.realtimePaused, isFalse);
 
+      controller.exitTrayMode();
       expect(controller.connectionMode, ConnectionMode.realtime);
       expect(sync.polling, isFalse);
       expect(sync.realtimePaused, isFalse);

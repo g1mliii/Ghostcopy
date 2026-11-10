@@ -133,7 +133,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _pollingTimer;
   bool _isPolling = false;
 
-  /// A poll asked for while one was running - the catch-up on resume, say.
+  /// A follow-up requested while a poll was running, such as a catch-up on
+  /// resume or a fresh read after realtime advanced during the request.
   /// Run once the current one finishes rather than dropped: the running poll
   /// may already have read the newest id, and a row after it would otherwise
   /// wait for the next timer tick, or forever once realtime has taken over.
@@ -1683,11 +1684,14 @@ class ClipboardSyncService implements IClipboardSyncService {
     // catch-up has run, can be blamed for what the poll finds. Rows from
     // before the join were never that channel's to deliver.
     final canBlameRealtime = _realtimeJoined && !_realtimeCatchUpPending;
+    final channelGeneration = _realtimeGeneration;
     _realtimeCatchUpPending = false;
     try {
       debugPrint('[ClipboardSync] 🔍 Polling for new items...');
 
       final userId = _supabaseClient.auth.currentUser?.id;
+      final previousId = _lastPolledItemId;
+      final wasReady = _baselineReady;
       final latestId = await _clipboardRepository.getLatestItemId();
       if (_isDisposed ||
           userId != _supabaseClient.auth.currentUser?.id ||
@@ -1696,16 +1700,24 @@ class ClipboardSyncService implements IClipboardSyncService {
         return;
       }
 
+      // The HTTP snapshot can predate a realtime insert that arrived while
+      // the request was in flight. Read again against the new baseline so
+      // we neither replay old clips nor tear down a healthy channel.
+      if (_lastPolledItemId != previousId || _baselineReady != wasReady) {
+        _pollRequested = true;
+        return;
+      }
+
       // Getting here means the newest row is one the poll has not seen. If
       // the channel believes it is subscribed, it should have delivered this
       // already - so it is broken whatever it claims, and saying so here is
       // the only evidence available.
-      if (canBlameRealtime) _noteRealtimeMissedAClip();
+      if (canBlameRealtime && channelGeneration == _realtimeGeneration) {
+        _noteRealtimeMissedAClip();
+      }
 
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
-      final previousId = _lastPolledItemId;
-      final wasReady = _baselineReady;
       _lastPolledItemId = latestId;
       _baselineReady = true;
       // An account that had no clips at all: everything before the newest is

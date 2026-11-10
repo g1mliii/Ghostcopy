@@ -305,8 +305,11 @@ class LifecycleController implements ILifecycleController {
   void notifyClipboardActivity() {
     _lastClipboardActivity = clock.now();
 
-    // If in polling mode and user becomes active, switch back to realtime
-    if (_connectionMode == ConnectionMode.polling && _isHybridModeEnabled) {
+    // A received clip can arrive while the window is still hidden. Keep the
+    // fallback running in the tray until the window opens or power changes.
+    if (!_isInTrayMode &&
+        _connectionMode == ConnectionMode.polling &&
+        _isHybridModeEnabled) {
       debugPrint('[Lifecycle] 📋 Clipboard activity → Switching to REALTIME');
       switchToRealtime();
     }
