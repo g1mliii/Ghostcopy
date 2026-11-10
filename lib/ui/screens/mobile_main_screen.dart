@@ -34,6 +34,24 @@ import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
 
+enum _HistoryFilter {
+  all('All'),
+  text('Text'),
+  images('Images'),
+  files('Files');
+
+  const _HistoryFilter(this.label);
+
+  final String label;
+
+  bool matches(ClipboardItem item) => switch (this) {
+    all => true,
+    text => !item.isImage && !item.isFile,
+    images => item.isImage,
+    files => item.isFile,
+  };
+}
+
 /// Width of the compose pane in the two-pane layout, for a screen [width]
 /// wide.
 ///
@@ -105,6 +123,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// to the composer. Presentation only, so it lives here and not in the
   /// ViewModel. See [_buildSingleColumnBody].
   bool _historyCollapsed = false;
+  _HistoryFilter _historyFilter = _HistoryFilter.all;
 
   /// Keeps the composer's field the same element across the collapsed and
   /// expanded layouts, which build it under different parents. Without it a
@@ -1736,10 +1755,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  List<ClipboardItem> get _visibleHistory {
+    final items = _viewModel.filteredHistoryItems;
+    return _historyFilter == _HistoryFilter.all
+        ? items
+        : items.where(_historyFilter.matches).toList();
+  }
+
   /// The history heading. When [collapsible], tapping it folds the section
   /// away or back, with a chevron saying which.
   Widget _buildHistoryHeading({bool collapsible = false}) {
-    final count = _viewModel.filteredHistoryItems.length;
+    final count = _visibleHistory.length;
     // Saved on this phone and not refreshed - it may be behind.
     final detail = _viewModel.showingSavedHistory
         ? '$count saved · offline'
@@ -1799,7 +1825,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Widget _buildHistorySection({bool collapsible = false}) {
-    final items = _viewModel.filteredHistoryItems;
+    final items = _visibleHistory;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1808,6 +1834,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         // The tap target already pads the collapsible heading.
         if (!collapsible) const SizedBox(height: _headingGap),
         _buildHistorySearch(),
+        if (_viewModel.historyItems.isNotEmpty ||
+            _historyFilter != _HistoryFilter.all) ...[
+          const SizedBox(height: _headingGap),
+          _buildHistoryFilters(),
+        ],
         const SizedBox(height: GhostSpacing.sectionTight),
         // Suppressed during pull-to-refresh: the indicator the user dragged
         // already reports that reload. See isRefreshing.
@@ -1828,6 +1859,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             icon: Icons.content_paste_off_outlined,
             message: _viewModel.historySearchQuery.isNotEmpty
                 ? 'No clips match your search'
+                : _historyFilter != _HistoryFilter.all
+                ? 'No clips in this category'
                 : 'Nothing here yet. Send something to get started.',
           )
         else
@@ -1855,6 +1888,33 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ],
                 ],
               ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHistoryFilters() {
+    return Wrap(
+      spacing: 6,
+      children: [
+        for (final filter in _HistoryFilter.values)
+          ChoiceChip(
+            label: Text(filter.label),
+            selected: _historyFilter == filter,
+            onSelected: (_) => setState(() => _historyFilter = filter),
+            showCheckmark: false,
+            selectedColor: GhostColors.accentSoft,
+            backgroundColor: GhostColors.surface,
+            labelStyle: TextStyle(
+              color: _historyFilter == filter
+                  ? GhostColors.accentText
+                  : GhostColors.textSecondary,
+            ),
+            side: BorderSide(
+              color: _historyFilter == filter
+                  ? GhostColors.accentBorder
+                  : GhostColors.border,
             ),
           ),
       ],
