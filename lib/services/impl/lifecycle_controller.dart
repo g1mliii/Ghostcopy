@@ -84,17 +84,18 @@ class LifecycleController implements ILifecycleController {
   Timer? _inactivityCheckTimer;
   static const Duration _realtimeIdleThreshold = Duration(minutes: 15);
 
-  /// How often an idle desktop asks whether a clip has arrived.
+  /// How often an idle desktop checks that realtime is still delivering.
   ///
-  /// This is the longest a clip can take to reach a desktop that has sat in
-  /// the tray: a desktop has no push, so once realtime is closed the poll is
-  /// the only way in. At five minutes a clip sent from the phone to a PC left
-  /// alone for a quarter of an hour appeared to never arrive - the user gave
-  /// up waiting before the next tick. Each poll reads one id, so asking ten
-  /// times as often is still cheap next to a socket held open all day, and
-  /// the first clip it finds switches back to realtime.
+  /// Idle used to close the realtime channel and make this poll the only
+  /// way a clip arrived, so a clip sent to a PC left alone for a quarter of
+  /// an hour took up to five minutes - a desktop has no push to fall back
+  /// on. The channel now stays open and delivers at once. The poll is only
+  /// the check on it: Windows can throttle a background process until the
+  /// socket dies without a word, and a poll that finds a clip the channel
+  /// should have delivered is what makes the sync service rejoin. Five
+  /// minutes is then the worst case for a dead socket, not the normal wait.
   @visibleForTesting
-  static const Duration idlePollInterval = Duration(seconds: 30);
+  static const Duration idlePollInterval = Duration(minutes: 5);
 
   // ========== FEATURE FLAG ==========
 
@@ -290,16 +291,14 @@ class LifecycleController implements ILifecycleController {
     }
 
     debugPrint(
-      '[Lifecycle] 🟡 Switching to POLLING mode '
-      '(${idlePollInterval.inSeconds}s interval)',
+      '[Lifecycle] 🟡 Idle: realtime stays open, checked every '
+      '${idlePollInterval.inMinutes} min',
     );
     _connectionMode = ConnectionMode.polling;
     _connectionModeController.add(_connectionMode);
 
-    // Stop realtime, start polling
-    _clipboardSyncService
-      ..pauseRealtime()
-      ..startPolling(interval: idlePollInterval);
+    // Realtime is deliberately not paused: see idlePollInterval.
+    _clipboardSyncService.startPolling(interval: idlePollInterval);
   }
 
   @override

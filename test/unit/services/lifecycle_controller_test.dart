@@ -171,7 +171,7 @@ void main() {
     });
   });
 
-  test('switches to polling after idling in the tray with no activity', () {
+  test('idling in the tray starts the poll and keeps realtime open', () {
     fakeAsync((async) {
       final controller = LifecycleController(
         clipboardSyncService: sync,
@@ -190,12 +190,13 @@ void main() {
       expect(
         controller.connectionMode,
         ConnectionMode.polling,
-        reason: 'idle in tray past the threshold should drop the websocket',
+        reason: 'idle in tray past the threshold should start the check',
       );
       expect(sync.polling, isTrue);
-      // A desktop has no push: this interval is how late a clip can be.
-      expect(sync.pollInterval, lessThanOrEqualTo(const Duration(minutes: 1)));
-      expect(sync.realtimePaused, isTrue);
+      // A desktop has no push, so idling must not close the one channel a
+      // clip arrives on. The poll only checks that channel is alive.
+      expect(sync.realtimePaused, isFalse);
+      expect(sync.pollInterval, LifecycleController.idlePollInterval);
 
       controller.dispose();
       async.flushTimers();

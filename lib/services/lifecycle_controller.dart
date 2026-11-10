@@ -5,7 +5,8 @@ enum ConnectionMode {
   /// Active WebSocket connection for realtime updates
   realtime,
 
-  /// Periodic HTTP polling (used after 15 min inactivity in tray)
+  /// Idle in the tray for 15 minutes: realtime stays open, and a periodic
+  /// HTTP poll checks that it is still delivering
   polling,
 
   /// All connections paused (system sleep or screen lock)
@@ -102,7 +103,8 @@ abstract class ILifecycleController {
   /// Switch to realtime mode (WebSocket)
   void switchToRealtime();
 
-  /// Switch to polling mode (HTTP every 30 seconds)
+  /// Switch to polling mode: realtime stays open, with a poll every 5
+  /// minutes as a check on it
   void switchToPolling();
 
   // ========== POWER STATE (System State) ==========
