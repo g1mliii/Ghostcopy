@@ -32,39 +32,18 @@ class SmartActionButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Don't show buttons for plain text
-    if (detectionResult.type == TransformerContentType.plainText) {
-      return const SizedBox.shrink();
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: _buildActionButtons(context),
-      ),
-    );
-  }
-
-  List<Widget> _buildActionButtons(BuildContext context) {
-    switch (detectionResult.type) {
-      case TransformerContentType.json:
-        return [_buildPrettifyButton(context)];
-      case TransformerContentType.jwt:
-        return [_buildDecodeButton(context)];
-      case TransformerContentType.hexColor:
-        return [_buildCopyColorButton(context)];
-      case TransformerContentType.plainText:
-        return [];
-    }
+    return switch (detectionResult.type) {
+      TransformerContentType.json => _buildPrettifyButton(context),
+      TransformerContentType.jwt => _buildDecodeButton(context),
+      TransformerContentType.hexColor => _buildCopyColorButton(context),
+      TransformerContentType.plainText => const SizedBox.shrink(),
+    };
   }
 
   Widget _buildPrettifyButton(BuildContext context) {
     return _SmartActionButton(
       icon: Icons.code,
       label: 'Prettify JSON',
-      color: GhostColors.primary,
       onTap: () => _handlePrettifyJson(context),
     );
   }
@@ -73,19 +52,16 @@ class SmartActionButtons extends StatelessWidget {
     return _SmartActionButton(
       icon: Icons.lock_open,
       label: 'Decode JWT',
-      color: GhostColors.warning,
       onTap: () => _handleDecodeJwt(context),
     );
   }
 
   Widget _buildCopyColorButton(BuildContext context) {
     final colorValue = detectionResult.metadata?['color'] as String?;
-    // Parse color once and reuse for both button color and preview (performance optimization)
     final parsedColor = _parseHexColor(colorValue ?? '#000000');
     return _SmartActionButton(
       icon: Icons.palette,
-      label: 'Copy Color',
-      color: parsedColor,
+      label: 'Copy color',
       onTap: () => _handleCopyColor(context, colorValue ?? ''),
       leading: colorValue != null
           ? Container(
@@ -296,49 +272,26 @@ class _SmartActionButton extends StatelessWidget {
   const _SmartActionButton({
     required this.icon,
     required this.label,
-    required this.color,
     required this.onTap,
     this.leading,
   });
 
   final IconData icon;
   final String label;
-  final Color color;
   final VoidCallback onTap;
   final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (leading != null) ...[leading!, const SizedBox(width: 6)],
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-        ),
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: GhostColors.textPrimary,
+        side: BorderSide(color: GhostColors.border),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
       ),
+      icon: leading ?? Icon(icon, size: 16),
+      label: Text(label),
     );
   }
 }
