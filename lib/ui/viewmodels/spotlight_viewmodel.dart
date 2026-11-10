@@ -15,6 +15,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/crash_reporting_service.dart';
+import '../../services/encryption_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/settings_service.dart';
@@ -50,6 +51,7 @@ class SpotlightViewModel extends ChangeNotifier {
     required this._notificationService,
     IClipboardService? clipboardService,
     this._accountPromptStore,
+    this._encryptionService,
     this._isGameModeActive,
     Stream<bool>? gameModeChanges,
     this._settingsService,
@@ -61,6 +63,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _gameModeSubscription = gameModeChanges?.listen((_) {
       if (isPinned) unawaited(_applyPin());
     });
+    _encryptionService?.keyRevision.addListener(_onEncryptionKeyChanged);
   }
 
   final IAuthService _authService;
@@ -79,6 +82,9 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Null turns the account offer and the guest badge off entirely.
   final AccountPromptStore? _accountPromptStore;
+
+  /// Null turns the encryption offer off.
+  final IEncryptionService? _encryptionService;
   final bool Function()? _isGameModeActive;
 
   // ========== SEND STATE ==========
@@ -309,6 +315,15 @@ class SpotlightViewModel extends ChangeNotifier {
   /// read, so an upgrade finishing while it is up takes it away at once.
   bool get showAccountOffer => _accountOfferVisible && _authService.isAnonymous;
 
+  // ========== ENCRYPTION OFFER ==========
+
+  bool _encryptionOfferVisible = false;
+  bool _encryptionOfferShownThisRun = false;
+
+  /// The card suggesting end-to-end encryption to someone who has not turned
+  /// it on. Never beside the account offer: one request at a time.
+  bool get showEncryptionOffer => _encryptionOfferVisible && !showAccountOffer;
+
   /// The small "Guest" label in the header, the way to an account that is
   /// always there and never interrupts.
   bool get showGuestBadge =>
@@ -514,7 +529,10 @@ class SpotlightViewModel extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Confirmation check failed: $e');
     }
-    if (composerVisible?.call() ?? true) offerAccountIfDue();
+    if (composerVisible?.call() ?? true) {
+      offerAccountIfDue();
+      await offerEncryptionIfDue(composerVisible: composerVisible);
+    }
   }
 
   /// Spotlight went back to the tray. A card the user looked at and left is
@@ -528,12 +546,18 @@ class SpotlightViewModel extends ChangeNotifier {
     _composerRevision++;
     _restore = null;
     _accountOfferVisible = false;
+    _encryptionOfferVisible = false;
     _releaseComposerForHide();
     if (_visibleState != before) notifyListeners();
   }
 
-  Object get _visibleState =>
-      (_content, _clipboardContent, _detectedContentType, _accountOfferVisible);
+  Object get _visibleState => (
+    _content,
+    _clipboardContent,
+    _detectedContentType,
+    _accountOfferVisible,
+    _encryptionOfferVisible,
+  );
 
   /// Give back what a hidden window has no use for. Auto-paste's content
   /// goes entirely - the next opening reads the clipboard again anyway. A
@@ -684,6 +708,60 @@ class SpotlightViewModel extends ChangeNotifier {
     if (store != null) unawaited(store.snoozeOffer());
     if (!_accountOfferVisible) return;
     _accountOfferVisible = false;
+    notifyListeners();
+  }
+
+  /// Suggest encryption, at most once per run of the app.
+  ///
+  /// Under the account offer's rules - after the first send, not while "Not
+  /// now" holds, not during Game Mode - and only in a run that has not
+  /// already asked for an account: two requests in one sitting is one too
+  /// many. Not shown when a key is loaded or a passphrase is stored, which
+  /// covers the moment at startup before the stored one has been derived.
+  ///
+  /// [composerVisible] is asked again after the checks, which are async: a
+  /// panel can open during them.
+  Future<void> offerEncryptionIfDue({bool Function()? composerVisible}) async {
+    final store = _accountPromptStore;
+    final encryption = _encryptionService;
+    if (store == null || encryption == null) return;
+    if (_encryptionOfferShownThisRun || _accountOfferShownThisRun) return;
+    if (!_spotlightOpen || !store.hasSent || store.isEncryptionOfferSnoozed) {
+      return;
+    }
+    if (_isGameModeActive?.call() ?? false) return;
+    final hides = _hideCount;
+    try {
+      if (await encryption.isEnabled() || await encryption.hasPassphrase()) {
+        return;
+      }
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Could not read encryption state: $e');
+      return;
+    }
+    if (_isDisposed || hides != _hideCount || !_spotlightOpen) return;
+    if (_encryptionOfferShownThisRun || _accountOfferShownThisRun) return;
+    if (!(composerVisible?.call() ?? true)) return;
+    _encryptionOfferShownThisRun = true;
+    _encryptionOfferVisible = true;
+    notifyListeners();
+  }
+
+  /// "Not now", or the card's button on its way to Settings. Opening
+  /// Settings snoozes too: someone who looks and leaves has said not yet.
+  void dismissEncryptionOffer() {
+    final store = _accountPromptStore;
+    if (store != null) unawaited(store.snoozeEncryptionOffer());
+    if (!_encryptionOfferVisible) return;
+    _encryptionOfferVisible = false;
+    notifyListeners();
+  }
+
+  /// A key arrived while the card was up - turned on in Settings, or the
+  /// stored passphrase finishing its derivation. Nothing left to offer.
+  void _onEncryptionKeyChanged() {
+    if (!_encryptionOfferVisible) return;
+    _encryptionOfferVisible = false;
     notifyListeners();
   }
 
@@ -1181,6 +1259,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
     _gameModeSubscription?.cancel();
+    _encryptionService?.keyRevision.removeListener(_onEncryptionKeyChanged);
     _gameModeSubscription = null;
 
     // Hand the callbacks back as they were before initialize

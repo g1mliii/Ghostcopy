@@ -13,6 +13,7 @@ import 'package:ghostcopy/services/account_prompt_store.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
+import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
@@ -102,6 +103,8 @@ class _TestClipboardSyncService implements IClipboardSyncService {
   @override
   void dispose() {}
 }
+
+class _MockEncryptionService extends Mock implements IEncryptionService {}
 
 class _TestNotificationService implements INotificationService {
   final List<(String message, NotificationType type)> toasts =
@@ -657,6 +660,151 @@ void main() {
       expect(notificationService.toasts.last.$2, NotificationType.success);
     },
   );
+
+  group('encryption offer', () {
+    late DateTime now;
+    late AccountPromptStore store;
+    late bool gameMode;
+    late _MockEncryptionService encryption;
+    late ValueNotifier<int> keyRevision;
+    late SpotlightViewModel offering;
+
+    Future<void> build({
+      bool sent = true,
+      bool anonymous = false,
+      bool enabled = false,
+      bool storedPassphrase = false,
+    }) async {
+      SharedPreferences.setMockInitialValues({
+        if (sent) 'account_offer_has_sent': true,
+      });
+      now = DateTime(2026, 11, 10);
+      store = AccountPromptStore(
+        await SharedPreferences.getInstance(),
+        clock: () => now,
+      );
+      gameMode = false;
+      encryption = _MockEncryptionService();
+      keyRevision = ValueNotifier(0);
+      addTearDown(keyRevision.dispose);
+      when(() => encryption.keyRevision).thenReturn(keyRevision);
+      when(() => encryption.isEnabled()).thenAnswer((_) async => enabled);
+      when(
+        () => encryption.hasPassphrase(),
+      ).thenAnswer((_) async => storedPassphrase);
+      when(() => authService.isAnonymous).thenReturn(anonymous);
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      offering = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        accountPromptStore: store,
+        encryptionService: encryption,
+        isGameModeActive: () => gameMode,
+      );
+      addTearDown(offering.dispose);
+    }
+
+    test('shows on opening when encryption is off', () async {
+      await build();
+
+      await offering.onWindowFocused();
+
+      expect(offering.showEncryptionOffer, isTrue);
+    });
+
+    test('never shows when encryption is already on', () async {
+      await build(enabled: true);
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('a stored passphrase not yet derived counts as on', () async {
+      // At startup the key can still be on its way.
+      await build(storedPassphrase: true);
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('waits for the first send', () async {
+      await build(sent: false);
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('stays quiet during Game Mode', () async {
+      await build();
+      gameMode = true;
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('a guest is asked for an account, not for both', () async {
+      await build(anonymous: true);
+
+      await offering.onWindowFocused();
+
+      expect(offering.showAccountOffer, isTrue);
+      expect(offering.showEncryptionOffer, isFalse);
+
+      // Nor on the next opening of the same run.
+      offering
+        ..dismissAccountOffer()
+        ..onSpotlightHidden();
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('"Not now" keeps it away for thirty days', () async {
+      await build();
+      await offering.onWindowFocused();
+      offering.dismissEncryptionOffer();
+      expect(offering.showEncryptionOffer, isFalse);
+      await Future<void>.delayed(Duration.zero);
+
+      now = now.add(const Duration(days: 29));
+      expect(store.isEncryptionOfferSnoozed, isTrue);
+      now = now.add(const Duration(days: 2));
+      expect(store.isEncryptionOfferSnoozed, isFalse);
+    });
+
+    test('shows once per run, not on every opening', () async {
+      await build();
+      await offering.onWindowFocused();
+      offering.onSpotlightHidden();
+
+      await offering.onWindowFocused();
+
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('turning encryption on takes the card away', () async {
+      await build();
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isTrue);
+
+      keyRevision.value++;
+
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('a panel opened during the check keeps the card back', () async {
+      await build();
+      var composerVisible = true;
+      when(() => encryption.isEnabled()).thenAnswer((_) async {
+        composerVisible = false;
+        return false;
+      });
+
+      await offering.onWindowFocused(composerVisible: () => composerVisible);
+
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+  });
 
   group('account offer', () {
     late DateTime now;
