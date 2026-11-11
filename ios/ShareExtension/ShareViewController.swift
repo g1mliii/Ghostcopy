@@ -41,6 +41,19 @@ class ShareViewController: RSIShareViewController {
     /// as soon as it opens; this only bounds what an abandoned share leaves.
     private static let staleShareAge: TimeInterval = 24 * 60 * 60
 
+    /// Most attachments one share sends. Each is loaded at once and copied
+    /// into the App Group, so a 200-photo selection would risk the
+    /// extension's memory and time limits and fill the container before
+    /// anything is sent. The activation rule cannot carry this cap: sharingd
+    /// rejects range expressions there and drops the extension (Info.plist).
+    private static let maxAttachments = 10
+
+    /// The types the activation rule offers GhostCopy for. A host can add
+    /// items of its own private types beside a link or photo; those are
+    /// skipped rather than sent as a stray file or left to hold the sheet
+    /// open until the timeout.
+    private static let supportedTypes: [UTType] = [.url, .text, .image, .movie, .data]
+
     /// Set once the share has been handed over or given up, so the timeout and
     /// the last attachment cannot both finish it.
     private var finished = false
@@ -53,7 +66,11 @@ class ShareViewController: RSIShareViewController {
 
     private func loadAttachments() {
         let items = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
-        let providers = items.flatMap { $0.attachments ?? [] }
+        let supported = items.flatMap { $0.attachments ?? [] }.filter(Self.isSupported)
+        let providers = Array(supported.prefix(Self.maxAttachments))
+        if supported.count > providers.count {
+            NSLog("[ShareExtension] Sending the first \(providers.count) of \(supported.count) attachments")
+        }
         let fallbackText = items.first?.attributedContentText?.string
         let directory = Self.makeShareDirectory()
 
@@ -156,6 +173,13 @@ class ShareViewController: RSIShareViewController {
     ///
     /// `public.file-url` comes before `public.url`, which it conforms to, and
     /// both come before text, so a link is sent as a link.
+    private static func isSupported(_ provider: NSItemProvider) -> Bool {
+        provider.registeredTypeIdentifiers.contains { identifier in
+            guard let type = UTType(identifier) else { return false }
+            return supportedTypes.contains { type.conforms(to: $0) }
+        }
+    }
+
     private static func kind(of provider: NSItemProvider) -> (SharedMediaType, String)? {
         let candidates: [(SharedMediaType, UTType)] = [
             (.video, .movie),
