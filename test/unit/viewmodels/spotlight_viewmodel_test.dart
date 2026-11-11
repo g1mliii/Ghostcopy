@@ -243,6 +243,7 @@ void main() {
     });
 
     test('a pinned window confirms the copy with a toast', () async {
+      await copying.setPin(SpotlightPin.open);
       await copying.handleHistoryItemCopy(
         _clipboardItem(id: '1', content: 'hello'),
       );
@@ -258,7 +259,6 @@ void main() {
       // the user made by clicking a moment ago.
       await copying.handleHistoryItemCopy(
         _clipboardItem(id: '1', content: 'hello'),
-        windowHidden: true,
       );
 
       verify(() => clipboard.writeText('hello')).called(1);
@@ -274,7 +274,6 @@ void main() {
 
       await copying.handleHistoryItemCopy(
         _clipboardItem(id: '1', content: 'hello'),
-        windowHidden: true,
       );
 
       expect(notificationService.toasts, isEmpty);
@@ -282,6 +281,22 @@ void main() {
         ('Failed to copy to clipboard', NotificationType.error),
       ]);
       expect(clipboardSyncService.modificationTimeUpdates, 0);
+      // Reported once: not also left under the composer for the next opening.
+      expect(copying.errorMessage, isNull);
+    });
+
+    test('a pinned window shows a failure in place', () async {
+      await copying.setPin(SpotlightPin.open);
+      when(
+        () => clipboard.writeText(any()),
+      ).thenThrow(Exception('clipboard busy'));
+
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
+
+      expect(copying.errorMessage, 'Failed to copy to clipboard');
+      expect(notificationService.systemNotifications, isEmpty);
     });
   });
 
@@ -316,11 +331,9 @@ void main() {
         contentType: ContentType.imagePng,
         storagePath: 'user-123/img',
       ),
-      windowHidden: true,
     );
 
     expect(clipboardSyncService.modificationTimeUpdates, 0);
-    expect(copying.errorMessage, isNotNull);
     expect(notificationService.toasts, isEmpty);
     expect(notificationService.systemNotifications, [
       (
@@ -362,7 +375,10 @@ void main() {
       ),
     );
 
-    expect(copying.errorMessage, offlineFileMessage);
+    expect(
+      notificationService.systemNotifications.single.$1,
+      offlineFileMessage,
+    );
   });
 
   testWidgets('plain typing pauses do not repeatedly rebuild the window', (

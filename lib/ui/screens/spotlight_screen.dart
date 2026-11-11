@@ -2003,7 +2003,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     // hidden the ViewModel stays quiet on success and reports a failure as a
     // system notification.
     try {
-      await _viewModel.handleHistoryItemCopy(item, windowHidden: hide);
+      await _viewModel.handleHistoryItemCopy(item);
     } on Exception catch (e) {
       debugPrint('[Spotlight] Copy failed after hide: $e');
     }

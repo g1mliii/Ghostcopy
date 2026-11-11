@@ -972,16 +972,23 @@ class SpotlightViewModel extends ChangeNotifier {
   /// UI callback:
   /// - onCopySuccess: Called after copy (to close history panel)
   ///
-  /// [windowHidden] is true when the copy starts closing Spotlight. The
-  /// window closing confirms a successful copy. Failures go directly to the
-  /// system notification service even if the window is still closing.
+  /// Unpinned, the screen hides Spotlight as the copy starts - it reads the
+  /// same [keepsOpen] - so the window closing is the confirmation: a toast
+  /// raised with no window to draw in becomes an OS notification for a copy
+  /// the user just made by hand. Decided here rather than passed in, so the
+  /// screen cannot forget to say so.
+  ///
+  /// A failure goes to a system notification directly when hidden: the
+  /// window may still be closing, so an overlay would be drawn unseen. It
+  /// is not also put under the composer, where it would greet the next
+  /// opening for an action not taken there.
   Future<void> handleHistoryItemCopy(
     ClipboardItem item, {
     VoidCallback? onCopySuccess,
-    bool windowHidden = false,
   }) async {
+    final windowHidden = !keepsOpen;
     Future<void> fail(String message) async {
-      _setError(message);
+      if (!windowHidden) _setError(message);
       if (windowHidden) {
         try {
           await _notificationService.showSystemNotification(
