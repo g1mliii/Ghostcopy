@@ -106,8 +106,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
-            <!-- Direct Share: the "Send to devices" shortcut MainActivity
-                 publishes, shown in the share sheet's top row. -->
+            <!-- Direct Share; see MainActivity.publishShareShortcut. -->
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/share_targets" />

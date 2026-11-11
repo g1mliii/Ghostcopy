@@ -48,11 +48,6 @@ class ShareViewController: RSIShareViewController {
     /// rejects range expressions there and drops the extension (Info.plist).
     private static let maxAttachments = 10
 
-    /// The types the activation rule offers GhostCopy for. A host can add
-    /// items of its own private types beside a link or photo; those are
-    /// skipped rather than sent as a stray file or left to hold the sheet
-    /// open until the timeout.
-    private static let supportedTypes: [UTType] = [.url, .text, .image, .movie, .data]
 
     /// Set once the share has been handed over or given up, so the timeout and
     /// the last attachment cannot both finish it.
@@ -66,10 +61,10 @@ class ShareViewController: RSIShareViewController {
 
     private func loadAttachments() {
         let items = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
-        let supported = items.flatMap { $0.attachments ?? [] }.filter(Self.isSupported)
-        let providers = Array(supported.prefix(Self.maxAttachments))
-        if supported.count > providers.count {
-            NSLog("[ShareExtension] Sending the first \(providers.count) of \(supported.count) attachments")
+        let attachments = items.flatMap { $0.attachments ?? [] }
+        let providers = Array(attachments.lazy.filter(Self.isSupported).prefix(Self.maxAttachments))
+        if attachments.count > providers.count {
+            NSLog("[ShareExtension] Sending \(providers.count) of \(attachments.count) attachments")
         }
         let fallbackText = items.first?.attributedContentText?.string
         let directory = Self.makeShareDirectory()
@@ -173,13 +168,6 @@ class ShareViewController: RSIShareViewController {
     ///
     /// `public.file-url` comes before `public.url`, which it conforms to, and
     /// both come before text, so a link is sent as a link.
-    private static func isSupported(_ provider: NSItemProvider) -> Bool {
-        provider.registeredTypeIdentifiers.contains { identifier in
-            guard let type = UTType(identifier) else { return false }
-            return supportedTypes.contains { type.conforms(to: $0) }
-        }
-    }
-
     private static func kind(of provider: NSItemProvider) -> (SharedMediaType, String)? {
         let candidates: [(SharedMediaType, UTType)] = [
             (.video, .movie),
@@ -191,6 +179,16 @@ class ShareViewController: RSIShareViewController {
         return candidates
             .first { provider.hasItemConformingToTypeIdentifier($0.1.identifier) }
             .map { ($0.0, $0.1.identifier) }
+    }
+
+    /// Whether an attachment is worth loading: anything that conforms to
+    /// public.data, which links, text, images and video all do - the same
+    /// test as the activation rule in Info.plist. A host's private type that
+    /// this device has no declaration for conforms to nothing, so it is
+    /// skipped instead of being sent as a stray file or holding the sheet
+    /// open until the timeout.
+    private static func isSupported(_ provider: NSItemProvider) -> Bool {
+        provider.hasItemConformingToTypeIdentifier(UTType.data.identifier)
     }
 
     /// Turn whatever `loadItem` handed back into something to send.

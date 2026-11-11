@@ -95,27 +95,31 @@ class MainActivity : FlutterActivity() {
         normalizeSharedAttachments(intent)
         super.onCreate(savedInstanceState)
         applyAppearance()
-        publishShareShortcut()
-        reportShareShortcutUsed(intent)
+        // Not again on a rotation or theme change: the shortcut never changes,
+        // and the same share intent would be reported twice.
+        if (savedInstanceState == null) {
+            publishShareShortcut()
+            reportShareShortcutUsed(intent)
+        }
     }
 
     /**
      * The share sheet's top row is Direct Share: sharing shortcuts, not apps.
-     * Without one, GhostCopy only appears in the app list further down, where
-     * it is easy to miss when sharing from Instagram, Reddit or X. One
+     * Without one, GhostCopy only appears in the app list further down. One
      * long-lived "Send to devices" shortcut puts it in that row; choosing it
-     * sends an ordinary ACTION_SEND here, so nothing downstream changes.
-     * Re-pushing on every launch is cheap and keeps it current.
+     * sends an ordinary ACTION_SEND here, so nothing downstream changes. Kept
+     * off the launcher's long-press menu, where it would only open the app.
      */
     private fun publishShareShortcut() {
         try {
             val shortcut = ShortcutInfoCompat.Builder(this, SHARE_SHORTCUT_ID)
-                .setShortLabel("Send to devices")
-                .setLongLabel("Send to your devices")
+                .setShortLabel(getString(R.string.share_shortcut_short))
+                .setLongLabel(getString(R.string.share_shortcut_long))
                 .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
                 .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_VIEW))
                 .setLongLived(true)
                 .setCategories(setOf(SHARE_TARGET_CATEGORY))
+                .setExcludedFromSurfaces(ShortcutInfoCompat.SURFACE_LAUNCHER)
                 .build()
             ShortcutManagerCompat.pushDynamicShortcut(this, shortcut)
         } catch (e: Exception) {
@@ -124,9 +128,9 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** Ranks the shortcut higher in the share sheet each time it is used. */
+    /** Ranks the shortcut higher each time a share actually came through it. */
     private fun reportShareShortcutUsed(share: Intent) {
-        if (share.action != Intent.ACTION_SEND && share.action != Intent.ACTION_SEND_MULTIPLE) return
+        if (share.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID) != SHARE_SHORTCUT_ID) return
         try {
             ShortcutManagerCompat.reportShortcutUsed(this, SHARE_SHORTCUT_ID)
         } catch (e: Exception) {
