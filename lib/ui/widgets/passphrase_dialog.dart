@@ -177,11 +177,11 @@ class _PassphraseDialogState extends State<PassphraseDialog> {
             ),
             const SizedBox(height: 16),
             if (!widget.isRestoreMode) ...[
-              const Text(
+              Text(
                 '⚠️ If you lose your passphrase, encrypted data cannot be recovered.',
                 style: TextStyle(
                   fontSize: 12,
-                  color: GhostColors.warning,
+                  color: GhostColors.warningText,
                   fontWeight: FontWeight.w600,
                 ),
               ),

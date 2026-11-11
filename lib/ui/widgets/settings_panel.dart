@@ -834,7 +834,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         ),
 
         const SizedBox(height: 20),
-        const Divider(height: 1, color: GhostColors.glassBorder),
+        Divider(height: 1, color: GhostColors.glassBorder),
         const SizedBox(height: 20),
 
         // 2. Configuration & Behavior
@@ -892,7 +892,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           const SizedBox(height: 20),
         ],
 
-        const Divider(height: 1, color: GhostColors.glassBorder),
+        Divider(height: 1, color: GhostColors.glassBorder),
         const SizedBox(height: 20),
 
         // 4. Set and Forget (System Settings)
@@ -1078,7 +1078,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     TextInputType keyboardType = TextInputType.text,
   }) {
     const inputRadius = BorderRadius.all(Radius.circular(6));
-    const inputBorder = OutlineInputBorder(
+    final inputBorder = OutlineInputBorder(
       borderRadius: inputRadius,
       borderSide: BorderSide(color: GhostColors.glassBorder),
     );
@@ -1276,7 +1276,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Row(
               children: [
                 Icon(Icons.info_outline, size: 14, color: GhostColors.primary),
@@ -1352,11 +1352,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                   ],
                 ),
               ),
-              const Icon(
-                Icons.chevron_right,
-                size: 16,
-                color: GhostColors.textMuted,
-              ),
+              Icon(Icons.chevron_right, size: 16, color: GhostColors.textMuted),
             ],
           ),
         ),
@@ -1503,7 +1499,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
             const SizedBox(height: 8),
             // Inside the guard: it describes the chips, so while they were
             // collapsed it told the user to tap something not on screen.
-            const Text(
+            Text(
               'Tap to select specific devices or leave all selected',
               style: TextStyle(
                 fontSize: 10,

@@ -16,7 +16,26 @@ class SettingsService implements ISettingsService {
   SharedPreferences? _prefs;
   bool _initialized = false;
 
+  @override
+  Future<AppThemeMode> getThemeMode() async {
+    _ensureInitialized();
+    final saved = _prefs!.getString(_keyThemeMode);
+    return AppThemeMode.values.firstWhere(
+      (mode) => mode.name == saved,
+      orElse: () => AppThemeMode.system,
+    );
+  }
+
+  @override
+  Future<void> setThemeMode(AppThemeMode mode) async {
+    _ensureInitialized();
+    if (!await _prefs!.setString(_keyThemeMode, mode.name)) {
+      throw Exception('Could not save appearance preference');
+    }
+  }
+
   // Settings keys
+  static const String _keyThemeMode = 'theme_mode';
   static const String _keyAutoSendEnabled = 'auto_send_enabled';
   static const String _keyStaleDurationMinutes =
       'clipboard_stale_duration_minutes';

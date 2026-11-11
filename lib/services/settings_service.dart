@@ -18,8 +18,17 @@ enum AutoReceiveBehavior {
   final String label;
 }
 
+/// Appearance preference. System follows the device's current brightness.
+enum AppThemeMode { system, light, dark }
+
 /// Abstract interface for app settings management
 abstract class ISettingsService {
+  /// Saved appearance override, defaulting to [AppThemeMode.system].
+  Future<AppThemeMode> getThemeMode();
+
+  /// Persist the appearance [mode] across launches.
+  Future<void> setThemeMode(AppThemeMode mode);
+
   /// Get auto-send enabled setting (default: false)
   Future<bool> getAutoSendEnabled();
 

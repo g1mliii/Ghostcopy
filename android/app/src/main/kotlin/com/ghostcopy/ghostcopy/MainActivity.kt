@@ -2,10 +2,14 @@ package com.ghostcopy.ghostcopy
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.UiModeManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -42,9 +46,48 @@ class MainActivity : FlutterActivity() {
     // not exist yet.
     private var pendingNotificationAction: Map<String, String>? = null
 
+    private val appearancePreferences by lazy {
+        getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+    }
+    private val appearanceListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "flutter.theme_mode") applyAppearance()
+        }
+
+    // Read the same preference as Dart, including choices saved before this
+    // native integration existed. API 31 persists it for the next system splash.
+    private fun applyAppearance() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val mode = when (appearancePreferences.getString("flutter.theme_mode", "system")) {
+                "light" -> UiModeManager.MODE_NIGHT_NO
+                "dark" -> UiModeManager.MODE_NIGHT_YES
+                // AUTO clears the application's night override in UiModeManager.
+                else -> UiModeManager.MODE_NIGHT_AUTO
+            }
+            getSystemService(UiModeManager::class.java).setApplicationNightMode(mode)
+        } else {
+            val night = when (appearancePreferences.getString("flutter.theme_mode", "system")) {
+                "light" -> false
+                "dark" -> true
+                else -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                    Configuration.UI_MODE_NIGHT_YES
+            }
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(
+                android.graphics.Color.parseColor(if (night) "#0F0F13" else "#F2F2F7")
+            ))
+        }
+    }
+
+    override fun onDestroy() {
+        appearancePreferences.unregisterOnSharedPreferenceChangeListener(appearanceListener)
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        appearancePreferences.registerOnSharedPreferenceChangeListener(appearanceListener)
         normalizeSharedAttachments(intent)
         super.onCreate(savedInstanceState)
+        applyAppearance()
     }
 
     /**
