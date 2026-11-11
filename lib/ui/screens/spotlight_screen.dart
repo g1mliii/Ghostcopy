@@ -414,7 +414,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       // The composer is showing again. Not after Create Account, which
       // opened a panel of its own and has already had its answer.
       if (panel == SpotlightPanel.history) _textFieldFocusNode.requestFocus();
-      if (panel != SpotlightPanel.auth) _viewModel.offerAccountIfDue();
+      if (panel != SpotlightPanel.auth) {
+        unawaited(
+          _viewModel.offerCardsIfDue(
+            composerVisible: () =>
+                mounted && _activePanel == SpotlightPanel.none,
+          ),
+        );
+      }
     }
   }
 
@@ -926,6 +933,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                             _buildAccountOffer(),
                                             const SizedBox(height: 10),
                                           ],
+                                          if (_viewModel
+                                              .showEncryptionOffer) ...[
+                                            _buildEncryptionOffer(),
+                                            const SizedBox(height: 10),
+                                          ],
                                           _buildTextField(),
                                           const SizedBox(height: 10),
                                           // Empty for JSON and plain text, so
@@ -1039,9 +1051,54 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     unawaited(_authSlideController.forward());
   }
 
+  /// Open Settings from the encryption card. The switch is there, with the
+  /// passphrase dialog and its checks; this does not grow a second way in.
+  /// Opens Settings scrolled to the switch, rather than at the top of the
+  /// list. Hides the card without snoozing it: following its button is not
+  /// "not now", and the run's one showing is used either way.
+  Future<void> _openEncryptionSettings() async {
+    _viewModel.hideEncryptionOffer();
+    _revealEncryptionOnOpen = true;
+    await _openSettings();
+  }
+
+  /// Read by the next settings panel built, then cleared.
+  bool _revealEncryptionOnOpen = false;
+
+  /// The card suggesting encryption. The rules for when it shows live in
+  /// SpotlightViewModel.offerEncryptionIfDue.
+  Widget _buildEncryptionOffer() {
+    return _buildOfferCard(
+      icon: Icons.lock_outline,
+      message:
+          'Use end-to-end encryption for new clips you sync from this device.',
+      actionLabel: 'Turn on in Settings',
+      onAction: _openEncryptionSettings,
+      onDismiss: _viewModel.dismissEncryptionOffer,
+    );
+  }
+
   /// The card asking a guest to make an account. The rules for when it shows
   /// live in SpotlightViewModel.showAccountOffer.
   Widget _buildAccountOffer() {
+    return _buildOfferCard(
+      icon: Icons.cloud_done_outlined,
+      message: 'Keep your clips if you reinstall or switch computers.',
+      actionLabel: 'Create account',
+      onAction: _openCreateAccount,
+      onDismiss: _viewModel.dismissAccountOffer,
+    );
+  }
+
+  /// One quiet card above the composer: a line of why, "Not now", and the
+  /// action.
+  Widget _buildOfferCard({
+    required IconData icon,
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+    required VoidCallback onDismiss,
+  }) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
@@ -1057,15 +1114,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.cloud_done_outlined,
-                size: 18,
-                color: GhostColors.primary,
-              ),
+              Icon(icon, size: 18, color: GhostColors.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Keep your clips if you reinstall or switch computers.',
+                  message,
                   style: GhostTypography.caption.copyWith(
                     color: GhostColors.textPrimary,
                   ),
@@ -1080,7 +1133,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             runSpacing: 4,
             children: [
               TextButton(
-                onPressed: _viewModel.dismissAccountOffer,
+                onPressed: onDismiss,
                 style: TextButton.styleFrom(
                   foregroundColor: GhostColors.textMuted,
                   visualDensity: VisualDensity.compact,
@@ -1088,12 +1141,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 child: const Text('Not now'),
               ),
               FilledButton(
-                onPressed: _openCreateAccount,
+                onPressed: onAction,
                 style: FilledButton.styleFrom(
                   backgroundColor: GhostColors.primary,
                   visualDensity: VisualDensity.compact,
                 ),
-                child: const Text('Create account'),
+                child: Text(actionLabel),
               ),
             ],
           ),
@@ -1813,6 +1866,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
+  bool _consumeRevealEncryption() {
+    final reveal = _revealEncryptionOnOpen;
+    _revealEncryptionOnOpen = false;
+    return reveal;
+  }
+
   /// Build settings panel (slide-in from left)
   Widget _buildSettingsPanel() {
     // Cache settings panel content to prevent rebuilds during animation
@@ -1870,6 +1929,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 commandLineToolService: _commandLineToolService,
                 deviceService: _deviceService,
                 encryptionService: EncryptionService.instance,
+                revealEncryption: _consumeRevealEncryption(),
                 onEncryptionChanged: _viewModel.refreshHistory,
                 onClose: _handleSettingsClose,
                 onOpenAuth: () async {

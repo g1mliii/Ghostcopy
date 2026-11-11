@@ -18,6 +18,7 @@ import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
+import '../theme/animations.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'adaptive_switch.dart';
@@ -50,8 +51,14 @@ class SettingsPanel extends StatefulWidget {
     this.deviceService,
     this.encryptionService,
     this.onCreateAccount,
+    this.revealEncryption = false,
     super.key,
   });
+
+  /// Scroll the encryption section into view on opening - for the
+  /// Spotlight's encryption card, whose button would otherwise land the
+  /// user at the top of a long list.
+  final bool revealEncryption;
 
   final IAuthService authService;
   final ISettingsService settingsService;
@@ -138,6 +145,9 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _loadWebhookStatus();
     _loadAgentAccess();
     _loadCommandLineTool();
+    if (widget.revealEncryption) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealEncryption());
+    }
     _loadObsidianStatus();
 
     // Filtered to actual identity changes, for two reasons.
@@ -189,6 +199,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     // Note: We intentionally don't await to prevent blocking dispose
     // Settings are persisted to SharedPreferences which is synchronous internally
     _flushPendingWrites();
+    _listController.dispose();
 
     // Cancel all timers
     _webhookDebounceTimer?.cancel();
@@ -644,6 +655,38 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     return _cachedDeviceText!;
   }
 
+  final ScrollController _listController = ScrollController();
+  final GlobalKey _encryptionSectionKey = GlobalKey();
+
+  /// Bring the encryption section on screen. The list builds lazily, so a
+  /// section far down has no context to scroll to until the list has moved
+  /// near it: step down a screen at a time until it is built, then settle
+  /// it into view.
+  Future<void> _revealEncryption([int attempt = 0]) async {
+    if (!mounted || !_listController.hasClients) return;
+    final section = _encryptionSectionKey.currentContext;
+    if (section != null) {
+      await Scrollable.ensureVisible(
+        section,
+        alignment: 0.1,
+        duration: GhostAnimations.normal,
+        curve: GhostAnimations.defaultCurve,
+      );
+      return;
+    }
+    final position = _listController.position;
+    if (attempt >= 10 || position.pixels >= position.maxScrollExtent) return;
+    _listController.jumpTo(
+      (position.pixels + position.viewportDimension).clamp(
+        0,
+        position.maxScrollExtent,
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _revealEncryption(attempt + 1),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = Adaptive.isDesktop;
@@ -651,6 +694,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     // NOTE: Individual builder methods (_buildSettingToggle, _buildTextField, etc.)
     // already wrap their content in RepaintBoundary. No need for additional wrapping here.
     final settingsList = ListView(
+      controller: _listController,
       padding: const EdgeInsets.all(12),
       physics: isDesktop
           ? const ClampingScrollPhysics()
@@ -1449,6 +1493,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
   Widget _buildEncryptionSection() {
     return Container(
+      key: _encryptionSectionKey,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: GhostColors.surface,
