@@ -36,7 +36,11 @@ class AppTheme {
               secondary: GhostColors.primary,
               surface: GhostColors.surface,
               onSurface: GhostColors.textPrimary,
-              error: Colors.red.shade400,
+              // Material error text (TextField errorText, the PIN dialog)
+              // inherits this. The light mobile palette needs the darker
+              // foreground: #EF5350 on the #EAEAF0 input fill is ~2.9:1.
+              // Desktop and dark resolve to the same #EF5350 as before.
+              error: GhostColors.errorText,
               onPrimary: Colors.white,
               onSecondary: Colors.white,
               onError: Colors.white,
