@@ -730,9 +730,13 @@ class SpotlightViewModel extends ChangeNotifier {
       return;
     }
     if (_isGameModeActive?.call() ?? false) return;
+    final userId = _authService.currentUserId;
+    if (userId == null) return;
+    final accountRevision = _accountRevision;
     final hides = _hideCount;
     try {
-      if (await encryption.isEnabled() || await encryption.hasPassphrase()) {
+      if (await encryption.isEnabled() ||
+          await encryption.hasPassphrase(userId)) {
         return;
       }
     } on Exception catch (e) {
@@ -740,7 +744,12 @@ class SpotlightViewModel extends ChangeNotifier {
       return;
     }
     if (_isDisposed || hides != _hideCount || !_spotlightOpen) return;
+    if (userId != _authService.currentUserId ||
+        accountRevision != _accountRevision) {
+      return;
+    }
     if (_encryptionOfferShownThisRun || _accountOfferShownThisRun) return;
+    if (_isGameModeActive?.call() ?? false) return;
     if (!(composerVisible?.call() ?? true)) return;
     _encryptionOfferShownThisRun = true;
     _encryptionOfferVisible = true;

@@ -662,6 +662,7 @@ void main() {
   );
 
   group('encryption offer', () {
+    const userId = 'user-123';
     late DateTime now;
     late AccountPromptStore store;
     late bool gameMode;
@@ -690,8 +691,9 @@ void main() {
       when(() => encryption.keyRevision).thenReturn(keyRevision);
       when(() => encryption.isEnabled()).thenAnswer((_) async => enabled);
       when(
-        () => encryption.hasPassphrase(),
+        () => encryption.hasPassphrase(userId),
       ).thenAnswer((_) async => storedPassphrase);
+      when(() => authService.currentUserId).thenReturn(userId);
       when(() => authService.isAnonymous).thenReturn(anonymous);
       when(
         () => authService.refreshIfAwaitingConfirmation(),
@@ -742,6 +744,42 @@ void main() {
       await offering.onWindowFocused();
       expect(offering.showEncryptionOffer, isFalse);
     });
+
+    test(
+      'Game Mode starting during the check leaves the offer available',
+      () async {
+        await build();
+        when(() => encryption.hasPassphrase(userId)).thenAnswer((_) async {
+          gameMode = true;
+          return false;
+        });
+
+        await offering.onWindowFocused();
+        expect(offering.showEncryptionOffer, isFalse);
+
+        gameMode = false;
+        when(
+          () => encryption.hasPassphrase(userId),
+        ).thenAnswer((_) async => false);
+        await offering.offerEncryptionIfDue();
+        expect(offering.showEncryptionOffer, isTrue);
+      },
+    );
+
+    test(
+      'discards the passphrase check after the active account changes',
+      () async {
+        await build();
+        when(() => encryption.hasPassphrase(userId)).thenAnswer((_) async {
+          when(() => authService.currentUserId).thenReturn('another-user');
+          return false;
+        });
+
+        await offering.onWindowFocused();
+
+        expect(offering.showEncryptionOffer, isFalse);
+      },
+    );
 
     test('a guest is asked for an account, not for both', () async {
       await build(anonymous: true);

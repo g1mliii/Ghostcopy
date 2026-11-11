@@ -1064,8 +1064,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     return _buildOfferCard(
       icon: Icons.lock_outline,
       message:
-          'Encrypt your clips so only your devices can read them, not even '
-          'GhostCopy.',
+          'Use end-to-end encryption for new clips you sync from this device.',
       actionLabel: 'Turn on in Settings',
       onAction: _openEncryptionSettings,
       onDismiss: _viewModel.dismissEncryptionOffer,
