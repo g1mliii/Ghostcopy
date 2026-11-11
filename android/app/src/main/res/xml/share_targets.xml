@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Direct Share target. The share sheet's top row lists sharing shortcuts,
+     not apps; MainActivity.publishShareShortcut publishes one with this
+     category so "Send to devices" can appear there. Picking it delivers an
+     ordinary ACTION_SEND to MainActivity, handled like any other share. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="com.ghostcopy.ghostcopy.MainActivity">
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="application/*" />
+        <category android:name="com.ghostcopy.ghostcopy.category.SHARE_TARGET" />
+    </share-target>
+</shortcuts>

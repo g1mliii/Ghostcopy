@@ -34,23 +34,33 @@
 				<string>Video</string>
 				<string>Image</string>
 			</array>
-			<!-- What GhostCopy offers to accept. Files cap at 10MB server side
-			     (check_file_size_limit), and each shared item becomes its own
-			     clip, so the counts are what the history can sensibly hold
-			     rather than the 100 the package's template suggests. -->
+			<!-- When the share sheet offers GhostCopy: whenever at least one
+			     shared item is a link, text, image, video or file.
+			     This used to be the dictionary form (text, 1 URL, 5 images...),
+			     which iOS checks against every attachment, so one item of a type
+			     it does not list can hide the extension. Apps like Instagram,
+			     Reddit and X may share a link alongside items of their own
+			     types; GhostCopy did not appear when sharing from Instagram. ShareViewController already finishes every
+			     attachment, loaded or not, so an unsupported one is skipped, not
+			     stuck. Files still cap at 10MB server side (check_file_size_limit).
+			     Keep to SUBQUERY, ANY, UTI-CONFORMS-TO, OR and @count compared with
+			     a number: sharingd vets the predicate and drops the extension from
+			     every share sheet if any part is not on its allowed list. BETWEEN
+			     {1, 10} was ("Expression considered unsafe" in sharingd's log). -->
 			<key>NSExtensionActivationRule</key>
-			<dict>
-				<key>NSExtensionActivationSupportsText</key>
-				<true/>
-				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
-				<integer>1</integer>
-				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
-				<integer>5</integer>
-				<key>NSExtensionActivationSupportsMovieWithMaxCount</key>
-				<integer>5</integer>
-				<key>NSExtensionActivationSupportsFileWithMaxCount</key>
-				<integer>5</integer>
-			</dict>
+			<string>SUBQUERY (
+    extensionItems,
+    $extensionItem,
+    SUBQUERY (
+        $extensionItem.attachments,
+        $attachment,
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url"
+        || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.text"
+        || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image"
+        || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie"
+        || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+    ).@count >= 1
+).@count >= 1</string>
 		</dict>
 		<key>NSExtensionMainStoryboard</key>
 		<string>MainInterface</string>
