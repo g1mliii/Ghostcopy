@@ -133,7 +133,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _pollingTimer;
   bool _isPolling = false;
 
-  /// A poll asked for while one was running - the catch-up on resume, say.
+  /// A follow-up requested while a poll was running, such as a catch-up on
+  /// resume or a fresh read after realtime advanced during the request.
   /// Run once the current one finishes rather than dropped: the running poll
   /// may already have read the newest id, and a row after it would otherwise
   /// wait for the next timer tick, or forever once realtime has taken over.
@@ -142,6 +143,22 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// The newest clipboard row already seen, by realtime or by a poll, so a
   /// poll never runs a clip through auto-receive a second time.
   String? _lastPolledItemId;
+
+  /// The baseline of a poll that gave way because realtime moved the
+  /// baseline while it ran. Rows between this and the new baseline were
+  /// never delivered - a catch-up after a rejoin exists to find exactly
+  /// those - so the poll that follows starts from here.
+  String? _pendingGapFrom;
+
+  /// The older of two row ids; null counts as neither.
+  static String? _olderId(String? a, String? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    final ai = int.tryParse(a);
+    final bi = int.tryParse(b);
+    if (ai == null || bi == null) return a;
+    return ai <= bi ? a : b;
+  }
 
   /// Whether [_lastPolledItemId] has been established for this account,
   /// including as "no clips at all". Null alone cannot say: an empty account
@@ -1584,11 +1601,13 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void resumeRealtime() {
     _realtimePaused = false;
-    if (_realtimeChannel != null) return; // Already active
+    if (_realtimeChannel == null) {
+      debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
+      _subscribeToRealtimeUpdates();
+    }
 
-    debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
-    _subscribeToRealtimeUpdates();
-
+    // A retained channel can have silently stopped delivering in the tray.
+    // Catch up even when it exists, so a missed clip also triggers a rejoin.
     // A subscription only sees rows inserted after it opens. Anything that
     // landed since the last poll - a file sent from Finder's context menu,
     // which inserts straight through the repository, or a clip from the
@@ -1606,9 +1625,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
     if (_pollingTimer != null) return; // Already polling
 
-    debugPrint(
-      '[ClipboardSync] 🔄 Starting polling mode (${interval.inMinutes} min)',
-    );
+    debugPrint('[ClipboardSync] 🔄 Starting polling mode (every $interval)');
 
     _pollingTimer = Timer.periodic(interval, (_) async {
       await _pollForNewClipboards();
@@ -1640,6 +1657,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _dropRealtimeChannel();
     _autoReceiveDebounceTimer?.cancel();
     _lastPolledItemId = null;
+    _pendingGapFrom = null;
     _baselineReady = false;
     _claimedIds.clear();
     _failedFetchIds.clear();
@@ -1683,16 +1701,43 @@ class ClipboardSyncService implements IClipboardSyncService {
     // catch-up has run, can be blamed for what the poll finds. Rows from
     // before the join were never that channel's to deliver.
     final canBlameRealtime = _realtimeJoined && !_realtimeCatchUpPending;
+    final channelGeneration = _realtimeGeneration;
     _realtimeCatchUpPending = false;
     try {
       debugPrint('[ClipboardSync] 🔍 Polling for new items...');
 
       final userId = _supabaseClient.auth.currentUser?.id;
+      final previousId = _lastPolledItemId;
+      final wasReady = _baselineReady;
+      // Where delivery starts. An account that had no clips at all: every
+      // row before the newest is new too.
+      final startedFrom = previousId ?? (wasReady ? '0' : null);
       final latestId = await _clipboardRepository.getLatestItemId();
       if (_isDisposed ||
           userId != _supabaseClient.auth.currentUser?.id ||
-          latestId == null ||
-          latestId == _lastPolledItemId) {
+          latestId == null) {
+        return;
+      }
+      if (latestId == _lastPolledItemId) {
+        // Nothing new, but a poll that gave way may have left a gap behind
+        // the row realtime delivered.
+        final gapFrom = _pendingGapFrom;
+        _pendingGapFrom = null;
+        if (gapFrom != null &&
+            await _deliverSkippedClips(after: gapFrom, latest: latestId) > 0) {
+          onClipboardReceived?.call();
+        }
+        return;
+      }
+
+      // The HTTP snapshot can predate a realtime insert that arrived while
+      // the request was in flight. Read again against the new baseline so
+      // we neither replay old clips nor tear down a healthy channel - and
+      // remember where this one started, so the rows before the realtime
+      // insert are still delivered.
+      if (_lastPolledItemId != previousId || _baselineReady != wasReady) {
+        _pendingGapFrom = _olderId(_pendingGapFrom, startedFrom);
+        _pollRequested = true;
         return;
       }
 
@@ -1700,17 +1745,16 @@ class ClipboardSyncService implements IClipboardSyncService {
       // the channel believes it is subscribed, it should have delivered this
       // already - so it is broken whatever it claims, and saying so here is
       // the only evidence available.
-      if (canBlameRealtime) _noteRealtimeMissedAClip();
+      if (canBlameRealtime && channelGeneration == _realtimeGeneration) {
+        _noteRealtimeMissedAClip();
+      }
 
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
-      final previousId = _lastPolledItemId;
-      final wasReady = _baselineReady;
       _lastPolledItemId = latestId;
       _baselineReady = true;
-      // An account that had no clips at all: everything before the newest is
-      // new too.
-      final after = previousId ?? (wasReady ? '0' : null);
+      final after = _olderId(_pendingGapFrom, startedFrom);
+      _pendingGapFrom = null;
       if (after != null) {
         await _deliverSkippedClips(after: after, latest: latestId);
       }
@@ -1741,13 +1785,16 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Clips that arrived between two polls, older than [latest] and newer than
   /// [after]. Only the newest is worth copying, but the integrations are
   /// meant to see every clip - as they do on the realtime path.
-  Future<void> _deliverSkippedClips({
+  ///
+  /// Returns how many were delivered.
+  Future<int> _deliverSkippedClips({
     required String after,
     required String latest,
   }) async {
     final afterId = int.tryParse(after);
     final latestId = int.tryParse(latest);
-    if (afterId == null || latestId == null) return;
+    if (afterId == null || latestId == null) return 0;
+    var delivered = 0;
     try {
       // Below the full-history limit, so the repository does not prune its
       // media cache against this partial list.
@@ -1757,12 +1804,16 @@ class ClipboardSyncService implements IClipboardSyncService {
         return id != null && id > afterId && id < latestId;
       }).toList()..sort((a, b) => int.parse(a.id).compareTo(int.parse(b.id)));
       for (final item in skipped) {
-        if (_isDisposed) return;
-        if (_canReceive(item) && _claim(item.id)) _deliverReceived(item);
+        if (_isDisposed) break;
+        if (_canReceive(item) && _claim(item.id)) {
+          _deliverReceived(item);
+          delivered++;
+        }
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSync] Could not deliver skipped clips: $e');
     }
+    return delivered;
   }
 
   bool _isDisposed = false;

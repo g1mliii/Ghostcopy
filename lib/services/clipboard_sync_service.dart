@@ -58,7 +58,8 @@ abstract class IClipboardSyncService {
   /// Pause realtime subscription (keeps subscription for resume)
   void pauseRealtime();
 
-  /// Resume realtime subscription
+  /// Resume realtime and check for missed clips, including when the channel
+  /// stayed open while the window was hidden.
   void resumeRealtime();
 
   /// Start polling mode (HTTP polling every N minutes)

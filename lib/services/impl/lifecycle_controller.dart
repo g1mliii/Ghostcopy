@@ -84,6 +84,20 @@ class LifecycleController implements ILifecycleController {
   Timer? _inactivityCheckTimer;
   static const Duration _realtimeIdleThreshold = Duration(minutes: 15);
 
+  /// How often a desktop in the tray checks that realtime is still
+  /// delivering.
+  ///
+  /// The realtime channel delivers clips at once and stays open in the tray:
+  /// a desktop has no push to fall back on. This poll is only the check on
+  /// it. Windows throttles a hidden process from the moment it hides, until
+  /// the socket can die without a word, and a poll that finds a clip the
+  /// channel should have delivered is what makes the sync service rejoin.
+  /// It runs whenever the window is hidden, from the first second and
+  /// whatever the hybrid flag says - a check that waited for fifteen idle
+  /// minutes, or the flag, left a dead socket unnoticed for that long.
+  @visibleForTesting
+  static const Duration trayHealthCheckInterval = Duration(minutes: 5);
+
   // ========== FEATURE FLAG ==========
 
   bool _isHybridModeEnabled = false;
@@ -153,7 +167,13 @@ class LifecycleController implements ILifecycleController {
         debugPrint('[Lifecycle] ⚠️  Failed to pause resource: $e');
       }
     }
+
+    // Locked or asleep, connections are paused; unlock starts it again.
+    if (_powerState == PowerState.awake) _startTrayHealthCheck();
   }
+
+  void _startTrayHealthCheck() =>
+      _clipboardSyncService.startPolling(interval: trayHealthCheckInterval);
 
   @override
   void exitTrayMode() {
@@ -177,7 +197,12 @@ class LifecycleController implements ILifecycleController {
     if (_connectionMode == ConnectionMode.polling) {
       debugPrint('[Lifecycle] 🪟 Spotlight opened → Switching to REALTIME');
       switchToRealtime();
+    } else if (_powerState == PowerState.awake) {
+      _clipboardSyncService.resumeRealtime();
     }
+    // Resume also checks a retained channel for clips it silently missed
+    // before the window opened, so stopping the timer preserves catch-up.
+    _clipboardSyncService.stopPolling();
   }
 
   @override
@@ -277,22 +302,27 @@ class LifecycleController implements ILifecycleController {
       return; // Can't switch during sleep/lock
     }
 
-    debugPrint('[Lifecycle] 🟡 Switching to POLLING mode (5 min interval)');
+    debugPrint(
+      '[Lifecycle] 🟡 Idle: realtime stays open, checked every '
+      '${trayHealthCheckInterval.inMinutes} min',
+    );
     _connectionMode = ConnectionMode.polling;
     _connectionModeController.add(_connectionMode);
 
-    // Stop realtime, start polling
-    _clipboardSyncService
-      ..pauseRealtime()
-      ..startPolling(interval: const Duration(minutes: 5));
+    // Realtime is deliberately not paused, and the tray health check is
+    // normally running already: see trayHealthCheckInterval.
+    _startTrayHealthCheck();
   }
 
   @override
   void notifyClipboardActivity() {
     _lastClipboardActivity = clock.now();
 
-    // If in polling mode and user becomes active, switch back to realtime
-    if (_connectionMode == ConnectionMode.polling && _isHybridModeEnabled) {
+    // A received clip can arrive while the window is still hidden. Keep the
+    // fallback running in the tray until the window opens or power changes.
+    if (!_isInTrayMode &&
+        _connectionMode == ConnectionMode.polling &&
+        _isHybridModeEnabled) {
       debugPrint('[Lifecycle] 📋 Clipboard activity → Switching to REALTIME');
       switchToRealtime();
     }
@@ -364,6 +394,8 @@ class LifecycleController implements ILifecycleController {
 
     // Always resume to realtime (user just woke system/unlocked screen)
     switchToRealtime();
+    // switchToRealtime stops the check; still in the tray, it is needed.
+    if (_isInTrayMode) _startTrayHealthCheck();
 
     // Not awaited, but safe against a lock that lands while it reads
     // settings: the stop that lock makes invalidates this refresh, so it

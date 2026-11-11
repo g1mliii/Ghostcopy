@@ -42,7 +42,12 @@ class _RecordingSyncService implements IClipboardSyncService {
   void reinitializeForUser() {}
 
   @override
-  void resumeRealtime() => realtimePaused = false;
+  void resumeRealtime() {
+    realtimePaused = false;
+    realtimeResumes++;
+  }
+
+  int realtimeResumes = 0;
 
   int monitoringStarts = 0;
 
@@ -52,7 +57,10 @@ class _RecordingSyncService implements IClipboardSyncService {
   @override
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
     polling = true;
+    pollInterval = interval;
   }
+
+  Duration? pollInterval;
 
   @override
   void stopClipboardMonitoring() {}
@@ -168,7 +176,7 @@ void main() {
     });
   });
 
-  test('switches to polling after idling in the tray with no activity', () {
+  test('idling in the tray starts the poll and keeps realtime open', () {
     fakeAsync((async) {
       final controller = LifecycleController(
         clipboardSyncService: sync,
@@ -187,10 +195,62 @@ void main() {
       expect(
         controller.connectionMode,
         ConnectionMode.polling,
-        reason: 'idle in tray past the threshold should drop the websocket',
+        reason: 'idle in tray past the threshold should start the check',
       );
       expect(sync.polling, isTrue);
-      expect(sync.realtimePaused, isTrue);
+      // A desktop has no push, so idling must not close the one channel a
+      // clip arrives on. The poll only checks that channel is alive.
+      expect(sync.realtimePaused, isFalse);
+      expect(sync.pollInterval, LifecycleController.trayHealthCheckInterval);
+
+      controller.dispose();
+      async.flushTimers();
+    });
+  });
+
+  test('the tray health check starts on hiding, whatever the flag', () {
+    // A socket throttled to death in the first minutes in the tray must not
+    // wait for the idle switch, and turning hybrid mode off must not remove
+    // the only thing that notices.
+    when(settings.isHybridModeEnabled).thenAnswer((_) async => false);
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller.enterTrayMode();
+      expect(sync.polling, isTrue);
+      expect(sync.pollInterval, LifecycleController.trayHealthCheckInterval);
+      expect(sync.realtimePaused, isFalse);
+
+      controller.exitTrayMode();
+      expect(sync.polling, isFalse);
+      expect(sync.realtimeResumes, 1);
+
+      controller.dispose();
+      async.flushTimers();
+    });
+  });
+
+  test('unlocking while in the tray brings the health check back', () {
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller
+        ..enterTrayMode()
+        ..onScreenLock();
+      expect(sync.polling, isFalse);
+
+      controller.onScreenUnlock();
+      async.elapse(const Duration(seconds: 1));
+      expect(sync.polling, isTrue);
+      expect(sync.realtimePaused, isFalse);
 
       controller.dispose();
       async.flushTimers();
@@ -218,7 +278,7 @@ void main() {
     });
   });
 
-  test('clipboard activity brings it back to realtime', () {
+  test('tray polling survives a receive and stops when the window opens', () {
     fakeAsync((async) {
       final controller = LifecycleController(
         clipboardSyncService: sync,
@@ -232,14 +292,44 @@ void main() {
       async.elapse(const Duration(minutes: 20));
       expect(controller.connectionMode, ConnectionMode.polling);
 
-      controller.notifyClipboardActivity();
+      sync.onClipboardReceived?.call();
+      expect(controller.connectionMode, ConnectionMode.polling);
+      expect(sync.polling, isTrue);
+      expect(sync.realtimePaused, isFalse);
 
+      controller.exitTrayMode();
       expect(controller.connectionMode, ConnectionMode.realtime);
       expect(sync.polling, isFalse);
       expect(sync.realtimePaused, isFalse);
+      expect(sync.realtimeResumes, 1);
 
       controller.dispose();
       async.flushTimers();
+    });
+  });
+
+  test('opening while locked keeps realtime paused until unlock', () {
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller
+        ..enterTrayMode()
+        ..onScreenLock()
+        ..exitTrayMode();
+
+      expect(sync.realtimeResumes, 0);
+      expect(sync.realtimePaused, isTrue);
+      expect(sync.polling, isFalse);
+
+      controller.onScreenUnlock();
+      async.flushMicrotasks();
+      expect(sync.realtimeResumes, 1);
+      expect(sync.realtimePaused, isFalse);
+      controller.dispose();
     });
   });
 }
