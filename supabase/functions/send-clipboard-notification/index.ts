@@ -4,7 +4,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
-import { sendWnsRaw, wnsConfigured } from './wns.ts';
+import { isWnsChannelUri, sendWnsRaw, wnsConfigured } from './wns.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -290,9 +290,7 @@ Deno.serve(async (req)=>{
     // in the tray, fetches the clip itself and shows its own toast. So no
     // alert, no sound, nothing in Notification Center - just the row id.
     const wakeData = {
-      clipboard_id: clipboard_id.toString(),
-      device_type: device_type,
-      content_type: contentType
+      clipboard_id: clipboard_id.toString()
     };
     // macOS: a silent APNs push through FCM. 'background' push type with
     // priority 5 is what Apple requires for content-available.
@@ -311,6 +309,11 @@ Deno.serve(async (req)=>{
           }
         }
       });
+    // WNS sends start now and are collected after FCM: the two do not depend
+    // on each other, and awaiting one before starting the other added a full
+    // external round trip to every clip for an account with both.
+    const windowsDevices = devices.filter((device)=>device.device_type === 'windows' && isWnsChannelUri(device.wns_channel_uri));
+    const wnsSends = windowsDevices.length > 0 && wnsConfigured() ? Promise.all(windowsDevices.map((device)=>sendWnsRaw(device.wns_channel_uri, clipboard_id.toString()))) : null;
     if (admin.apps.length > 0) {
       // Filter out devices without tokens
       const validDevices = devices.filter((device)=>typeof device.fcm_token === 'string' && device.fcm_token.length > 0);
@@ -436,15 +439,14 @@ Deno.serve(async (req)=>{
     // ------------------------------------------------------------------
     // WNS (packaged Windows desktops)
     // ------------------------------------------------------------------
-    const windowsDevices = devices.filter((device)=>device.device_type === 'windows' && typeof device.wns_channel_uri === 'string' && device.wns_channel_uri.length > 0);
     if (windowsDevices.length > 0) {
-      if (!wnsConfigured()) {
+      if (wnsSends == null) {
         // Not a failure of the device: it still has realtime and the tray
         // health check. Said in the response so it is visible in
         // net._http_response.
         warnings.push(`WNS credentials not configured; ${windowsDevices.length} Windows device(s) not pushed`);
       } else {
-        const results = await Promise.all(windowsDevices.map((device)=>sendWnsRaw(device.wns_channel_uri, clipboard_id.toString())));
+        const results = await wnsSends;
         const goneDeviceIds: string[] = [];
         results.forEach((result, idx)=>{
           if (result.ok) {

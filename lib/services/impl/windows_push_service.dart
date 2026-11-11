@@ -29,7 +29,10 @@ class WindowsPushService implements IDesktopPushService {
   static const Duration _refreshEvery = Duration(days: 7);
   Timer? _refreshTimer;
   String? _channelUri;
-  bool _disposed = false;
+
+  /// The URI last written to the device row, so a weekly refresh that gets
+  /// the same channel back does not write it again.
+  String? _storedUri;
 
   @override
   Stream<void> get pushes => _pushes.stream;
@@ -54,13 +57,14 @@ class WindowsPushService implements IDesktopPushService {
     if (uri == null) return;
     // The new account's row first: the update goes to whichever row
     // registration last returned.
-    if (await _deviceService.registerCurrentDevice()) {
-      await _deviceService.updateWnsChannelUri(uri);
+    if (await _deviceService.registerCurrentDevice() &&
+        await _deviceService.updateWnsChannelUri(uri)) {
+      _storedUri = uri;
     }
   }
 
   Future<bool> _createAndStore() async {
-    if (_disposed) return false;
+    if (_pushes.isClosed) return false;
     try {
       final result = await _channel.invokeMapMethod<String, Object?>(
         'createChannel',
@@ -68,7 +72,10 @@ class WindowsPushService implements IDesktopPushService {
       final uri = result?['uri'];
       if (uri is! String || uri.isEmpty) return false;
       _channelUri = uri;
-      return await _deviceService.updateWnsChannelUri(uri);
+      if (uri == _storedUri) return true;
+      final stored = await _deviceService.updateWnsChannelUri(uri);
+      if (stored) _storedUri = uri;
+      return stored;
     } on PlatformException catch (e) {
       // "unpackaged" is the expected answer for a dev build.
       debugPrint('[WindowsPush] No WNS channel: ${e.code} ${e.message}');
@@ -80,7 +87,6 @@ class WindowsPushService implements IDesktopPushService {
 
   @override
   void dispose() {
-    _disposed = true;
     _refreshTimer?.cancel();
     _channel.setMethodCallHandler(null);
     unawaited(_pushes.close());

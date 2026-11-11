@@ -171,10 +171,7 @@ void main() {
     test('stores the channel URI on the device row', () async {
       messenger.setMockMethodCallHandler(channel, (call) async {
         expect(call.method, 'createChannel');
-        return {
-          'uri': 'https://db5.notify.windows.com/?token=abc',
-          'expiresAtMs': 0,
-        };
+        return {'uri': 'https://db5.notify.windows.com/?token=abc'};
       });
       final service = WindowsPushService(deviceService: devices);
       addTearDown(service.dispose);

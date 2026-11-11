@@ -108,8 +108,19 @@ BEGIN
 
   PERFORM net.http_post(
     url := supabase_url || '/functions/v1/send-clipboard-notification',
+    -- Only what the function reads. The whole row carried the clip itself
+    -- (up to 100 KB of content) through pg_net for every insert, and no push
+    -- may carry clipboard content anyway.
     body := jsonb_build_object(
-      'record', row_to_json(NEW),
+      'record', jsonb_build_object(
+        'id', NEW.id,
+        'user_id', NEW.user_id,
+        'device_type', NEW.device_type,
+        'target_device_type', NEW.target_device_type,
+        'content_type', NEW.content_type,
+        'file_size_bytes', NEW.file_size_bytes,
+        'rich_text_format', NEW.rich_text_format
+      ),
       'type', 'INSERT'
     ),
     headers := jsonb_build_object(

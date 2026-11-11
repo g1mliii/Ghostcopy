@@ -20,8 +20,6 @@ using winrt::Windows::Networking::PushNotifications::
     PushNotificationReceivedEventArgs;
 using winrt::Windows::Networking::PushNotifications::PushNotificationType;
 
-std::string Narrow(const winrt::hstring& text) { return winrt::to_string(text); }
-
 }  // namespace
 
 // Shared with the worker thread and the WinRT event handler, either of which
@@ -41,12 +39,20 @@ struct PushChannel::State {
   // The outcome of the last request, read on the platform thread.
   bool succeeded = false;
   std::string uri;
-  int64_t expires_at_ms = 0;
   std::string error;
 
   void Post(UINT message) {
     std::lock_guard<std::mutex> lock(mutex);
     if (alive) ::PostMessage(window, message, 0, 0);
+  }
+
+  // Stop listening on the current channel, if any. Call with |mutex| held.
+  void Unsubscribe() {
+    if (!channel) return;
+    try {
+      channel.PushNotificationReceived(received_token);
+    } catch (const winrt::hresult_error&) {
+    }
   }
 };
 
@@ -75,12 +81,7 @@ PushChannel::PushChannel(flutter::BinaryMessenger* messenger, HWND window,
 PushChannel::~PushChannel() {
   std::lock_guard<std::mutex> lock(state_->mutex);
   state_->alive = false;
-  if (state_->channel) {
-    try {
-      state_->channel.PushNotificationReceived(state_->received_token);
-    } catch (const winrt::hresult_error&) {
-    }
-  }
+  state_->Unsubscribe();
 }
 
 void PushChannel::CreateChannel(
@@ -107,32 +108,23 @@ void PushChannel::CreateChannel(
     }
     bool succeeded = false;
     std::string uri;
-    int64_t expires_at_ms = 0;
     std::string error;
     PushNotificationChannel channel{nullptr};
     try {
       channel = PushNotificationChannelManager::
                     CreatePushNotificationChannelForApplicationAsync()
                         .get();
-      uri = Narrow(channel.Uri());
-      // DateTime ticks are 100 ns since 1601; Unix epoch is 11644473600 s on.
-      const auto ticks = channel.ExpirationTime().time_since_epoch().count();
-      expires_at_ms = ticks / 10000 - 11644473600000LL;
+      uri = winrt::to_string(channel.Uri());
       succeeded = true;
     } catch (const winrt::hresult_error& e) {
-      error = Narrow(e.message());
+      error = winrt::to_string(e.message());
       if (error.empty()) error = "hresult " + std::to_string(e.code().value);
     }
 
     {
       std::lock_guard<std::mutex> lock(state->mutex);
       if (succeeded) {
-        if (state->channel) {
-          try {
-            state->channel.PushNotificationReceived(state->received_token);
-          } catch (const winrt::hresult_error&) {
-          }
-        }
+        state->Unsubscribe();
         state->channel = channel;
         std::weak_ptr<State> weak = state;
         state->received_token = channel.PushNotificationReceived(
@@ -148,7 +140,6 @@ void PushChannel::CreateChannel(
       }
       state->succeeded = succeeded;
       state->uri = std::move(uri);
-      state->expires_at_ms = expires_at_ms;
       state->error = std::move(error);
     }
     state->Post(state->channel_ready_message);
@@ -166,8 +157,6 @@ void PushChannel::OnChannelReady() {
   }
   flutter::EncodableMap map;
   map[flutter::EncodableValue("uri")] = flutter::EncodableValue(state_->uri);
-  map[flutter::EncodableValue("expiresAtMs")] =
-      flutter::EncodableValue(state_->expires_at_ms);
   result->Success(flutter::EncodableValue(map));
 }
 

@@ -18,7 +18,10 @@ const TOKEN_URL = 'https://login.live.com/accesstoken.srf';
 // Re-read a little before the server says it expires.
 const TOKEN_MARGIN_MS = 5 * 60 * 1000;
 
-let cachedToken: { value: string; expiresAt: number } | null = null;
+// The request in flight is cached, not just its result: a clip for several
+// Windows desktops sends to them all at once, and on a cold instance each
+// would otherwise ask login.live.com for its own token.
+let cachedToken: Promise<{ value: string; expiresAt: number }> | null = null;
 
 export function wnsConfigured(): boolean {
   return Boolean(Deno.env.get('WNS_PACKAGE_SID') && Deno.env.get('WNS_CLIENT_SECRET'));
@@ -39,9 +42,25 @@ export function isWnsChannelUri(value: unknown): value is string {
 }
 
 async function accessToken(forceRefresh: boolean): Promise<string> {
-  if (!forceRefresh && cachedToken && cachedToken.expiresAt - TOKEN_MARGIN_MS > Date.now()) {
-    return cachedToken.value;
+  if (!forceRefresh && cachedToken) {
+    try {
+      const token = await cachedToken;
+      if (token.expiresAt - TOKEN_MARGIN_MS > Date.now()) return token.value;
+    } catch {
+      // A failed request is not reused; ask again below.
+    }
   }
+  const request = requestToken();
+  cachedToken = request;
+  try {
+    return (await request).value;
+  } catch (error) {
+    if (cachedToken === request) cachedToken = null;
+    throw error;
+  }
+}
+
+async function requestToken(): Promise<{ value: string; expiresAt: number }> {
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
     client_id: Deno.env.get('WNS_PACKAGE_SID') ?? '',
@@ -61,11 +80,10 @@ async function accessToken(forceRefresh: boolean): Promise<string> {
   }
   const json = await response.json();
   const expiresIn = Number(json.expires_in ?? 86400);
-  cachedToken = {
+  return {
     value: String(json.access_token),
     expiresAt: Date.now() + expiresIn * 1000,
   };
-  return cachedToken.value;
 }
 
 export type WnsResult =

@@ -91,9 +91,12 @@ class MacPushService implements IDesktopPushService {
         ..add(FirebaseMessaging.onMessage.listen(wake))
         ..add(_backgroundPushes.stream.listen(wake))
         ..add(
+          // registerCurrentDevice rather than updateFcmToken, as on mobile
+          // (main.dart): it upserts the row, so a refresh that lands before
+          // or after an account switch still reaches the signed-in row.
           fcm.tokenRefreshStream.listen((fresh) {
             _token = fresh;
-            unawaited(_deviceService.updateFcmToken(fresh));
+            unawaited(_deviceService.registerCurrentDevice(fcmToken: fresh));
           }),
         );
 

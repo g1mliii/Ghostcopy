@@ -177,6 +177,14 @@ class LifecycleController implements ILifecycleController {
 
   bool _desktopPushActive = false;
 
+  /// How long the window has to stay in the tray before push takes over
+  /// from realtime. The Spotlight is opened and put away many times a day,
+  /// and closing the socket on every hide would pay a reconnect, a channel
+  /// join and a catch-up poll on every opening.
+  @visibleForTesting
+  static const Duration pushTakeoverDelay = Duration(minutes: 2);
+  Timer? _pushTakeoverTimer;
+
   @override
   bool get desktopPushActive => _desktopPushActive;
 
@@ -188,12 +196,24 @@ class LifecycleController implements ILifecycleController {
     if (_powerState == PowerState.awake) _applyPushConnection();
   }
 
-  /// Close realtime in the tray while push reaches this desktop; open it
-  /// otherwise. Both calls are no-ops when the connection is already so.
+  /// Close realtime once the window has settled in the tray while push
+  /// reaches this desktop; open it otherwise. Every transition - tray, power,
+  /// push trust - ends here, so the rule lives in one place. Both calls are
+  /// no-ops when the connection is already so.
   void _applyPushConnection() {
     if (_isInTrayMode && _desktopPushActive) {
-      _clipboardSyncService.pauseRealtime();
+      _pushTakeoverTimer ??= Timer(pushTakeoverDelay, () {
+        _pushTakeoverTimer = null;
+        if (_isInTrayMode &&
+            _desktopPushActive &&
+            _powerState == PowerState.awake &&
+            !_isDisposed) {
+          _clipboardSyncService.pauseRealtime();
+        }
+      });
     } else {
+      _pushTakeoverTimer?.cancel();
+      _pushTakeoverTimer = null;
       _clipboardSyncService.resumeRealtime();
     }
   }
@@ -227,9 +247,7 @@ class LifecycleController implements ILifecycleController {
     // The window is up, so the process is not throttled: no check needed.
     _clipboardSyncService.stopPolling();
     // Push may have closed realtime in the tray; the open window wants it.
-    if (_desktopPushActive && _powerState == PowerState.awake) {
-      _clipboardSyncService.resumeRealtime();
-    }
+    if (_powerState == PowerState.awake) _applyPushConnection();
   }
 
   @override
@@ -404,6 +422,9 @@ class LifecycleController implements ILifecycleController {
   void _pauseConnections() {
     debugPrint('[Lifecycle] ⏸️  Pausing all connections');
 
+    _pushTakeoverTimer?.cancel();
+    _pushTakeoverTimer = null;
+
     // Save current mode to restore later
     _connectionMode = ConnectionMode.paused;
     _connectionModeController.add(_connectionMode);
@@ -469,6 +490,8 @@ class LifecycleController implements ILifecycleController {
     _inactivityCheckTimer = null;
     _trimTimer?.cancel();
     _trimTimer = null;
+    _pushTakeoverTimer?.cancel();
+    _pushTakeoverTimer = null;
 
     // Close streams
     _connectionModeController.close();

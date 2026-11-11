@@ -260,6 +260,27 @@ void main() {
   });
 
   group('with desktop push active', () {
+    test('reopening within the takeover delay keeps the socket', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        controller
+          ..desktopPushActive = true
+          ..enterTrayMode();
+        async.elapse(const Duration(seconds: 30));
+        controller.exitTrayMode();
+        async.elapse(LifecycleController.pushTakeoverDelay);
+
+        expect(sync.realtimePaused, isFalse);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
     test('the tray closes realtime and the window reopens it', () {
       fakeAsync((async) {
         final controller = LifecycleController(
@@ -272,6 +293,8 @@ void main() {
         expect(sync.realtimePaused, isFalse, reason: 'window still open');
 
         controller.enterTrayMode();
+        expect(sync.realtimePaused, isFalse, reason: 'a quick reopen is free');
+        async.elapse(LifecycleController.pushTakeoverDelay);
         expect(sync.realtimePaused, isTrue);
         expect(sync.polling, isTrue, reason: 'the health check stays on');
 
@@ -293,6 +316,7 @@ void main() {
         controller
           ..enterTrayMode()
           ..desktopPushActive = true;
+        async.elapse(LifecycleController.pushTakeoverDelay);
         expect(sync.realtimePaused, isTrue);
 
         controller.desktopPushActive = false;
@@ -315,7 +339,7 @@ void main() {
           ..desktopPushActive = true
           ..onScreenLock()
           ..onScreenUnlock();
-        async.elapse(const Duration(seconds: 1));
+        async.elapse(LifecycleController.pushTakeoverDelay);
 
         expect(sync.realtimePaused, isTrue);
         expect(sync.polling, isTrue);

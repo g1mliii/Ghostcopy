@@ -16,8 +16,8 @@
 //
 // Dart side: lib/services/impl/windows_push_service.dart, channel
 // "com.ghostcopy.app/push".
-//   createChannel -> {"uri": String, "expiresAtMs": int}, or an error. Only a
-//                    packaged process has the identity WNS needs.
+//   createChannel -> {"uri": String}, or an error. Only a packaged process has
+//                    the identity WNS needs.
 //   received      <- sent to Dart for every raw notification. The payload is
 //                    not forwarded: it carries only a row id, and the app
 //                    polls for what is new rather than trusting a push.
