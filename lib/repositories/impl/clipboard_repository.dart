@@ -864,68 +864,6 @@ class ClipboardRepository implements IClipboardRepository {
     }
   }
 
-  static int _insertChannelSequence = 0;
-
-  @override
-  Stream<ClipboardItem> watchClipboardInserts() {
-    final userId = _client.auth.currentUser?.id;
-    if (userId == null) {
-      throw SecurityException(
-        'User must be authenticated to watch incoming clipboard items',
-      );
-    }
-
-    // A fresh topic keeps messages from an old channel that is still leaving
-    // from reaching the listener opened after resume.
-    final topic = 'clipboard_inserts:${++_insertChannelSequence}';
-    final changes = StreamController<PostgresChangePayload>();
-    late final RealtimeChannel channel;
-    changes
-      ..onListen = () {
-        channel = _client.channel(topic);
-        channel
-            .onPostgresChanges(
-              event: PostgresChangeEvent.insert,
-              schema: 'public',
-              table: 'clipboard',
-              filter: PostgresChangeFilter(
-                type: PostgresChangeFilterType.eq,
-                column: 'user_id',
-                value: userId,
-              ),
-              callback: (payload) {
-                if (!changes.isClosed) changes.add(payload);
-              },
-            )
-            .subscribe((status, error) {
-              if (changes.isClosed) return;
-              switch (status) {
-                case RealtimeSubscribeStatus.subscribed:
-                  break;
-                case RealtimeSubscribeStatus.closed:
-                  unawaited(changes.close());
-                case RealtimeSubscribeStatus.timedOut:
-                case RealtimeSubscribeStatus.channelError:
-                  changes.addError(RealtimeSubscribeException(status, error));
-              }
-            });
-      }
-      ..onCancel = () async {
-        if (changes.isClosed) return;
-        unawaited(changes.close());
-        await _client.removeChannel(channel);
-      };
-
-    return changes.stream
-        .asyncMap(
-          (payload) => _decryptItems(
-            _parseClipboardItems([payload.newRecord]),
-            updateUndecryptableCount: false,
-          ),
-        )
-        .expand((items) => items);
-  }
-
   @override
   Future<ClipboardItem?> getById(String id) async {
     _validateId(id);
@@ -1480,10 +1418,7 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Decrypt clipboard items content (only if encrypted)
-  Future<List<ClipboardItem>> _decryptItems(
-    List<ClipboardItem> items, {
-    bool updateUndecryptableCount = true,
-  }) async {
+  Future<List<ClipboardItem>> _decryptItems(List<ClipboardItem> items) async {
     // canDecrypt gates every item below, because EncryptionService.decrypt()
     // returns its input UNCHANGED when no key is loaded
     // (encryption_service.dart: `if (_keyBytes == null) return ciphertext;`)
@@ -1569,9 +1504,7 @@ class ClipboardRepository implements IClipboardRepository {
       }
     }
 
-    if (updateUndecryptableCount) {
-      _undecryptableItemCount.value = undecryptable;
-    }
+    _undecryptableItemCount.value = undecryptable;
     if (undecryptable > 0) {
       debugPrint(
         '[Repository] ⚠️ $undecryptable encrypted item(s) could not be '
@@ -1731,6 +1664,24 @@ class ClipboardRepository implements IClipboardRepository {
 
   static String _capitalize(String value) =>
       value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
+
+  /// Whether a clip sent by [senderName] to [targets] is this device's to
+  /// receive. Desktop and mobile both ask this before copying a clip unasked,
+  /// so the rule lives in one place: they had drifted apart once already.
+  ///
+  /// The sender check is a plain inequality: a device never receives its own
+  /// clip, and an unnamed sender is someone else unless this device is
+  /// unnamed too. Null or empty targets mean every device - an empty list is
+  /// never a deliberate "nobody".
+  ///
+  /// Known limit: devices are told apart by name, so two machines sharing a
+  /// hostname, or two phones of the same platform, do not receive from each
+  /// other. Fixing that needs a device id on the clipboard row.
+  static bool isForThisDevice(String? senderName, List<String>? targets) =>
+      senderName != getCurrentDeviceName() &&
+      (targets == null ||
+          targets.isEmpty ||
+          targets.contains(getCurrentDeviceType()));
 
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;

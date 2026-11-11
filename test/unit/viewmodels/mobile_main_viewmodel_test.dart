@@ -63,7 +63,6 @@ void main() {
   late _MockAuthService authService;
   late _MockClipboardRepository clipboardRepository;
   late _MockClipboardService clipboardService;
-  late StreamController<ClipboardItem> incomingClips;
   late _MockDeviceService deviceService;
   late _MockSecurityService securityService;
   late _MockSettingsService settingsService;
@@ -74,15 +73,11 @@ void main() {
     authService = _MockAuthService();
     clipboardRepository = _MockClipboardRepository();
     clipboardService = _MockClipboardService();
-    incomingClips = StreamController<ClipboardItem>.broadcast();
     deviceService = _MockDeviceService();
     securityService = _MockSecurityService();
     settingsService = _MockSettingsService();
     transcoder = _FakeImageTranscoder();
 
-    when(
-      () => clipboardRepository.watchClipboardInserts(),
-    ).thenAnswer((_) => incomingClips.stream);
     when(() => clipboardService.writeText(any())).thenAnswer((_) async {});
     when(() => clipboardService.writeImage(any())).thenAnswer((_) async {});
     when(
@@ -111,9 +106,8 @@ void main() {
     );
   });
 
-  tearDown(() async {
+  tearDown(() {
     viewModel.dispose();
-    await incomingClips.close();
   });
 
   for (final filename in ['original.png', 'original.heic']) {
@@ -308,11 +302,9 @@ void main() {
 
   group('auto-copy of an arriving clip', () {
     late StreamController<List<ClipboardItem>> history;
-    late StreamController<ClipboardItem> resumedInserts;
 
     ClipboardItem clip(
       String id, {
-      DateTime? createdAt,
       String? deviceName,
       List<String>? targetDeviceTypes,
       ContentType contentType = ContentType.text,
@@ -324,37 +316,36 @@ void main() {
       deviceName: deviceName,
       targetDeviceTypes: targetDeviceTypes,
       contentType: contentType,
-      createdAt: createdAt ?? DateTime.utc(2000),
+      createdAt: DateTime.utc(2000),
     );
+
+    /// A row as the server would answer a fetch by id.
+    void stored(ClipboardItem item) {
+      when(
+        () => clipboardRepository.getById(item.id),
+      ).thenAnswer((_) async => item);
+    }
 
     Future<void> flushStreams() => Future<void>.delayed(Duration.zero);
 
     setUp(() {
       history = StreamController<List<ClipboardItem>>.broadcast();
-      resumedInserts = StreamController<ClipboardItem>.broadcast();
       when(
         () => clipboardRepository.watchHistory(),
       ).thenAnswer((_) => history.stream);
       viewModel.subscribeToRealtimeUpdates();
     });
 
-    tearDown(() async {
+    tearDown(() {
       viewModel.dispose();
-      await history.close();
-      await resumedInserts.close();
+      // Not awaited: a subscription left paused holds the close open.
+      unawaited(history.close());
     });
-
-    void resume() {
-      when(
-        () => clipboardRepository.watchClipboardInserts(),
-      ).thenAnswer((_) => resumedInserts.stream);
-      viewModel.onAppResumed();
-    }
 
     test(
       'opening displays existing clips without writing the clipboard',
       () async {
-        history.add([clip('existing', createdAt: DateTime.utc(2100))]);
+        history.add([clip('existing')]);
         await flushStreams();
 
         expect(viewModel.historyItems.single.id, 'existing');
@@ -366,9 +357,8 @@ void main() {
       history.add([]);
       await flushStreams();
 
-      // A device clock far ahead of the server must still allow this insert.
       final first = clip('first');
-      incomingClips.add(first);
+      stored(first);
       history.add([first]);
       await flushStreams();
 
@@ -376,12 +366,49 @@ void main() {
       expect(viewModel.historyItems.single.id, 'first');
     });
 
+    test('what is copied is the stored row, not the realtime one', () async {
+      history.add([]);
+      await flushStreams();
+
+      // Realtime can drop columns from an oversized row.
+      final truncated = clip('big');
+      stored(
+        ClipboardItem(
+          id: 'big',
+          userId: 'u1',
+          content: 'the whole clip',
+          deviceType: 'windows',
+          createdAt: DateTime.utc(2000),
+        ),
+      );
+      history.add([truncated]);
+      await flushStreams();
+
+      verify(() => clipboardService.writeText('the whole clip')).called(1);
+    });
+
+    test('a clip deleted before it is fetched is not copied', () async {
+      history.add([]);
+      await flushStreams();
+      when(
+        () => clipboardRepository.getById('gone'),
+      ).thenAnswer((_) async => null);
+
+      history.add([clip('gone')]);
+      await flushStreams();
+
+      verifyZeroInteractions(clipboardService);
+    });
+
     test('deleting the newest clip does not copy the one below it', () async {
       final older = clip('older');
       final newest = clip('newest');
-      incomingClips.add(older);
+      stored(older);
+      stored(newest);
+      history.add([]);
+      await flushStreams();
       history.add([older]);
-      incomingClips.add(newest);
+      await flushStreams();
       history.add([newest, older]);
       await flushStreams();
 
@@ -397,46 +424,66 @@ void main() {
     });
 
     test(
-      'resume displays background clips and copies only new inserts',
+      'resume shows clips sent while away and copies only new ones',
       () async {
         final existing = clip('existing');
         history.add([existing]);
         await flushStreams();
 
         viewModel.onAppPaused();
-        expect(incomingClips.hasListener, isFalse);
-        // Even a server timestamp far ahead of the device cannot turn this
-        // queued history update into a foreground clipboard write.
-        final background = clip('background', createdAt: DateTime.utc(2100));
-        incomingClips.add(background);
+        final background = clip('background');
+        stored(background);
         history.add([background, existing]);
         when(
           () => clipboardRepository.getHistory(),
         ).thenAnswer((_) async => [background, existing]);
 
-        resume();
+        viewModel.onAppResumed();
         await flushStreams();
         expect(viewModel.historyItems.first.id, 'background');
         verifyZeroInteractions(clipboardService);
 
-        resumedInserts.add(clip('foreground'));
+        final foreground = clip('foreground');
+        stored(foreground);
+        history.add([foreground, background, existing]);
         await flushStreams();
         verify(() => clipboardService.writeText('clip foreground')).called(1);
+        verifyNever(() => clipboardService.writeText('clip background'));
       },
     );
 
-    test('an image download finishing after resume cannot write', () async {
+    test('a list delivered while backgrounded copies nothing', () async {
+      history.add([]);
+      await flushStreams();
+      viewModel.onAppPaused();
+
+      // A reconnect can open a fresh, unpaused subscription in the
+      // background.
+      final background = clip('background');
+      stored(background);
+      viewModel.subscribeToRealtimeUpdates();
+      history.add([background]);
+      await flushStreams();
+
+      verifyZeroInteractions(clipboardService);
+    });
+
+    test('an image download finishing after a pause cannot write', () async {
+      history.add([]);
+      await flushStreams();
       final image = clip('image', contentType: ContentType.imagePng);
+      stored(image);
       final download = Completer<Uint8List?>();
       when(
         () => clipboardRepository.downloadFile(image),
       ).thenAnswer((_) => download.future);
-      incomingClips.add(image);
+      history.add([image]);
       await flushStreams();
       verify(() => clipboardRepository.downloadFile(image)).called(1);
 
-      viewModel.onAppPaused();
-      resume();
+      viewModel
+        ..onAppPaused()
+        ..onAppResumed();
       download.complete(Uint8List.fromList([1, 2, 3]));
       await flushStreams();
 
@@ -446,14 +493,21 @@ void main() {
     test(
       'local and untargeted inserts do not overwrite the clipboard',
       () async {
-        incomingClips
-          ..add(
-            clip(
-              'local',
-              deviceName: ClipboardRepository.getCurrentDeviceName(),
-            ),
-          )
-          ..add(clip('other target', targetDeviceTypes: ['not-this-platform']));
+        history.add([]);
+        await flushStreams();
+        final local = clip(
+          'local',
+          deviceName: ClipboardRepository.getCurrentDeviceName(),
+        );
+        final elsewhere = clip(
+          'other target',
+          targetDeviceTypes: ['not-this-platform'],
+        );
+        stored(local);
+        stored(elsewhere);
+        history.add([local]);
+        await flushStreams();
+        history.add([elsewhere, local]);
         await flushStreams();
 
         verifyZeroInteractions(clipboardService);

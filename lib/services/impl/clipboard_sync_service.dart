@@ -731,9 +731,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// hostname will not receive from each other. Fixing that needs a device id
   /// on the clipboard row.
   static bool _isForThisDevice(String? senderName, List<String>? targets) =>
-      senderName != ClipboardRepository.getCurrentDeviceName() &&
-      (targets == null ||
-          targets.contains(ClipboardRepository.getCurrentDeviceType()));
+      ClipboardRepository.isForThisDevice(senderName, targets);
 
   /// Copy a clipboard item to the system clipboard, supporting multiple content types
   ///

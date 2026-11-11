@@ -201,8 +201,26 @@ class MobileMainViewModel extends ChangeNotifier {
   bool get showingSavedHistory => _showingSavedHistory;
 
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
-  StreamSubscription<ClipboardItem>? _incomingClipSubscription;
   bool _isForeground = true;
+
+  /// Bumped on every pause and account change. A copy started under an
+  /// older value - an image still downloading - must not land: the user has
+  /// left, or is someone else now.
+  int _foregroundGeneration = 0;
+
+  /// Clips already seen in a live list since launch.
+  ///
+  /// Auto-copy writes the newest clip only when it is not in here, so what
+  /// it copies is decided by what this session has already shown, not by
+  /// timestamps - a phone clock running ahead of or behind the server
+  /// changes nothing. Bounded: only the head of a list is ever looked up.
+  final LinkedHashSet<String> _seenClipIds = LinkedHashSet<String>();
+  static const int _maxSeenClipIds = 200;
+
+  /// False from launch and from every resume until the first live list
+  /// arrives. That list is the baseline and copies nothing: it holds
+  /// whatever was sent while the app was away, or before it opened.
+  bool _clipBaselineReady = false;
   Timer? _realtimeReconnectTimer;
   int _realtimeRetryCount = 0;
 
@@ -482,6 +500,9 @@ class MobileMainViewModel extends ChangeNotifier {
     try {
       final items = await _clipboardRepo.getHistory();
       if (!_isDisposed && revision == _accountRevision) {
+        // A fetch never copies, but what it shows is seen: the stream's next
+        // list must not treat these rows as arriving.
+        _markClipsSeen(items);
         _historyIsLive = true;
         _showingSavedHistory = false;
         _historyItems = items;
@@ -545,7 +566,6 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Subscribe to realtime history updates
   void subscribeToRealtimeUpdates() {
-    _subscribeToIncomingClips();
     final revision = _accountRevision;
     final Stream<List<ClipboardItem>> stream;
     try {
@@ -567,6 +587,7 @@ class MobileMainViewModel extends ChangeNotifier {
         _realtimeRetryCount = 0;
         _historyError = null;
 
+        final arrived = _newlyArrivedClip(items);
         _historyIsLive = true;
         _showingSavedHistory = false;
 
@@ -575,6 +596,8 @@ class MobileMainViewModel extends ChangeNotifier {
         _historyLoading = false;
         _cleanupCache();
         notifyListeners();
+
+        if (arrived != null) _onIncomingClip(arrived);
       },
       onError: (Object error) {
         debugPrint('[MobileMainVM] Realtime subscription error: $error');
@@ -598,57 +621,45 @@ class MobileMainViewModel extends ChangeNotifier {
     );
   }
 
-  /// Subscribe only in the foreground. History snapshots can contain clips
-  /// sent while the app was away, or expose older clips after a deletion.
-  void _subscribeToIncomingClips() {
-    if (_isDisposed || !_isForeground || _incomingClipSubscription != null) {
-      return;
-    }
-
-    try {
-      _incomingClipSubscription = _clipboardRepo.watchClipboardInserts().listen(
-        _onIncomingClip,
-        onError: (Object error) {
-          debugPrint('[MobileMainVM] Incoming clipboard stream error: $error');
-          _stopWatchingIncomingClips();
-          _scheduleRealtimeReconnect();
-        },
-        onDone: () {
-          _incomingClipSubscription = null;
-          _scheduleRealtimeReconnect();
-        },
-      );
-    } on Exception catch (e) {
-      debugPrint('[MobileMainVM] Could not watch incoming clipboard items: $e');
-      _scheduleRealtimeReconnect();
-    }
+  /// The clip at the head of [items] if it arrived while the app was open;
+  /// records everything in [items] as seen either way.
+  ///
+  /// Not from the first live list after launch or resume: that is the
+  /// baseline, and holds clips sent while the app was away. Not a clip
+  /// already seen: deleting the newest row brings an older one to the head.
+  /// Not while backgrounded, when a reconnect can deliver a list nobody is
+  /// looking at.
+  ClipboardItem? _newlyArrivedClip(List<ClipboardItem> items) {
+    final head = items.isEmpty ? null : items.first;
+    final isNew =
+        head != null &&
+        _isForeground &&
+        _clipBaselineReady &&
+        !_seenClipIds.contains(head.id);
+    _markClipsSeen(items);
+    return isNew ? head : null;
   }
 
-  void _stopWatchingIncomingClips() {
-    unawaited(_incomingClipSubscription?.cancel());
-    _incomingClipSubscription = null;
+  void _markClipsSeen(List<ClipboardItem> items) {
+    for (final item in items) {
+      _seenClipIds
+        ..remove(item.id)
+        ..add(item.id);
+    }
+    while (_seenClipIds.length > _maxSeenClipIds) {
+      _seenClipIds.remove(_seenClipIds.first);
+    }
+    if (_isForeground) _clipBaselineReady = true;
   }
 
   void _onIncomingClip(ClipboardItem item) {
-    final currentDeviceName = ClipboardRepository.getCurrentDeviceName();
-    final isFromDifferentDevice =
-        item.deviceName == null ||
-        currentDeviceName == null ||
-        item.deviceName != currentDeviceName;
-
-    final targets = item.targetDeviceTypes;
-    final isTargetedToMe =
-        targets == null ||
-        targets.isEmpty ||
-        targets.contains(ClipboardRepository.getCurrentDeviceType());
-
-    if (isFromDifferentDevice && isTargetedToMe) {
+    if (ClipboardRepository.isForThisDevice(
+      item.deviceName,
+      item.targetDeviceTypes,
+    )) {
       unawaited(_autoCopyToClipboard(item));
     } else {
-      debugPrint(
-        '[MobileMainVM] Skipped auto-copy '
-        '(fromOtherDevice=$isFromDifferentDevice, targeted=$isTargetedToMe)',
-      );
+      debugPrint('[MobileMainVM] Skipped auto-copy: not for this device');
     }
   }
 
@@ -1668,7 +1679,8 @@ class MobileMainViewModel extends ChangeNotifier {
       '[MobileMainVM] App backgrounded - Pausing Realtime subscription',
     );
     _isForeground = false;
-    _stopWatchingIncomingClips();
+    _foregroundGeneration++;
+    _clipBaselineReady = false;
     _historySubscription?.pause();
 
     // Clear sensitive decrypted data from memory when backgrounded
@@ -1687,8 +1699,10 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Called when app returns to foreground
   void onAppResumed() {
     debugPrint('[MobileMainVM] App resumed - Resuming Realtime subscription');
+    // The baseline stays unset until a live list arrives: the lists the
+    // paused subscription held back, and the fetch below, hold what was
+    // sent while the app was away.
     _isForeground = true;
-    _subscribeToIncomingClips();
     _historySubscription?.resume();
 
     // Re-fetch, don't just resume. Push notifications deliberately carry no
@@ -1793,7 +1807,9 @@ class MobileMainViewModel extends ChangeNotifier {
   /// replaced them - and stayed in memory regardless.
   void clearUserState() {
     _accountRevision++;
-    _stopWatchingIncomingClips();
+    _foregroundGeneration++;
+    _seenClipIds.clear();
+    _clipBaselineReady = false;
     _decryptedContentCache.clear();
     _detectionCache.clear();
     _historyItems = [];
@@ -1895,12 +1911,20 @@ class MobileMainViewModel extends ChangeNotifier {
     );
   }
 
-  Future<void> _autoCopyToClipboard(ClipboardItem item) async {
-    final subscription = _incomingClipSubscription;
+  Future<void> _autoCopyToClipboard(ClipboardItem arrived) async {
+    final generation = _foregroundGeneration;
+    bool stillWanted() =>
+        !_isDisposed && _isForeground && generation == _foregroundGeneration;
     try {
+      // Fetched again rather than copied from the realtime list: an oversized
+      // row can arrive there with columns missing, and the desktop reads by
+      // id for the same reason. Null means it was deleted meanwhile.
+      final item = await _clipboardRepo.getById(arrived.id);
+      if (item == null || !stillWanted()) return;
+
       if (item.isImage) {
         final bytes = await _clipboardRepo.downloadFile(item);
-        if (subscription != _incomingClipSubscription) return;
+        if (!stillWanted()) return;
         if (bytes == null) {
           throw _clipboardRepo.lastDownloadWasOffline(item)
               ? NetworkException(offlineFileMessage)
@@ -1937,7 +1961,6 @@ class MobileMainViewModel extends ChangeNotifier {
     if (_isDisposed) return;
     _isDisposed = true;
 
-    _stopWatchingIncomingClips();
     _historySubscription?.cancel();
     _historySubscription = null;
     _realtimeReconnectTimer?.cancel();
