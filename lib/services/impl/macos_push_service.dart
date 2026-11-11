@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import '../desktop_push_service.dart';
 import '../device_service.dart';
@@ -47,6 +48,11 @@ Future<void> _onBackgroundMessage(RemoteMessage message) async {
 class MacPushService implements IDesktopPushService {
   MacPushService({required this._deviceService});
 
+  /// MainFlutterWindow.swift; registers the app with APNs.
+  static const MethodChannel _nativeChannel = MethodChannel(
+    'com.ghostcopy.app/push',
+  );
+
   final IDeviceService _deviceService;
   final StreamController<void> _pushes = StreamController<void>.broadcast();
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -74,12 +80,17 @@ class MacPushService implements IDesktopPushService {
         );
       }
       FirebaseMessaging.onBackgroundMessage(_onBackgroundMessage);
+      // Now that Firebase exists to receive the APNs token. The plugin's own
+      // launch-time registration ran before it did, and skipped.
+      await _nativeChannel.invokeMethod<void>('registerForRemoteNotifications');
 
       // Waits for the APNs token the same way iOS does: an FCM token exists
-      // only once APNs has handed one over.
+      // only once APNs has handed one over. No permission prompt: these
+      // pushes are silent, and a user who turned GhostCopy's notifications
+      // off should still get them.
       final fcm = _fcm = FcmService(isIOS: true);
       await fcm.initialize();
-      final token = await fcm.getToken();
+      final token = await fcm.getToken(requirePermission: false);
       if (token == null) return false;
       _token = token;
 

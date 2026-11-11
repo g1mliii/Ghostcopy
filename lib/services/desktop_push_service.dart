@@ -51,6 +51,13 @@ class DesktopPushCoordinator {
   StreamSubscription<void>? _subscription;
   void Function()? _previousOnPollFoundClip;
   DateTime? _lastPushAt;
+  Timer? _missedPushTimer;
+
+  /// How long a clip the poll found may still be followed by its push
+  /// before push counts as missing. Apple and Microsoft can hold a push
+  /// for seconds, and the health poll can land in between.
+  @visibleForTesting
+  static const Duration lateGrace = Duration(seconds: 30);
 
   /// How recent a push must be for a clip a poll finds to count as
   /// announced. The push-triggered poll lands within seconds; this allows
@@ -71,6 +78,8 @@ class DesktopPushCoordinator {
   }
 
   void _onPush() {
+    _missedPushTimer?.cancel();
+    _missedPushTimer = null;
     _lastPushAt = clock.now();
     _lifecycle.desktopPushActive = true;
     _sync.checkForNewClips();
@@ -82,13 +91,18 @@ class DesktopPushCoordinator {
     if (last != null && clock.now().difference(last) <= announcedWindow) {
       return;
     }
-    debugPrint(
-      '[DesktopPush] A clip arrived without a push - reopening realtime',
-    );
-    _lifecycle.desktopPushActive = false;
+    // Give a late push the chance to arrive before calling it missing.
+    _missedPushTimer ??= Timer(lateGrace, () {
+      _missedPushTimer = null;
+      debugPrint(
+        '[DesktopPush] A clip arrived without a push - reopening realtime',
+      );
+      _lifecycle.desktopPushActive = false;
+    });
   }
 
   void dispose() {
+    _missedPushTimer?.cancel();
     unawaited(_subscription?.cancel());
     _subscription = null;
     _sync.onPollFoundClip = _previousOnPollFoundClip;

@@ -52,6 +52,15 @@ by CI; set them by hand as below.
    register.
 3. `build-release.sh` reads `ios/Runner/GoogleService-Info.plist` and passes
    its values as `--dart-define`s. Without that file the build has no push.
+4. Only release builds carry the push entitlement. Debug builds
+   (`flutter run -d macos`) deliberately do not, so they need no push-capable
+   development profile; they stay on realtime. Test push with a release build.
+
+Silent pushes need no notification permission, so a Mac whose user turned
+GhostCopy's notifications off still gets them. The app registers with APNs
+itself once Firebase is up (`com.ghostcopy.app/push` in
+`MainFlutterWindow.swift`): Firebase is configured from Dart after launch, so
+the plugin's own launch-time registration would find no Firebase app and skip.
 
 ## Windows setup
 
@@ -77,7 +86,9 @@ that changes.
 update app_config set enabled = true where key = 'desktop_push_enabled';
 ```
 
-Takes effect on each desktop's next launch.
+Takes effect on each desktop's next launch. Turning it off stops pushes to
+desktops at once - the trigger and the edge function both check the flag -
+and each desktop reopens realtime on its next launch.
 
 ## Checking it works
 

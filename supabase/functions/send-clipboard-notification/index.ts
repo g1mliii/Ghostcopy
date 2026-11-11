@@ -4,7 +4,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
-import { isWnsChannelUri, sendWnsRaw, wnsConfigured } from './wns.ts';
+import { sendWnsRaw, wnsConfigured } from './wns.ts';
+import { fcmMessageFor, fcmTargets, pushTargets, wnsTargets } from './messages.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -286,104 +287,27 @@ Deno.serve(async (req)=>{
     // nothing to tell an APNs credential problem from a dead token.
     const failures = [];
     const warnings = [];
-    // A desktop's push is a wake-up, not a notification: the app is running
-    // in the tray, fetches the clip itself and shows its own toast. So no
-    // alert, no sound, nothing in Notification Center - just the row id.
-    const wakeData = {
-      clipboard_id: clipboard_id.toString()
+    // Desktop push can be switched off after desktops have registered; their
+    // rows keep their tokens, so the flag is honoured here, at sending.
+    const { data: desktopPushFlag } = await supabaseAdmin.from('app_config').select('enabled').eq('key', 'desktop_push_enabled').maybeSingle();
+    const targets = pushTargets(devices, desktopPushFlag?.enabled === true);
+    const clip = {
+      clipboardId: clipboard_id.toString(),
+      senderType: device_type,
+      contentType,
+      title: notificationTitle,
+      body: notificationBody,
+      isMedia: isImage || isFile
     };
-    // macOS: a silent APNs push through FCM. 'background' push type with
-    // priority 5 is what Apple requires for content-available.
-    const macWakeMessage = (token: string)=>({
-        token,
-        data: wakeData,
-        apns: {
-          headers: {
-            'apns-push-type': 'background',
-            'apns-priority': '5'
-          },
-          payload: {
-            aps: {
-              'content-available': 1
-            }
-          }
-        }
-      });
     // WNS sends start now and are collected after FCM: the two do not depend
     // on each other, and awaiting one before starting the other added a full
     // external round trip to every clip for an account with both.
-    const windowsDevices = devices.filter((device)=>device.device_type === 'windows' && isWnsChannelUri(device.wns_channel_uri));
-    const wnsSends = windowsDevices.length > 0 && wnsConfigured() ? Promise.all(windowsDevices.map((device)=>sendWnsRaw(device.wns_channel_uri, clipboard_id.toString()))) : null;
+    const windowsDevices = wnsTargets(targets);
+    const wnsSends = windowsDevices.length > 0 && wnsConfigured() ? Promise.all(windowsDevices.map((device)=>sendWnsRaw(device.wns_channel_uri as string, clip.clipboardId))) : null;
     if (admin.apps.length > 0) {
-      // Filter out devices without tokens
-      const validDevices = devices.filter((device)=>typeof device.fcm_token === 'string' && device.fcm_token.length > 0);
+      const validDevices = fcmTargets(targets);
       if (validDevices.length > 0) {
-        // Construct message payloads
-        const messages = validDevices.map((device)=>device.device_type === 'macos' ? macWakeMessage(device.fcm_token) : ({
-            token: device.fcm_token,
-            notification: {
-              title: notificationTitle,
-              body: notificationBody
-            },
-            data: {
-              // Data values MUST be strings in FCM
-              clipboard_id: clipboard_id.toString(),
-              device_type: device_type,
-              content_type: contentType
-            },
-            // Tapping routes straight to CopyActivity - a translucent, no-history
-            // activity that writes the clipboard and finishes - instead of cold
-            // starting the full Flutter app (~2.5s, and visibly "opens GhostCopy").
-            //
-            // Safe despite CopyActivity being exported="false": the click_action
-            // PendingIntent is constructed by the FCM SDK inside this app's own
-            // process, and Android permits same-UID callers to start non-exported
-            // components. No other app can reach COPY_ACTION.
-            //
-            // The push still carries no clipboard value - CopyActivity reads the
-            // plaintext the background isolate cached on arrival, and falls back to
-            // opening the app when that cache misses.
-            android: {
-              priority: 'high',
-              notification: {
-                clickAction: 'com.ghostcopy.ghostcopy.COPY_ACTION',
-                channelId: 'ghostcopy_notifications'
-              }
-            },
-            // APNs configuration for iOS.
-            //
-            // No category, because iOS notifications carry no long-press
-            // actions: the Copy button needed the clip already staged on the
-            // device by a background isolate, and iOS wake-ups are throttled on
-            // battery and usage and refused outright for a swiped-away app, so
-            // it worked only sometimes. Tapping opens the app and copies, for
-            // text and files alike. See AppDelegate.swift.
-            //
-            // No content-available either, for the same reason - waking the app
-            // to prefetch a clip nothing will read is just battery.
-            //
-            // The alert is overridden here because the shared `notification`
-            // above says "Tap to copy", which is true on Android, where the tap
-            // routes to CopyActivity and the app never appears. On iOS the tap
-            // opens GhostCopy, so promising a bare copy would misdescribe what
-            // happens next.
-            apns: {
-              headers: {
-                'apns-priority': '10'
-              },
-              payload: {
-                aps: {
-                  'mutable-content': 1,
-                  alert: {
-                    title: notificationTitle,
-                    body: isImage || isFile
-                      ? 'Tap to open in GhostCopy'
-                      : 'Tap to open and copy'
-                  }
-                }
-              }
-            }
-          }));
+        const messages = validDevices.map((device)=>fcmMessageFor(device, clip));
         try {
           const batchResponse = await admin.messaging().sendEach(messages);
           successCount = batchResponse.successCount;

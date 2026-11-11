@@ -500,18 +500,18 @@ class DeviceService implements IDeviceService {
       return false;
     }
     try {
-      await _supabase
-          .from('devices')
-          .update({
-            'wns_channel_uri': channelUri,
-            'last_active': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('id', _currentDeviceId!);
+      // Claimed rather than written: it also takes the URI off a row of an
+      // account this install has left, which RLS would not let us touch.
+      final claimed = await _supabase.rpc<bool>(
+        'claim_wns_channel',
+        params: {'p_device_id': _currentDeviceId, 'p_uri': channelUri},
+      );
       // Length only: the URI is a credential for pushing to this install.
       debugPrint(
-        '[DeviceService] ✅ WNS channel stored (${channelUri.length} chars)',
+        '[DeviceService] WNS channel ${claimed ? "stored" : "not stored"} '
+        '(${channelUri.length} chars)',
       );
-      return true;
+      return claimed;
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to store WNS channel: $e');
       return false;

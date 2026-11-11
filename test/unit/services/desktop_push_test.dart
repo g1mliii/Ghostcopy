@@ -119,12 +119,34 @@ void main() {
             DesktopPushCoordinator.announcedWindow + const Duration(minutes: 1),
           );
         sync.onPollFoundClip!();
+        async.elapse(DesktopPushCoordinator.lateGrace);
 
         expect(lifecycle.desktopPushActive, isFalse);
 
         // And the next push brings it back.
         push.controller.add(null);
         async.flushMicrotasks();
+        expect(lifecycle.desktopPushActive, isTrue);
+      });
+    });
+
+    test('a push that is only late keeps push trusted', () {
+      fakeAsync((async) {
+        unawaited(coordinator.start());
+        async.flushMicrotasks();
+        push.controller.add(null);
+        async
+          ..flushMicrotasks()
+          ..elapse(const Duration(minutes: 10));
+
+        // The health poll finds the clip a few seconds before its push.
+        sync.onPollFoundClip!();
+        async.elapse(const Duration(seconds: 3));
+        push.controller.add(null);
+        async
+          ..flushMicrotasks()
+          ..elapse(DesktopPushCoordinator.lateGrace);
+
         expect(lifecycle.desktopPushActive, isTrue);
       });
     });

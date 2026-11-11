@@ -39,6 +39,43 @@ ALTER TABLE public.devices
 COMMENT ON COLUMN public.devices.wns_channel_uri IS
   'WNS channel URI for a packaged Windows desktop. Expires after 30 days; the app requests a fresh one on every launch. NULL when the desktop uses realtime only.';
 
+-- A channel URI addresses one install. When that install signs into another
+-- account, the old account's row would keep it and go on waking this desktop
+-- for someone else's clips; RLS stops the app clearing another account's row,
+-- so the claim happens here, the way claim_fcm_token does it for FCM.
+CREATE OR REPLACE FUNCTION public.claim_wns_channel(p_device_id uuid, p_uri text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'Not signed in';
+  END IF;
+  IF p_uri IS NULL
+     OR length(p_uri) > 2048
+     OR p_uri !~ '^https://[a-z0-9.-]+\.notify\.windows\.com/' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Not a WNS channel URI';
+  END IF;
+
+  PERFORM 1 FROM public.devices
+  WHERE id = p_device_id AND user_id = auth.uid()
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+
+  UPDATE public.devices SET wns_channel_uri = NULL
+  WHERE wns_channel_uri = p_uri AND id <> p_device_id;
+
+  UPDATE public.devices SET wns_channel_uri = p_uri, last_active = now()
+  WHERE id = p_device_id;
+
+  RETURN true;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.claim_wns_channel(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.claim_wns_channel(uuid, text) TO authenticated;
+
 -- 2. Rollout flag -------------------------------------------------------------
 
 INSERT INTO public.app_config (key, enabled)
@@ -54,9 +91,17 @@ SET search_path TO 'public', 'vault'
 AS $$
 DECLARE
   has_push_target boolean;
+  desktop_push boolean;
   supabase_url text;
   service_role_key text;
 BEGIN
+  -- Desktops count only while the flag is on: turning it off must stop
+  -- pushes to desktops that registered while it was on.
+  SELECT COALESCE(
+    (SELECT enabled FROM public.app_config WHERE key = 'desktop_push_enabled'),
+    false
+  ) INTO desktop_push;
+
   -- Any device the clip is for, other than the sending type, that push can
   -- reach. The edge function applies the same rules when it picks devices.
   SELECT EXISTS (
@@ -70,6 +115,7 @@ BEGIN
         OR d.device_type = ANY (NEW.target_device_type)
       )
       AND (d.fcm_token IS NOT NULL OR d.wns_channel_uri IS NOT NULL)
+      AND (desktop_push OR d.device_type IN ('ios', 'android'))
   ) INTO has_push_target;
 
   IF NOT has_push_target THEN
