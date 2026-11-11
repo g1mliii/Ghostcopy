@@ -41,6 +41,16 @@ class ShareViewController: RSIShareViewController {
     /// as soon as it opens; this only bounds what an abandoned share leaves.
     private static let staleShareAge: TimeInterval = 24 * 60 * 60
 
+    /// Most attachments one share sends. Larger shares are rejected before
+    /// loading anything so no selected attachment is silently dropped.
+    /// Attachments are loaded at once and copied into the App Group, so a
+    /// 200-photo selection would risk the
+    /// extension's memory and time limits and fill the container before
+    /// anything is sent. The activation rule cannot carry this cap: sharingd
+    /// rejects range expressions there and drops the extension (Info.plist).
+    private static let maxAttachments = 10
+    private var startedLoading = false
+
     /// Set once the share has been handed over or given up, so the timeout and
     /// the last attachment cannot both finish it.
     private var finished = false
@@ -48,12 +58,22 @@ class ShareViewController: RSIShareViewController {
     override func viewDidAppear(_ animated: Bool) {
         // Not super: RSIShareViewController.viewDidAppear starts the package's
         // loader, which is what this replaces.
+        guard !startedLoading else { return }
+        startedLoading = true
         loadAttachments()
     }
 
     private func loadAttachments() {
         let items = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
-        let providers = items.flatMap { $0.attachments ?? [] }
+        let attachments = items.flatMap { $0.attachments ?? [] }
+        let providers = attachments.filter(Self.isSupported)
+        guard providers.count <= Self.maxAttachments else {
+            showAttachmentLimit()
+            return
+        }
+        if attachments.count > providers.count {
+            NSLog("[ShareExtension] Sending \(providers.count) of \(attachments.count) attachments")
+        }
         let fallbackText = items.first?.attributedContentText?.string
         let directory = Self.makeShareDirectory()
 
@@ -90,6 +110,19 @@ class ShareViewController: RSIShareViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.loadTimeout) { [weak self] in
             self?.finish(with: inOrder())
         }
+    }
+
+    private func showAttachmentLimit() {
+        finished = true
+        let alert = UIAlertController(
+            title: "Too many attachments",
+            message: "GhostCopy can share up to \(Self.maxAttachments) attachments at once. Nothing was sent. Select fewer items and try again.",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.extensionContext?.cancelRequest(withError: NSError(
+                domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        })
+        present(alert, animated: true)
     }
 
     // MARK: - Loading
@@ -167,6 +200,16 @@ class ShareViewController: RSIShareViewController {
         return candidates
             .first { provider.hasItemConformingToTypeIdentifier($0.1.identifier) }
             .map { ($0.0, $0.1.identifier) }
+    }
+
+    /// Whether an attachment is worth loading: anything that conforms to
+    /// public.data, which links, text, images and video all do - the same
+    /// test as the activation rule in Info.plist. A host's private type that
+    /// this device has no declaration for conforms to nothing, so it is
+    /// skipped instead of being sent as a stray file or holding the sheet
+    /// open until the timeout.
+    private static func isSupported(_ provider: NSItemProvider) -> Bool {
+        provider.hasItemConformingToTypeIdentifier(UTType.data.identifier)
     }
 
     /// Turn whatever `loadItem` handed back into something to send.

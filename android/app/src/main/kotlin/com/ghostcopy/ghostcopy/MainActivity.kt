@@ -14,6 +14,9 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.IntentCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -30,6 +33,10 @@ class MainActivity : FlutterActivity() {
         // channelId the edge function sets on the push, and the channel
         // flutter_local_notifications uses for in-app notifications.
         private const val NOTIFICATION_CHANNEL_ID = "ghostcopy_notifications"
+
+        // res/xml/share_targets.xml declares this category for MainActivity.
+        private const val SHARE_TARGET_CATEGORY = "com.ghostcopy.ghostcopy.category.SHARE_TARGET"
+        private const val SHARE_SHORTCUT_ID = "send_to_devices"
 
         // Mirrors _keyScreenshotProtection in settings_service.dart.
         private const val PREF_SCREENSHOT_PROTECTION = "screenshot_protection"
@@ -88,6 +95,47 @@ class MainActivity : FlutterActivity() {
         normalizeSharedAttachments(intent)
         super.onCreate(savedInstanceState)
         applyAppearance()
+        // Not again on a rotation or theme change: the shortcut never changes,
+        // and the same share intent would be reported twice.
+        if (savedInstanceState == null) {
+            publishShareShortcut()
+            reportShareShortcutUsed(intent)
+        }
+    }
+
+    /**
+     * The share sheet's top row is Direct Share: sharing shortcuts, not apps.
+     * Without one, GhostCopy only appears in the app list further down. One
+     * long-lived "Send to devices" shortcut puts it in that row; choosing it
+     * sends an ordinary ACTION_SEND here, so nothing downstream changes. It
+     * also appears in the launcher's long-press menu: excluding that surface
+     * prevents publishing the sharing shortcut, including on Android 13+.
+     */
+    private fun publishShareShortcut() {
+        try {
+            val shortcut = ShortcutInfoCompat.Builder(this, SHARE_SHORTCUT_ID)
+                .setShortLabel(getString(R.string.share_shortcut_short))
+                .setLongLabel(getString(R.string.share_shortcut_long))
+                .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+                .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_VIEW))
+                .setLongLived(true)
+                .setCategories(setOf(SHARE_TARGET_CATEGORY))
+                .build()
+            ShortcutManagerCompat.pushDynamicShortcut(this, shortcut)
+        } catch (e: Exception) {
+            // Launcher or OEM refusing shortcuts must never stop the app.
+            Log.w(TAG, "Could not publish share shortcut", e)
+        }
+    }
+
+    /** Ranks the shortcut higher each time a share actually came through it. */
+    private fun reportShareShortcutUsed(share: Intent) {
+        if (share.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID) != SHARE_SHORTCUT_ID) return
+        try {
+            ShortcutManagerCompat.reportShortcutUsed(this, SHARE_SHORTCUT_ID)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not report share shortcut use", e)
+        }
     }
 
     /**
@@ -247,6 +295,7 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         normalizeSharedAttachments(intent)
         super.onNewIntent(intent)
+        reportShareShortcutUsed(intent)
         setIntent(intent) // Update the intent so Flutter can access it
 
         // A notification tapped while the app is already running arrives here.
