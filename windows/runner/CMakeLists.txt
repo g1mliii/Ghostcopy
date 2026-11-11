@@ -83,3 +83,11 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Explicit native regression target; kept out of app builds and bundles.
+add_executable(clipboard_flush_guard_test EXCLUDE_FROM_ALL
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../test/windows/clipboard_flush_guard_test.cpp")
+apply_standard_settings(clipboard_flush_guard_test)
+target_include_directories(clipboard_flush_guard_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(clipboard_flush_guard_test PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")

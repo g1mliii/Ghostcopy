@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "clipboard_flush_guard.h"
 #include "gpu_watchdog.h"
 #include "power_monitor.h"
 #include "push_channel.h"
@@ -52,6 +53,7 @@ class FlutterWindow : public Win32Window {
   /// True while a deferred flush is already queued, so a burst of clipboard
   /// updates collapses into one rather than filling the message queue.
   bool flush_posted_ = false;
+  ClipboardFlushGuard clipboard_flush_guard_;
 
   /// Retries left for a flush that failed because another process had the
   /// clipboard open. Reset whenever a fresh flush is posted.
