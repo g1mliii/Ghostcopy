@@ -415,9 +415,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       // opened a panel of its own and has already had its answer.
       if (panel == SpotlightPanel.history) _textFieldFocusNode.requestFocus();
       if (panel != SpotlightPanel.auth) {
-        _viewModel.offerAccountIfDue();
         unawaited(
-          _viewModel.offerEncryptionIfDue(
+          _viewModel.offerCardsIfDue(
             composerVisible: () =>
                 mounted && _activePanel == SpotlightPanel.none,
           ),
@@ -933,7 +932,8 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                           if (_viewModel.showAccountOffer) ...[
                                             _buildAccountOffer(),
                                             const SizedBox(height: 10),
-                                          ] else if (_viewModel
+                                          ],
+                                          if (_viewModel
                                               .showEncryptionOffer) ...[
                                             _buildEncryptionOffer(),
                                             const SizedBox(height: 10),

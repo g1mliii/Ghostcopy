@@ -63,7 +63,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _gameModeSubscription = gameModeChanges?.listen((_) {
       if (isPinned) unawaited(_applyPin());
     });
-    _encryptionService?.keyRevision.addListener(_onEncryptionKeyChanged);
+    _encryptionService?.keyRevision.addListener(_hideEncryptionOffer);
   }
 
   final IAuthService _authService;
@@ -530,10 +530,27 @@ class SpotlightViewModel extends ChangeNotifier {
       debugPrint('[SpotlightVM] Confirmation check failed: $e');
     }
     if (composerVisible?.call() ?? true) {
-      offerAccountIfDue();
-      await offerEncryptionIfDue(composerVisible: composerVisible);
+      await offerCardsIfDue(composerVisible: composerVisible);
     }
   }
+
+  /// The one card a run may show, account first: on focus, and when a
+  /// panel closes, since an opening that began behind one never got its
+  /// chance at focus.
+  Future<void> offerCardsIfDue({bool Function()? composerVisible}) async {
+    offerAccountIfDue();
+    await offerEncryptionIfDue(composerVisible: composerVisible);
+  }
+
+  /// What every card waits for: an open Spotlight, a first send behind it,
+  /// no card shown yet this run, and no Game Mode, which exists so nothing
+  /// asks for attention.
+  bool _offerGateOpen(AccountPromptStore store) =>
+      _spotlightOpen &&
+      store.hasSent &&
+      !_accountOfferShownThisRun &&
+      !_encryptionOfferShownThisRun &&
+      !(_isGameModeActive?.call() ?? false);
 
   /// Spotlight went back to the tray. A card the user looked at and left is
   /// this run's one showing, so it does not come back on the next opening.
@@ -689,11 +706,8 @@ class SpotlightViewModel extends ChangeNotifier {
   /// one never got its chance at focus.
   void offerAccountIfDue() {
     final store = _accountPromptStore;
-    if (store == null || _accountOfferShownThisRun || !_spotlightOpen) return;
-    if (!_authService.isAnonymous || !store.hasSent || store.isOfferSnoozed) {
-      return;
-    }
-    if (_isGameModeActive?.call() ?? false) return;
+    if (store == null || !_offerGateOpen(store)) return;
+    if (!_authService.isAnonymous || store.isOfferSnoozed) return;
     _accountOfferShownThisRun = true;
     _accountOfferVisible = true;
     notifyListeners();
@@ -725,14 +739,9 @@ class SpotlightViewModel extends ChangeNotifier {
     final store = _accountPromptStore;
     final encryption = _encryptionService;
     if (store == null || encryption == null) return;
-    if (_encryptionOfferShownThisRun || _accountOfferShownThisRun) return;
-    if (!_spotlightOpen || !store.hasSent || store.isEncryptionOfferSnoozed) {
-      return;
-    }
-    if (_isGameModeActive?.call() ?? false) return;
+    if (!_offerGateOpen(store) || store.isEncryptionOfferSnoozed) return;
     final userId = _authService.currentUserId;
     if (userId == null) return;
-    final accountRevision = _accountRevision;
     final hides = _hideCount;
     try {
       if (await encryption.isEnabled() ||
@@ -743,13 +752,10 @@ class SpotlightViewModel extends ChangeNotifier {
       debugPrint('[SpotlightVM] Could not read encryption state: $e');
       return;
     }
-    if (_isDisposed || hides != _hideCount || !_spotlightOpen) return;
-    if (userId != _authService.currentUserId ||
-        accountRevision != _accountRevision) {
-      return;
-    }
-    if (_encryptionOfferShownThisRun || _accountOfferShownThisRun) return;
-    if (_isGameModeActive?.call() ?? false) return;
+    // Asked again: the window can hide, the account change, another card
+    // show or Game Mode start during the reads above.
+    if (_isDisposed || hides != _hideCount) return;
+    if (userId != _authService.currentUserId || !_offerGateOpen(store)) return;
     if (!(composerVisible?.call() ?? true)) return;
     _encryptionOfferShownThisRun = true;
     _encryptionOfferVisible = true;
@@ -761,14 +767,12 @@ class SpotlightViewModel extends ChangeNotifier {
   void dismissEncryptionOffer() {
     final store = _accountPromptStore;
     if (store != null) unawaited(store.snoozeEncryptionOffer());
-    if (!_encryptionOfferVisible) return;
-    _encryptionOfferVisible = false;
-    notifyListeners();
+    _hideEncryptionOffer();
   }
 
-  /// A key arrived while the card was up - turned on in Settings, or the
-  /// stored passphrase finishing its derivation. Nothing left to offer.
-  void _onEncryptionKeyChanged() {
+  /// Also on a key arriving while the card is up - turned on in Settings,
+  /// or the stored passphrase finishing its derivation.
+  void _hideEncryptionOffer() {
     if (!_encryptionOfferVisible) return;
     _encryptionOfferVisible = false;
     notifyListeners();
@@ -1268,7 +1272,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
     _gameModeSubscription?.cancel();
-    _encryptionService?.keyRevision.removeListener(_onEncryptionKeyChanged);
+    _encryptionService?.keyRevision.removeListener(_hideEncryptionOffer);
     _gameModeSubscription = null;
 
     // Hand the callbacks back as they were before initialize

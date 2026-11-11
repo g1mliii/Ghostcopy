@@ -49,27 +49,24 @@ class AccountPromptStore {
     if (!hasSent) await _prefs.setBool(_keyHasSent, true);
   }
 
-  bool get isOfferSnoozed {
-    final until = _prefs.getInt(_keySnoozedUntil);
-    return until != null && _clock().millisecondsSinceEpoch < until;
-  }
+  bool get isOfferSnoozed => _isSnoozed(_keySnoozedUntil);
 
-  Future<void> snoozeOffer() => _prefs.setInt(
-    _keySnoozedUntil,
-    _clock().add(snooze).millisecondsSinceEpoch,
-  );
+  Future<void> snoozeOffer() => _snooze(_keySnoozedUntil, snooze);
 
   // ========== DESKTOP ENCRYPTION OFFER ==========
 
-  bool get isEncryptionOfferSnoozed {
-    final until = _prefs.getInt(_keyEncryptionSnoozedUntil);
+  bool get isEncryptionOfferSnoozed => _isSnoozed(_keyEncryptionSnoozedUntil);
+
+  Future<void> snoozeEncryptionOffer() =>
+      _snooze(_keyEncryptionSnoozedUntil, encryptionSnooze);
+
+  bool _isSnoozed(String key) {
+    final until = _prefs.getInt(key);
     return until != null && _clock().millisecondsSinceEpoch < until;
   }
 
-  Future<void> snoozeEncryptionOffer() => _prefs.setInt(
-    _keyEncryptionSnoozedUntil,
-    _clock().add(encryptionSnooze).millisecondsSinceEpoch,
-  );
+  Future<void> _snooze(String key, Duration duration) =>
+      _prefs.setInt(key, _clock().add(duration).millisecondsSinceEpoch);
 }
 
 /// Whether a phone launching with [user] goes straight to the main screen.
