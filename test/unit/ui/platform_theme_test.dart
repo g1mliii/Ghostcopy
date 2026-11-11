@@ -38,6 +38,19 @@ void main() {
         mobile ? Colors.white : const Color(0xFF19191F),
       );
       expect(theme.dialogTheme.backgroundColor, theme.cardTheme.color);
+      // Material error text (TextField errorText) sits on the input fill.
+      if (mobile) {
+        final luminances = [
+          theme.colorScheme.error.computeLuminance(),
+          GhostColors.surfaceLight.computeLuminance(),
+        ]..sort();
+        expect(
+          (luminances.last + 0.05) / (luminances.first + 0.05),
+          greaterThanOrEqualTo(4.5),
+        );
+      } else {
+        expect(theme.colorScheme.error, const Color(0xFFEF5350));
+      }
       for (final color in [
         GhostColors.textPrimary,
         GhostColors.textSecondary,
