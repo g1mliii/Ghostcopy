@@ -15,8 +15,18 @@ class _Encryption extends Mock implements IEncryptionService {}
 
 class _Storage extends Mock implements IStorageService {}
 
+class _RealtimeClient extends Mock implements SupabaseClient {}
+
+class _Channel extends Mock implements RealtimeChannel {}
+
+void _ignoreStatus(RealtimeSubscribeStatus status, Object? error) {}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() {
+    registerFallbackValue(_ignoreStatus);
+    registerFallbackValue((PostgresChangePayload _) {});
+  });
   late SupabaseClient client;
   late ClipboardRepository repository;
   late _Encryption encryption;
@@ -102,6 +112,79 @@ void main() {
     repository.dispose();
     await client.dispose();
   });
+
+  test(
+    'clipboard insert watch decrypts live rows and leaves on cancel',
+    () async {
+      final realtimeClient = _RealtimeClient();
+      final channel = _Channel();
+      late void Function(PostgresChangePayload) deliverInsert;
+      when(() => realtimeClient.auth).thenReturn(client.auth);
+      when(() => realtimeClient.channel(any())).thenReturn(channel);
+      when(
+        () => realtimeClient.removeChannel(channel),
+      ).thenAnswer((_) async => 'ok');
+      when(() => channel.subscribe(any())).thenReturn(channel);
+      when(
+        () => channel.onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'clipboard',
+          filter: any(named: 'filter'),
+          callback: any(named: 'callback'),
+        ),
+      ).thenAnswer((invocation) {
+        final filter =
+            invocation.namedArguments[#filter] as PostgresChangeFilter;
+        expect(filter.type, PostgresChangeFilterType.eq);
+        expect(filter.column, 'user_id');
+        expect(filter.value, 'user');
+        deliverInsert =
+            invocation.namedArguments[#callback]
+                as void Function(PostgresChangePayload);
+        return channel;
+      });
+      when(() => encryption.initialize('user')).thenAnswer((_) async {});
+      when(encryption.isEnabled).thenAnswer((_) async => true);
+      when(
+        () => encryption.decrypt('ciphertext'),
+      ).thenAnswer((_) async => 'plaintext');
+
+      final realtimeRepository = ClipboardRepository(
+        client: realtimeClient,
+        encryptionService: encryption,
+        storageService: _Storage(),
+      );
+      addTearDown(realtimeRepository.dispose);
+
+      final received = realtimeRepository.watchClipboardInserts().first;
+      final created = DateTime.utc(2026);
+      deliverInsert(
+        PostgresChangePayload(
+          schema: 'public',
+          table: 'clipboard',
+          commitTimestamp: created,
+          eventType: PostgresChangeEvent.insert,
+          newRecord: {
+            'id': 123,
+            'user_id': 'user',
+            'device_type': 'windows',
+            'content': 'ciphertext',
+            'is_encrypted': true,
+            'created_at': created.toIso8601String(),
+          },
+          oldRecord: {},
+          errors: null,
+        ),
+      );
+
+      final clip = await received;
+      expect(clip.id, '123');
+      expect(clip.content, 'plaintext');
+      expect(requests, isEmpty);
+      verify(() => realtimeClient.removeChannel(channel)).called(1);
+    },
+  );
 
   test(
     'encryption initialization failure prevents plaintext uploads',

@@ -9,6 +9,7 @@ import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/models/clipboard_limits.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/services/auth_service.dart';
+import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/image_transcoder.dart';
 import 'package:ghostcopy/services/security_service.dart';
@@ -23,6 +24,8 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 class _MockAuthService extends Mock implements IAuthService {}
 
 class _MockClipboardRepository extends Mock implements IClipboardRepository {}
+
+class _MockClipboardService extends Mock implements IClipboardService {}
 
 class _MockDeviceService extends Mock implements IDeviceService {}
 
@@ -59,6 +62,8 @@ void main() {
 
   late _MockAuthService authService;
   late _MockClipboardRepository clipboardRepository;
+  late _MockClipboardService clipboardService;
+  late StreamController<ClipboardItem> incomingClips;
   late _MockDeviceService deviceService;
   late _MockSecurityService securityService;
   late _MockSettingsService settingsService;
@@ -68,11 +73,18 @@ void main() {
   setUp(() {
     authService = _MockAuthService();
     clipboardRepository = _MockClipboardRepository();
+    clipboardService = _MockClipboardService();
+    incomingClips = StreamController<ClipboardItem>.broadcast();
     deviceService = _MockDeviceService();
     securityService = _MockSecurityService();
     settingsService = _MockSettingsService();
     transcoder = _FakeImageTranscoder();
 
+    when(
+      () => clipboardRepository.watchClipboardInserts(),
+    ).thenAnswer((_) => incomingClips.stream);
+    when(() => clipboardService.writeText(any())).thenAnswer((_) async {});
+    when(() => clipboardService.writeImage(any())).thenAnswer((_) async {});
     when(
       () => clipboardRepository.getHistory(),
     ).thenAnswer((_) async => <ClipboardItem>[]);
@@ -95,11 +107,13 @@ void main() {
       deviceService: deviceService,
       securityService: securityService,
       imageTranscoder: transcoder,
+      clipboardService: clipboardService,
     );
   });
 
-  tearDown(() {
+  tearDown(() async {
     viewModel.dispose();
+    await incomingClips.close();
   });
 
   for (final filename in ['original.png', 'original.heic']) {
@@ -293,82 +307,158 @@ void main() {
   });
 
   group('auto-copy of an arriving clip', () {
-    final opened = DateTime.utc(2026, 11, 10, 12);
-    ClipboardItem clip(String id, DateTime createdAt) => ClipboardItem(
+    late StreamController<List<ClipboardItem>> history;
+    late StreamController<ClipboardItem> resumedInserts;
+
+    ClipboardItem clip(
+      String id, {
+      DateTime? createdAt,
+      String? deviceName,
+      List<String>? targetDeviceTypes,
+      ContentType contentType = ContentType.text,
+    }) => ClipboardItem(
       id: id,
       userId: 'u1',
       content: 'clip $id',
       deviceType: 'windows',
-      createdAt: createdAt,
+      deviceName: deviceName,
+      targetDeviceTypes: targetDeviceTypes,
+      contentType: contentType,
+      createdAt: createdAt ?? DateTime.utc(2000),
     );
-    final before = opened.subtract(const Duration(minutes: 3));
-    final after = opened.add(const Duration(seconds: 20));
 
-    test('the first list after opening the app copies nothing', () {
-      expect(
-        MobileMainViewModel.arrivedWhileOpen(
-          latest: clip('9', after),
-          previousFirstId: null,
-          foregroundSince: opened,
-        ),
-        isFalse,
-      );
+    Future<void> flushStreams() => Future<void>.delayed(Duration.zero);
+
+    setUp(() {
+      history = StreamController<List<ClipboardItem>>.broadcast();
+      resumedInserts = StreamController<ClipboardItem>.broadcast();
+      when(
+        () => clipboardRepository.watchHistory(),
+      ).thenAnswer((_) => history.stream);
+      viewModel.subscribeToRealtimeUpdates();
     });
 
-    test('a clip sent while the app was away is not copied on resume', () {
-      expect(
-        MobileMainViewModel.arrivedWhileOpen(
-          latest: clip('9', before),
-          previousFirstId: '8',
-          foregroundSince: opened,
-        ),
-        isFalse,
-      );
+    tearDown(() async {
+      viewModel.dispose();
+      await history.close();
+      await resumedInserts.close();
     });
 
-    test('a clip that lands while the app is open is copied', () {
-      expect(
-        MobileMainViewModel.arrivedWhileOpen(
-          latest: clip('9', after),
-          previousFirstId: '8',
-          foregroundSince: opened,
-        ),
-        isTrue,
-      );
+    void resume() {
+      when(
+        () => clipboardRepository.watchClipboardInserts(),
+      ).thenAnswer((_) => resumedInserts.stream);
+      viewModel.onAppResumed();
+    }
+
+    test(
+      'opening displays existing clips without writing the clipboard',
+      () async {
+        history.add([clip('existing', createdAt: DateTime.utc(2100))]);
+        await flushStreams();
+
+        expect(viewModel.historyItems.single.id, 'existing');
+        verifyZeroInteractions(clipboardService);
+      },
+    );
+
+    test('the first live clip is copied into an empty history', () async {
+      history.add([]);
+      await flushStreams();
+
+      // A device clock far ahead of the server must still allow this insert.
+      final first = clip('first');
+      incomingClips.add(first);
+      history.add([first]);
+      await flushStreams();
+
+      verify(() => clipboardService.writeText('clip first')).called(1);
+      expect(viewModel.historyItems.single.id, 'first');
     });
 
-    test('nothing is copied while backgrounded', () {
-      expect(
-        MobileMainViewModel.arrivedWhileOpen(
-          latest: clip('9', after),
-          previousFirstId: '8',
-          foregroundSince: null,
-        ),
-        isFalse,
-      );
+    test('deleting the newest clip does not copy the one below it', () async {
+      final older = clip('older');
+      final newest = clip('newest');
+      incomingClips.add(older);
+      history.add([older]);
+      incomingClips.add(newest);
+      history.add([newest, older]);
+      await flushStreams();
+
+      history.add([older]);
+      await flushStreams();
+
+      expect(viewModel.historyItems.single.id, 'older');
+      verifyInOrder([
+        () => clipboardService.writeText('clip older'),
+        () => clipboardService.writeText('clip newest'),
+      ]);
+      verifyNoMoreInteractions(clipboardService);
     });
 
-    test('deleting the newest clip does not copy the one below it', () {
-      expect(
-        MobileMainViewModel.arrivedWhileOpen(
-          latest: clip('7', before),
-          previousFirstId: '8',
-          foregroundSince: opened,
-        ),
-        isFalse,
-      );
+    test(
+      'resume displays background clips and copies only new inserts',
+      () async {
+        final existing = clip('existing');
+        history.add([existing]);
+        await flushStreams();
+
+        viewModel.onAppPaused();
+        expect(incomingClips.hasListener, isFalse);
+        // Even a server timestamp far ahead of the device cannot turn this
+        // queued history update into a foreground clipboard write.
+        final background = clip('background', createdAt: DateTime.utc(2100));
+        incomingClips.add(background);
+        history.add([background, existing]);
+        when(
+          () => clipboardRepository.getHistory(),
+        ).thenAnswer((_) async => [background, existing]);
+
+        resume();
+        await flushStreams();
+        expect(viewModel.historyItems.first.id, 'background');
+        verifyZeroInteractions(clipboardService);
+
+        resumedInserts.add(clip('foreground'));
+        await flushStreams();
+        verify(() => clipboardService.writeText('clip foreground')).called(1);
+      },
+    );
+
+    test('an image download finishing after resume cannot write', () async {
+      final image = clip('image', contentType: ContentType.imagePng);
+      final download = Completer<Uint8List?>();
+      when(
+        () => clipboardRepository.downloadFile(image),
+      ).thenAnswer((_) => download.future);
+      incomingClips.add(image);
+      await flushStreams();
+      verify(() => clipboardRepository.downloadFile(image)).called(1);
+
+      viewModel.onAppPaused();
+      resume();
+      download.complete(Uint8List.fromList([1, 2, 3]));
+      await flushStreams();
+
+      verifyZeroInteractions(clipboardService);
     });
 
-    test('an unchanged newest clip is not copied again', () {
-      expect(
-        MobileMainViewModel.arrivedWhileOpen(
-          latest: clip('8', after),
-          previousFirstId: '8',
-          foregroundSince: opened,
-        ),
-        isFalse,
-      );
-    });
+    test(
+      'local and untargeted inserts do not overwrite the clipboard',
+      () async {
+        incomingClips
+          ..add(
+            clip(
+              'local',
+              deviceName: ClipboardRepository.getCurrentDeviceName(),
+            ),
+          )
+          ..add(clip('other target', targetDeviceTypes: ['not-this-platform']));
+        await flushStreams();
+
+        verifyZeroInteractions(clipboardService);
+      },
+    );
   });
 
   group('history error lifecycle', () {

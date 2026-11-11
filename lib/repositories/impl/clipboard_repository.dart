@@ -864,6 +864,68 @@ class ClipboardRepository implements IClipboardRepository {
     }
   }
 
+  static int _insertChannelSequence = 0;
+
+  @override
+  Stream<ClipboardItem> watchClipboardInserts() {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) {
+      throw SecurityException(
+        'User must be authenticated to watch incoming clipboard items',
+      );
+    }
+
+    // A fresh topic keeps messages from an old channel that is still leaving
+    // from reaching the listener opened after resume.
+    final topic = 'clipboard_inserts:${++_insertChannelSequence}';
+    final changes = StreamController<PostgresChangePayload>();
+    late final RealtimeChannel channel;
+    changes
+      ..onListen = () {
+        channel = _client.channel(topic);
+        channel
+            .onPostgresChanges(
+              event: PostgresChangeEvent.insert,
+              schema: 'public',
+              table: 'clipboard',
+              filter: PostgresChangeFilter(
+                type: PostgresChangeFilterType.eq,
+                column: 'user_id',
+                value: userId,
+              ),
+              callback: (payload) {
+                if (!changes.isClosed) changes.add(payload);
+              },
+            )
+            .subscribe((status, error) {
+              if (changes.isClosed) return;
+              switch (status) {
+                case RealtimeSubscribeStatus.subscribed:
+                  break;
+                case RealtimeSubscribeStatus.closed:
+                  unawaited(changes.close());
+                case RealtimeSubscribeStatus.timedOut:
+                case RealtimeSubscribeStatus.channelError:
+                  changes.addError(RealtimeSubscribeException(status, error));
+              }
+            });
+      }
+      ..onCancel = () async {
+        if (changes.isClosed) return;
+        unawaited(changes.close());
+        await _client.removeChannel(channel);
+      };
+
+    return changes.stream
+        .asyncMap(
+          (payload) => _decryptItems(
+            _parseClipboardItems([payload.newRecord]),
+            updateUndecryptableCount: false,
+          ),
+        )
+        .expand((items) => items);
+  }
+
   @override
   Future<ClipboardItem?> getById(String id) async {
     _validateId(id);
@@ -1418,7 +1480,10 @@ class ClipboardRepository implements IClipboardRepository {
   }
 
   /// Decrypt clipboard items content (only if encrypted)
-  Future<List<ClipboardItem>> _decryptItems(List<ClipboardItem> items) async {
+  Future<List<ClipboardItem>> _decryptItems(
+    List<ClipboardItem> items, {
+    bool updateUndecryptableCount = true,
+  }) async {
     // canDecrypt gates every item below, because EncryptionService.decrypt()
     // returns its input UNCHANGED when no key is loaded
     // (encryption_service.dart: `if (_keyBytes == null) return ciphertext;`)
@@ -1504,7 +1569,9 @@ class ClipboardRepository implements IClipboardRepository {
       }
     }
 
-    _undecryptableItemCount.value = undecryptable;
+    if (updateUndecryptableCount) {
+      _undecryptableItemCount.value = undecryptable;
+    }
     if (undecryptable > 0) {
       debugPrint(
         '[Repository] ⚠️ $undecryptable encrypted item(s) could not be '

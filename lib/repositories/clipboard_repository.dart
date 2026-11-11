@@ -107,6 +107,11 @@ abstract class IClipboardRepository {
   /// Watch clipboard history with real-time updates
   Stream<List<ClipboardItem>> watchHistory({int limit = 15});
 
+  /// Watch new clips for the signed-in user as they are inserted.
+  ///
+  /// The stream emits decrypted clips and starts without a history snapshot.
+  Stream<ClipboardItem> watchClipboardInserts();
+
   /// Read only the newest row ID, without fetching or decrypting its content.
   Future<String?> getLatestItemId();
 
