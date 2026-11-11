@@ -196,7 +196,55 @@ void main() {
       // A desktop has no push, so idling must not close the one channel a
       // clip arrives on. The poll only checks that channel is alive.
       expect(sync.realtimePaused, isFalse);
-      expect(sync.pollInterval, LifecycleController.idlePollInterval);
+      expect(sync.pollInterval, LifecycleController.trayHealthCheckInterval);
+
+      controller.dispose();
+      async.flushTimers();
+    });
+  });
+
+  test('the tray health check starts on hiding, whatever the flag', () {
+    // A socket throttled to death in the first minutes in the tray must not
+    // wait for the idle switch, and turning hybrid mode off must not remove
+    // the only thing that notices.
+    when(settings.isHybridModeEnabled).thenAnswer((_) async => false);
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller.enterTrayMode();
+      expect(sync.polling, isTrue);
+      expect(sync.pollInterval, LifecycleController.trayHealthCheckInterval);
+      expect(sync.realtimePaused, isFalse);
+
+      controller.exitTrayMode();
+      expect(sync.polling, isFalse);
+
+      controller.dispose();
+      async.flushTimers();
+    });
+  });
+
+  test('unlocking while in the tray brings the health check back', () {
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller
+        ..enterTrayMode()
+        ..onScreenLock();
+      expect(sync.polling, isFalse);
+
+      controller.onScreenUnlock();
+      async.elapse(const Duration(seconds: 1));
+      expect(sync.polling, isTrue);
+      expect(sync.realtimePaused, isFalse);
 
       controller.dispose();
       async.flushTimers();

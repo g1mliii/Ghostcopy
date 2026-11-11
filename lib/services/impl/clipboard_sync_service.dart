@@ -144,6 +144,22 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// poll never runs a clip through auto-receive a second time.
   String? _lastPolledItemId;
 
+  /// The baseline of a poll that gave way because realtime moved the
+  /// baseline while it ran. Rows between this and the new baseline were
+  /// never delivered - a catch-up after a rejoin exists to find exactly
+  /// those - so the poll that follows starts from here.
+  String? _pendingGapFrom;
+
+  /// The older of two row ids; null counts as neither.
+  static String? _olderId(String? a, String? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    final ai = int.tryParse(a);
+    final bi = int.tryParse(b);
+    if (ai == null || bi == null) return a;
+    return ai <= bi ? a : b;
+  }
+
   /// Whether [_lastPolledItemId] has been established for this account,
   /// including as "no clips at all". Null alone cannot say: an empty account
   /// looked exactly like a baseline never taken, so a first clip that landed
@@ -1641,6 +1657,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _dropRealtimeChannel();
     _autoReceiveDebounceTimer?.cancel();
     _lastPolledItemId = null;
+    _pendingGapFrom = null;
     _baselineReady = false;
     _claimedIds.clear();
     _failedFetchIds.clear();
@@ -1695,15 +1712,31 @@ class ClipboardSyncService implements IClipboardSyncService {
       final latestId = await _clipboardRepository.getLatestItemId();
       if (_isDisposed ||
           userId != _supabaseClient.auth.currentUser?.id ||
-          latestId == null ||
-          latestId == _lastPolledItemId) {
+          latestId == null) {
+        return;
+      }
+      if (latestId == _lastPolledItemId) {
+        // Nothing new, but a poll that gave way may have left a gap behind
+        // the row realtime delivered.
+        final gapFrom = _pendingGapFrom;
+        _pendingGapFrom = null;
+        if (gapFrom != null) {
+          await _deliverSkippedClips(after: gapFrom, latest: latestId);
+          onClipboardReceived?.call();
+        }
         return;
       }
 
       // The HTTP snapshot can predate a realtime insert that arrived while
       // the request was in flight. Read again against the new baseline so
-      // we neither replay old clips nor tear down a healthy channel.
+      // we neither replay old clips nor tear down a healthy channel - and
+      // remember where this one started, so the rows before the realtime
+      // insert are still delivered.
       if (_lastPolledItemId != previousId || _baselineReady != wasReady) {
+        _pendingGapFrom = _olderId(
+          _pendingGapFrom,
+          previousId ?? (wasReady ? '0' : null),
+        );
         _pollRequested = true;
         return;
       }
@@ -1722,7 +1755,11 @@ class ClipboardSyncService implements IClipboardSyncService {
       _baselineReady = true;
       // An account that had no clips at all: everything before the newest is
       // new too.
-      final after = previousId ?? (wasReady ? '0' : null);
+      final after = _olderId(
+        _pendingGapFrom,
+        previousId ?? (wasReady ? '0' : null),
+      );
+      _pendingGapFrom = null;
       if (after != null) {
         await _deliverSkippedClips(after: after, latest: latestId);
       }

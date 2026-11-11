@@ -84,18 +84,19 @@ class LifecycleController implements ILifecycleController {
   Timer? _inactivityCheckTimer;
   static const Duration _realtimeIdleThreshold = Duration(minutes: 15);
 
-  /// How often an idle desktop checks that realtime is still delivering.
+  /// How often a desktop in the tray checks that realtime is still
+  /// delivering.
   ///
-  /// Idle used to close the realtime channel and make this poll the only
-  /// way a clip arrived, so a clip sent to a PC left alone for a quarter of
-  /// an hour took up to five minutes - a desktop has no push to fall back
-  /// on. The channel now stays open and delivers at once. The poll is only
-  /// the check on it: Windows can throttle a background process until the
-  /// socket dies without a word, and a poll that finds a clip the channel
-  /// should have delivered is what makes the sync service rejoin. Five
-  /// minutes is then the worst case for a dead socket, not the normal wait.
+  /// The realtime channel delivers clips at once and stays open in the tray:
+  /// a desktop has no push to fall back on. This poll is only the check on
+  /// it. Windows throttles a hidden process from the moment it hides, until
+  /// the socket can die without a word, and a poll that finds a clip the
+  /// channel should have delivered is what makes the sync service rejoin.
+  /// It runs whenever the window is hidden, from the first second and
+  /// whatever the hybrid flag says - a check that waited for fifteen idle
+  /// minutes, or the flag, left a dead socket unnoticed for that long.
   @visibleForTesting
-  static const Duration idlePollInterval = Duration(minutes: 5);
+  static const Duration trayHealthCheckInterval = Duration(minutes: 5);
 
   // ========== FEATURE FLAG ==========
 
@@ -166,7 +167,13 @@ class LifecycleController implements ILifecycleController {
         debugPrint('[Lifecycle] ⚠️  Failed to pause resource: $e');
       }
     }
+
+    // Locked or asleep, connections are paused; unlock starts it again.
+    if (_powerState == PowerState.awake) _startTrayHealthCheck();
   }
+
+  void _startTrayHealthCheck() =>
+      _clipboardSyncService.startPolling(interval: trayHealthCheckInterval);
 
   @override
   void exitTrayMode() {
@@ -191,6 +198,8 @@ class LifecycleController implements ILifecycleController {
       debugPrint('[Lifecycle] 🪟 Spotlight opened → Switching to REALTIME');
       switchToRealtime();
     }
+    // The window is up, so the process is not throttled: no check needed.
+    _clipboardSyncService.stopPolling();
   }
 
   @override
@@ -292,13 +301,14 @@ class LifecycleController implements ILifecycleController {
 
     debugPrint(
       '[Lifecycle] 🟡 Idle: realtime stays open, checked every '
-      '${idlePollInterval.inMinutes} min',
+      '${trayHealthCheckInterval.inMinutes} min',
     );
     _connectionMode = ConnectionMode.polling;
     _connectionModeController.add(_connectionMode);
 
-    // Realtime is deliberately not paused: see idlePollInterval.
-    _clipboardSyncService.startPolling(interval: idlePollInterval);
+    // Realtime is deliberately not paused, and the tray health check is
+    // normally running already: see trayHealthCheckInterval.
+    _startTrayHealthCheck();
   }
 
   @override
@@ -381,6 +391,8 @@ class LifecycleController implements ILifecycleController {
 
     // Always resume to realtime (user just woke system/unlocked screen)
     switchToRealtime();
+    // switchToRealtime stops the check; still in the tray, it is needed.
+    if (_isInTrayMode) _startTrayHealthCheck();
 
     // Not awaited, but safe against a lock that lands while it reads
     // settings: the stop that lock makes invalidates this refresh, so it

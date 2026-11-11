@@ -641,6 +641,60 @@ void main() {
       service.stopPolling();
     });
 
+    testWidgets('a poll that gives way to realtime still delivers the clips '
+        'before it', (tester) async {
+      // Baseline 1. Clip 2 lands while the channel is down; the catch-up
+      // poll is in flight when clip 3 arrives over realtime.
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      final slow = Completer<String?>();
+      when(repository.getLatestItemId).thenAnswer((_) => slow.future);
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+
+      onInsert(
+        PostgresChangePayload(
+          schema: 'public',
+          table: 'clipboard',
+          commitTimestamp: DateTime(2026),
+          eventType: PostgresChangeEvent.insert,
+          newRecord: {'id': 3, 'device_name': 'remote-device'},
+          oldRecord: const {},
+          errors: null,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await settle(tester);
+      verifyVaultGot('clip 3');
+
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      when(
+        () => repository.getHistory(limit: 10),
+      ).thenAnswer((_) async => [clip('3'), clip('2'), clip('1')]);
+      slow.complete('2');
+      await settle(tester);
+
+      // Clip 2 reaches the vault once; 3 is not delivered again, and
+      // nothing older than the baseline is.
+      verifyVaultGot('clip 2');
+      verifyNever(
+        () => obsidian.appendToVault(
+          deviceType: any(named: 'deviceType'),
+          direction: any(named: 'direction'),
+          vaultPath: any(named: 'vaultPath'),
+          fileName: any(named: 'fileName'),
+          content: any(named: 'content', that: isNot('clip 2')),
+        ),
+      );
+      verifyNever(() => clipboard.writeText('clip 2'));
+      service.stopPolling();
+    });
+
     testWidgets('a clip that landed while polling arrives when realtime '
         'resumes', (tester) async {
       // Idle in the tray, the lifecycle had dropped realtime for polling. A

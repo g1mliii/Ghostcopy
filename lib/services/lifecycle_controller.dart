@@ -103,8 +103,9 @@ abstract class ILifecycleController {
   /// Switch to realtime mode (WebSocket)
   void switchToRealtime();
 
-  /// Switch to polling mode: realtime stays open, with a poll every 5
-  /// minutes as a check on it
+  /// Mark the desktop idle in the tray. Realtime stays open, and the tray
+  /// health check (see LifecycleController.trayHealthCheckInterval) keeps
+  /// running
   void switchToPolling();
 
   // ========== POWER STATE (System State) ==========
