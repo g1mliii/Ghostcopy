@@ -1998,14 +1998,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       unawaited(_windowService.hideSpotlight());
     }
 
-    // 2. Perform copy in background
-    // We act as if it succeeded immediately to the user
-    try {
-      await _viewModel.handleHistoryItemCopy(item);
-    } on Exception catch (e) {
-      // If copy fails, we might want to show a system notification since window is hidden
-      debugPrint('[Spotlight] Copy failed after hide: $e');
-    }
+    // 2. Perform copy in background. The ViewModel reports its own
+    // failures: under the composer when pinned, as a system notification
+    // when the window is hiding.
+    await _viewModel.handleHistoryItemCopy(item);
 
     // Reset panel state for next time
     if (hide && mounted) {

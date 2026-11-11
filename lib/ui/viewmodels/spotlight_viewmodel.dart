@@ -969,12 +969,33 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Handle copying a history item to clipboard
   ///
-  /// UI callback:
-  /// - onCopySuccess: Called after copy (to close history panel)
-  Future<void> handleHistoryItemCopy(
-    ClipboardItem item, {
-    VoidCallback? onCopySuccess,
-  }) async {
+  /// Unpinned, the screen hides Spotlight as the copy starts - it reads the
+  /// same [keepsOpen] - so the window closing is the confirmation: a toast
+  /// raised with no window to draw in becomes an OS notification for a copy
+  /// the user just made by hand. Decided here rather than passed in, so the
+  /// screen cannot forget to say so.
+  ///
+  /// A failure goes to a system notification directly when hidden: the
+  /// window may still be closing, so an overlay would be drawn unseen. It
+  /// is not also put under the composer, where it would greet the next
+  /// opening for an action not taken there.
+  Future<void> handleHistoryItemCopy(ClipboardItem item) async {
+    final windowHidden = !keepsOpen;
+    Future<void> fail(String message) async {
+      if (!windowHidden) {
+        _setError(message);
+        return;
+      }
+      try {
+        await _notificationService.showSystemNotification(
+          message: message,
+          type: NotificationType.error,
+        );
+      } on Exception catch (e) {
+        debugPrint('[SpotlightVM] Failed to notify about copy failure: $e');
+      }
+    }
+
     try {
       // Media is downloaded first, and downloadFile returns null when the
       // storage path is missing, the download fails or decryption does.
@@ -985,7 +1006,7 @@ class SpotlightViewModel extends ChangeNotifier {
           ? await _clipboardRepo.downloadFile(item)
           : null;
       if ((item.isImage || item.isFile) && bytes == null) {
-        _setError(
+        await fail(
           _clipboardRepo.lastDownloadWasOffline(item)
               ? offlineFileMessage
               : 'Could not copy - the file could not be downloaded',
@@ -1041,15 +1062,15 @@ class SpotlightViewModel extends ChangeNotifier {
       // dropped this call and staleness quietly stopped working.
       _syncService.updateClipboardModificationTime();
 
-      _notificationService.showToast(
-        message: 'Copied to clipboard',
-        type: NotificationType.success,
-      );
-
-      onCopySuccess?.call();
+      if (!windowHidden) {
+        _notificationService.showToast(
+          message: 'Copied to clipboard',
+          type: NotificationType.success,
+        );
+      }
     } on Exception catch (e) {
-      _setError('Failed to copy: $e');
       debugPrint('[SpotlightVM] Failed to copy history item: $e');
+      await fail('Failed to copy to clipboard');
     }
   }
 

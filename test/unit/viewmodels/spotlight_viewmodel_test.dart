@@ -107,7 +107,7 @@ class _TestNotificationService implements INotificationService {
   final List<(String message, NotificationType type)> toasts =
       <(String, NotificationType)>[];
 
-  /// Raised without an overlay, by the headless send-file path.
+  /// Notifications sent directly to the OS.
   final List<(String message, NotificationType type)> systemNotifications =
       <(String, NotificationType)>[];
 
@@ -201,99 +201,141 @@ void main() {
     viewModel.dispose();
   });
 
-  test('copying from history marks the clipboard as freshly changed', () async {
-    // Smart auto-receive reads this to avoid overwriting a copy the user
-    // just made. A refactor once dropped the call and nothing noticed.
-    final clipboard = _MockClipboardService();
-    when(() => clipboard.writeText(any())).thenAnswer((_) async {});
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+  group('history copy confirmation', () {
+    late _MockClipboardService clipboard;
+    late SpotlightViewModel copying;
 
-    await copying.handleHistoryItemCopy(
-      _clipboardItem(id: '1', content: 'hello'),
-    );
+    setUp(() {
+      clipboard = _MockClipboardService();
+      when(() => clipboard.writeText(any())).thenAnswer((_) async {});
+      copying = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        clipboardService: clipboard,
+      );
+      addTearDown(copying.dispose);
+    });
 
-    verify(() => clipboard.writeText('hello')).called(1);
-    expect(clipboardSyncService.modificationTimeUpdates, 1);
-  });
+    test('a pinned window confirms the copy with a toast', () async {
+      await copying.setPin(SpotlightPin.open);
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
 
-  test('a failed media download is not counted as a copy', () async {
-    // downloadFile answers null for a missing path, a failed download or a
-    // failed decrypt. Nothing reaches the clipboard, so smart receive must
-    // not start guarding it.
-    final clipboard = _MockClipboardService();
-    when(
-      () => clipboardRepository.downloadFile(any()),
-    ).thenAnswer((_) async => null);
-    when(
-      () => clipboardRepository.lastDownloadWasOffline(any()),
-    ).thenReturn(false);
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+      expect(notificationService.toasts, [
+        ('Copied to clipboard', NotificationType.success),
+      ]);
+      expect(notificationService.systemNotifications, isEmpty);
+    });
 
-    await copying.handleHistoryItemCopy(
-      ClipboardItem(
-        id: 'img',
-        userId: 'user-123',
-        content: '',
-        deviceType: 'ios',
-        createdAt: DateTime(2026),
-        contentType: ContentType.imagePng,
-        storagePath: 'user-123/img',
-      ),
-    );
+    test('a window hidden by the copy raises no notification', () async {
+      // With no window the toast would be a system notification, for a copy
+      // the user made by clicking a moment ago.
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
 
-    expect(clipboardSyncService.modificationTimeUpdates, 0);
-    expect(copying.errorMessage, isNotNull);
-    verifyNever(() => clipboard.writeImage(any()));
-  });
+      verify(() => clipboard.writeText('hello')).called(1);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, isEmpty);
+      expect(clipboardSyncService.modificationTimeUpdates, 1);
+    });
 
-  test('copying a file that never downloaded, offline, says so', () async {
-    // Offline history shows the clip; its file lives in storage.
-    final clipboard = _MockClipboardService();
-    when(
-      () => clipboardRepository.downloadFile(any()),
-    ).thenAnswer((_) async => null);
-    when(
-      () => clipboardRepository.lastDownloadWasOffline(any()),
-    ).thenReturn(true);
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+    test('a copy exception is reported without its details', () async {
+      when(() => clipboard.writeText(any())).thenThrow(
+        const FileSystemException('Access denied', r'C:\Temp\private.txt'),
+      );
 
-    await copying.handleHistoryItemCopy(
-      ClipboardItem(
-        id: 'img',
-        userId: 'user-123',
-        content: '',
-        deviceType: 'ios',
-        createdAt: DateTime(2026),
-        contentType: ContentType.imagePng,
-        storagePath: 'user-123/img',
-      ),
-    );
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
 
-    expect(copying.errorMessage, offlineFileMessage);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, [
+        ('Failed to copy to clipboard', NotificationType.error),
+      ]);
+      expect(clipboardSyncService.modificationTimeUpdates, 0);
+      // Reported once: not also left under the composer for the next opening.
+      expect(copying.errorMessage, isNull);
+    });
+
+    test('a pinned window shows a failure in place', () async {
+      await copying.setPin(SpotlightPin.open);
+      when(
+        () => clipboard.writeText(any()),
+      ).thenThrow(Exception('clipboard busy'));
+
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
+
+      expect(copying.errorMessage, 'Failed to copy to clipboard');
+      expect(notificationService.systemNotifications, isEmpty);
+    });
+
+    test('a failed media download is not counted as a copy', () async {
+      // downloadFile answers null for a missing path, a failed download or a
+      // failed decrypt. Nothing reaches the clipboard, so smart receive must
+      // not start guarding it.
+      when(
+        () => clipboardRepository.downloadFile(any()),
+      ).thenAnswer((_) async => null);
+      when(
+        () => clipboardRepository.lastDownloadWasOffline(any()),
+      ).thenReturn(false);
+
+      await copying.handleHistoryItemCopy(
+        ClipboardItem(
+          id: 'img',
+          userId: 'user-123',
+          content: '',
+          deviceType: 'ios',
+          createdAt: DateTime(2026),
+          contentType: ContentType.imagePng,
+          storagePath: 'user-123/img',
+        ),
+      );
+
+      expect(clipboardSyncService.modificationTimeUpdates, 0);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, [
+        (
+          'Could not copy - the file could not be downloaded',
+          NotificationType.error,
+        ),
+      ]);
+      verifyNever(() => clipboard.writeImage(any()));
+    });
+
+    test('copying a file that never downloaded, offline, says so', () async {
+      // Offline history shows the clip; its file lives in storage.
+      when(
+        () => clipboardRepository.downloadFile(any()),
+      ).thenAnswer((_) async => null);
+      when(
+        () => clipboardRepository.lastDownloadWasOffline(any()),
+      ).thenReturn(true);
+
+      await copying.handleHistoryItemCopy(
+        ClipboardItem(
+          id: 'img',
+          userId: 'user-123',
+          content: '',
+          deviceType: 'ios',
+          createdAt: DateTime(2026),
+          contentType: ContentType.imagePng,
+          storagePath: 'user-123/img',
+        ),
+      );
+
+      expect(
+        notificationService.systemNotifications.single.$1,
+        offlineFileMessage,
+      );
+    });
   });
 
   testWidgets('plain typing pauses do not repeatedly rebuild the window', (
