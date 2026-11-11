@@ -37,7 +37,8 @@ abstract class IClipboardSyncService {
   /// Used by UI for feedback
   void Function(ClipboardItem item)? onClipboardSent;
 
-  /// Called when a poll - not realtime - finds a clip it had not seen.
+  /// Called when a poll - not realtime - finds an unseen clip addressed to
+  /// this device from another device in the current account.
   /// Desktop push uses it to notice a clip its push never announced.
   void Function()? onPollFoundClip;
 

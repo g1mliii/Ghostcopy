@@ -23,6 +23,14 @@ export type ClipContext = {
 
 const DESKTOP_TYPES = new Set(['windows', 'macos', 'linux']);
 
+/// Match the insert trigger's sender exclusion. Desktop sync uses the name
+/// to distinguish machines on the same platform; clipboard has no device id.
+/// Phones retain their existing same-platform exclusion.
+export function recipientDevices(devices: DeviceRow[], senderType: string, senderName: string | null): DeviceRow[] {
+  return devices.filter((device)=>device.device_type !== senderType ||
+    (DESKTOP_TYPES.has(device.device_type) && device.device_name !== senderName));
+}
+
 /// Devices push may reach. Desktops only while desktop_push_enabled is on:
 /// turning the flag off must stop pushes to desktops that registered while
 /// it was on, not just stop new ones registering.

@@ -20,10 +20,17 @@ and `app_config.desktop_push_enabled` is set to true.
 
 Push is trusted only after one has actually arrived on this run. While trusted,
 the tray closes realtime and the 5-minute tray health check keeps polling. If
-that check finds a clip no push announced in the previous two minutes, trust is
+that check finds a clip addressed to this desktop from another device that no
+push announced in the previous two minutes, trust is
 withdrawn and realtime reopens until the next push. A desktop where push cannot
 start (no Firebase config, an unpackaged Windows build, refused permission)
 never closes realtime.
+
+Other desktops on the sender's platform receive pushes too. The trigger and
+edge function distinguish the originating desktop by `device_name`, matching
+desktop sync; machines sharing a hostname retain that existing limitation.
+Pushes received while locked or asleep prove delivery but leave fetching to
+the normal catch-up poll on unlock or wake.
 
 ## Before merging
 

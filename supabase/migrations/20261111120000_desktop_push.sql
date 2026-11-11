@@ -102,13 +102,21 @@ BEGIN
     false
   ) INTO desktop_push;
 
-  -- Any device the clip is for, other than the sending type, that push can
-  -- reach. The edge function applies the same rules when it picks devices.
+  -- Other desktops of the sender's platform must still receive. Desktop
+  -- sync identifies the sender by device_name (clipboard has no device id).
+  -- Preserve the existing same-platform exclusion for phones.
+  -- The edge function applies the same rules when it picks devices.
   SELECT EXISTS (
     SELECT 1
     FROM public.devices d
     WHERE d.user_id = NEW.user_id
-      AND d.device_type <> NEW.device_type
+      AND (
+        d.device_type <> NEW.device_type
+        OR (
+          d.device_type IN ('windows', 'macos', 'linux')
+          AND d.device_name IS DISTINCT FROM NEW.device_name
+        )
+      )
       AND (
         NEW.target_device_type IS NULL
         OR cardinality(NEW.target_device_type) = 0
@@ -162,6 +170,7 @@ BEGIN
         'id', NEW.id,
         'user_id', NEW.user_id,
         'device_type', NEW.device_type,
+        'device_name', NEW.device_name,
         'target_device_type', NEW.target_device_type,
         'content_type', NEW.content_type,
         'file_size_bytes', NEW.file_size_bytes,
@@ -181,4 +190,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.notify_mobile_devices_on_clipboard_insert() IS
-  'Calls send-clipboard-notification when a device the clip targets (other than the sending type) holds a push token: FCM for phones and macOS, WNS for Windows. Skips the call otherwise.';
+  'Calls send-clipboard-notification when another targeted device holds a push token: FCM for phones and macOS, WNS for Windows. Same-platform desktops are distinguished by device_name; phones retain same-platform exclusion.';

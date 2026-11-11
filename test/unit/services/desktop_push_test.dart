@@ -44,6 +44,9 @@ class _Sync extends Fake implements IClipboardSyncService {
 class _Lifecycle extends Fake implements ILifecycleController {
   @override
   bool desktopPushActive = false;
+
+  @override
+  PowerState powerState = PowerState.awake;
 }
 
 class _Devices extends Mock implements IDeviceService {}
@@ -91,6 +94,27 @@ void main() {
       expect(await coordinator.start(), isFalse);
       expect(sync.onPollFoundClip, isNull);
     });
+
+    for (final state in [PowerState.screenLocked, PowerState.systemSleeping]) {
+      test(
+        'push while $state leaves fetching to the resume catch-up',
+        () async {
+          await coordinator.start();
+          lifecycle.powerState = state;
+
+          push.controller.add(null);
+          await Future<void>.delayed(Duration.zero);
+
+          expect(lifecycle.desktopPushActive, isTrue);
+          expect(sync.checks, 0);
+
+          lifecycle.powerState = PowerState.awake;
+          push.controller.add(null);
+          await Future<void>.delayed(Duration.zero);
+          expect(sync.checks, 1);
+        },
+      );
+    }
 
     test('a clip the push announced keeps push trusted', () {
       fakeAsync((async) {

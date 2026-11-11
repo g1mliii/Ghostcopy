@@ -5,7 +5,7 @@ import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
 import { sendWnsRaw, wnsConfigured } from './wns.ts';
-import { fcmMessageFor, fcmTargets, pushTargets, wnsTargets } from './messages.ts';
+import { fcmMessageFor, fcmTargets, pushTargets, recipientDevices, wnsTargets } from './messages.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -165,6 +165,7 @@ Deno.serve(async (req)=>{
     // Handle webhook payload vs client invocation
     let clipboard_id = null;
     let device_type = null;
+    let sender_name: string | null = null;
     let target_device_types;
     let content_preview = null;
     let clipboardItemFromWebhook = null;
@@ -173,6 +174,7 @@ Deno.serve(async (req)=>{
       const record = body.record;
       clipboard_id = record.id;
       device_type = record.device_type;
+      sender_name = typeof record.device_name === 'string' ? record.device_name : null;
       target_device_types = normalizeTargetDeviceTypes(record.target_device_type);
       clipboardItemFromWebhook = {
         id: record.id,
@@ -217,13 +219,14 @@ Deno.serve(async (req)=>{
       // Recency check: only allow notifications for items created in the last 5 minutes.
       // Prevents replay-based notification spam using old clipboard_ids.
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: dbItem, error: clipboardError } = await db.from('clipboard').select('id, content_type, rich_text_format, file_size_bytes, content').eq('id', clipboard_id).eq('user_id', userId) // Security: ensure user owns this item
+      const { data: dbItem, error: clipboardError } = await db.from('clipboard').select('id, device_name, content_type, rich_text_format, file_size_bytes, content').eq('id', clipboard_id).eq('user_id', userId) // Security: ensure user owns this item
       .gte('created_at', fiveMinutesAgo).single();
       if (clipboardError || !dbItem) {
         console.error('[Notification] Failed to fetch clipboard item:', clipboardError);
         return json({ error: 'Clipboard item not found' }, 404);
       }
       clipboardItem = dbItem;
+      sender_name = dbItem.device_name ?? null;
     }
     const contentType = clipboardItem.content_type || 'text';
     const isImage = contentType.startsWith('image_');
@@ -246,7 +249,7 @@ Deno.serve(async (req)=>{
     const targetText = target_device_types && target_device_types.length > 0 ? target_device_types.join(', ') : 'all devices';
     console.log(`[Notification] User ${userId} sending ${contentType} from ${device_type} to ${targetText}`);
     // Query devices table for FCM tokens.
-    let query = db.from('devices').select('id, device_type, device_name, fcm_token, wns_channel_uri').eq('user_id', userId).neq('device_type', device_type); // Skip self-notifications: don't send to sending device type
+    let query = db.from('devices').select('id, device_type, device_name, fcm_token, wns_channel_uri').eq('user_id', userId);
     // Filter by target device types if specified
     if (target_device_types && target_device_types.length > 0) {
       query = query.in('device_type', target_device_types);
@@ -258,7 +261,7 @@ Deno.serve(async (req)=>{
       // net._http_response - the logs do not carry console output.
       return json({ error: 'Failed to query devices', detail: devicesError.message ?? String(devicesError) }, 500);
     }
-    const devices = rawDevices ?? [];
+    const devices = recipientDevices(rawDevices ?? [], device_type, sender_name);
     if (devices.length === 0) {
       console.log('[Notification] No devices found with FCM tokens');
       return json({

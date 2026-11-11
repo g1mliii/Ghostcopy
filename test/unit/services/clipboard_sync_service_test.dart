@@ -80,11 +80,13 @@ void main() {
     List<String>? targets,
     ContentType type = ContentType.text,
     String? content,
+    String? senderName = 'remote-device',
+    String userId = 'user',
   }) => ClipboardItem(
     id: id,
-    userId: 'user',
+    userId: userId,
     content: content ?? 'clip $id',
-    deviceName: 'remote-device',
+    deviceName: senderName,
     deviceType: 'android',
     createdAt: DateTime(2026),
     targetDeviceTypes: targets,
@@ -1001,6 +1003,8 @@ void main() {
   testWidgets('polling does not deliver a clip realtime already delivered', (
     tester,
   ) async {
+    var missedPushes = 0;
+    service.onPollFoundClip = () => missedPushes++;
     // The first fallback poll finds the row realtime just handled.
     when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
     when(repository.getLatestItemId).thenAnswer((_) async => '1');
@@ -1012,7 +1016,59 @@ void main() {
     await tester.pump();
 
     verifyVaultGot('clip 1');
+    expect(missedPushes, 0);
     service.stopPolling();
+  });
+
+  for (final reason in ['other platform', 'sender', 'other account']) {
+    testWidgets('polling $reason clips is not evidence of a missed push', (
+      tester,
+    ) async {
+      final item = switch (reason) {
+        'other platform' => clip('1', targets: ['not-this-platform']),
+        'sender' => clip(
+          '1',
+          senderName: ClipboardRepository.getCurrentDeviceName(),
+        ),
+        _ => clip('1', userId: 'other-user'),
+      };
+      var missedPushes = 0;
+      service.onPollFoundClip = () => missedPushes++;
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('1')).thenAnswer((_) async => item);
+
+      service.checkForNewClips();
+      await settle(tester);
+
+      expect(missedPushes, 0);
+      verifyNever(() => clipboard.writeText(any()));
+    });
+  }
+
+  testWidgets('an eligible clip between polls counts even if newest is not '
+      'addressed here', (tester) async {
+    var missedPushes = 0;
+    service.onPollFoundClip = () => missedPushes++;
+    final elsewhere = clip('3', targets: ['not-this-platform']);
+    when(repository.getLatestItemId).thenAnswer((_) async => '1');
+    when(
+      () => repository.getById('1'),
+    ).thenAnswer((_) async => clip('1', targets: ['not-this-platform']));
+    service.checkForNewClips();
+    await settle(tester);
+    expect(missedPushes, 0);
+
+    when(repository.getLatestItemId).thenAnswer((_) async => '3');
+    when(() => repository.getById('3')).thenAnswer((_) async => elsewhere);
+    when(
+      () => repository.getHistory(limit: 10),
+    ).thenAnswer((_) async => [elsewhere, clip('2')]);
+    service.checkForNewClips();
+    await settle(tester);
+
+    expect(missedPushes, 1);
+    verifyVaultGot('clip 2');
+    verifyNever(() => clipboard.writeText(any()));
   });
 
   testWidgets('polling hands the integrations clips between two polls', (
@@ -1664,6 +1720,8 @@ void main() {
   });
 
   testWidgets('unchanged polls do not fetch content again', (tester) async {
+    var missedPushes = 0;
+    service.onPollFoundClip = () => missedPushes++;
     when(repository.getLatestItemId).thenAnswer((_) async => '1');
     when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
     service.startPolling(interval: const Duration(seconds: 1));
@@ -1672,6 +1730,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
     verify(() => repository.getById('1')).called(1);
+    expect(missedPushes, 1);
     verifyNever(() => repository.getHistory(limit: any(named: 'limit')));
     service.stopPolling();
   });

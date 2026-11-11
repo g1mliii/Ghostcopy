@@ -82,7 +82,11 @@ class DesktopPushCoordinator {
     _missedPushTimer = null;
     _lastPushAt = clock.now();
     _lifecycle.desktopPushActive = true;
-    _sync.checkForNewClips();
+    // Unlock/wake already runs a catch-up poll through resumeRealtime.
+    // Prove push delivery now, but leave clipboard work paused until then.
+    if (_lifecycle.powerState == PowerState.awake) {
+      _sync.checkForNewClips();
+    }
   }
 
   void _onPollFoundClip() {

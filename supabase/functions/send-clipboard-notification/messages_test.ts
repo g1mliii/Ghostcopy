@@ -1,6 +1,6 @@
 // deno test supabase/functions/send-clipboard-notification/messages_test.ts
 import { assert, assertEquals, assertFalse } from 'jsr:@std/assert@1';
-import { type DeviceRow, fcmMessageFor, fcmTargets, pushTargets, wnsTargets } from './messages.ts';
+import { type DeviceRow, fcmMessageFor, fcmTargets, pushTargets, recipientDevices, wnsTargets } from './messages.ts';
 
 const row = (device_type: string, extra: Partial<DeviceRow> = {}): DeviceRow => ({
   id: `${device_type}-id`,
@@ -19,6 +19,22 @@ const clip = {
   body: 'Tap to copy',
   isMedia: false
 };
+
+for (const platform of ['windows', 'macos']) {
+  Deno.test(`${platform} pushes reach another machine on the same platform`, () => {
+    const sender = row(platform, { id: 'sender', device_name: 'home' });
+    const receiver = row(platform, { id: 'receiver', device_name: 'work' });
+    const phone = row('ios');
+    assertEquals(recipientDevices([sender, receiver, phone], platform, 'home'), [receiver, phone]);
+  });
+}
+
+Deno.test('phone sender exclusion and unnamed desktop senders remain supported', () => {
+  const phone = row('ios');
+  const desktop = row('macos', { device_name: 'work' });
+  assertEquals(recipientDevices([phone, desktop], 'ios', null), [desktop]);
+  assertEquals(recipientDevices([phone, desktop], 'macos', null), [phone, desktop]);
+});
 
 Deno.test('desktops are pushed only while the flag is on', () => {
   const devices = [
