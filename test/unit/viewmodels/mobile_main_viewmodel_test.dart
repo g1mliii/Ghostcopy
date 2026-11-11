@@ -338,7 +338,6 @@ void main() {
 
     tearDown(() {
       viewModel.dispose();
-      // Not awaited: a subscription left paused holds the close open.
       unawaited(history.close());
     });
 
@@ -439,6 +438,7 @@ void main() {
         ).thenAnswer((_) async => [background, existing]);
 
         viewModel.onAppResumed();
+        history.add([background, existing]);
         await flushStreams();
         expect(viewModel.historyItems.first.id, '31');
         verifyZeroInteractions(clipboardService);
@@ -452,16 +452,137 @@ void main() {
       },
     );
 
-    test('a list delivered while backgrounded copies nothing', () async {
+    test('resume discards every queued background snapshot', () async {
+      final existing = clip('10');
+      history.add([existing]);
+      await flushStreams();
+
+      viewModel.onAppPaused();
+      final firstBackground = clip('11');
+      final secondBackground = clip('12');
+      stored(firstBackground);
+      stored(secondBackground);
+      history
+        ..add([firstBackground, existing])
+        ..add([secondBackground, firstBackground, existing]);
+
+      final resumedHistory = StreamController<List<ClipboardItem>>.broadcast();
+      addTearDown(resumedHistory.close);
+      when(
+        () => clipboardRepository.watchHistory(),
+      ).thenAnswer((_) => resumedHistory.stream);
+      final refresh = Completer<List<ClipboardItem>>();
+      when(
+        () => clipboardRepository.getHistory(),
+      ).thenAnswer((_) => refresh.future);
+      addTearDown(() {
+        if (!refresh.isCompleted) refresh.complete([]);
+      });
+
+      viewModel.onAppResumed();
+      resumedHistory.add([secondBackground, firstBackground, existing]);
+      await flushStreams();
+
+      verifyZeroInteractions(clipboardService);
+      expect(history.hasListener, isFalse);
+      expect(viewModel.historyItems.first.id, '12');
+
+      final foreground = clip('13');
+      stored(foreground);
+      resumedHistory.add([foreground, secondBackground, firstBackground]);
+      await flushStreams();
+      verify(() => clipboardService.writeText('clip 13')).called(1);
+      verifyNoMoreInteractions(clipboardService);
+    });
+
+    test(
+      'a refresh cannot enable copying before the resumed baseline',
+      () async {
+        history.add([]);
+        await flushStreams();
+        viewModel.onAppPaused();
+
+        final resumedHistory =
+            StreamController<List<ClipboardItem>>.broadcast();
+        addTearDown(resumedHistory.close);
+        when(
+          () => clipboardRepository.watchHistory(),
+        ).thenAnswer((_) => resumedHistory.stream);
+
+        viewModel.onAppResumed();
+        // The one-shot fetch returns before the stream's initial snapshot.
+        await flushStreams();
+        final background = clip('11');
+        stored(background);
+        resumedHistory.add([background]);
+        await flushStreams();
+
+        expect(viewModel.historyItems.single.id, '11');
+        verifyZeroInteractions(clipboardService);
+      },
+    );
+
+    test('a newer arrival supersedes an older pending text fetch', () async {
+      history.add([]);
+      await flushStreams();
+
+      final older = clip('11');
+      final pending = Completer<ClipboardItem?>();
+      when(
+        () => clipboardRepository.getById(older.id),
+      ).thenAnswer((_) => pending.future);
+      history.add([older]);
+      await flushStreams();
+      verify(() => clipboardRepository.getById('11')).called(1);
+
+      final newer = clip('12');
+      stored(newer);
+      history.add([newer, older]);
+      await flushStreams();
+      verify(() => clipboardService.writeText('clip 12')).called(1);
+
+      pending.complete(older);
+      await flushStreams();
+      verifyNoMoreInteractions(clipboardService);
+    });
+
+    test(
+      'a newer arrival supersedes an older pending image download',
+      () async {
+        history.add([]);
+        await flushStreams();
+
+        final image = clip('11', contentType: ContentType.imagePng);
+        stored(image);
+        final download = Completer<Uint8List?>();
+        when(
+          () => clipboardRepository.downloadFile(image),
+        ).thenAnswer((_) => download.future);
+        history.add([image]);
+        await flushStreams();
+        verify(() => clipboardRepository.downloadFile(image)).called(1);
+
+        final newer = clip('12');
+        stored(newer);
+        history.add([newer, image]);
+        await flushStreams();
+        verify(() => clipboardService.writeText('clip 12')).called(1);
+
+        download.complete(Uint8List.fromList([1, 2, 3]));
+        await flushStreams();
+        verifyNoMoreInteractions(clipboardService);
+      },
+    );
+
+    test('history reconnects stay stopped while backgrounded', () async {
       history.add([]);
       await flushStreams();
       viewModel.onAppPaused();
 
-      // A reconnect can open a fresh, unpaused subscription in the
-      // background.
       final background = clip('31');
       stored(background);
       viewModel.subscribeToRealtimeUpdates();
+      expect(history.hasListener, isFalse);
       history.add([background]);
       await flushStreams();
 
@@ -689,6 +810,9 @@ void main() {
       when(
         () => clipboardRepository.getHistory(),
       ).thenAnswer((_) => request.future);
+      when(
+        () => clipboardRepository.watchHistory(),
+      ).thenAnswer((_) => const Stream.empty());
       viewModel.onAppResumed();
       await Future<void>.delayed(Duration.zero);
 

@@ -201,12 +201,12 @@ class MobileMainViewModel extends ChangeNotifier {
   bool get showingSavedHistory => _showingSavedHistory;
 
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
+  int _historyStreamGeneration = 0;
   bool _isForeground = true;
 
-  /// Bumped on every pause and account change. A copy started under an
-  /// older value - an image still downloading - must not land: the user has
-  /// left, or is someone else now.
-  int _foregroundGeneration = 0;
+  /// Each eligible arrival, pause, and account change invalidates older
+  /// pending copies, including fetches and image downloads.
+  int _autoCopyGeneration = 0;
 
   /// The highest clip id seen in a live list since launch.
   ///
@@ -216,9 +216,9 @@ class MobileMainViewModel extends ChangeNotifier {
   /// nothing, and deleting the newest row cannot make an older one look new.
   int? _newestSeenId;
 
-  /// False from launch and from every resume until the first live list
-  /// arrives. That list is the baseline and copies nothing: it holds
-  /// whatever was sent while the app was away, or before it opened.
+  /// False from launch and from every pause until the foreground stream's
+  /// first snapshot arrives. That snapshot establishes the baseline for
+  /// subsequent arrivals. A one-shot fetch cannot enable copying.
   bool _clipBaselineReady = false;
   Timer? _realtimeReconnectTimer;
   int _realtimeRetryCount = 0;
@@ -565,6 +565,9 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Subscribe to realtime history updates
   void subscribeToRealtimeUpdates() {
+    if (_isDisposed || !_isForeground) return;
+    _cancelHistorySubscription();
+    final generation = _historyStreamGeneration;
     final revision = _accountRevision;
     final Stream<List<ClipboardItem>> stream;
     try {
@@ -580,13 +583,18 @@ class MobileMainViewModel extends ChangeNotifier {
 
     _historySubscription = stream.listen(
       (items) {
-        if (_isDisposed || revision != _accountRevision) return;
+        if (_isDisposed ||
+            revision != _accountRevision ||
+            generation != _historyStreamGeneration) {
+          return;
+        }
 
         // The stream is alive again; forget any previous backoff.
         _realtimeRetryCount = 0;
         _historyError = null;
 
         final arrived = _newlyArrivedClip(items);
+        _clipBaselineReady = true;
         _historyIsLive = true;
         _showingSavedHistory = false;
 
@@ -600,7 +608,11 @@ class MobileMainViewModel extends ChangeNotifier {
       },
       onError: (Object error) {
         debugPrint('[MobileMainVM] Realtime subscription error: $error');
-        if (_isDisposed || revision != _accountRevision) return;
+        if (_isDisposed ||
+            revision != _accountRevision ||
+            generation != _historyStreamGeneration) {
+          return;
+        }
 
         _historyLoading = false;
         // Keep whatever is already on screen. Only a cold failure - nothing
@@ -618,6 +630,12 @@ class MobileMainViewModel extends ChangeNotifier {
         _scheduleRealtimeReconnect();
       },
     );
+  }
+
+  void _cancelHistorySubscription() {
+    _historyStreamGeneration++;
+    unawaited(_historySubscription?.cancel());
+    _historySubscription = null;
   }
 
   /// The clip at the head of [items] if it arrived while the app was open;
@@ -648,7 +666,6 @@ class MobileMainViewModel extends ChangeNotifier {
       final newest = _newestSeenId;
       if (id != null && (newest == null || id > newest)) _newestSeenId = id;
     }
-    if (_isForeground) _clipBaselineReady = true;
   }
 
   void _onIncomingClip(ClipboardItem item) {
@@ -665,7 +682,11 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Re-arm the realtime subscription after an error, backing off so a server
   /// outage does not turn into a reconnect loop.
   void _scheduleRealtimeReconnect() {
-    if (_isDisposed || _realtimeReconnectTimer?.isActive == true) return;
+    if (_isDisposed ||
+        !_isForeground ||
+        _realtimeReconnectTimer?.isActive == true) {
+      return;
+    }
 
     final attempt = ++_realtimeRetryCount;
     // 2s, 4s, 8s, 16s, 30s, 30s...
@@ -674,14 +695,12 @@ class MobileMainViewModel extends ChangeNotifier {
       '[MobileMainVM] Reconnecting realtime in ${seconds}s (attempt $attempt)',
     );
 
-    _realtimeReconnectTimer = Timer(Duration(seconds: seconds), () async {
-      if (_isDisposed) return;
-      await _historySubscription?.cancel();
-      _historySubscription = null;
+    _realtimeReconnectTimer = Timer(Duration(seconds: seconds), () {
+      if (_isDisposed || !_isForeground) return;
       subscribeToRealtimeUpdates();
       // Realtime only delivers changes from here on, so fetch the rows that
       // landed while the connection was down.
-      await loadHistory();
+      unawaited(loadHistory());
     });
   }
 
@@ -1661,12 +1680,15 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Called when app goes to background
   void onAppPaused() {
     debugPrint(
-      '[MobileMainVM] App backgrounded - Pausing Realtime subscription',
+      '[MobileMainVM] App backgrounded - Closing Realtime subscription',
     );
     _isForeground = false;
-    _foregroundGeneration++;
+    _autoCopyGeneration++;
     _clipBaselineReady = false;
-    _historySubscription?.pause();
+    // Cancel buffered snapshots and pending callbacks before the next session.
+    _cancelHistorySubscription();
+    _realtimeReconnectTimer?.cancel();
+    _realtimeReconnectTimer = null;
 
     // Clear sensitive decrypted data from memory when backgrounded
     _decryptedContentCache.clear();
@@ -1683,18 +1705,13 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Called when app returns to foreground
   void onAppResumed() {
-    debugPrint('[MobileMainVM] App resumed - Resuming Realtime subscription');
-    // The baseline stays unset until a live list arrives: the lists the
-    // paused subscription held back, and the fetch below, hold what was
-    // sent while the app was away.
+    debugPrint('[MobileMainVM] App resumed - Opening Realtime subscription');
     _isForeground = true;
-    _historySubscription?.resume();
+    if (_historySubscription == null) subscribeToRealtimeUpdates();
 
-    // Re-fetch, don't just resume. Push notifications deliberately carry no
-    // clipboard content - the body literally says "Open GhostCopy to view it"
-    // - so opening the app IS the sync step. Resuming the subscription only
-    // restores the flow of future events; anything that arrived while the app
-    // was backgrounded would never appear until a manual pull-to-refresh.
+    // A fresh stream establishes the baseline without replaying the old
+    // subscription's buffered snapshots. Fetch as well so history refreshes
+    // even while the Realtime connection is being restored.
     unawaited(loadHistory());
 
     unawaited(_reassertFcmToken());
@@ -1792,7 +1809,8 @@ class MobileMainViewModel extends ChangeNotifier {
   /// replaced them - and stayed in memory regardless.
   void clearUserState() {
     _accountRevision++;
-    _foregroundGeneration++;
+    _autoCopyGeneration++;
+    _cancelHistorySubscription();
     _newestSeenId = null;
     _clipBaselineReady = false;
     _decryptedContentCache.clear();
@@ -1820,8 +1838,6 @@ class MobileMainViewModel extends ChangeNotifier {
     _realtimeReconnectTimer?.cancel();
     _realtimeReconnectTimer = null;
     _realtimeRetryCount = 0;
-    await _historySubscription?.cancel();
-    _historySubscription = null;
     if (_isDisposed) return;
     subscribeToRealtimeUpdates();
     await Future.wait([loadHistory(), loadDevices()]);
@@ -1905,9 +1921,8 @@ class MobileMainViewModel extends ChangeNotifier {
       : _clipboardService.writeText(content);
 
   Future<void> _autoCopyToClipboard(ClipboardItem arrived) async {
-    final generation = _foregroundGeneration;
-    // Every pause bumps the generation, so this also means "still in front".
-    bool stillWanted() => !_isDisposed && generation == _foregroundGeneration;
+    final generation = ++_autoCopyGeneration;
+    bool stillWanted() => !_isDisposed && generation == _autoCopyGeneration;
     try {
       // Fetched again rather than copied from the realtime list: an oversized
       // row can arrive there with columns missing, and the desktop reads by
@@ -1944,8 +1959,7 @@ class MobileMainViewModel extends ChangeNotifier {
     if (_isDisposed) return;
     _isDisposed = true;
 
-    _historySubscription?.cancel();
-    _historySubscription = null;
+    _cancelHistorySubscription();
     _realtimeReconnectTimer?.cancel();
     _realtimeReconnectTimer = null;
     _searchDebounceTimer?.cancel();
