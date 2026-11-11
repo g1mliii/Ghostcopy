@@ -1632,9 +1632,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
     if (_pollingTimer != null) return; // Already polling
 
-    debugPrint(
-      '[ClipboardSync] 🔄 Starting polling mode (${interval.inSeconds}s)',
-    );
+    debugPrint('[ClipboardSync] 🔄 Starting polling mode (every $interval)');
 
     _pollingTimer = Timer.periodic(interval, (_) async {
       await _pollForNewClipboards();
@@ -1718,6 +1716,9 @@ class ClipboardSyncService implements IClipboardSyncService {
       final userId = _supabaseClient.auth.currentUser?.id;
       final previousId = _lastPolledItemId;
       final wasReady = _baselineReady;
+      // Where delivery starts. An account that had no clips at all: every
+      // row before the newest is new too.
+      final startedFrom = previousId ?? (wasReady ? '0' : null);
       final latestId = await _clipboardRepository.getLatestItemId();
       if (_isDisposed ||
           userId != _supabaseClient.auth.currentUser?.id ||
@@ -1729,8 +1730,8 @@ class ClipboardSyncService implements IClipboardSyncService {
         // the row realtime delivered.
         final gapFrom = _pendingGapFrom;
         _pendingGapFrom = null;
-        if (gapFrom != null) {
-          await _deliverSkippedClips(after: gapFrom, latest: latestId);
+        if (gapFrom != null &&
+            await _deliverSkippedClips(after: gapFrom, latest: latestId) > 0) {
           onClipboardReceived?.call();
         }
         return;
@@ -1742,10 +1743,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       // remember where this one started, so the rows before the realtime
       // insert are still delivered.
       if (_lastPolledItemId != previousId || _baselineReady != wasReady) {
-        _pendingGapFrom = _olderId(
-          _pendingGapFrom,
-          previousId ?? (wasReady ? '0' : null),
-        );
+        _pendingGapFrom = _olderId(_pendingGapFrom, startedFrom);
         _pollRequested = true;
         return;
       }
@@ -1763,12 +1761,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       // ownership, sender and targets before touching the system clipboard.
       _lastPolledItemId = latestId;
       _baselineReady = true;
-      // An account that had no clips at all: everything before the newest is
-      // new too.
-      final after = _olderId(
-        _pendingGapFrom,
-        previousId ?? (wasReady ? '0' : null),
-      );
+      final after = _olderId(_pendingGapFrom, startedFrom);
       _pendingGapFrom = null;
       if (after != null) {
         await _deliverSkippedClips(after: after, latest: latestId);
@@ -1800,13 +1793,16 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Clips that arrived between two polls, older than [latest] and newer than
   /// [after]. Only the newest is worth copying, but the integrations are
   /// meant to see every clip - as they do on the realtime path.
-  Future<void> _deliverSkippedClips({
+  ///
+  /// Returns how many were delivered.
+  Future<int> _deliverSkippedClips({
     required String after,
     required String latest,
   }) async {
     final afterId = int.tryParse(after);
     final latestId = int.tryParse(latest);
-    if (afterId == null || latestId == null) return;
+    if (afterId == null || latestId == null) return 0;
+    var delivered = 0;
     try {
       // Below the full-history limit, so the repository does not prune its
       // media cache against this partial list.
@@ -1816,12 +1812,16 @@ class ClipboardSyncService implements IClipboardSyncService {
         return id != null && id > afterId && id < latestId;
       }).toList()..sort((a, b) => int.parse(a.id).compareTo(int.parse(b.id)));
       for (final item in skipped) {
-        if (_isDisposed) return;
-        if (_canReceive(item) && _claim(item.id)) _deliverReceived(item);
+        if (_isDisposed) break;
+        if (_canReceive(item) && _claim(item.id)) {
+          _deliverReceived(item);
+          delivered++;
+        }
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSync] Could not deliver skipped clips: $e');
     }
+    return delivered;
   }
 
   bool _isDisposed = false;

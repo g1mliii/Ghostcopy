@@ -5,8 +5,9 @@ enum ConnectionMode {
   /// Active WebSocket connection for realtime updates
   realtime,
 
-  /// Idle in the tray for 15 minutes: realtime stays open, and a periodic
-  /// HTTP poll checks that it is still delivering
+  /// Idle in the tray for 15 minutes. Only a label now: realtime stays open,
+  /// and the tray health check runs whenever the window is hidden, idle or
+  /// not
   polling,
 
   /// All connections paused (system sleep or screen lock)
