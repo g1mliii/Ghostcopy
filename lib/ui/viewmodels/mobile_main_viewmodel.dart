@@ -208,14 +208,13 @@ class MobileMainViewModel extends ChangeNotifier {
   /// left, or is someone else now.
   int _foregroundGeneration = 0;
 
-  /// Clips already seen in a live list since launch.
+  /// The highest clip id seen in a live list since launch.
   ///
-  /// Auto-copy writes the newest clip only when it is not in here, so what
-  /// it copies is decided by what this session has already shown, not by
-  /// timestamps - a phone clock running ahead of or behind the server
-  /// changes nothing. Bounded: only the head of a list is ever looked up.
-  final LinkedHashSet<String> _seenClipIds = LinkedHashSet<String>();
-  static const int _maxSeenClipIds = 200;
+  /// Ids are the clipboard table's identity column, so a clip that arrived
+  /// is one above this - the same rule the desktop's sync service uses. No
+  /// timestamps, so a phone clock ahead of or behind the server changes
+  /// nothing, and deleting the newest row cannot make an older one look new.
+  int? _newestSeenId;
 
   /// False from launch and from every resume until the first live list
   /// arrives. That list is the baseline and copies nothing: it holds
@@ -631,23 +630,23 @@ class MobileMainViewModel extends ChangeNotifier {
   /// looking at.
   ClipboardItem? _newlyArrivedClip(List<ClipboardItem> items) {
     final head = items.isEmpty ? null : items.first;
+    final headId = head == null ? null : int.tryParse(head.id);
+    final newest = _newestSeenId;
+    // A ready baseline implies the foreground: it is only set there, and a
+    // pause clears it.
     final isNew =
-        head != null &&
-        _isForeground &&
+        headId != null &&
         _clipBaselineReady &&
-        !_seenClipIds.contains(head.id);
+        (newest == null || headId > newest);
     _markClipsSeen(items);
     return isNew ? head : null;
   }
 
   void _markClipsSeen(List<ClipboardItem> items) {
     for (final item in items) {
-      _seenClipIds
-        ..remove(item.id)
-        ..add(item.id);
-    }
-    while (_seenClipIds.length > _maxSeenClipIds) {
-      _seenClipIds.remove(_seenClipIds.first);
+      final id = int.tryParse(item.id);
+      final newest = _newestSeenId;
+      if (id != null && (newest == null || id > newest)) _newestSeenId = id;
     }
     if (_isForeground) _clipBaselineReady = true;
   }
@@ -1069,14 +1068,10 @@ class MobileMainViewModel extends ChangeNotifier {
         // as metadata describing how the row is STORED, so it must NOT be
         // used to trigger a second decrypt here - nor to decide that content
         // is unreadable, which is what the widget used to do.
-        final finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        if (item.richTextFormat == RichTextFormat.html) {
-          await _clipboardService.writeHtml(finalContent);
-        } else {
-          await _clipboardService.writeText(finalContent);
-        }
-
+        await _writeTextual(
+          item,
+          _decryptedContentCache[item.id] ?? item.content,
+        );
         onSuccess?.call('Copied ${item.richTextFormat?.value ?? "rich text"}');
       } else {
         // Content is already plaintext: getHistory()/watchHistory() run
@@ -1084,9 +1079,10 @@ class MobileMainViewModel extends ChangeNotifier {
         // as metadata describing how the row is STORED, so it must NOT be
         // used to trigger a second decrypt here - nor to decide that content
         // is unreadable, which is what the widget used to do.
-        final finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        await _clipboardService.writeText(finalContent);
+        await _writeTextual(
+          item,
+          _decryptedContentCache[item.id] ?? item.content,
+        );
         onSuccess?.call('Copied to clipboard');
       }
     } on Exception catch (e) {
@@ -1626,19 +1622,8 @@ class MobileMainViewModel extends ChangeNotifier {
         // as metadata describing how the row is STORED, so it must NOT be
         // used to trigger a second decrypt here - nor to decide that content
         // is unreadable, which is what the widget used to do.
-        final content = item.content;
-
-        switch (item.contentType) {
-          case ContentType.html:
-            await _clipboardService.writeHtml(content);
-            debugPrint('[MobileMainVM] Copied HTML to clipboard');
-          case ContentType.markdown:
-            await _clipboardService.writeText(content);
-            debugPrint('[MobileMainVM] Copied Markdown to clipboard');
-          default:
-            await _clipboardService.writeText(content);
-            debugPrint('[MobileMainVM] Copied text to clipboard');
-        }
+        await _writeTextual(item, item.content);
+        debugPrint('[MobileMainVM] Copied ${item.contentType.value}');
       }
 
       return true;
@@ -1808,7 +1793,7 @@ class MobileMainViewModel extends ChangeNotifier {
   void clearUserState() {
     _accountRevision++;
     _foregroundGeneration++;
-    _seenClipIds.clear();
+    _newestSeenId = null;
     _clipBaselineReady = false;
     _decryptedContentCache.clear();
     _detectionCache.clear();
@@ -1911,10 +1896,18 @@ class MobileMainViewModel extends ChangeNotifier {
     );
   }
 
+  /// Put a text-shaped clip on the clipboard: HTML with its plain-text
+  /// fallback, anything else (text, Markdown) as plain text.
+  Future<void> _writeTextual(ClipboardItem item, String content) =>
+      item.contentType == ContentType.html ||
+          item.richTextFormat == RichTextFormat.html
+      ? _clipboardService.writeHtml(content)
+      : _clipboardService.writeText(content);
+
   Future<void> _autoCopyToClipboard(ClipboardItem arrived) async {
     final generation = _foregroundGeneration;
-    bool stillWanted() =>
-        !_isDisposed && _isForeground && generation == _foregroundGeneration;
+    // Every pause bumps the generation, so this also means "still in front".
+    bool stillWanted() => !_isDisposed && generation == _foregroundGeneration;
     try {
       // Fetched again rather than copied from the realtime list: an oversized
       // row can arrive there with columns missing, and the desktop reads by
@@ -1935,19 +1928,9 @@ class MobileMainViewModel extends ChangeNotifier {
         debugPrint(
           '[MobileMainVM] Auto-copied image to clipboard (${bytes.length} bytes)',
         );
-      } else if (item.isRichText) {
-        if (item.richTextFormat == RichTextFormat.html) {
-          await _clipboardService.writeHtml(item.content);
-        } else {
-          await _clipboardService.writeText(item.content);
-        }
-
-        debugPrint(
-          '[MobileMainVM] Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard',
-        );
       } else {
-        await _clipboardService.writeText(item.content);
-        debugPrint('[MobileMainVM] Auto-copied text to clipboard');
+        await _writeTextual(item, item.content);
+        debugPrint('[MobileMainVM] Auto-copied ${item.contentType.value}');
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to auto-copy: $e');

@@ -345,10 +345,10 @@ void main() {
     test(
       'opening displays existing clips without writing the clipboard',
       () async {
-        history.add([clip('existing')]);
+        history.add([clip('10')]);
         await flushStreams();
 
-        expect(viewModel.historyItems.single.id, 'existing');
+        expect(viewModel.historyItems.single.id, '10');
         verifyZeroInteractions(clipboardService);
       },
     );
@@ -357,13 +357,13 @@ void main() {
       history.add([]);
       await flushStreams();
 
-      final first = clip('first');
+      final first = clip('11');
       stored(first);
       history.add([first]);
       await flushStreams();
 
-      verify(() => clipboardService.writeText('clip first')).called(1);
-      expect(viewModel.historyItems.single.id, 'first');
+      verify(() => clipboardService.writeText('clip 11')).called(1);
+      expect(viewModel.historyItems.single.id, '11');
     });
 
     test('what is copied is the stored row, not the realtime one', () async {
@@ -371,10 +371,10 @@ void main() {
       await flushStreams();
 
       // Realtime can drop columns from an oversized row.
-      final truncated = clip('big');
+      final truncated = clip('12');
       stored(
         ClipboardItem(
-          id: 'big',
+          id: '12',
           userId: 'u1',
           content: 'the whole clip',
           deviceType: 'windows',
@@ -391,18 +391,18 @@ void main() {
       history.add([]);
       await flushStreams();
       when(
-        () => clipboardRepository.getById('gone'),
+        () => clipboardRepository.getById('13'),
       ).thenAnswer((_) async => null);
 
-      history.add([clip('gone')]);
+      history.add([clip('13')]);
       await flushStreams();
 
       verifyZeroInteractions(clipboardService);
     });
 
     test('deleting the newest clip does not copy the one below it', () async {
-      final older = clip('older');
-      final newest = clip('newest');
+      final older = clip('20');
+      final newest = clip('21');
       stored(older);
       stored(newest);
       history.add([]);
@@ -415,10 +415,10 @@ void main() {
       history.add([older]);
       await flushStreams();
 
-      expect(viewModel.historyItems.single.id, 'older');
+      expect(viewModel.historyItems.single.id, '20');
       verifyInOrder([
-        () => clipboardService.writeText('clip older'),
-        () => clipboardService.writeText('clip newest'),
+        () => clipboardService.writeText('clip 20'),
+        () => clipboardService.writeText('clip 21'),
       ]);
       verifyNoMoreInteractions(clipboardService);
     });
@@ -426,12 +426,12 @@ void main() {
     test(
       'resume shows clips sent while away and copies only new ones',
       () async {
-        final existing = clip('existing');
+        final existing = clip('10');
         history.add([existing]);
         await flushStreams();
 
         viewModel.onAppPaused();
-        final background = clip('background');
+        final background = clip('31');
         stored(background);
         history.add([background, existing]);
         when(
@@ -440,15 +440,15 @@ void main() {
 
         viewModel.onAppResumed();
         await flushStreams();
-        expect(viewModel.historyItems.first.id, 'background');
+        expect(viewModel.historyItems.first.id, '31');
         verifyZeroInteractions(clipboardService);
 
-        final foreground = clip('foreground');
+        final foreground = clip('32');
         stored(foreground);
         history.add([foreground, background, existing]);
         await flushStreams();
-        verify(() => clipboardService.writeText('clip foreground')).called(1);
-        verifyNever(() => clipboardService.writeText('clip background'));
+        verify(() => clipboardService.writeText('clip 32')).called(1);
+        verifyNever(() => clipboardService.writeText('clip 31'));
       },
     );
 
@@ -459,7 +459,7 @@ void main() {
 
       // A reconnect can open a fresh, unpaused subscription in the
       // background.
-      final background = clip('background');
+      final background = clip('31');
       stored(background);
       viewModel.subscribeToRealtimeUpdates();
       history.add([background]);
@@ -471,7 +471,7 @@ void main() {
     test('an image download finishing after a pause cannot write', () async {
       history.add([]);
       await flushStreams();
-      final image = clip('image', contentType: ContentType.imagePng);
+      final image = clip('40', contentType: ContentType.imagePng);
       stored(image);
       final download = Completer<Uint8List?>();
       when(
