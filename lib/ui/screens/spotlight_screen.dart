@@ -1053,10 +1053,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
 
   /// Open Settings from the encryption card. The switch is there, with the
   /// passphrase dialog and its checks; this does not grow a second way in.
+  /// Opens Settings scrolled to the switch, rather than at the top of the
+  /// list. Hides the card without snoozing it: following its button is not
+  /// "not now", and the run's one showing is used either way.
   Future<void> _openEncryptionSettings() async {
-    _viewModel.dismissEncryptionOffer();
+    _viewModel.hideEncryptionOffer();
+    _revealEncryptionOnOpen = true;
     await _openSettings();
   }
+
+  /// Read by the next settings panel built, then cleared.
+  bool _revealEncryptionOnOpen = false;
 
   /// The card suggesting encryption. The rules for when it shows live in
   /// SpotlightViewModel.offerEncryptionIfDue.
@@ -1859,6 +1866,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
+  bool _consumeRevealEncryption() {
+    final reveal = _revealEncryptionOnOpen;
+    _revealEncryptionOnOpen = false;
+    return reveal;
+  }
+
   /// Build settings panel (slide-in from left)
   Widget _buildSettingsPanel() {
     // Cache settings panel content to prevent rebuilds during animation
@@ -1916,6 +1929,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 commandLineToolService: _commandLineToolService,
                 deviceService: _deviceService,
                 encryptionService: EncryptionService.instance,
+                revealEncryption: _consumeRevealEncryption(),
                 onEncryptionChanged: _viewModel.refreshHistory,
                 onClose: _handleSettingsClose,
                 onOpenAuth: () async {

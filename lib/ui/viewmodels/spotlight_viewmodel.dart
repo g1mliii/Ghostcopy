@@ -63,7 +63,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _gameModeSubscription = gameModeChanges?.listen((_) {
       if (isPinned) unawaited(_applyPin());
     });
-    _encryptionService?.keyRevision.addListener(_hideEncryptionOffer);
+    _encryptionService?.keyRevision.addListener(hideEncryptionOffer);
   }
 
   final IAuthService _authService;
@@ -740,6 +740,9 @@ class SpotlightViewModel extends ChangeNotifier {
     final encryption = _encryptionService;
     if (store == null || encryption == null) return;
     if (!_offerGateOpen(store) || store.isEncryptionOfferSnoozed) return;
+    // A guest is asked for an account, not a passphrase: a guest's key lives
+    // only on this device, and the account card is the one to keep showing.
+    if (_authService.isAnonymous) return;
     final userId = _authService.currentUserId;
     if (userId == null) return;
     final hides = _hideCount;
@@ -762,17 +765,17 @@ class SpotlightViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// "Not now", or the card's button on its way to Settings. Opening
-  /// Settings snoozes too: someone who looks and leaves has said not yet.
+  /// "Not now": keeps the card away for its snooze.
   void dismissEncryptionOffer() {
     final store = _accountPromptStore;
     if (store != null) unawaited(store.snoozeEncryptionOffer());
-    _hideEncryptionOffer();
+    hideEncryptionOffer();
   }
 
-  /// Also on a key arriving while the card is up - turned on in Settings,
-  /// or the stored passphrase finishing its derivation.
-  void _hideEncryptionOffer() {
+  /// Take the card down without snoozing it - its button on the way to
+  /// Settings, or a key arriving while it is up (turned on in Settings, or
+  /// the stored passphrase finishing its derivation).
+  void hideEncryptionOffer() {
     if (!_encryptionOfferVisible) return;
     _encryptionOfferVisible = false;
     notifyListeners();
@@ -1272,7 +1275,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
     _gameModeSubscription?.cancel();
-    _encryptionService?.keyRevision.removeListener(_hideEncryptionOffer);
+    _encryptionService?.keyRevision.removeListener(hideEncryptionOffer);
     _gameModeSubscription = null;
 
     // Hand the callbacks back as they were before initialize

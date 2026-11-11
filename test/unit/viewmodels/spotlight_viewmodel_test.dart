@@ -797,6 +797,27 @@ void main() {
       expect(offering.showEncryptionOffer, isFalse);
     });
 
+    test('a guest who snoozed the account card is not asked either', () async {
+      await build(anonymous: true);
+      await store.snoozeOffer();
+
+      await offering.onWindowFocused();
+
+      expect(offering.showAccountOffer, isFalse);
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('following the card to Settings does not snooze it', () async {
+      await build();
+      await offering.onWindowFocused();
+
+      offering.hideEncryptionOffer();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(offering.showEncryptionOffer, isFalse);
+      expect(store.isEncryptionOfferSnoozed, isFalse);
+    });
+
     test('"Not now" keeps it away for thirty days', () async {
       await build();
       await offering.onWindowFocused();
