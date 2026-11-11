@@ -19,6 +19,7 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/capped_page.dart';
 import '../layout/side_safe_area.dart';
 import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
@@ -71,9 +72,10 @@ const double _headingGap = 6;
 /// else on the page adds to it: see _collapsedPageFloor.
 const double _minCollapsedPageHeight = 420;
 
-/// [child] in an [Expanded] when [expand], as is otherwise.
-Widget _expandedIf(bool expand, Widget child) =>
-    expand ? Expanded(child: child) : child;
+/// [child] in a loose [Flexible] when [grow], as is otherwise: it may take
+/// up to the room left in its column, but only as much as it needs.
+Widget _flexibleIf(bool grow, Widget child) =>
+    grow ? Flexible(child: child) : child;
 
 const _notificationChannel = MethodChannel(
   'com.ghostcopy.ghostcopy/notifications',
@@ -964,7 +966,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// [_minCollapsedPageHeight] plus room for whatever else is showing.
   ///
-  /// The page is a fixed height, so everything in it but the composer's text
+  /// The page height is capped, so everything in it but the composer's text
   /// field has to fit under it, or the field is squeezed to nothing and the
   /// column overflows. The allowances are generous on purpose: too much only
   /// scrolls the page a little with the keyboard up, too little overflows.
@@ -985,9 +987,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// Phones and narrow windows: one column, capped so it stays readable.
   ///
-  /// History can be folded away from its heading, and the composer then grows
-  /// to fill the screen - for writing something long without a five-line box
-  /// and a list of old clips under it. The two-pane layout has no need: there
+  /// History can be folded away from its heading, and the composer can then
+  /// grow past five lines with its text, up to the screen - for writing
+  /// something long without a five-line box and a list of old clips under
+  /// it. It still starts at three lines: folding history lifts the cap, it
+  /// does not stretch an empty box. The two-pane layout has no need: there
   /// the composer already has a column of its own.
   Widget _buildSingleColumnBody(BuildContext context) {
     // One padded column for the whole page, so the composer, chips, button
@@ -999,13 +1003,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       GhostSpacing.gutter,
       24 + MediaQuery.viewPaddingOf(context).bottom,
     );
-    // The same page either way; collapsed, the composer takes the spare
-    // height and history is only its heading.
+    // The same page either way; collapsed, history is only its heading and
+    // the composer may grow into the room it left - as its text needs, not
+    // all at once. An empty composer stays a few lines tall rather than a
+    // screen-high box with a hint at the top of it.
     final page = [
-      _expandedIf(
-        _historyCollapsed,
-        _buildPasteArea(expand: _historyCollapsed),
-      ),
+      _flexibleIf(_historyCollapsed, _buildPasteArea(grow: _historyCollapsed)),
       const SizedBox(height: 15),
       _buildDeviceSelector(),
       const SizedBox(height: 13),
@@ -1044,30 +1047,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 slivers: [
                   if (_historyCollapsed)
-                    // History folded away: the composer takes the room it
-                    // left, and the chips, Send and the history heading sit at
-                    // the bottom of the screen instead of under a short box.
-                    //
-                    // A fixed height - the viewport's, or more when that is too
-                    // short - rather than SliverFillRemaining, which sizes to
-                    // its child's intrinsic height: that is the full height of
-                    // the composer's TEXT, so a long paste grew the box past the
-                    // screen instead of scrolling inside it. With the keyboard
-                    // up on a small phone the floor makes the page scroll
-                    // rather than squash the composer.
+                    // History folded away: see CappedPage. The cap is the
+                    // viewport, or the floor when that is taller, so a small
+                    // phone scrolls the page rather than squash the composer.
                     SliverToBoxAdapter(
-                      child: SizedBox(
-                        height: math.max(
+                      child: CappedPage(
+                        maxHeight: math.max(
                           viewport.maxHeight,
                           _collapsedPageFloor(context),
                         ),
-                        child: Padding(
-                          padding: singleColumnPadding,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: page,
-                          ),
-                        ),
+                        padding: singleColumnPadding,
+                        children: page,
                       ),
                     )
                   else
@@ -1302,26 +1292,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   /// The composer: one surface holding the text field, any staged
-  /// attachment, and the attach control.
-  ///
-  /// Previously a card containing a separately-bordered text field, which read
-  /// as a card inside a card, under a "Paste & Send" heading that only
-  /// restated the placeholder below it. The heading is gone and the field is
-  /// borderless in every state - including focus, which inherited a 2px
-  /// primary outline from the theme and lit the whole box up bright purple.
-  /// Focus is now shown by the surface border alone.
-  /// The composer: one surface holding the text field, any staged
   /// attachment, and a toolbar.
   ///
   /// Previously a card containing a separately-bordered text field - a card
   /// inside a card - under a "Paste & Send" heading that only restated the
   /// placeholder below it. The field is borderless in EVERY state: setting
   /// only `border` left focusedBorder falling back to the theme's 2px primary
-  /// outline, which lit the whole box up on focus.
-  /// The composer. With [expand] it fills the height its parent gives it,
-  /// the text field taking all of it but the toolbar, rather than sizing to
-  /// three-to-five lines.
-  Widget _buildPasteArea({bool expand = false}) {
+  /// outline, which lit the whole box up on focus. Focus is shown by the
+  /// surface border alone.
+  ///
+  /// It sizes to its text: three lines empty, growing as text is added.
+  /// Normally it stops at five lines and scrolls; with [grow] - in a column
+  /// that bounds it - it keeps growing with its text up to the height it is
+  /// given, and scrolls from there.
+  Widget _buildPasteArea({bool grow = false}) {
     final sendError = _viewModel.sendErrorMessage;
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
@@ -1345,7 +1329,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           // the separating instead.
         ),
         child: Column(
-          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (hasAttachment) ...[
@@ -1356,8 +1340,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 _buildImagePreview(),
             ],
             // Its own layer: the cursor repaints this and nothing else.
-            _expandedIf(
-              expand,
+            _flexibleIf(
+              grow,
               // The field scrolls its own text, and those scroll events
               // bubble. The page's keyboardDismissBehavior.onDrag does not
               // check where a drag came from, so scrolling back up through a
@@ -1385,13 +1369,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       // Phones do not unfocus on a tap elsewhere by default, so there was
                       // no way to put the keyboard away and stay on this screen.
                       onTapOutside: (_) => _pasteFocusNode.unfocus(),
-                      // In the scrolling page the height is unbounded, so
-                      // minLines sizes the empty field. With history
-                      // collapsed it is given a height and fills it.
-                      expands: expand,
-                      minLines: expand ? null : 3,
-                      maxLines: expand ? null : 5,
-                      textAlignVertical: TextAlignVertical.top,
+                      // Sized by its text from three lines up. In the
+                      // scrolling page the height is unbounded, so it stops
+                      // at five. With history collapsed it is bounded by the
+                      // room left on screen instead, and grows to that.
+                      minLines: 3,
+                      maxLines: grow ? null : 5,
                       keyboardType: TextInputType.multiline,
                       style: const TextStyle(
                         fontSize: 16,
@@ -1449,11 +1432,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         liveRegion: true,
                         child: Text(
                           sendError,
-                          // Collapsed, the page is a fixed height and
+                          // Collapsed, the page height is capped and
                           // _collapsedPageFloor allows this two lines; a longer
                           // message wrapping freely overflowed the column.
-                          maxLines: expand ? 2 : null,
-                          overflow: expand ? TextOverflow.ellipsis : null,
+                          maxLines: grow ? 2 : null,
+                          overflow: grow ? TextOverflow.ellipsis : null,
                           style: const TextStyle(
                             fontSize: 12,
                             color: GhostColors.errorLight,
