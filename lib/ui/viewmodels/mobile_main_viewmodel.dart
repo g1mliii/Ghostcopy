@@ -692,6 +692,8 @@ class MobileMainViewModel extends ChangeNotifier {
     String pasteText, {
     VoidCallback? onSendSuccess,
   }) async {
+    if (_isSending) return;
+
     // Check if sending image
     if (_clipboardContent?.hasImage ?? false) {
       await _sendImage(onSendSuccess: onSendSuccess);

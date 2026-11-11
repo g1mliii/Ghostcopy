@@ -119,7 +119,8 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
     super.initState();
 
     _controller = AnimationController(
-      duration: GhostAnimations.slow,
+      duration: GhostAnimations.normal,
+      reverseDuration: GhostAnimations.fast,
       vsync: this,
     );
 
@@ -131,10 +132,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
     );
 
     _slideAnimation =
-        Tween<Offset>(
-          begin: const Offset(0, -1), // Slide down from above
-          end: Offset.zero,
-        ).animate(
+        Tween<Offset>(begin: const Offset(0, -0.25), end: Offset.zero).animate(
           CurvedAnimation(
             parent: _controller,
             curve: GhostAnimations.defaultCurve,
@@ -146,11 +144,7 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
 
     // Auto-dismiss after duration - use Timer for cancellation (Fix #16)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _autoDismissTimer = Timer(widget.duration, () {
-        if (mounted && !_isDismissed) {
-          _dismiss();
-        }
-      });
+      if (mounted) _autoDismissTimer = Timer(widget.duration, _dismiss);
     });
   }
 
@@ -203,64 +197,71 @@ class _GhostToastWidgetState extends State<_GhostToastWidget>
       top: padding.top + 12,
       left: padding.left,
       right: padding.right,
-      child: FadeTransition(
-        opacity: _fadeAnimation,
-        child: SlideTransition(
-          position: _slideAnimation,
-          child: Center(
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                // Capped and centred rather than stretched edge to edge: a
-                // three-word confirmation spread across a full phone width
-                // reads as a banner, which is heavier than the moment
-                // deserves. Same cap the desktop toast uses.
-                constraints: const BoxConstraints(maxWidth: 320),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 12,
-                ),
-                decoration: ShapeDecoration(
-                  // One surface colour for every type. Success used to wash the
-                  // whole toast in translucent green and error in translucent
-                  // red, which sat oddly in an app that is otherwise opaque
-                  // and near-black, and made a routine "Copied to clipboard"
-                  // louder than the action. The type is still legible from
-                  // the icon, which is the part that carries meaning; the
-                  // surface just holds the text. Matches the desktop toast in
-                  // notification_service.dart.
-                  color: GhostColors.surfaceAlpha95,
-                  shape: Adaptive.surfaceShape(
-                    radius: 12,
-                    side: BorderSide(color: GhostColors.glassBorderAlpha30),
-                  ),
-                  shadows: const [
-                    BoxShadow(
-                      color: Color(0x80000000),
-                      blurRadius: 20,
-                      offset: Offset(0, 8),
+      child: IgnorePointer(
+        child: Semantics(
+          liveRegion: true,
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: SlideTransition(
+              position: MediaQuery.disableAnimationsOf(context)
+                  ? const AlwaysStoppedAnimation(Offset.zero)
+                  : _slideAnimation,
+              child: Center(
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    // Capped and centred rather than stretched edge to edge: a
+                    // three-word confirmation spread across a full phone width
+                    // reads as a banner, which is heavier than the moment
+                    // deserves. Same cap the desktop toast uses.
+                    constraints: const BoxConstraints(maxWidth: 320),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 12,
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(widget.icon, size: 18, color: _getIconColor()),
-                    const SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        widget.message,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 0.2,
-                          color: GhostColors.textPrimary,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                    decoration: ShapeDecoration(
+                      // One surface colour for every type. Success used to wash the
+                      // whole toast in translucent green and error in translucent
+                      // red, which sat oddly in an app that is otherwise opaque
+                      // and near-black, and made a routine "Copied to clipboard"
+                      // louder than the action. The type is still legible from
+                      // the icon, which is the part that carries meaning; the
+                      // surface just holds the text. Matches the desktop toast in
+                      // notification_service.dart.
+                      color: GhostColors.surfaceAlpha95,
+                      shape: Adaptive.surfaceShape(
+                        radius: 12,
+                        side: BorderSide(color: GhostColors.glassBorderAlpha30),
                       ),
+                      shadows: const [
+                        BoxShadow(
+                          color: Color(0x80000000),
+                          blurRadius: 20,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
                     ),
-                  ],
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(widget.icon, size: 18, color: _getIconColor()),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            widget.message,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.2,
+                              color: GhostColors.textPrimary,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),

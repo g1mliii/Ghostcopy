@@ -19,6 +19,7 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/capped_page.dart';
 import '../layout/side_safe_area.dart';
 import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
@@ -27,11 +28,30 @@ import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
+import '../widgets/ghost_loading_indicator.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/native_toast.dart';
 import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
+
+enum _HistoryFilter {
+  all('All'),
+  text('Text'),
+  images('Images'),
+  files('Files');
+
+  const _HistoryFilter(this.label);
+
+  final String label;
+
+  bool matches(ClipboardItem item) => switch (this) {
+    all => true,
+    text => !item.isImage && !item.isFile,
+    images => item.isImage,
+    files => item.isFile,
+  };
+}
 
 /// Width of the compose pane in the two-pane layout, for a screen [width]
 /// wide.
@@ -105,6 +125,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// to the composer. Presentation only, so it lives here and not in the
   /// ViewModel. See [_buildSingleColumnBody].
   bool _historyCollapsed = false;
+  _HistoryFilter _historyFilter = _HistoryFilter.all;
 
   /// Keeps the composer's field the same element across the collapsed and
   /// expanded layouts, which build it under different parents. Without it a
@@ -704,48 +725,37 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleSend() async {
-    // Check if sending image or text
-    if (_viewModel.clipboardContent?.hasImage ?? false) {
-      await _viewModel.handleSend(
-        _pasteController.text,
-        onSendSuccess: () {
-          Adaptive.successFeedback();
-          if (mounted) {
-            _pasteController.clear();
-            showGhostToast(
-              context,
-              'Image sent successfully',
-              icon: Icons.image,
-              type: GhostToastType.success,
-            );
-          }
-        },
-      );
-      return;
+    final attachment = _viewModel.clipboardContent;
+    final text = _pasteController.text;
+    if (attachment?.hasImage != true && attachment?.hasFile != true) {
+      final content = text.trim();
+      if (content.isEmpty) {
+        _viewModel.setSendError('Please paste or type content to send');
+        return;
+      }
+
+      final isSensitive = await _viewModel.checkSensitiveData(content);
+      if (!mounted) return;
+      if (isSensitive && !await _showSensitiveDataWarning()) return;
+
+      // Check that the draft still matches the one we checked.
+      if (!mounted ||
+          _pasteController.text != text ||
+          !identical(_viewModel.clipboardContent, attachment)) {
+        return;
+      }
     }
 
-    final content = _pasteController.text.trim();
-    if (content.isEmpty) {
-      _viewModel.setSendError('Please paste or type content to send');
-      return;
-    }
-
-    // Security check
-    final isSensitive = await _viewModel.checkSensitiveData(content);
-    if (isSensitive) {
-      final shouldContinue = await _showSensitiveDataWarning();
-      if (!shouldContinue) return;
-    }
-
+    final destination = sendDestinationLabel(_viewModel.selectedDeviceTypes);
     await _viewModel.handleSend(
-      _pasteController.text,
+      text,
       onSendSuccess: () {
         Adaptive.successFeedback();
         if (mounted) {
-          _pasteController.clear();
+          if (_pasteController.text == text) _pasteController.clear();
           showGhostToast(
             context,
-            'Sent successfully',
+            'Sent to $destination',
             icon: Icons.send,
             type: GhostToastType.success,
           );
@@ -941,17 +951,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Adaptive.progressIndicator(
+                  const GhostLoadingIndicator(
                     size: 24,
-                    color: GhostColors.primary,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Preparing to share…',
-                    style: GhostTypography.body.copyWith(
-                      fontSize: 13,
-                      color: GhostColors.textMuted,
-                    ),
+                    label: 'Preparing to share…',
                   ),
                 ],
               ),
@@ -1058,21 +1060,13 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     // composer's full text height, so a long paste grew past
                     // the screen instead of scrolling inside the box.
                     SliverToBoxAdapter(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxHeight: math.max(
-                            viewport.maxHeight,
-                            _collapsedPageFloor(context),
-                          ),
+                      child: CappedPage(
+                        maxHeight: math.max(
+                          viewport.maxHeight,
+                          _collapsedPageFloor(context),
                         ),
-                        child: Padding(
-                          padding: singleColumnPadding,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: page,
-                          ),
-                        ),
+                        padding: singleColumnPadding,
+                        children: page,
                       ),
                     )
                   else
@@ -1390,7 +1384,6 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       // room left on screen instead, and grows to that.
                       minLines: 3,
                       maxLines: grow ? null : 5,
-                      textAlignVertical: TextAlignVertical.top,
                       keyboardType: TextInputType.multiline,
                       style: const TextStyle(
                         fontSize: 16,
@@ -1444,16 +1437,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        sendError,
-                        // Collapsed, the page height is capped and
-                        // _collapsedPageFloor allows this two lines; a longer
-                        // message wrapping freely overflowed the column.
-                        maxLines: grow ? 2 : null,
-                        overflow: grow ? TextOverflow.ellipsis : null,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: GhostColors.errorLight,
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          sendError,
+                          // Collapsed, the page height is capped and
+                          // _collapsedPageFloor allows this two lines; a longer
+                          // message wrapping freely overflowed the column.
+                          maxLines: grow ? 2 : null,
+                          overflow: grow ? TextOverflow.ellipsis : null,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: GhostColors.errorLight,
+                          ),
                         ),
                       ),
                     ),
@@ -1608,7 +1604,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       child: FilledButton.icon(
         onPressed: _viewModel.isSending ? null : _handleSend,
         icon: _viewModel.isSending
-            ? Adaptive.progressIndicator(size: 18, color: Colors.white)
+            ? const GhostLoadingIndicator.compact(color: Colors.white)
             : const Icon(Icons.send_rounded, size: 18),
         label: Text(_viewModel.isSending ? 'Sending…' : _sendButtonLabel()),
         style: FilledButton.styleFrom(
@@ -1629,14 +1625,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// Counting "Devices" was wrong for the same reason the chips were: a
   /// selection is a platform, and one platform can cover several machines, so
   /// "Send to 1 Device" was a miscount whenever a type had more than one.
-  String _sendButtonLabel() {
-    final selected = _viewModel.selectedDeviceTypes;
-    if (selected.isEmpty) return 'Send to all devices';
-    if (selected.length == 1) {
-      return 'Send to ${platformLabel(selected.first)}';
-    }
-    return 'Send to ${selected.length} platforms';
-  }
+  String _sendButtonLabel() =>
+      'Send to ${sendDestinationLabel(_viewModel.selectedDeviceTypes)}';
 
   /// Banner shown whenever this device holds clips it cannot decrypt.
   ///
@@ -1743,10 +1733,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  List<ClipboardItem> get _visibleHistory {
+    final items = _viewModel.filteredHistoryItems;
+    return _historyFilter == _HistoryFilter.all
+        ? items
+        : items.where(_historyFilter.matches).toList();
+  }
+
   /// The history heading. When [collapsible], tapping it folds the section
   /// away or back, with a chevron saying which.
   Widget _buildHistoryHeading({bool collapsible = false}) {
-    final count = _viewModel.filteredHistoryItems.length;
+    final count = _visibleHistory.length;
     // Saved on this phone and not refreshed - it may be behind.
     final detail = _viewModel.showingSavedHistory
         ? '$count saved · offline'
@@ -1806,7 +1803,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Widget _buildHistorySection({bool collapsible = false}) {
-    final items = _viewModel.filteredHistoryItems;
+    final items = _visibleHistory;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1815,17 +1812,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         // The tap target already pads the collapsible heading.
         if (!collapsible) const SizedBox(height: _headingGap),
         _buildHistorySearch(),
+        if (_viewModel.historyItems.isNotEmpty ||
+            _historyFilter != _HistoryFilter.all) ...[
+          const SizedBox(height: _headingGap),
+          _buildHistoryFilters(),
+        ],
         const SizedBox(height: GhostSpacing.sectionTight),
         // Suppressed during pull-to-refresh: the indicator the user dragged
         // already reports that reload. See isRefreshing.
         if (_viewModel.historyLoading && !_viewModel.isRefreshing)
-          SizedBox(
+          const SizedBox(
             height: 120,
             child: Center(
-              child: Adaptive.progressIndicator(
-                size: 28,
-                color: GhostColors.primary,
-              ),
+              child: GhostLoadingIndicator(label: 'Loading history…'),
             ),
           )
         else if (_viewModel.historyError != null)
@@ -1838,6 +1837,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             icon: Icons.content_paste_off_outlined,
             message: _viewModel.historySearchQuery.isNotEmpty
                 ? 'No clips match your search'
+                : _historyFilter != _HistoryFilter.all
+                ? 'No clips in this category'
                 : 'Nothing here yet. Send something to get started.',
           )
         else
@@ -1865,6 +1866,33 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ],
                 ],
               ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHistoryFilters() {
+    return Wrap(
+      spacing: 6,
+      children: [
+        for (final filter in _HistoryFilter.values)
+          ChoiceChip(
+            label: Text(filter.label),
+            selected: _historyFilter == filter,
+            onSelected: (_) => setState(() => _historyFilter = filter),
+            showCheckmark: false,
+            selectedColor: GhostColors.accentSoft,
+            backgroundColor: GhostColors.surface,
+            labelStyle: TextStyle(
+              color: _historyFilter == filter
+                  ? GhostColors.accentText
+                  : GhostColors.textSecondary,
+            ),
+            side: BorderSide(
+              color: _historyFilter == filter
+                  ? GhostColors.accentBorder
+                  : GhostColors.border,
             ),
           ),
       ],
