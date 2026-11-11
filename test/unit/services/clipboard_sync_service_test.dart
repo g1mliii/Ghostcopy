@@ -199,6 +199,76 @@ void main() {
         .setMockMethodCallHandler(clipboardChangeChannel, null);
   });
 
+  test('send shortcut reports a missing session', () async {
+    when(() => auth.currentUser).thenReturn(null);
+    clipboardValue = ClipboardContent.text('current selection');
+    await service.sendCurrentClipboard();
+    verify(
+      () => notifier.showToast(
+        message:
+            'Clipboard was not sent. Sign in or wait for your session to reconnect.',
+        type: NotificationType.warning,
+      ),
+    ).called(1);
+    verifyNever(() => repository.insert(any()));
+  });
+
+  test(
+    'send shortcut reads and sends unchanged text with monitoring off',
+    () async {
+      clipboardValue = ClipboardContent.text('current selection');
+      when(
+        settings.getAutoSendTargetDevices,
+      ).thenAnswer((_) async => {'android'});
+      when(() => repository.insert(any())).thenAnswer(
+        (call) async => call.positionalArguments.first as ClipboardItem,
+      );
+      await service.sendCurrentClipboard();
+      await service.sendCurrentClipboard();
+      verify(clipboard.read).called(2);
+      final items = verify(
+        () => repository.insert(captureAny()),
+      ).captured.cast<ClipboardItem>();
+      expect(items, hasLength(2));
+      for (final item in items) {
+        expect(item.content, 'current selection');
+        expect(item.targetDeviceTypes, ['android']);
+      }
+    },
+  );
+
+  testWidgets('send shortcut does not resend a copy auto-sent while waiting', (
+    tester,
+  ) async {
+    clipboardValue = ClipboardContent.text('copied');
+    when(
+      settings.getAutoSendTargetDevices,
+    ).thenAnswer((_) async => {'android'});
+    final inserted = Completer<void>();
+    when(() => repository.insert(any())).thenAnswer((call) async {
+      await inserted.future;
+      return call.positionalArguments.first as ClipboardItem;
+    });
+    service.startClipboardMonitoring();
+    await tester.pump(const Duration(seconds: 5));
+    verify(() => repository.insert(any())).called(1); // auto-send in flight
+    final manualSend = service.sendCurrentClipboard();
+    inserted.complete();
+    await tester.pump();
+    await manualSend;
+    verifyNever(() => repository.insert(any()));
+    service.stopClipboardMonitoring();
+  });
+
+  test('send shortcut reports an empty clipboard', () async {
+    await service.sendCurrentClipboard();
+    verify(
+      () => notifier.showToast(
+        message: 'Clipboard is empty. Copy something first.',
+      ),
+    ).called(1);
+  });
+
   testWidgets('slow clipboard reads do not overlap timer ticks', (
     tester,
   ) async {
@@ -220,12 +290,14 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     }
     verify(clipboard.read).called(1);
+    final manualSend = service.sendCurrentClipboard();
+    verifyNever(clipboard.read);
     pending.completeError(Exception('Temporary read failure'));
-    await tester.pump();
     when(
       clipboard.read,
     ).thenAnswer((_) async => const ClipboardContent.empty());
-    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    await manualSend;
     verify(clipboard.read).called(1);
     service.stopClipboardMonitoring();
   });
@@ -258,6 +330,23 @@ void main() {
           content: content,
         ),
       ).called(1);
+
+  test(
+    'send shortcut blocks a sensitive value split across HTML tags',
+    () async {
+      clipboardValue = ClipboardContent.html(
+        '<span>41111111</span><span>11111111</span>',
+      );
+      when(
+        () => security.detectSensitiveDataAsync('4111111111111111'),
+      ).thenAnswer((_) async => const DetectionResult(isSensitive: true));
+      await service.sendCurrentClipboard();
+      verify(
+        () => security.detectSensitiveDataAsync('4111111111111111'),
+      ).called(1);
+      verifyZeroInteractions(repository);
+    },
+  );
 
   testWidgets('manual text sends reach both integrations', (tester) async {
     service.notifyManualSend('manual clip');
@@ -391,6 +480,51 @@ void main() {
 
       verify(channel.unsubscribe).called(1);
       verifyNever(() => channel.subscribe(any()));
+    });
+
+    testWidgets('resuming a retained silent channel catches up and rejoins', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      // The tray poll has not run yet when the user opens Spotlight.
+      service.startPolling();
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      service
+        ..stopPolling()
+        ..resumeRealtime();
+      await settle(tester);
+
+      verify(channel.unsubscribe).called(1);
+      verify(() => channel.subscribe(any())).called(1);
+      verify(() => clipboard.writeText('clip 2')).called(1);
+      verifyVaultGot('clip 2');
+    });
+
+    testWidgets('resuming a healthy retained channel only checks for clips', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+      clearInteractions(repository);
+
+      service.resumeRealtime();
+      await settle(tester);
+
+      verify(repository.getLatestItemId).called(1);
+      verifyNever(channel.unsubscribe);
+      verifyNever(() => channel.subscribe(any()));
+      verifyNever(() => clipboard.writeText(any()));
     });
 
     // A second missed clip inside the 30 s rejoin cooldown was refused, and
@@ -1471,6 +1605,14 @@ void main() {
         () => repository.downloadFile(any()),
       ).thenAnswer((_) => download.future);
       await receive(tester); // clip 1 is now downloading
+      await service.sendCurrentClipboard();
+      verify(
+        () => notifier.showToast(
+          message:
+              'Clipboard is being updated. Try sending again when it finishes.',
+          type: NotificationType.warning,
+        ),
+      ).called(1);
 
       pasteboard++; // the user copies in another app
       when(repository.getLatestItemId).thenAnswer((_) async => '2');

@@ -19,9 +19,11 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/capped_page.dart';
 import '../layout/side_safe_area.dart';
 import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
+import '../theme/appearance.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
 import '../theme/typography.dart';
@@ -71,9 +73,10 @@ const double _headingGap = 6;
 /// else on the page adds to it: see _collapsedPageFloor.
 const double _minCollapsedPageHeight = 420;
 
-/// [child] in an [Expanded] when [expand], as is otherwise.
-Widget _expandedIf(bool expand, Widget child) =>
-    expand ? Expanded(child: child) : child;
+/// [child] in a loose [Flexible] when [grow], as is otherwise: it may take
+/// up to the room left in its column, but only as much as it needs.
+Widget _flexibleIf(bool grow, Widget child) =>
+    grow ? Flexible(child: child) : child;
 
 const _notificationChannel = MethodChannel(
   'com.ghostcopy.ghostcopy/notifications',
@@ -429,11 +432,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 Icons.content_paste_outlined,
                 color: GhostColors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'Paste from clipboard',
                 style: TextStyle(color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Image, file or rich text you copied',
                 style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
               ),
@@ -444,11 +447,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 Icons.add_photo_alternate_outlined,
                 color: GhostColors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'Image',
                 style: TextStyle(color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Pick from your gallery',
                 style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
               ),
@@ -459,11 +462,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 Icons.insert_drive_file_outlined,
                 color: GhostColors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'File',
                 style: TextStyle(color: GhostColors.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Any file up to 10MB',
                 style: TextStyle(color: GhostColors.textMuted, fontSize: 12),
               ),
@@ -819,8 +822,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   @override
-  Widget build(BuildContext context) =>
-      SideSafeArea(child: _buildContent(context));
+  Widget build(BuildContext context) {
+    // Rebuild explicit palette colors when the application's theme changes.
+    Theme.of(context);
+    return SideSafeArea(child: _buildContent(context));
+  }
 
   Widget _buildContent(BuildContext context) {
     final shareProgress = _viewModel.shareProgress;
@@ -863,12 +869,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         surfaceTintColor: Colors.transparent,
         // AppBar derives its own overlay style from the background colour,
         // which would undo the transparent status bar set in main(). Pin it so
-        // the header's colour shows through the cutout strip with light
-        // glyphs over it.
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
-          statusBarBrightness: Brightness.dark,
+        // the header's colour shows through with matching system glyphs.
+        systemOverlayStyle: appearanceOverlayStyle(
+          isLight: GhostColors.isLight,
         ),
         toolbarHeight: 62,
         titleSpacing: GhostSpacing.gutter,
@@ -964,7 +967,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// [_minCollapsedPageHeight] plus room for whatever else is showing.
   ///
-  /// The page is a fixed height, so everything in it but the composer's text
+  /// The page height is capped, so everything in it but the composer's text
   /// field has to fit under it, or the field is squeezed to nothing and the
   /// column overflows. The allowances are generous on purpose: too much only
   /// scrolls the page a little with the keyboard up, too little overflows.
@@ -985,9 +988,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// Phones and narrow windows: one column, capped so it stays readable.
   ///
-  /// History can be folded away from its heading, and the composer then grows
-  /// to fill the screen - for writing something long without a five-line box
-  /// and a list of old clips under it. The two-pane layout has no need: there
+  /// History can be folded away from its heading, and the composer can then
+  /// grow past five lines with its text, up to the screen - for writing
+  /// something long without a five-line box and a list of old clips under
+  /// it. It still starts at three lines: folding history lifts the cap, it
+  /// does not stretch an empty box. The two-pane layout has no need: there
   /// the composer already has a column of its own.
   Widget _buildSingleColumnBody(BuildContext context) {
     // One padded column for the whole page, so the composer, chips, button
@@ -999,13 +1004,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       GhostSpacing.gutter,
       24 + MediaQuery.viewPaddingOf(context).bottom,
     );
-    // The same page either way; collapsed, the composer takes the spare
-    // height and history is only its heading.
+    // The same page either way; collapsed, history is only its heading and
+    // the composer may grow into the room it left - as its text needs, not
+    // all at once. An empty composer stays a few lines tall rather than a
+    // screen-high box with a hint at the top of it.
     final page = [
-      _expandedIf(
-        _historyCollapsed,
-        _buildPasteArea(expand: _historyCollapsed),
-      ),
+      _flexibleIf(_historyCollapsed, _buildPasteArea(grow: _historyCollapsed)),
       const SizedBox(height: 15),
       _buildDeviceSelector(),
       const SizedBox(height: 13),
@@ -1044,30 +1048,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 slivers: [
                   if (_historyCollapsed)
-                    // History folded away: the composer takes the room it
-                    // left, and the chips, Send and the history heading sit at
-                    // the bottom of the screen instead of under a short box.
-                    //
-                    // A fixed height - the viewport's, or more when that is too
-                    // short - rather than SliverFillRemaining, which sizes to
-                    // its child's intrinsic height: that is the full height of
-                    // the composer's TEXT, so a long paste grew the box past the
-                    // screen instead of scrolling inside it. With the keyboard
-                    // up on a small phone the floor makes the page scroll
-                    // rather than squash the composer.
+                    // History folded away: see CappedPage. The cap is the
+                    // viewport, or the floor when that is taller, so a small
+                    // phone scrolls the page rather than squash the composer.
                     SliverToBoxAdapter(
-                      child: SizedBox(
-                        height: math.max(
+                      child: CappedPage(
+                        maxHeight: math.max(
                           viewport.maxHeight,
                           _collapsedPageFloor(context),
                         ),
-                        child: Padding(
-                          padding: singleColumnPadding,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: page,
-                          ),
-                        ),
+                        padding: singleColumnPadding,
+                        children: page,
                       ),
                     )
                   else
@@ -1125,11 +1116,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             ),
           ),
         ),
-        const VerticalDivider(
-          width: 1,
-          thickness: 1,
-          color: GhostColors.border,
-        ),
+        VerticalDivider(width: 1, thickness: 1, color: GhostColors.border),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _viewModel.handleRefresh,
@@ -1302,26 +1289,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   /// The composer: one surface holding the text field, any staged
-  /// attachment, and the attach control.
-  ///
-  /// Previously a card containing a separately-bordered text field, which read
-  /// as a card inside a card, under a "Paste & Send" heading that only
-  /// restated the placeholder below it. The heading is gone and the field is
-  /// borderless in every state - including focus, which inherited a 2px
-  /// primary outline from the theme and lit the whole box up bright purple.
-  /// Focus is now shown by the surface border alone.
-  /// The composer: one surface holding the text field, any staged
   /// attachment, and a toolbar.
   ///
   /// Previously a card containing a separately-bordered text field - a card
   /// inside a card - under a "Paste & Send" heading that only restated the
   /// placeholder below it. The field is borderless in EVERY state: setting
   /// only `border` left focusedBorder falling back to the theme's 2px primary
-  /// outline, which lit the whole box up on focus.
-  /// The composer. With [expand] it fills the height its parent gives it,
-  /// the text field taking all of it but the toolbar, rather than sizing to
-  /// three-to-five lines.
-  Widget _buildPasteArea({bool expand = false}) {
+  /// outline, which lit the whole box up on focus. Focus is shown by the
+  /// surface border alone.
+  ///
+  /// It sizes to its text: three lines empty, growing as text is added.
+  /// Normally it stops at five lines and scrolls; with [grow] - in a column
+  /// that bounds it - it keeps growing with its text up to the height it is
+  /// given, and scrolls from there.
+  Widget _buildPasteArea({bool grow = false}) {
     final sendError = _viewModel.sendErrorMessage;
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
@@ -1345,7 +1326,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           // the separating instead.
         ),
         child: Column(
-          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (hasAttachment) ...[
@@ -1356,8 +1337,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 _buildImagePreview(),
             ],
             // Its own layer: the cursor repaints this and nothing else.
-            _expandedIf(
-              expand,
+            _flexibleIf(
+              grow,
               // The field scrolls its own text, and those scroll events
               // bubble. The page's keyboardDismissBehavior.onDrag does not
               // check where a drag came from, so scrolling back up through a
@@ -1385,19 +1366,18 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       // Phones do not unfocus on a tap elsewhere by default, so there was
                       // no way to put the keyboard away and stay on this screen.
                       onTapOutside: (_) => _pasteFocusNode.unfocus(),
-                      // In the scrolling page the height is unbounded, so
-                      // minLines sizes the empty field. With history
-                      // collapsed it is given a height and fills it.
-                      expands: expand,
-                      minLines: expand ? null : 3,
-                      maxLines: expand ? null : 5,
-                      textAlignVertical: TextAlignVertical.top,
+                      // Sized by its text from three lines up. In the
+                      // scrolling page the height is unbounded, so it stops
+                      // at five. With history collapsed it is bounded by the
+                      // room left on screen instead, and grows to that.
+                      minLines: 3,
+                      maxLines: grow ? null : 5,
                       keyboardType: TextInputType.multiline,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         color: GhostColors.textPrimary,
                       ),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         hintText: 'Paste or type something…',
                         hintStyle: TextStyle(color: GhostColors.textMuted),
                         contentPadding: EdgeInsets.fromLTRB(16, 16, 16, 10),
@@ -1426,7 +1406,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 ),
               ),
             ),
-            const Divider(height: 1, color: GhostColors.border),
+            Divider(height: 1, color: GhostColors.border),
             _buildComposerToolbar(),
             if (sendError != null)
               Padding(
@@ -1438,7 +1418,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 ),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.error_outline_rounded,
                       size: 15,
                       color: GhostColors.errorLight,
@@ -1449,12 +1429,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         liveRegion: true,
                         child: Text(
                           sendError,
-                          // Collapsed, the page is a fixed height and
+                          // Collapsed, the page height is capped and
                           // _collapsedPageFloor allows this two lines; a longer
                           // message wrapping freely overflowed the column.
-                          maxLines: expand ? 2 : null,
-                          overflow: expand ? TextOverflow.ellipsis : null,
-                          style: const TextStyle(
+                          maxLines: grow ? 2 : null,
+                          overflow: grow ? TextOverflow.ellipsis : null,
+                          style: TextStyle(
                             fontSize: 12,
                             color: GhostColors.errorLight,
                           ),
@@ -1580,11 +1560,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       onTap: () => _viewModel.loadDevices(),
       child: Row(
         children: [
-          const Icon(
-            Icons.error_outline,
-            size: 14,
-            color: GhostColors.errorLight,
-          ),
+          Icon(Icons.error_outline, size: 14, color: GhostColors.errorLight),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
@@ -1692,7 +1668,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                         ],
                       ),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right,
                       color: GhostColors.textMuted,
                       size: 20,
@@ -1864,7 +1840,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 children: [
                   for (var index = 0; index < items.length; index++) ...[
                     if (index > 0)
-                      const Divider(
+                      Divider(
                         height: 1,
                         indent: 16,
                         endIndent: 16,
@@ -1916,11 +1892,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         cursorOpacityAnimates: false,
         onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
         onChanged: _viewModel.filterHistoryDebounced,
-        style: const TextStyle(fontSize: 16, color: GhostColors.textPrimary),
+        style: TextStyle(fontSize: 16, color: GhostColors.textPrimary),
         decoration: InputDecoration(
           hintText: 'Search clips…',
-          hintStyle: const TextStyle(color: GhostColors.textMuted),
-          prefixIcon: const Icon(
+          hintStyle: TextStyle(color: GhostColors.textMuted),
+          prefixIcon: Icon(
             Icons.search_rounded,
             size: 18,
             color: GhostColors.textMuted,
@@ -1944,11 +1920,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-            borderSide: const BorderSide(color: GhostColors.border),
+            borderSide: BorderSide(color: GhostColors.border),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
-            borderSide: const BorderSide(color: GhostColors.border),
+            borderSide: BorderSide(color: GhostColors.border),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(GhostSpacing.controlRadius),
@@ -2343,7 +2319,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                         // read cramped on a tablet, where the row is wide and
                         // the text has room it was not using; the line height
                         // matters as much as the size for the two-line case.
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           height: 1.35,
                           color: GhostColors.textPrimary,
@@ -2433,20 +2409,14 @@ class _HistoryRowState extends State<_HistoryRow> {
         ),
         Text(
           platformLabel(item.deviceType),
-          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        const Text(
-          '•',
           style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
+        Text('•', style: TextStyle(fontSize: 12, color: GhostColors.textMuted)),
         Text(
           timeago.format(item.createdAt, locale: 'en_short'),
-          style: const TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        const Text(
-          '→',
           style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
         ),
+        Text('→', style: TextStyle(fontSize: 12, color: GhostColors.textMuted)),
         // Destination is drawn the same way as the source - icon then label -
         // so both ends of the arrow read as the same kind of thing. It was
         // previously a bare word, which made "Windows → All devices" look like
@@ -2461,7 +2431,7 @@ class _HistoryRowState extends State<_HistoryRow> {
           // generic icon only when a clip WAS targeted, so absence had to mean
           // "went everywhere" - which no missing icon can communicate.
           _targetLabel(item.targetDeviceTypes),
-          style: const TextStyle(fontSize: 12, color: GhostColors.accentText),
+          style: TextStyle(fontSize: 12, color: GhostColors.accentText),
         ),
       ],
     );
@@ -2546,7 +2516,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                           ScrollViewKeyboardDismissBehavior.onDrag,
                       child: SelectableText(
                         widget.item.content,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           color: GhostColors.textPrimary,
                         ),

@@ -90,8 +90,12 @@ class _LogoButton extends StatelessWidget {
           opacity: onTap == null ? 0.5 : 1,
           child: Material(
             color: Colors.white,
-            shape: const CircleBorder(
-              side: BorderSide(color: GhostColors.surface),
+            shape: CircleBorder(
+              side: BorderSide(
+                color: GhostColors.isLight
+                    ? GhostColors.border
+                    : GhostColors.surface,
+              ),
             ),
             clipBehavior: Clip.antiAlias,
             child: InkWell(

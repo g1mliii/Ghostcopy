@@ -414,7 +414,14 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       // The composer is showing again. Not after Create Account, which
       // opened a panel of its own and has already had its answer.
       if (panel == SpotlightPanel.history) _textFieldFocusNode.requestFocus();
-      if (panel != SpotlightPanel.auth) _viewModel.offerAccountIfDue();
+      if (panel != SpotlightPanel.auth) {
+        unawaited(
+          _viewModel.offerCardsIfDue(
+            composerVisible: () =>
+                mounted && _activePanel == SpotlightPanel.none,
+          ),
+        );
+      }
     }
   }
 
@@ -926,6 +933,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                             _buildAccountOffer(),
                                             const SizedBox(height: 10),
                                           ],
+                                          if (_viewModel
+                                              .showEncryptionOffer) ...[
+                                            _buildEncryptionOffer(),
+                                            const SizedBox(height: 10),
+                                          ],
                                           _buildTextField(),
                                           const SizedBox(height: 10),
                                           // Empty for JSON and plain text, so
@@ -1039,9 +1051,54 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     unawaited(_authSlideController.forward());
   }
 
+  /// Open Settings from the encryption card. The switch is there, with the
+  /// passphrase dialog and its checks; this does not grow a second way in.
+  /// Opens Settings scrolled to the switch, rather than at the top of the
+  /// list. Hides the card without snoozing it: following its button is not
+  /// "not now", and the run's one showing is used either way.
+  Future<void> _openEncryptionSettings() async {
+    _viewModel.hideEncryptionOffer();
+    _revealEncryptionOnOpen = true;
+    await _openSettings();
+  }
+
+  /// Read by the next settings panel built, then cleared.
+  bool _revealEncryptionOnOpen = false;
+
+  /// The card suggesting encryption. The rules for when it shows live in
+  /// SpotlightViewModel.offerEncryptionIfDue.
+  Widget _buildEncryptionOffer() {
+    return _buildOfferCard(
+      icon: Icons.lock_outline,
+      message:
+          'Use end-to-end encryption for new clips you sync from this device.',
+      actionLabel: 'Turn on in Settings',
+      onAction: _openEncryptionSettings,
+      onDismiss: _viewModel.dismissEncryptionOffer,
+    );
+  }
+
   /// The card asking a guest to make an account. The rules for when it shows
   /// live in SpotlightViewModel.showAccountOffer.
   Widget _buildAccountOffer() {
+    return _buildOfferCard(
+      icon: Icons.cloud_done_outlined,
+      message: 'Keep your clips if you reinstall or switch computers.',
+      actionLabel: 'Create account',
+      onAction: _openCreateAccount,
+      onDismiss: _viewModel.dismissAccountOffer,
+    );
+  }
+
+  /// One quiet card above the composer: a line of why, "Not now", and the
+  /// action.
+  Widget _buildOfferCard({
+    required IconData icon,
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+    required VoidCallback onDismiss,
+  }) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
@@ -1057,15 +1114,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.cloud_done_outlined,
-                size: 18,
-                color: GhostColors.primary,
-              ),
+              Icon(icon, size: 18, color: GhostColors.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Keep your clips if you reinstall or switch computers.',
+                  message,
                   style: GhostTypography.caption.copyWith(
                     color: GhostColors.textPrimary,
                   ),
@@ -1080,7 +1133,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             runSpacing: 4,
             children: [
               TextButton(
-                onPressed: _viewModel.dismissAccountOffer,
+                onPressed: onDismiss,
                 style: TextButton.styleFrom(
                   foregroundColor: GhostColors.textMuted,
                   visualDensity: VisualDensity.compact,
@@ -1088,12 +1141,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 child: const Text('Not now'),
               ),
               FilledButton(
-                onPressed: _openCreateAccount,
+                onPressed: onAction,
                 style: FilledButton.styleFrom(
                   backgroundColor: GhostColors.primary,
                   visualDensity: VisualDensity.compact,
                 ),
-                child: const Text('Create account'),
+                child: Text(actionLabel),
               ),
             ],
           ),
@@ -1119,7 +1172,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 Icons.person_outline,
                 size: 13,
                 color: GhostColors.textMuted,
@@ -1382,7 +1435,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
               ),
               decoration: InputDecoration(
                 hintText: 'Paste or type your content...',
-                hintStyle: const TextStyle(color: GhostColors.textMuted),
+                hintStyle: TextStyle(color: GhostColors.textMuted),
                 filled: true,
                 fillColor: GhostColors.surfaceLight,
                 border: OutlineInputBorder(
@@ -1647,7 +1700,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 else if (result?.error != null)
                   Text(
                     result!.error!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: GhostColors.errorLight,
                     ),
@@ -1813,6 +1866,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     );
   }
 
+  bool _consumeRevealEncryption() {
+    final reveal = _revealEncryptionOnOpen;
+    _revealEncryptionOnOpen = false;
+    return reveal;
+  }
+
   /// Build settings panel (slide-in from left)
   Widget _buildSettingsPanel() {
     // Cache settings panel content to prevent rebuilds during animation
@@ -1856,7 +1915,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 ],
               ),
             ),
-            const Divider(height: 1, color: GhostColors.surface),
+            Divider(height: 1, color: GhostColors.surface),
             // Settings content - now using SettingsPanel widget
             Expanded(
               child: SettingsPanel(
@@ -1870,6 +1929,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 commandLineToolService: _commandLineToolService,
                 deviceService: _deviceService,
                 encryptionService: EncryptionService.instance,
+                revealEncryption: _consumeRevealEncryption(),
                 onEncryptionChanged: _viewModel.refreshHistory,
                 onClose: _handleSettingsClose,
                 onOpenAuth: () async {
@@ -1956,7 +2016,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 ],
               ),
             ),
-            const Divider(height: 1, color: GhostColors.surface),
+            Divider(height: 1, color: GhostColors.surface),
             // Auth form - now using AuthPanel widget
             Expanded(
               child: AuthPanel(
@@ -1998,14 +2058,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       unawaited(_windowService.hideSpotlight());
     }
 
-    // 2. Perform copy in background
-    // We act as if it succeeded immediately to the user
-    try {
-      await _viewModel.handleHistoryItemCopy(item);
-    } on Exception catch (e) {
-      // If copy fails, we might want to show a system notification since window is hidden
-      debugPrint('[Spotlight] Copy failed after hide: $e');
-    }
+    // 2. Perform copy in background. The ViewModel reports its own
+    // failures: under the composer when pinned, as a system notification
+    // when the window is hiding.
+    await _viewModel.handleHistoryItemCopy(item);
 
     // Reset panel state for next time
     if (hide && mounted) {
@@ -2297,7 +2353,7 @@ class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
             ],
           ),
         ),
-        const Divider(height: 1, color: GhostColors.surface),
+        Divider(height: 1, color: GhostColors.surface),
         // Search bar
         _HistorySearchBar(
           controller: _searchController,
@@ -2336,7 +2392,7 @@ class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
                                 'Settings to unlock it'
                           : '$locked clips are encrypted - enter your '
                                 'passphrase in Settings to unlock them',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: GhostColors.textSecondary,
                         fontSize: 11,
                       ),
@@ -2381,14 +2437,14 @@ class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
                                 locked == 1
                                     ? '1 encrypted clip'
                                     : '$locked encrypted clips',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: GhostColors.textPrimary,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                               const SizedBox(height: 6),
-                              const Text(
+                              Text(
                                 'Enter your passphrase in Settings to unlock '
                                 'them. It is never sent to the server, so it '
                                 'has to be entered on each device.',
@@ -2407,7 +2463,7 @@ class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
                         _searchQuery.isNotEmpty
                             ? 'No results found'
                             : 'No clipboard history yet',
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: GhostColors.textMuted,
                           fontSize: 13,
                         ),
@@ -2445,7 +2501,7 @@ class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
                                   header: true,
                                   child: Text(
                                     heading,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                       color: GhostColors.textMuted,
@@ -2480,7 +2536,7 @@ class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
               label:
                   'Arrow keys to browse, Enter to copy, Shift F10 for actions',
               excludeSemantics: true,
-              child: const Text(
+              child: Text(
                 '↑ ↓  Browse    ↵  Copy    ⇧ F10  Actions',
                 style: TextStyle(fontSize: 11, color: GhostColors.textMuted),
               ),
@@ -2544,14 +2600,11 @@ class _HistorySearchBarState extends State<_HistorySearchBar> {
           onEditingComplete: widget.controller.clearComposing,
           onSubmitted: (_) => widget.onCopy(),
           onChanged: widget.onChanged,
-          style: const TextStyle(color: GhostColors.textPrimary, fontSize: 13),
+          style: TextStyle(color: GhostColors.textPrimary, fontSize: 13),
           decoration: InputDecoration(
             hintText: 'Search clips...',
-            hintStyle: const TextStyle(
-              color: GhostColors.textMuted,
-              fontSize: 13,
-            ),
-            prefixIcon: const Icon(
+            hintStyle: TextStyle(color: GhostColors.textMuted, fontSize: 13),
+            prefixIcon: Icon(
               Icons.search,
               size: 18,
               color: GhostColors.textMuted,
@@ -2654,7 +2707,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       widget.item.content,
       maxLines: _isExpanded ? null : 2,
       overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 13, color: GhostColors.textPrimary),
+      style: TextStyle(fontSize: 13, color: GhostColors.textPrimary),
     );
   }
 
@@ -2698,7 +2751,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
           widget.item.content,
           maxLines: _isExpanded ? null : 2,
           overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12,
             color: GhostColors.textSecondary,
             fontStyle: FontStyle.italic,
@@ -2863,7 +2916,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       height: 32,
                     ),
                     padding: EdgeInsets.zero,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.more_horiz,
                       size: 17,
                       color: GhostColors.textSecondary,
@@ -2889,7 +2942,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   const SizedBox(width: 4),
                   Text(
                     widget.device,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: GhostColors.textMuted,
                     ),
@@ -2927,7 +2980,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       ),
                     ),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     '\u2022',
                     style: TextStyle(
                       fontSize: 11,
@@ -2937,7 +2990,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                   const SizedBox(width: 8),
                   Text(
                     widget.timeAgo,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       color: GhostColors.textMuted,
                     ),

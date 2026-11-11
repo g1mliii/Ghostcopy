@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launch splash. Dark in both day and night: the app ships one theme
-     (AppTheme.darkTheme, no light variant), so a white splash in day mode was
-     a flash of white before a dark UI. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/ghost_background" />
 

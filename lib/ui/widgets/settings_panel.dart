@@ -18,6 +18,7 @@ import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
 import '../platform_adaptive.dart';
+import '../theme/animations.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'adaptive_switch.dart';
@@ -50,8 +51,14 @@ class SettingsPanel extends StatefulWidget {
     this.deviceService,
     this.encryptionService,
     this.onCreateAccount,
+    this.revealEncryption = false,
     super.key,
   });
+
+  /// Scroll the encryption section into view on opening - for the
+  /// Spotlight's encryption card, whose button would otherwise land the
+  /// user at the top of a long list.
+  final bool revealEncryption;
 
   final IAuthService authService;
   final ISettingsService settingsService;
@@ -93,7 +100,8 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
   String _obsidianFileName = 'clipboard.md';
-  HotKey _currentHotkey = defaultHotkey;
+  HotKey? _sendHotkey;
+  HotKey? _currentHotkey;
 
   // Text controllers
   final _webhookUrlController = TextEditingController();
@@ -138,6 +146,9 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     _loadWebhookStatus();
     _loadAgentAccess();
     _loadCommandLineTool();
+    if (widget.revealEncryption) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealEncryption());
+    }
     _loadObsidianStatus();
 
     // Filtered to actual identity changes, for two reasons.
@@ -189,6 +200,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     // Note: We intentionally don't await to prevent blocking dispose
     // Settings are persisted to SharedPreferences which is synchronous internally
     _flushPendingWrites();
+    _listController.dispose();
 
     // Cancel all timers
     _webhookDebounceTimer?.cancel();
@@ -249,9 +261,13 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Future<void> _loadHotkey() async {
     if (widget.hotkeyService == null) return;
 
-    final saved = await widget.settingsService.getHotkey();
-    if (saved == null || !mounted) return;
-    _currentHotkey = saved;
+    // Registered rather than saved: a saved shortcut another app held at
+    // login is not live, and showing it would also make re-choosing it a
+    // no-op in [_handleHotkeyChanged].
+    final registered = await registeredHotkeys();
+    if (!mounted) return;
+    _sendHotkey = registered.send;
+    _currentHotkey = registered.spotlight;
     scheduleRebuild();
   }
 
@@ -644,6 +660,38 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     return _cachedDeviceText!;
   }
 
+  final ScrollController _listController = ScrollController();
+  final GlobalKey _encryptionSectionKey = GlobalKey();
+
+  /// Bring the encryption section on screen. The list builds lazily, so a
+  /// section far down has no context to scroll to until the list has moved
+  /// near it: step down a screen at a time until it is built, then settle
+  /// it into view.
+  Future<void> _revealEncryption([int attempt = 0]) async {
+    if (!mounted || !_listController.hasClients) return;
+    final section = _encryptionSectionKey.currentContext;
+    if (section != null) {
+      await Scrollable.ensureVisible(
+        section,
+        alignment: 0.1,
+        duration: GhostAnimations.normal,
+        curve: GhostAnimations.defaultCurve,
+      );
+      return;
+    }
+    final position = _listController.position;
+    if (attempt >= 10 || position.pixels >= position.maxScrollExtent) return;
+    _listController.jumpTo(
+      (position.pixels + position.viewportDimension).clamp(
+        0,
+        position.maxScrollExtent,
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _revealEncryption(attempt + 1),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = Adaptive.isDesktop;
@@ -651,6 +699,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     // NOTE: Individual builder methods (_buildSettingToggle, _buildTextField, etc.)
     // already wrap their content in RepaintBoundary. No need for additional wrapping here.
     final settingsList = ListView(
+      controller: _listController,
       padding: const EdgeInsets.all(12),
       physics: isDesktop
           ? const ClampingScrollPhysics()
@@ -677,6 +726,27 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         // the right-click menu sends, so hiding it with auto-send off would
         // strand a setting that is still in effect.
         _buildDeviceSelector(),
+        if (widget.hotkeyService != null) ...[
+          const SizedBox(height: 10),
+          if (widget.hotkeyService!.managedBySystem)
+            ListTile(
+              title: const Text('Send current clipboard'),
+              subtitle: const Text('Assign a shortcut in KDE Plasma'),
+              onTap: _configureSystemShortcut,
+            )
+          else ...[
+            HotkeyCapture(
+              title: 'Send current clipboard',
+              currentHotkey: _sendHotkey,
+              onHotkeyChanged: _changeSendHotkey,
+            ),
+            if (_sendHotkey != null)
+              TextButton(
+                onPressed: () => _changeSendHotkey(null),
+                child: const Text('Clear send shortcut'),
+              ),
+          ],
+        ],
         const SizedBox(height: 10),
         // URL shortening toggle
         _buildSettingToggle(
@@ -764,7 +834,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         ),
 
         const SizedBox(height: 20),
-        const Divider(height: 1, color: GhostColors.glassBorder),
+        Divider(height: 1, color: GhostColors.glassBorder),
         const SizedBox(height: 20),
 
         // 2. Configuration & Behavior
@@ -822,7 +892,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
           const SizedBox(height: 20),
         ],
 
-        const Divider(height: 1, color: GhostColors.glassBorder),
+        Divider(height: 1, color: GhostColors.glassBorder),
         const SizedBox(height: 20),
 
         // 4. Set and Forget (System Settings)
@@ -1008,7 +1078,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     TextInputType keyboardType = TextInputType.text,
   }) {
     const inputRadius = BorderRadius.all(Radius.circular(6));
-    const inputBorder = OutlineInputBorder(
+    final inputBorder = OutlineInputBorder(
       borderRadius: inputRadius,
       borderSide: BorderSide(color: GhostColors.glassBorder),
     );
@@ -1206,7 +1276,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Row(
               children: [
                 Icon(Icons.info_outline, size: 14, color: GhostColors.primary),
@@ -1282,11 +1352,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
                   ],
                 ),
               ),
-              const Icon(
-                Icons.chevron_right,
-                size: 16,
-                color: GhostColors.textMuted,
-              ),
+              Icon(Icons.chevron_right, size: 16, color: GhostColors.textMuted),
             ],
           ),
         ),
@@ -1433,7 +1499,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
             const SizedBox(height: 8),
             // Inside the guard: it describes the chips, so while they were
             // collapsed it told the user to tap something not on screen.
-            const Text(
+            Text(
               'Tap to select specific devices or leave all selected',
               style: TextStyle(
                 fontSize: 10,
@@ -1449,6 +1515,7 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
   Widget _buildEncryptionSection() {
     return Container(
+      key: _encryptionSectionKey,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: GhostColors.surface,
@@ -1576,6 +1643,29 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     }
   }
 
+  Future<void> _changeSendHotkey(HotKey? key) async {
+    try {
+      await applySendHotkey(key);
+      if (mounted) setState(() => _sendHotkey = key);
+    } on HotkeyInUseException {
+      _showShortcutError(
+        '${formatHotkey(key!)} already opens GhostCopy. '
+        'Choose another combination.',
+      );
+    } on Exception {
+      _showShortcutError(
+        'Could not apply send shortcut. Try another combination.',
+      );
+    }
+  }
+
+  void _showShortcutError(String message, {Color? background}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: background),
+    );
+  }
+
   /// Apply a newly captured hotkey: register it, persist it, and only then
   /// show it as current.
   ///
@@ -1587,28 +1677,21 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
     try {
       await applyHotkey(newHotkey);
-    } on UnsupportedHotkeyException {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${formatHotkey(newHotkey)} cannot be used as a shortcut. '
-            'Your previous shortcut is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
+    } on UnsupportedHotkeyException catch (e) {
+      final why = e is HotkeyInUseException
+          ? 'already sends the clipboard'
+          : 'cannot be used as a shortcut';
+      _showShortcutError(
+        '${formatHotkey(newHotkey)} $why. '
+        'Your previous shortcut is still active.',
+        background: Colors.red,
       );
       return;
     } on Object catch (e) {
       debugPrint('Failed to apply hotkey: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not change the shortcut. Your previous one is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
+      _showShortcutError(
+        'Could not change the shortcut. Your previous one is still active.',
+        background: Colors.red,
       );
       return;
     }

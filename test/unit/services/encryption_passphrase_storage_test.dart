@@ -30,6 +30,24 @@ void main() {
     ).thenAnswer((_) async {});
   });
 
+  test(
+    'checks the specified user for a passphrase before initialization',
+    () async {
+      when(
+        () => storage.read(key: passphraseKey),
+      ).thenAnswer((_) async => 'the saved passphrase');
+      const otherUserId = 'bbbbbbbb-0000-0000-0000-000000000002';
+      when(
+        () => storage.read(key: 'encryption_passphrase_$otherUserId'),
+      ).thenAnswer((_) async => null);
+      final service = EncryptionService(secureStorage: storage);
+      addTearDown(service.dispose);
+
+      expect(await service.hasPassphrase(userId), isTrue);
+      expect(await service.hasPassphrase(otherUserId), isFalse);
+    },
+  );
+
   test('a failed write puts the previous passphrase back', () async {
     // The replacement flows - QR import, or entering a different passphrase -
     // reach this with a value already stored. A transient failure here used to

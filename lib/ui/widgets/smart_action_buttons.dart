@@ -168,7 +168,7 @@ class SmartActionButtons extends StatelessWidget {
                 children: [
                   Icon(Icons.lock_open, color: GhostColors.warning, size: 20),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     'JWT Token Decoded',
                     style: TextStyle(
                       fontSize: 16,
@@ -187,7 +187,7 @@ class SmartActionButtons extends StatelessWidget {
                 ],
               ),
             ),
-            const Divider(color: GhostColors.glassBorder, height: 1),
+            Divider(color: GhostColors.glassBorder, height: 1),
             // Content
             Expanded(
               child: ListView(

@@ -52,10 +52,13 @@ class MobileMainViewModel extends ChangeNotifier {
     required this._deviceService,
     required this._securityService,
     this._imageTranscoder = const ImageTranscoder(),
-  }) : _clipboardRepo = clipboardRepository;
+    IClipboardService? clipboardService,
+  }) : _clipboardRepo = clipboardRepository,
+       _clipboardService = clipboardService ?? ClipboardService.instance;
 
   final IAuthService _authService;
   final IClipboardRepository _clipboardRepo;
+  final IClipboardService _clipboardService;
 
   /// Encrypted clips in the last history load that the local passphrase could
   /// not open. They are excluded from [historyItems], so the UI shows a
@@ -198,6 +201,25 @@ class MobileMainViewModel extends ChangeNotifier {
   bool get showingSavedHistory => _showingSavedHistory;
 
   StreamSubscription<List<ClipboardItem>>? _historySubscription;
+  int _historyStreamGeneration = 0;
+  bool _isForeground = true;
+
+  /// Each eligible arrival, pause, and account change invalidates older
+  /// pending copies, including fetches and image downloads.
+  int _autoCopyGeneration = 0;
+
+  /// The highest clip id seen in a live list since launch.
+  ///
+  /// Ids are the clipboard table's identity column, so a clip that arrived
+  /// is one above this - the same rule the desktop's sync service uses. No
+  /// timestamps, so a phone clock ahead of or behind the server changes
+  /// nothing, and deleting the newest row cannot make an older one look new.
+  int? _newestSeenId;
+
+  /// False from launch and from every pause until the foreground stream's
+  /// first snapshot arrives. That snapshot establishes the baseline for
+  /// subsequent arrivals. A one-shot fetch cannot enable copying.
+  bool _clipBaselineReady = false;
   Timer? _realtimeReconnectTimer;
   int _realtimeRetryCount = 0;
 
@@ -477,6 +499,9 @@ class MobileMainViewModel extends ChangeNotifier {
     try {
       final items = await _clipboardRepo.getHistory();
       if (!_isDisposed && revision == _accountRevision) {
+        // A fetch never copies, but what it shows is seen: the stream's next
+        // list must not treat these rows as arriving.
+        _markClipsSeen(items);
         _historyIsLive = true;
         _showingSavedHistory = false;
         _historyItems = items;
@@ -540,6 +565,9 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Subscribe to realtime history updates
   void subscribeToRealtimeUpdates() {
+    if (_isDisposed || !_isForeground) return;
+    _cancelHistorySubscription();
+    final generation = _historyStreamGeneration;
     final revision = _accountRevision;
     final Stream<List<ClipboardItem>> stream;
     try {
@@ -555,19 +583,18 @@ class MobileMainViewModel extends ChangeNotifier {
 
     _historySubscription = stream.listen(
       (items) {
-        if (_isDisposed || revision != _accountRevision) return;
+        if (_isDisposed ||
+            revision != _accountRevision ||
+            generation != _historyStreamGeneration) {
+          return;
+        }
 
         // The stream is alive again; forget any previous backoff.
         _realtimeRetryCount = 0;
         _historyError = null;
 
-        // The saved copy is not a baseline for auto-copy: before it existed,
-        // this compared against an empty list at that point, and it still
-        // must - otherwise what counts as "new" would depend on whether the
-        // app was last opened offline.
-        final oldFirstId = _historyIsLive && _historyItems.isNotEmpty
-            ? _historyItems.first.id
-            : null;
+        final arrived = _newlyArrivedClip(items);
+        _clipBaselineReady = true;
         _historyIsLive = true;
         _showingSavedHistory = false;
 
@@ -577,42 +604,15 @@ class MobileMainViewModel extends ChangeNotifier {
         _cleanupCache();
         notifyListeners();
 
-        // Auto-copy the latest item, but only when it genuinely came from
-        // another device AND was targeted at this one. Previously this copied
-        // any new row, so a clip sent to "Windows only" still overwrote the
-        // phone's clipboard - the exact leak device targeting exists to stop.
-        // Mirrors the desktop checks in ClipboardSyncService.
-        if (items.isNotEmpty) {
-          final latest = items.first;
-          if (oldFirstId == null || latest.id != oldFirstId) {
-            final currentDeviceName =
-                ClipboardRepository.getCurrentDeviceName();
-            final isFromDifferentDevice =
-                latest.deviceName == null ||
-                currentDeviceName == null ||
-                latest.deviceName != currentDeviceName;
-
-            final targets = latest.targetDeviceTypes;
-            final isTargetedToMe =
-                targets == null ||
-                targets.isEmpty ||
-                targets.contains(ClipboardRepository.getCurrentDeviceType());
-
-            if (isFromDifferentDevice && isTargetedToMe) {
-              unawaited(_autoCopyToClipboard(latest));
-            } else {
-              debugPrint(
-                '[MobileMainVM] Skipped auto-copy '
-                '(fromOtherDevice=$isFromDifferentDevice, '
-                'targeted=$isTargetedToMe)',
-              );
-            }
-          }
-        }
+        if (arrived != null) _onIncomingClip(arrived);
       },
       onError: (Object error) {
         debugPrint('[MobileMainVM] Realtime subscription error: $error');
-        if (_isDisposed || revision != _accountRevision) return;
+        if (_isDisposed ||
+            revision != _accountRevision ||
+            generation != _historyStreamGeneration) {
+          return;
+        }
 
         _historyLoading = false;
         // Keep whatever is already on screen. Only a cold failure - nothing
@@ -632,10 +632,61 @@ class MobileMainViewModel extends ChangeNotifier {
     );
   }
 
+  void _cancelHistorySubscription() {
+    _historyStreamGeneration++;
+    unawaited(_historySubscription?.cancel());
+    _historySubscription = null;
+  }
+
+  /// The clip at the head of [items] if it arrived while the app was open;
+  /// records everything in [items] as seen either way.
+  ///
+  /// Not from the first live list after launch or resume: that is the
+  /// baseline, and holds clips sent while the app was away. Not a clip
+  /// already seen: deleting the newest row brings an older one to the head.
+  /// Not while backgrounded, when a reconnect can deliver a list nobody is
+  /// looking at.
+  ClipboardItem? _newlyArrivedClip(List<ClipboardItem> items) {
+    final head = items.isEmpty ? null : items.first;
+    final headId = head == null ? null : int.tryParse(head.id);
+    final newest = _newestSeenId;
+    // A ready baseline implies the foreground: it is only set there, and a
+    // pause clears it.
+    final isNew =
+        headId != null &&
+        _clipBaselineReady &&
+        (newest == null || headId > newest);
+    _markClipsSeen(items);
+    return isNew ? head : null;
+  }
+
+  void _markClipsSeen(List<ClipboardItem> items) {
+    for (final item in items) {
+      final id = int.tryParse(item.id);
+      final newest = _newestSeenId;
+      if (id != null && (newest == null || id > newest)) _newestSeenId = id;
+    }
+  }
+
+  void _onIncomingClip(ClipboardItem item) {
+    if (ClipboardRepository.isForThisDevice(
+      item.deviceName,
+      item.targetDeviceTypes,
+    )) {
+      unawaited(_autoCopyToClipboard(item));
+    } else {
+      debugPrint('[MobileMainVM] Skipped auto-copy: not for this device');
+    }
+  }
+
   /// Re-arm the realtime subscription after an error, backing off so a server
   /// outage does not turn into a reconnect loop.
   void _scheduleRealtimeReconnect() {
-    if (_isDisposed || _realtimeReconnectTimer?.isActive == true) return;
+    if (_isDisposed ||
+        !_isForeground ||
+        _realtimeReconnectTimer?.isActive == true) {
+      return;
+    }
 
     final attempt = ++_realtimeRetryCount;
     // 2s, 4s, 8s, 16s, 30s, 30s...
@@ -644,14 +695,12 @@ class MobileMainViewModel extends ChangeNotifier {
       '[MobileMainVM] Reconnecting realtime in ${seconds}s (attempt $attempt)',
     );
 
-    _realtimeReconnectTimer = Timer(Duration(seconds: seconds), () async {
-      if (_isDisposed) return;
-      await _historySubscription?.cancel();
-      _historySubscription = null;
+    _realtimeReconnectTimer = Timer(Duration(seconds: seconds), () {
+      if (_isDisposed || !_isForeground) return;
       subscribeToRealtimeUpdates();
       // Realtime only delivers changes from here on, so fetch the rows that
       // landed while the connection was down.
-      await loadHistory();
+      unawaited(loadHistory());
     });
   }
 
@@ -1020,8 +1069,6 @@ class MobileMainViewModel extends ChangeNotifier {
     Rect? sharePositionOrigin,
   }) async {
     try {
-      final clipboardService = ClipboardService.instance;
-
       if (item.isImage || item.isFile) {
         final shared = await _shareStoredFile(
           item,
@@ -1040,14 +1087,10 @@ class MobileMainViewModel extends ChangeNotifier {
         // as metadata describing how the row is STORED, so it must NOT be
         // used to trigger a second decrypt here - nor to decide that content
         // is unreadable, which is what the widget used to do.
-        final finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        if (item.richTextFormat == RichTextFormat.html) {
-          await clipboardService.writeHtml(finalContent);
-        } else {
-          await clipboardService.writeText(finalContent);
-        }
-
+        await _writeTextual(
+          item,
+          _decryptedContentCache[item.id] ?? item.content,
+        );
         onSuccess?.call('Copied ${item.richTextFormat?.value ?? "rich text"}');
       } else {
         // Content is already plaintext: getHistory()/watchHistory() run
@@ -1055,9 +1098,10 @@ class MobileMainViewModel extends ChangeNotifier {
         // as metadata describing how the row is STORED, so it must NOT be
         // used to trigger a second decrypt here - nor to decide that content
         // is unreadable, which is what the widget used to do.
-        final finalContent = _decryptedContentCache[item.id] ?? item.content;
-
-        await clipboardService.writeText(finalContent);
+        await _writeTextual(
+          item,
+          _decryptedContentCache[item.id] ?? item.content,
+        );
         onSuccess?.call('Copied to clipboard');
       }
     } on Exception catch (e) {
@@ -1592,26 +1636,13 @@ class MobileMainViewModel extends ChangeNotifier {
           '[MobileMainVM] Opened Share Sheet for ${item.contentType.value}',
         );
       } else {
-        final clipboardService = ClipboardService.instance;
-
         // Content is already plaintext: getHistory()/watchHistory() run
         // _decryptItems() before handing items over. isEncrypted is retained
         // as metadata describing how the row is STORED, so it must NOT be
         // used to trigger a second decrypt here - nor to decide that content
         // is unreadable, which is what the widget used to do.
-        final content = item.content;
-
-        switch (item.contentType) {
-          case ContentType.html:
-            await clipboardService.writeHtml(content);
-            debugPrint('[MobileMainVM] Copied HTML to clipboard');
-          case ContentType.markdown:
-            await clipboardService.writeText(content);
-            debugPrint('[MobileMainVM] Copied Markdown to clipboard');
-          default:
-            await clipboardService.writeText(content);
-            debugPrint('[MobileMainVM] Copied text to clipboard');
-        }
+        await _writeTextual(item, item.content);
+        debugPrint('[MobileMainVM] Copied ${item.contentType.value}');
       }
 
       return true;
@@ -1649,9 +1680,15 @@ class MobileMainViewModel extends ChangeNotifier {
   /// Called when app goes to background
   void onAppPaused() {
     debugPrint(
-      '[MobileMainVM] App backgrounded - Pausing Realtime subscription',
+      '[MobileMainVM] App backgrounded - Closing Realtime subscription',
     );
-    _historySubscription?.pause();
+    _isForeground = false;
+    _autoCopyGeneration++;
+    _clipBaselineReady = false;
+    // Cancel buffered snapshots and pending callbacks before the next session.
+    _cancelHistorySubscription();
+    _realtimeReconnectTimer?.cancel();
+    _realtimeReconnectTimer = null;
 
     // Clear sensitive decrypted data from memory when backgrounded
     _decryptedContentCache.clear();
@@ -1668,14 +1705,13 @@ class MobileMainViewModel extends ChangeNotifier {
 
   /// Called when app returns to foreground
   void onAppResumed() {
-    debugPrint('[MobileMainVM] App resumed - Resuming Realtime subscription');
-    _historySubscription?.resume();
+    debugPrint('[MobileMainVM] App resumed - Opening Realtime subscription');
+    _isForeground = true;
+    if (_historySubscription == null) subscribeToRealtimeUpdates();
 
-    // Re-fetch, don't just resume. Push notifications deliberately carry no
-    // clipboard content - the body literally says "Open GhostCopy to view it"
-    // - so opening the app IS the sync step. Resuming the subscription only
-    // restores the flow of future events; anything that arrived while the app
-    // was backgrounded would never appear until a manual pull-to-refresh.
+    // A fresh stream establishes the baseline without replaying the old
+    // subscription's buffered snapshots. Fetch as well so history refreshes
+    // even while the Realtime connection is being restored.
     unawaited(loadHistory());
 
     unawaited(_reassertFcmToken());
@@ -1773,6 +1809,10 @@ class MobileMainViewModel extends ChangeNotifier {
   /// replaced them - and stayed in memory regardless.
   void clearUserState() {
     _accountRevision++;
+    _autoCopyGeneration++;
+    _cancelHistorySubscription();
+    _newestSeenId = null;
+    _clipBaselineReady = false;
     _decryptedContentCache.clear();
     _detectionCache.clear();
     _historyItems = [];
@@ -1798,8 +1838,6 @@ class MobileMainViewModel extends ChangeNotifier {
     _realtimeReconnectTimer?.cancel();
     _realtimeReconnectTimer = null;
     _realtimeRetryCount = 0;
-    await _historySubscription?.cancel();
-    _historySubscription = null;
     if (_isDisposed) return;
     subscribeToRealtimeUpdates();
     await Future.wait([loadHistory(), loadDevices()]);
@@ -1874,49 +1912,40 @@ class MobileMainViewModel extends ChangeNotifier {
     );
   }
 
-  Future<void> _autoCopyToClipboard(ClipboardItem item) async {
+  /// Put a text-shaped clip on the clipboard: HTML with its plain-text
+  /// fallback, anything else (text, Markdown) as plain text.
+  Future<void> _writeTextual(ClipboardItem item, String content) =>
+      item.contentType == ContentType.html ||
+          item.richTextFormat == RichTextFormat.html
+      ? _clipboardService.writeHtml(content)
+      : _clipboardService.writeText(content);
+
+  Future<void> _autoCopyToClipboard(ClipboardItem arrived) async {
+    final generation = ++_autoCopyGeneration;
+    bool stillWanted() => !_isDisposed && generation == _autoCopyGeneration;
     try {
-      final clipboardService = ClipboardService.instance;
+      // Fetched again rather than copied from the realtime list: an oversized
+      // row can arrive there with columns missing, and the desktop reads by
+      // id for the same reason. Null means it was deleted meanwhile.
+      final item = await _clipboardRepo.getById(arrived.id);
+      if (item == null || !stillWanted()) return;
 
       if (item.isImage) {
         final bytes = await _clipboardRepo.downloadFile(item);
+        if (!stillWanted()) return;
         if (bytes == null) {
           throw _clipboardRepo.lastDownloadWasOffline(item)
               ? NetworkException(offlineFileMessage)
               : Exception('Failed to download image');
         }
 
-        await clipboardService.writeImage(bytes);
+        await _clipboardService.writeImage(bytes);
         debugPrint(
           '[MobileMainVM] Auto-copied image to clipboard (${bytes.length} bytes)',
         );
-      } else if (item.isRichText) {
-        // Content is already plaintext: getHistory()/watchHistory() run
-        // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata describing how the row is STORED, so it must NOT be
-        // used to trigger a second decrypt here - nor to decide that content
-        // is unreadable, which is what the widget used to do.
-        final finalContent = item.content;
-
-        if (item.richTextFormat == RichTextFormat.html) {
-          await clipboardService.writeHtml(finalContent);
-        } else {
-          await clipboardService.writeText(finalContent);
-        }
-
-        debugPrint(
-          '[MobileMainVM] Auto-copied ${item.richTextFormat?.value ?? "rich text"} to clipboard',
-        );
       } else {
-        // Content is already plaintext: getHistory()/watchHistory() run
-        // _decryptItems() before handing items over. isEncrypted is retained
-        // as metadata describing how the row is STORED, so it must NOT be
-        // used to trigger a second decrypt here - nor to decide that content
-        // is unreadable, which is what the widget used to do.
-        final finalContent = item.content;
-
-        await clipboardService.writeText(finalContent);
-        debugPrint('[MobileMainVM] Auto-copied text to clipboard');
+        await _writeTextual(item, item.content);
+        debugPrint('[MobileMainVM] Auto-copied ${item.contentType.value}');
       }
     } on Exception catch (e) {
       debugPrint('[MobileMainVM] Failed to auto-copy: $e');
@@ -1930,8 +1959,7 @@ class MobileMainViewModel extends ChangeNotifier {
     if (_isDisposed) return;
     _isDisposed = true;
 
-    _historySubscription?.cancel();
-    _historySubscription = null;
+    _cancelHistorySubscription();
     _realtimeReconnectTimer?.cancel();
     _realtimeReconnectTimer = null;
     _searchDebounceTimer?.cancel();

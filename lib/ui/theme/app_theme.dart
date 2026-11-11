@@ -5,35 +5,20 @@ import 'colors.dart';
 import 'typography.dart';
 
 /// GhostCopy application theme configuration
-/// Inspired by Discord and Blip - modern, sleek dark theme with glassmorphism
+/// White mobile surfaces and dark desktop surfaces with purple accents.
 class AppTheme {
   // Private constructor to prevent instantiation
   AppTheme._();
 
-  /// Main dark theme for the application
-  static ThemeData get darkTheme {
+  /// Theme matching the platform palette.
+  static ThemeData get platformTheme {
     return _withPlatformFont(
       ThemeData(
         // Base theme
-        brightness: Brightness.dark,
+        brightness: GhostColors.isLight ? Brightness.light : Brightness.dark,
         useMaterial3: true,
 
-        // Ink ripples wash out to near-white against this palette's dark
-        // surfaces, so presses read as a white flash. On desktop that is worth
-        // removing outright, because hover already shows a control reacting
-        // before it is pressed.
-        //
-        // Touch has no hover. Dropping the splash AND the highlight there left
-        // taps with no feedback whatsoever - a row or chip looked inert until
-        // its action finished, which on a slow network is long enough to make
-        // people tap again. So mobile keeps a press state.
-        //
-        // The overlay is BLACK, not a tint. Every surface here is already dark,
-        // so an additive overlay of any colour lightens it - that is the white
-        // flash the default ripple gives and the reason splashes were removed
-        // in the first place, and a brand-coloured one only makes it a purple
-        // flash. Darkening reads as the control being pushed in, and matches
-        // iOS, where a pressed control dims rather than glows.
+        // Touch controls dim while pressed. Desktop uses hover feedback.
         splashFactory: Adaptive.isDesktop
             ? NoSplash.splashFactory
             : InkRipple.splashFactory,
@@ -45,21 +30,23 @@ class AppTheme {
             : GhostColors.blackAlpha18,
 
         // Color scheme
-        colorScheme: ColorScheme.dark(
-          primary: GhostColors.primary,
-          secondary: GhostColors.primary,
-          surface: GhostColors.surface,
-          error: Colors.red.shade400,
-          onPrimary: Colors.white,
-          onSecondary: Colors.white,
-          onError: Colors.white,
-        ),
+        colorScheme:
+            (GhostColors.isLight ? ColorScheme.light : ColorScheme.dark)(
+              primary: GhostColors.primary,
+              secondary: GhostColors.primary,
+              surface: GhostColors.surface,
+              onSurface: GhostColors.textPrimary,
+              error: Colors.red.shade400,
+              onPrimary: Colors.white,
+              onSecondary: Colors.white,
+              onError: Colors.white,
+            ),
 
         // Scaffold
         scaffoldBackgroundColor: GhostColors.background,
 
         // App Bar
-        appBarTheme: const AppBarTheme(
+        appBarTheme: AppBarTheme(
           // The header shares the page background rather than sitting on its own
           // grey bar. That leaves one meaning for the lighter surface colour -
           // "an elevated thing you interact with", i.e. cards and clips - instead
@@ -111,7 +98,7 @@ class AppTheme {
         // Text Button
         textButtonTheme: TextButtonThemeData(
           style: TextButton.styleFrom(
-            foregroundColor: GhostColors.primary,
+            foregroundColor: GhostColors.actionText,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             textStyle: const TextStyle(
               fontSize: 14,
@@ -145,24 +132,21 @@ class AppTheme {
             horizontal: 16,
             vertical: 12,
           ),
-          hintStyle: const TextStyle(
+          hintStyle: TextStyle(
             color: GhostColors.textMuted,
             fontFamily: GhostTypography.fontFamily,
           ),
-          labelStyle: const TextStyle(
+          labelStyle: TextStyle(
             color: GhostColors.textSecondary,
             fontFamily: GhostTypography.fontFamily,
           ),
         ),
 
         // Icon Theme
-        iconTheme: const IconThemeData(
-          color: GhostColors.textSecondary,
-          size: 24,
-        ),
+        iconTheme: IconThemeData(color: GhostColors.textSecondary, size: 24),
 
         // Divider
-        dividerTheme: const DividerThemeData(
+        dividerTheme: DividerThemeData(
           color: GhostColors.surfaceLight,
           space: 1,
         ),
@@ -173,7 +157,7 @@ class AppTheme {
             color: GhostColors.surfaceLight,
             borderRadius: BorderRadius.circular(6),
           ),
-          textStyle: const TextStyle(
+          textStyle: TextStyle(
             color: GhostColors.textPrimary,
             fontSize: 12,
             fontFamily: GhostTypography.fontFamily,
@@ -184,7 +168,7 @@ class AppTheme {
         // Snackbar
         snackBarTheme: SnackBarThemeData(
           backgroundColor: GhostColors.surfaceLight,
-          contentTextStyle: const TextStyle(
+          contentTextStyle: TextStyle(
             color: GhostColors.textPrimary,
             fontSize: 14,
             fontFamily: GhostTypography.fontFamily,
@@ -198,13 +182,13 @@ class AppTheme {
           backgroundColor: GhostColors.surface,
           elevation: 8,
           shape: Adaptive.surfaceShape(radius: 12),
-          titleTextStyle: const TextStyle(
+          titleTextStyle: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w600,
             fontFamily: GhostTypography.fontFamily,
             color: GhostColors.textPrimary,
           ),
-          contentTextStyle: const TextStyle(
+          contentTextStyle: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w400,
             fontFamily: GhostTypography.fontFamily,
@@ -292,7 +276,7 @@ class AppTheme {
         ),
 
         // List Tile
-        listTileTheme: const ListTileThemeData(
+        listTileTheme: ListTileThemeData(
           contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           iconColor: GhostColors.textSecondary,
           textColor: GhostColors.textPrimary,
@@ -323,7 +307,7 @@ class AppTheme {
             return Colors.transparent;
           }),
           checkColor: WidgetStateProperty.all(Colors.white),
-          side: const BorderSide(color: GhostColors.textMuted, width: 2),
+          side: BorderSide(color: GhostColors.textMuted, width: 2),
         ),
 
         // Radio

@@ -15,6 +15,9 @@ class _MockSettingsService extends Mock implements ISettingsService {}
 /// Records only what the lifecycle controller drives.
 class _RecordingSyncService implements IClipboardSyncService {
   @override
+  Future<void> sendCurrentClipboard() async {}
+
+  @override
   void ensureRealtimeConnected() {}
 
   bool polling = false;
@@ -50,7 +53,12 @@ class _RecordingSyncService implements IClipboardSyncService {
   void reinitializeForUser() {}
 
   @override
-  void resumeRealtime() => realtimePaused = false;
+  void resumeRealtime() {
+    realtimePaused = false;
+    realtimeResumes++;
+  }
+
+  int realtimeResumes = 0;
 
   int monitoringStarts = 0;
 
@@ -230,6 +238,7 @@ void main() {
 
       controller.exitTrayMode();
       expect(sync.polling, isFalse);
+      expect(sync.realtimeResumes, 1);
 
       controller.dispose();
       async.flushTimers();
@@ -394,9 +403,35 @@ void main() {
       expect(controller.connectionMode, ConnectionMode.realtime);
       expect(sync.polling, isFalse);
       expect(sync.realtimePaused, isFalse);
+      expect(sync.realtimeResumes, 1);
 
       controller.dispose();
       async.flushTimers();
+    });
+  });
+
+  test('opening while locked keeps realtime paused until unlock', () {
+    fakeAsync((async) {
+      final controller = LifecycleController(
+        clipboardSyncService: sync,
+        settingsService: settings,
+      )..initialize();
+      async.elapse(const Duration(seconds: 1));
+
+      controller
+        ..enterTrayMode()
+        ..onScreenLock()
+        ..exitTrayMode();
+
+      expect(sync.realtimeResumes, 0);
+      expect(sync.realtimePaused, isTrue);
+      expect(sync.polling, isFalse);
+
+      controller.onScreenUnlock();
+      async.flushMicrotasks();
+      expect(sync.realtimeResumes, 1);
+      expect(sync.realtimePaused, isFalse);
+      controller.dispose();
     });
   });
 }
