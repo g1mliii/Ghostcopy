@@ -11,7 +11,11 @@ abstract class IFcmService {
   ///
   /// Returns null if permissions not granted or token not available.
   /// Automatically requests notification permissions if not already granted.
-  Future<String?> getToken();
+  ///
+  /// [requirePermission] false skips the notification prompt: a silent
+  /// (background) push needs no permission, which is all macOS desktop push
+  /// sends.
+  Future<String?> getToken({bool requirePermission = true});
 
   /// Request notification permissions from user
   ///

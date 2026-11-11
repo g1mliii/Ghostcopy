@@ -9,6 +9,7 @@ class MainFlutterWindow: NSWindow {
   private var clipboardChangeCount: ClipboardChangeCount?
   private var launchAtStartup: LaunchAtStartup?
   private var appPresence: AppPresence?
+  private var pushChannel: FlutterMethodChannel?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -43,6 +44,23 @@ class MainFlutterWindow: NSWindow {
       messenger: flutterViewController.engine.binaryMessenger,
       spotlight: self
     )
+
+    // Desktop push (MacPushService). Firebase is configured from Dart after
+    // launch, so firebase_messaging's own launch-time registration finds no
+    // Firebase app and skips it; Dart asks here once Firebase is up, and the
+    // APNs token reaches the plugin through its app-delegate proxy.
+    pushChannel = FlutterMethodChannel(
+      name: "com.ghostcopy.app/push",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    pushChannel?.setMethodCallHandler { call, result in
+      if call.method == "registerForRemoteNotifications" {
+        NSApplication.shared.registerForRemoteNotifications()
+        result(nil)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
 
     super.awakeFromNib()
     

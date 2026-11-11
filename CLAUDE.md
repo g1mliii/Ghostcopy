@@ -208,7 +208,9 @@ from the Firebase console) when setting up a new machine for mobile work:
 - `android/app/google-services.json`
 - `ios/Runner/GoogleService-Info.plist`
 
-Neither is needed for Windows, macOS or Linux - desktop does not use FCM. CI
+Neither is needed for Windows or Linux. The macOS release build reads the iOS
+`GoogleService-Info.plist` for desktop push (`installer/macos/build-release.sh`,
+see `docs/desktop-push.md`); without it a Mac build simply has no push. CI
 builds Android against `.github/ci/google-services.placeholder.json`.
 
 For Google OAuth setup, see `left_TO_DO/GOOGLE_OAUTH_SETUP.md`.

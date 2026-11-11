@@ -493,6 +493,32 @@ class DeviceService implements IDeviceService {
   }
 
   @override
+  Future<bool> updateWnsChannelUri(String channelUri) async {
+    _ensureInitialized();
+    if (_supabase.auth.currentUser == null || _currentDeviceId == null) {
+      debugPrint('[DeviceService] ⚠️ Cannot store WNS channel: not registered');
+      return false;
+    }
+    try {
+      // Claimed rather than written: it also takes the URI off a row of an
+      // account this install has left, which RLS would not let us touch.
+      final claimed = await _supabase.rpc<bool>(
+        'claim_wns_channel',
+        params: {'p_device_id': _currentDeviceId, 'p_uri': channelUri},
+      );
+      // Length only: the URI is a credential for pushing to this install.
+      debugPrint(
+        '[DeviceService] WNS channel ${claimed ? "stored" : "not stored"} '
+        '(${channelUri.length} chars)',
+      );
+      return claimed;
+    } on Exception catch (e) {
+      debugPrint('[DeviceService] ❌ Failed to store WNS channel: $e');
+      return false;
+    }
+  }
+
+  @override
   Future<void> updateLastActive() async {
     _ensureInitialized();
     _ensureAuthenticated();

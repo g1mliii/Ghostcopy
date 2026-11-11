@@ -33,6 +33,14 @@ class _RecordingSyncService implements IClipboardSyncService {
   void Function(ClipboardItem item)? onClipboardSent;
 
   @override
+  void Function()? onPollFoundClip;
+
+  int checks = 0;
+
+  @override
+  void checkForNewClips() => checks++;
+
+  @override
   Future<void> initialize() async {}
 
   @override
@@ -257,6 +265,123 @@ void main() {
 
       controller.dispose();
       async.flushTimers();
+    });
+  });
+
+  group('with desktop push active', () {
+    test('reopening within the takeover delay keeps the socket', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        controller
+          ..desktopPushActive = true
+          ..enterTrayMode();
+        async.elapse(const Duration(seconds: 30));
+        controller.exitTrayMode();
+        async.elapse(LifecycleController.pushTakeoverDelay);
+
+        expect(sync.realtimePaused, isFalse);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
+    test('the tray leaves an open socket alone until push takes over', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        // Push arriving while hidden, before the takeover delay, must not
+        // resume a socket nothing closed (a resume also runs a catch-up).
+        controller
+          ..enterTrayMode()
+          ..desktopPushActive = true;
+        expect(sync.realtimeResumes, 0);
+
+        async.elapse(LifecycleController.pushTakeoverDelay);
+        expect(sync.realtimePaused, isTrue);
+
+        controller.exitTrayMode();
+        expect(sync.realtimePaused, isFalse);
+        expect(sync.realtimeResumes, 1);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
+    test('the tray closes realtime and the window reopens it', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+
+        controller.desktopPushActive = true;
+        expect(sync.realtimePaused, isFalse, reason: 'window still open');
+
+        controller.enterTrayMode();
+        expect(sync.realtimePaused, isFalse, reason: 'a quick reopen is free');
+        async.elapse(LifecycleController.pushTakeoverDelay);
+        expect(sync.realtimePaused, isTrue);
+        expect(sync.polling, isTrue, reason: 'the health check stays on');
+
+        controller.exitTrayMode();
+        expect(sync.realtimePaused, isFalse);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
+    test('losing push in the tray reopens realtime', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        controller
+          ..enterTrayMode()
+          ..desktopPushActive = true;
+        async.elapse(LifecycleController.pushTakeoverDelay);
+        expect(sync.realtimePaused, isTrue);
+
+        controller.desktopPushActive = false;
+        expect(sync.realtimePaused, isFalse);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
+    test('unlocking in the tray leaves realtime closed', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        controller
+          ..enterTrayMode()
+          ..desktopPushActive = true
+          ..onScreenLock()
+          ..onScreenUnlock();
+        async.elapse(LifecycleController.pushTakeoverDelay);
+
+        expect(sync.realtimePaused, isTrue);
+        expect(sync.polling, isTrue);
+
+        controller.dispose();
+        async.flushTimers();
+      });
     });
   });
 

@@ -10,6 +10,7 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "package_context.h"
 #include "power_monitor.h"
+#include "push_channel.h"
 
 namespace {
 
@@ -24,6 +25,11 @@ constexpr UINT kFlushClipboardMessage = WM_APP + 1;
 
 // Posted by GpuWatchdog when the GPU has been reset under the app.
 constexpr UINT kGpuResetMessage = WM_APP + 2;
+
+// Posted by PushChannel from its worker thread and WinRT event handler, so
+// the Flutter channel is only touched on this thread.
+constexpr UINT kPushChannelReadyMessage = WM_APP + 3;
+constexpr UINT kPushReceivedMessage = WM_APP + 4;
 
 // Passed to the copy started after a GPU reset. The pid flag is read in
 // main.cpp, before the engine starts.
@@ -178,6 +184,11 @@ bool FlutterWindow::OnCreate() {
         result->Success(flutter::EncodableValue(ok != 0));
       });
 
+  // WNS for the packaged build; see push_channel.h.
+  push_channel_ = std::make_unique<PushChannel>(
+      flutter_controller_->engine()->messenger(), GetHandle(),
+      kPushChannelReadyMessage, kPushReceivedMessage);
+
   // Initialize power monitor for system sleep/wake/lock events
   power_monitor_ =
       std::make_unique<PowerMonitor>(flutter_controller_->engine());
@@ -300,6 +311,7 @@ void FlutterWindow::OnDestroy() {
   clipboard_change_channel_ = nullptr;
   packaging_channel_ = nullptr;
   memory_channel_ = nullptr;
+  push_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -370,6 +382,14 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
     case kGpuResetMessage:
       RestartAfterGpuReset();
+      return 0;
+
+    case kPushChannelReadyMessage:
+      if (push_channel_) push_channel_->OnChannelReady();
+      return 0;
+
+    case kPushReceivedMessage:
+      if (push_channel_) push_channel_->OnReceived();
       return 0;
 
     case WM_TIMER:

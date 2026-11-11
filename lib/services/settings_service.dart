@@ -157,6 +157,11 @@ abstract class ISettingsService {
   /// Returns false by default if error or not found
   Future<bool> isHybridModeEnabled();
 
+  /// Whether desktops may use OS push (FCM on macOS, WNS on Windows) in
+  /// place of an always-open realtime connection while in the tray. From
+  /// the app_config table; false on any error.
+  Future<bool> isDesktopPushEnabled();
+
   /// Initialize settings service
   Future<void> initialize();
 

@@ -242,6 +242,15 @@ class ClipboardSyncService implements IClipboardSyncService {
   void Function(ClipboardItem item)? onClipboardSent;
 
   @override
+  void Function()? onPollFoundClip;
+
+  @override
+  void checkForNewClips() {
+    if (_isDisposed) return;
+    unawaited(_pollForNewClipboards(queueIfBusy: true));
+  }
+
+  @override
   Future<void> initialize() async {
     debugPrint('[ClipboardSyncService] Initializing...');
 
@@ -538,7 +547,10 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Resolves to null when the clip is not this device's to receive, or the
   /// account changed while it was being fetched. Never throws: the result can
   /// sit unawaited behind a debounce that gets cancelled.
-  Future<ClipboardItem?> _receiveItem(String id) async {
+  Future<ClipboardItem?> _receiveItem(
+    String id, {
+    bool fromPoll = false,
+  }) async {
     try {
       final userId = _supabaseClient.auth.currentUser?.id;
       if (userId == null || _isDisposed) return null;
@@ -549,6 +561,7 @@ class ClipboardSyncService implements IClipboardSyncService {
           !_canReceive(item)) {
         return null;
       }
+      if (fromPoll) onPollFoundClip?.call();
       _deliverReceived(item);
       return item;
     } on Exception catch (e) {
@@ -1857,7 +1870,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
       // Realtime delivered it while the id was being read.
       if (_claim(latestId)) {
-        await _handleSmartAutoReceive(_receiveItem(latestId));
+        await _handleSmartAutoReceive(_receiveItem(latestId, fromPoll: true));
         // The fetch failed: wind the baseline back so the next poll - or the
         // next resume's catch-up - tries this row again instead of treating
         // it as seen.
@@ -1903,6 +1916,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       for (final item in skipped) {
         if (_isDisposed) break;
         if (_canReceive(item) && _claim(item.id)) {
+          onPollFoundClip?.call();
           _deliverReceived(item);
           delivered++;
         }

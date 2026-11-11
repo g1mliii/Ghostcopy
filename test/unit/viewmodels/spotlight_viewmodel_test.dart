@@ -61,6 +61,12 @@ class _TestClipboardSyncService implements IClipboardSyncService {
   @override
   void Function(ClipboardItem item)? onClipboardSent;
 
+  @override
+  void Function()? onPollFoundClip;
+
+  @override
+  void checkForNewClips() {}
+
   String? lastManualSendContent;
 
   @override
