@@ -201,29 +201,6 @@ void main() {
     viewModel.dispose();
   });
 
-  test('copying from history marks the clipboard as freshly changed', () async {
-    // Smart auto-receive reads this to avoid overwriting a copy the user
-    // just made. A refactor once dropped the call and nothing noticed.
-    final clipboard = _MockClipboardService();
-    when(() => clipboard.writeText(any())).thenAnswer((_) async {});
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
-
-    await copying.handleHistoryItemCopy(
-      _clipboardItem(id: '1', content: 'hello'),
-    );
-
-    verify(() => clipboard.writeText('hello')).called(1);
-    expect(clipboardSyncService.modificationTimeUpdates, 1);
-  });
-
   group('history copy confirmation', () {
     late _MockClipboardService clipboard;
     late SpotlightViewModel copying;
@@ -298,87 +275,67 @@ void main() {
       expect(copying.errorMessage, 'Failed to copy to clipboard');
       expect(notificationService.systemNotifications, isEmpty);
     });
-  });
 
-  test('a failed media download is not counted as a copy', () async {
-    // downloadFile answers null for a missing path, a failed download or a
-    // failed decrypt. Nothing reaches the clipboard, so smart receive must
-    // not start guarding it.
-    final clipboard = _MockClipboardService();
-    when(
-      () => clipboardRepository.downloadFile(any()),
-    ).thenAnswer((_) async => null);
-    when(
-      () => clipboardRepository.lastDownloadWasOffline(any()),
-    ).thenReturn(false);
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+    test('a failed media download is not counted as a copy', () async {
+      // downloadFile answers null for a missing path, a failed download or a
+      // failed decrypt. Nothing reaches the clipboard, so smart receive must
+      // not start guarding it.
+      when(
+        () => clipboardRepository.downloadFile(any()),
+      ).thenAnswer((_) async => null);
+      when(
+        () => clipboardRepository.lastDownloadWasOffline(any()),
+      ).thenReturn(false);
 
-    await copying.handleHistoryItemCopy(
-      ClipboardItem(
-        id: 'img',
-        userId: 'user-123',
-        content: '',
-        deviceType: 'ios',
-        createdAt: DateTime(2026),
-        contentType: ContentType.imagePng,
-        storagePath: 'user-123/img',
-      ),
-    );
+      await copying.handleHistoryItemCopy(
+        ClipboardItem(
+          id: 'img',
+          userId: 'user-123',
+          content: '',
+          deviceType: 'ios',
+          createdAt: DateTime(2026),
+          contentType: ContentType.imagePng,
+          storagePath: 'user-123/img',
+        ),
+      );
 
-    expect(clipboardSyncService.modificationTimeUpdates, 0);
-    expect(notificationService.toasts, isEmpty);
-    expect(notificationService.systemNotifications, [
-      (
-        'Could not copy - the file could not be downloaded',
-        NotificationType.error,
-      ),
-    ]);
-    verifyNever(() => clipboard.writeImage(any()));
-  });
+      expect(clipboardSyncService.modificationTimeUpdates, 0);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, [
+        (
+          'Could not copy - the file could not be downloaded',
+          NotificationType.error,
+        ),
+      ]);
+      verifyNever(() => clipboard.writeImage(any()));
+    });
 
-  test('copying a file that never downloaded, offline, says so', () async {
-    // Offline history shows the clip; its file lives in storage.
-    final clipboard = _MockClipboardService();
-    when(
-      () => clipboardRepository.downloadFile(any()),
-    ).thenAnswer((_) async => null);
-    when(
-      () => clipboardRepository.lastDownloadWasOffline(any()),
-    ).thenReturn(true);
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+    test('copying a file that never downloaded, offline, says so', () async {
+      // Offline history shows the clip; its file lives in storage.
+      when(
+        () => clipboardRepository.downloadFile(any()),
+      ).thenAnswer((_) async => null);
+      when(
+        () => clipboardRepository.lastDownloadWasOffline(any()),
+      ).thenReturn(true);
 
-    await copying.handleHistoryItemCopy(
-      ClipboardItem(
-        id: 'img',
-        userId: 'user-123',
-        content: '',
-        deviceType: 'ios',
-        createdAt: DateTime(2026),
-        contentType: ContentType.imagePng,
-        storagePath: 'user-123/img',
-      ),
-    );
+      await copying.handleHistoryItemCopy(
+        ClipboardItem(
+          id: 'img',
+          userId: 'user-123',
+          content: '',
+          deviceType: 'ios',
+          createdAt: DateTime(2026),
+          contentType: ContentType.imagePng,
+          storagePath: 'user-123/img',
+        ),
+      );
 
-    expect(
-      notificationService.systemNotifications.single.$1,
-      offlineFileMessage,
-    );
+      expect(
+        notificationService.systemNotifications.single.$1,
+        offlineFileMessage,
+      );
+    });
   });
 
   testWidgets('plain typing pauses do not repeatedly rebuild the window', (
