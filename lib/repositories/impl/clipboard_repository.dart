@@ -1665,6 +1665,24 @@ class ClipboardRepository implements IClipboardRepository {
   static String _capitalize(String value) =>
       value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
 
+  /// Whether a clip sent by [senderName] to [targets] is this device's to
+  /// receive. Desktop and mobile both ask this before copying a clip unasked,
+  /// so the rule lives in one place: they had drifted apart once already.
+  ///
+  /// The sender check is a plain inequality: a device never receives its own
+  /// clip, and an unnamed sender is someone else unless this device is
+  /// unnamed too. Null or empty targets mean every device - an empty list is
+  /// never a deliberate "nobody".
+  ///
+  /// Known limit: devices are told apart by name, so two machines sharing a
+  /// hostname, or two phones of the same platform, do not receive from each
+  /// other. Fixing that needs a device id on the clipboard row.
+  static bool isForThisDevice(String? senderName, List<String>? targets) =>
+      senderName != getCurrentDeviceName() &&
+      (targets == null ||
+          targets.isEmpty ||
+          targets.contains(getCurrentDeviceType()));
+
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;
 

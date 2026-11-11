@@ -487,7 +487,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
     }
 
-    if (_isForThisDevice(
+    if (ClipboardRepository.isForThisDevice(
       record['device_name'] as String?,
       ClipboardItem.parseTargetDeviceTypes(record['target_device_type']),
     )) {
@@ -731,26 +731,10 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   bool _canReceive(ClipboardItem item) =>
       item.userId == _supabaseClient.auth.currentUser?.id &&
-      _isForThisDevice(item.deviceName, item.targetDeviceTypes);
-
-  /// Whether a clip sent by [senderName] to [targets] is this device's to
-  /// receive. The realtime filter and [_canReceive] share it, so the two
-  /// paths cannot drift apart again.
-  ///
-  /// The sender check is a plain inequality, deliberately: null guards that
-  /// used to be here made it false whenever either side had no name, and
-  /// mobile sends device_name: null on every path. That meant a clip sent
-  /// from the phone never triggered auto-receive on the desktop - the
-  /// Mobile -> Desktop half of sync - and it only appeared to work because
-  /// the polling fallback compared the same two values without the guards.
-  ///
-  /// Known limit: this identifies devices by name, so two machines sharing a
-  /// hostname will not receive from each other. Fixing that needs a device id
-  /// on the clipboard row.
-  static bool _isForThisDevice(String? senderName, List<String>? targets) =>
-      senderName != ClipboardRepository.getCurrentDeviceName() &&
-      (targets == null ||
-          targets.contains(ClipboardRepository.getCurrentDeviceType()));
+      ClipboardRepository.isForThisDevice(
+        item.deviceName,
+        item.targetDeviceTypes,
+      );
 
   /// Copy a clipboard item to the system clipboard, supporting multiple content types
   ///
