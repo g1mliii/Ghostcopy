@@ -185,6 +185,11 @@ class LifecycleController implements ILifecycleController {
   static const Duration pushTakeoverDelay = Duration(minutes: 2);
   Timer? _pushTakeoverTimer;
 
+  /// Realtime was closed because push took over, so leaving push mode must
+  /// reopen it. Without this every lifecycle transition resumed realtime -
+  /// and a resume runs a catch-up fetch - even though nothing had closed it.
+  bool _realtimeClosedForPush = false;
+
   @override
   bool get desktopPushActive => _desktopPushActive;
 
@@ -200,7 +205,11 @@ class LifecycleController implements ILifecycleController {
   /// reaches this desktop; open it otherwise. Every transition - tray, power,
   /// push trust - ends here, so the rule lives in one place. Both calls are
   /// no-ops when the connection is already so.
-  void _applyPushConnection() {
+  ///
+  /// [windowOpened] resumes realtime even when push did not close it: a
+  /// resume also checks a retained channel for clips it silently missed
+  /// while the window was hidden.
+  void _applyPushConnection({bool windowOpened = false}) {
     if (_isInTrayMode && _desktopPushActive) {
       _pushTakeoverTimer ??= Timer(pushTakeoverDelay, () {
         _pushTakeoverTimer = null;
@@ -209,12 +218,16 @@ class LifecycleController implements ILifecycleController {
             _powerState == PowerState.awake &&
             !_isDisposed) {
           _clipboardSyncService.pauseRealtime();
+          _realtimeClosedForPush = true;
         }
       });
     } else {
       _pushTakeoverTimer?.cancel();
       _pushTakeoverTimer = null;
-      _clipboardSyncService.resumeRealtime();
+      if (_realtimeClosedForPush || windowOpened) {
+        _realtimeClosedForPush = false;
+        _clipboardSyncService.resumeRealtime();
+      }
     }
   }
 
@@ -240,17 +253,21 @@ class LifecycleController implements ILifecycleController {
     }
 
     // When spotlight opens, switch back to realtime if in polling mode
-    if (_connectionMode == ConnectionMode.polling) {
+    final switched =
+        _connectionMode == ConnectionMode.polling &&
+        _powerState == PowerState.awake;
+    if (switched) {
       debugPrint('[Lifecycle] 🪟 Spotlight opened → Switching to REALTIME');
       switchToRealtime();
-    } else if (_powerState == PowerState.awake) {
-      _clipboardSyncService.resumeRealtime();
     }
-    // Resume also checks a retained channel for clips it silently missed
-    // before the window opened, so stopping the timer preserves catch-up.
     _clipboardSyncService.stopPolling();
-    // Push may have closed realtime in the tray; the open window wants it.
-    if (_powerState == PowerState.awake) _applyPushConnection();
+    // Push may have closed realtime in the tray; the open window wants it
+    // either way. The resume also catches up on clips a retained channel
+    // missed while hidden, so stopping the timer above loses nothing.
+    // switchToRealtime has already resumed once.
+    if (_powerState == PowerState.awake) {
+      _applyPushConnection(windowOpened: !switched);
+    }
   }
 
   @override
@@ -341,6 +358,7 @@ class LifecycleController implements ILifecycleController {
     _clipboardSyncService
       ..stopPolling()
       ..resumeRealtime();
+    _realtimeClosedForPush = false;
   }
 
   @override

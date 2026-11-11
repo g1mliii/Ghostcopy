@@ -290,6 +290,32 @@ void main() {
       });
     });
 
+    test('the tray leaves an open socket alone until push takes over', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        // Push arriving while hidden, before the takeover delay, must not
+        // resume a socket nothing closed (a resume also runs a catch-up).
+        controller
+          ..enterTrayMode()
+          ..desktopPushActive = true;
+        expect(sync.realtimeResumes, 0);
+
+        async.elapse(LifecycleController.pushTakeoverDelay);
+        expect(sync.realtimePaused, isTrue);
+
+        controller.exitTrayMode();
+        expect(sync.realtimePaused, isFalse);
+        expect(sync.realtimeResumes, 1);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
     test('the tray closes realtime and the window reopens it', () {
       fakeAsync((async) {
         final controller = LifecycleController(
