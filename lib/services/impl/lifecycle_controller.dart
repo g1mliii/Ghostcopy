@@ -197,8 +197,11 @@ class LifecycleController implements ILifecycleController {
     if (_connectionMode == ConnectionMode.polling) {
       debugPrint('[Lifecycle] 🪟 Spotlight opened → Switching to REALTIME');
       switchToRealtime();
+    } else if (_powerState == PowerState.awake) {
+      _clipboardSyncService.resumeRealtime();
     }
-    // The window is up, so the process is not throttled: no check needed.
+    // Resume also checks a retained channel for clips it silently missed
+    // before the window opened, so stopping the timer preserves catch-up.
     _clipboardSyncService.stopPolling();
   }
 

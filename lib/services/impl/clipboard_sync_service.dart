@@ -1601,11 +1601,13 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void resumeRealtime() {
     _realtimePaused = false;
-    if (_realtimeChannel != null) return; // Already active
+    if (_realtimeChannel == null) {
+      debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
+      _subscribeToRealtimeUpdates();
+    }
 
-    debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
-    _subscribeToRealtimeUpdates();
-
+    // A retained channel can have silently stopped delivering in the tray.
+    // Catch up even when it exists, so a missed clip also triggers a rejoin.
     // A subscription only sees rows inserted after it opens. Anything that
     // landed since the last poll - a file sent from Finder's context menu,
     // which inserts straight through the repository, or a clip from the

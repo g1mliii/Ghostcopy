@@ -391,6 +391,51 @@ void main() {
       verifyNever(() => channel.subscribe(any()));
     });
 
+    testWidgets('resuming a retained silent channel catches up and rejoins', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      // The tray poll has not run yet when the user opens Spotlight.
+      service.startPolling();
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      service
+        ..stopPolling()
+        ..resumeRealtime();
+      await settle(tester);
+
+      verify(channel.unsubscribe).called(1);
+      verify(() => channel.subscribe(any())).called(1);
+      verify(() => clipboard.writeText('clip 2')).called(1);
+      verifyVaultGot('clip 2');
+    });
+
+    testWidgets('resuming a healthy retained channel only checks for clips', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+      clearInteractions(repository);
+
+      service.resumeRealtime();
+      await settle(tester);
+
+      verify(repository.getLatestItemId).called(1);
+      verifyNever(channel.unsubscribe);
+      verifyNever(() => channel.subscribe(any()));
+      verifyNever(() => clipboard.writeText(any()));
+    });
+
     // A second missed clip inside the 30 s rejoin cooldown was refused, and
     // with the channel already marked unjoined no later poll asked again -
     // realtime stayed down until some unrelated wake or unlock.
