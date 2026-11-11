@@ -1047,18 +1047,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 slivers: [
                   if (_historyCollapsed)
-                    // History folded away: the composer grows with its text
-                    // up to what the screen above the keyboard leaves after
-                    // the chips, Send and the history heading, then scrolls
-                    // inside itself, with the controls straight under it.
-                    //
-                    // The page is capped at the viewport - or the floor, when
-                    // that is taller, so a small phone scrolls the page
-                    // rather than squash the composer - but only as tall as
-                    // what is on it, so there is no blank page to scroll
-                    // into. Not SliverFillRemaining: that sizes to the
-                    // composer's full text height, so a long paste grew past
-                    // the screen instead of scrolling inside the box.
+                    // History folded away: see CappedPage. The cap is the
+                    // viewport, or the floor when that is taller, so a small
+                    // phone scrolls the page rather than squash the composer.
                     SliverToBoxAdapter(
                       child: CappedPage(
                         maxHeight: math.max(
