@@ -43,11 +43,8 @@ flutter_secure_storage's key for a data file that is deleted with the package.
 
 ## iOS: open
 
-- [ ] **Trace the typing and history-scroll lag on a real iPhone.** Reported
-      2026-11-10, not reproducible from the code and needs the Mac. Steps
-      and a results table to fill in are in `docs/ios-performance.md`
-      ("Open: typing and history-scroll lag"). No fix until the trace says
-      where the time goes
+- [ ] **Trace the typing and history-scroll lag** - steps and results table
+      in `docs/ios-performance.md`, "Open: typing and history-scroll lag"
 - [ ] **iPhone Duo - check on the simulator before the next iOS build**
       (Xcode 27.1 iPhone Duo simulator). `SideSafeArea`
       (`lib/ui/layout/side_safe_area.dart`, PR #106) keeps content out of the

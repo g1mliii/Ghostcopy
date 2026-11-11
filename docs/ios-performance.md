@@ -59,14 +59,20 @@ Two reports from use on a real iPhone, neither traced yet:
 
 - **Typing in the composer feels laggy.** Nothing in the composer runs per
   keystroke in Dart (`onChanged` only clears a send error; the length check is
-  a controller listener), and Sentry holds no iOS hang or slow-frame events
-  for the last 30 days. The table above already shows ~25% of a core while
+  a controller listener). A search of Sentry for unresolved issues tagged
+  `os.name:iOS` over 30 days found none; resolved issues and individual
+  events were not searched, and FLUTTER-8 (a composer hang, see
+  `mobile_main_screen.dart`) shows there has been one before - worth a look
+  at its history before capturing. The table above already shows ~25% of a
+  core while
   keys are pressed, so the question is whether frames are being missed, and
   on which thread.
 - **Scrolling the history lags after copying a clip, and recovers after the
   app sits idle for a while.** Not reproduced from the code. Scrolling was
   never measured (see above). Still to confirm: whether this is the phone's
-  history list or the desktop history panel.
+  history list or the desktop history panel. If it is the desktop, run
+  captures 3-5 below against `flutter run --profile -d macos` (or
+  `-d windows`) instead; the iPhone steps will not show it.
 
 A TestFlight build cannot be traced: it is distribution-signed, so neither
 DevTools nor Instruments can attach. It is still worth trying there first -
@@ -100,6 +106,13 @@ in one cannot be blamed on another:
 5. **Scroll, after idle.** Leave the app untouched until scrolling feels
    normal again, note how long that took, and record ten more seconds.
 
+**Frame budget.** iPhones with ProMotion (the 13 Pro and later Pro models)
+run GhostCopy at up to 120 Hz, because the app opts in
+(`CADisableMinimumFrameDurationOnPhone` in `ios/Runner/Info.plist`). That is
+about 8.3 ms per frame, not the 16.7 ms of a 60 Hz screen, so work that was
+fine at 60 Hz can drop frames here. Note the device's rate in the table and
+judge frames against its budget.
+
 For each capture note the slow frames (red bars) and whether the time is in
 UI (Dart: build, layout, paint) or Raster (GPU). Select the worst frame and
 export it, or screenshot the flame chart. The difference between captures 3
@@ -115,13 +128,13 @@ release build signed for development.
 
 Fill in after capturing.
 
-| Capture | Build | Slow frames | Worst frame (ms) | UI or Raster | What was in the worst frame |
-| --- | --- | --- | --- | --- | --- |
-| 1. Typing, short | | | | | |
-| 2. Typing, long | | | | | |
-| 3. Scroll, before | | | | | |
-| 4. Scroll, after copy | | | | | |
-| 5. Scroll, after idle | | | | | |
+| Capture | Build | Refresh rate (Hz) | Slow frames | Worst frame (ms) | UI or Raster | What was in the worst frame |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1. Typing, short | | | | | | |
+| 2. Typing, long | | | | | | |
+| 3. Scroll, before | | | | | | |
+| 4. Scroll, after copy | | | | | | |
+| 5. Scroll, after idle | | | | | | |
 
 Time for scrolling to recover after a copy:
 
