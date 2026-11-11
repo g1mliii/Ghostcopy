@@ -108,19 +108,26 @@ class MainActivity : FlutterActivity() {
      * Without one, GhostCopy only appears in the app list further down. One
      * long-lived "Send to devices" shortcut puts it in that row; choosing it
      * sends an ordinary ACTION_SEND here, so nothing downstream changes. Kept
-     * off the launcher's long-press menu, where it would only open the app.
+     * off the launcher's long-press menu where Android allows it (13+), since
+     * there it would only open the app.
      */
     private fun publishShareShortcut() {
         try {
-            val shortcut = ShortcutInfoCompat.Builder(this, SHARE_SHORTCUT_ID)
+            val builder = ShortcutInfoCompat.Builder(this, SHARE_SHORTCUT_ID)
                 .setShortLabel(getString(R.string.share_shortcut_short))
                 .setLongLabel(getString(R.string.share_shortcut_long))
                 .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
                 .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_VIEW))
                 .setLongLived(true)
                 .setCategories(setOf(SHARE_TARGET_CATEGORY))
-                .setExcludedFromSurfaces(ShortcutInfoCompat.SURFACE_LAUNCHER)
-                .build()
+            // Android 13 is the first that can keep a shortcut out of the
+            // launcher alone. Before it, ShortcutManagerCompat drops a
+            // launcher-excluded shortcut entirely, so Direct Share would lose
+            // it too; there it shows in the long-press menu as well.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                builder.setExcludedFromSurfaces(ShortcutInfoCompat.SURFACE_LAUNCHER)
+            }
+            val shortcut = builder.build()
             ShortcutManagerCompat.pushDynamicShortcut(this, shortcut)
         } catch (e: Exception) {
             // Launcher or OEM refusing shortcuts must never stop the app.
