@@ -100,7 +100,8 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   bool _obsidianEnabled = false;
   String _obsidianVaultPath = '';
   String _obsidianFileName = 'clipboard.md';
-  HotKey _currentHotkey = defaultHotkey;
+  HotKey? _sendHotkey;
+  HotKey? _currentHotkey;
 
   // Text controllers
   final _webhookUrlController = TextEditingController();
@@ -260,9 +261,13 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
   Future<void> _loadHotkey() async {
     if (widget.hotkeyService == null) return;
 
-    final saved = await widget.settingsService.getHotkey();
-    if (saved == null || !mounted) return;
-    _currentHotkey = saved;
+    // Registered rather than saved: a saved shortcut another app held at
+    // login is not live, and showing it would also make re-choosing it a
+    // no-op in [_handleHotkeyChanged].
+    final registered = await registeredHotkeys();
+    if (!mounted) return;
+    _sendHotkey = registered.send;
+    _currentHotkey = registered.spotlight;
     scheduleRebuild();
   }
 
@@ -721,6 +726,27 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
         // the right-click menu sends, so hiding it with auto-send off would
         // strand a setting that is still in effect.
         _buildDeviceSelector(),
+        if (widget.hotkeyService != null) ...[
+          const SizedBox(height: 10),
+          if (widget.hotkeyService!.managedBySystem)
+            ListTile(
+              title: const Text('Send current clipboard'),
+              subtitle: const Text('Assign a shortcut in KDE Plasma'),
+              onTap: _configureSystemShortcut,
+            )
+          else ...[
+            HotkeyCapture(
+              title: 'Send current clipboard',
+              currentHotkey: _sendHotkey,
+              onHotkeyChanged: _changeSendHotkey,
+            ),
+            if (_sendHotkey != null)
+              TextButton(
+                onPressed: () => _changeSendHotkey(null),
+                child: const Text('Clear send shortcut'),
+              ),
+          ],
+        ],
         const SizedBox(height: 10),
         // URL shortening toggle
         _buildSettingToggle(
@@ -1621,6 +1647,29 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
     }
   }
 
+  Future<void> _changeSendHotkey(HotKey? key) async {
+    try {
+      await applySendHotkey(key);
+      if (mounted) setState(() => _sendHotkey = key);
+    } on HotkeyInUseException {
+      _showShortcutError(
+        '${formatHotkey(key!)} already opens GhostCopy. '
+        'Choose another combination.',
+      );
+    } on Exception {
+      _showShortcutError(
+        'Could not apply send shortcut. Try another combination.',
+      );
+    }
+  }
+
+  void _showShortcutError(String message, {Color? background}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: background),
+    );
+  }
+
   /// Apply a newly captured hotkey: register it, persist it, and only then
   /// show it as current.
   ///
@@ -1632,28 +1681,21 @@ class _SettingsPanelState extends State<SettingsPanel> with CoalescedRebuild {
 
     try {
       await applyHotkey(newHotkey);
-    } on UnsupportedHotkeyException {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${formatHotkey(newHotkey)} cannot be used as a shortcut. '
-            'Your previous shortcut is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
+    } on UnsupportedHotkeyException catch (e) {
+      final why = e is HotkeyInUseException
+          ? 'already sends the clipboard'
+          : 'cannot be used as a shortcut';
+      _showShortcutError(
+        '${formatHotkey(newHotkey)} $why. '
+        'Your previous shortcut is still active.',
+        background: Colors.red,
       );
       return;
     } on Object catch (e) {
       debugPrint('Failed to apply hotkey: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not change the shortcut. Your previous one is still active.',
-          ),
-          backgroundColor: Colors.red,
-        ),
+      _showShortcutError(
+        'Could not change the shortcut. Your previous one is still active.',
+        background: Colors.red,
       );
       return;
     }

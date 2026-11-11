@@ -18,6 +18,9 @@ abstract class IClipboardSyncService {
   /// Initialize the service (call once at startup)
   Future<void> initialize();
 
+  /// Send the current clipboard to the saved default devices.
+  Future<void> sendCurrentClipboard();
+
   /// Start clipboard monitoring for auto-send
   /// Called when user enables auto-send in settings
   void startClipboardMonitoring();

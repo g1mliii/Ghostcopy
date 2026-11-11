@@ -47,6 +47,9 @@ class _MockWindowService extends Mock implements IWindowService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
   @override
+  Future<void> sendCurrentClipboard() async {}
+
+  @override
   void ensureRealtimeConnected() {}
 
   @override
