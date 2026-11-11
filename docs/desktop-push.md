@@ -25,6 +25,20 @@ withdrawn and realtime reopens until the next push. A desktop where push cannot
 start (no Firebase config, an unpackaged Windows build, refused permission)
 never closes realtime.
 
+## Before merging
+
+Merging to `main` deploys on its own (`.github/workflows/deploy.yml`): once CI
+passes, the migration is applied to production and the edge function is
+redeployed. There is no approval step.
+
+`supabase db push` runs without `--include-all`, so it refuses a pending
+migration dated earlier than the newest one already on production. If another
+migration merges first, rename `20261111120000_desktop_push.sql` to a current
+timestamp before merging this, or every later deploy stops at it.
+
+The edge function secrets and the `desktop_push_enabled` flag are not deployed
+by CI; set them by hand as below.
+
 ## macOS setup
 
 1. In the Apple Developer portal, the `com.ghostcopy.ghostcopy` App ID needs
