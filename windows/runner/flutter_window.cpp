@@ -253,11 +253,10 @@ int64_t FlutterWindow::ClipboardChangeCount() {
 // the smart action buttons all go through the clipboard, and therefore through
 // here.
 //
-// Flushing renders each format and hands ownership back to the system, so the
-// clipboard still holds the data and GetClipboardOwner becomes null. That ends
-// the recursion this would otherwise have: the flush changes the sequence
-// number, which posts one more WM_CLIPBOARDUPDATE, and by then this process no
-// longer owns the clipboard so nothing flushes again.
+// OLE can retain this process's owner window after flushing. Each flush can
+// emit another WM_CLIPBOARDUPDATE, so ownership alone cannot prevent a feedback
+// loop. Remember the post-flush sequence and skip notifications for that same
+// clipboard state. A genuinely new copy (even from this process) still flushes.
 //
 // The cost is rendering large formats up front rather than only if something
 // asks. Bounded here: a clip is at most 100 KB of text or a 10 MB file
@@ -269,6 +268,8 @@ void FlutterWindow::FlushOwnedClipboard() {
   DWORD owner_process = 0;
   GetWindowThreadProcessId(owner, &owner_process);
   if (owner_process != GetCurrentProcessId()) return;
+  const DWORD sequence = GetClipboardSequenceNumber();
+  if (!clipboard_flush_guard_.NeedsFlush(sequence)) return;
   // The flush itself moves the sequence number, and that is not a copy. When
   // the counter has already seen everything up to now - the usual case, since
   // the WM_CLIPBOARDUPDATE that posted this counted the write - absorb the
@@ -277,7 +278,7 @@ void FlutterWindow::FlushOwnedClipboard() {
   // smart auto-receive would only offer the next clip instead of taking it.
   // If something is still uncounted, leave it: the next WM_CLIPBOARDUPDATE
   // counts it and the flush together, once.
-  const bool counted = GetClipboardSequenceNumber() == last_clipboard_sequence_;
+  const bool counted = sequence == last_clipboard_sequence_;
   // Only meaningful for data this process put there with OLE; harmless
   // otherwise, and the owner check above already narrows it to our own.
   const HRESULT hr = ::OleFlushClipboard();
@@ -293,7 +294,9 @@ void FlutterWindow::FlushOwnedClipboard() {
     }
     return;
   }
-  if (counted) last_clipboard_sequence_ = GetClipboardSequenceNumber();
+  const DWORD completed_sequence = GetClipboardSequenceNumber();
+  clipboard_flush_guard_.DidFlush(completed_sequence);
+  if (counted) last_clipboard_sequence_ = completed_sequence;
 }
 
 void FlutterWindow::OnDestroy() {
@@ -365,7 +368,8 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       // synchronous flush can re-enter HandleTopLevelWindowProc, including
       // with the very WM_CLIPBOARDUPDATE the flush itself raises. Posting
       // lets the current message finish first.
-      if (!flush_posted_) {
+      if (!flush_posted_ &&
+          clipboard_flush_guard_.NeedsFlush(GetClipboardSequenceNumber())) {
         flush_posted_ = true;
         ::PostMessage(hwnd, kFlushClipboardMessage, 0, 0);
       }
