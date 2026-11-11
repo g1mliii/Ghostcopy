@@ -23,5 +23,14 @@
 	<array>
 		<string>$(AppIdentifierPrefix)com.ghostcopy.ghostcopy</string>
 	</array>
+
+	<!-- APNs, for desktop push (MacPushService). Restricted: the Developer
+	     ID provisioning profile must carry it too, or macOS refuses to launch
+	     the app - automatic signing adds the Push capability to the App ID
+	     and regenerates the profile under -allowProvisioningUpdates, and
+	     verify-app.py checks the profile authorizes it. Developer ID builds
+	     talk to the production APNs environment. -->
+	<key>com.apple.developer.aps-environment</key>
+	<string>production</string>
 </dict>
 </plist>

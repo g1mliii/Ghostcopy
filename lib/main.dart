@@ -27,6 +27,7 @@ import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/command_line_tool_service.dart';
 import 'services/crash_reporting_service.dart';
+import 'services/desktop_push_service.dart';
 import 'services/device_service.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
@@ -42,6 +43,7 @@ import 'services/impl/linux_auto_start_service.dart';
 import 'services/impl/linux_clipboard_reader.dart';
 import 'services/impl/linux_hotkey_service.dart';
 import 'services/impl/linux_power_service.dart';
+import 'services/impl/macos_push_service.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/pkce_verifier_store.dart';
 import 'services/impl/security_service.dart';
@@ -50,6 +52,7 @@ import 'services/impl/transformer_service.dart';
 import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
 import 'services/impl/windows_package_service.dart';
+import 'services/impl/windows_push_service.dart';
 import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
 import 'services/obsidian_service.dart';
@@ -677,6 +680,18 @@ Future<void> _appMain(
         if (windowService.isVisible) return;
         await trimWindowsWorkingSet();
       }),
+    );
+
+    // After the device row exists, which the push token is written to.
+    // Not awaited: on macOS it waits on APNs, and nothing here needs it.
+    unawaited(
+      startDesktopPush(
+        settings: locator<ISettingsService>(),
+        devices: deviceService,
+        auth: authService,
+        sync: clipboardSyncService,
+        lifecycle: lifecycleController,
+      ),
     );
 
     runApp(MyApp(launchedAtStartup: launchedAtStartup));
@@ -2058,6 +2073,51 @@ Future<void> startAuthAndDevice(
         context: 'register_current_device',
       ),
     );
+  }
+}
+
+// ignore: cancel_subscriptions - lives as long as the app does
+StreamSubscription<AuthState>? _desktopPushAuthSubscription;
+
+/// Let OS push stand in for the tray's realtime connection, on macOS (FCM)
+/// and the packaged Windows build (WNS). Off unless the desktop_push_enabled
+/// flag is on, and a desktop where push cannot start keeps realtime as before.
+/// See DesktopPushCoordinator.
+Future<void> startDesktopPush({
+  required ISettingsService settings,
+  required IDeviceService devices,
+  required IAuthService auth,
+  required IClipboardSyncService sync,
+  required ILifecycleController lifecycle,
+}) async {
+  if (!Platform.isMacOS && !Platform.isWindows) return;
+  try {
+    if (!await settings.isDesktopPushEnabled()) return;
+    final push = Platform.isMacOS
+        ? MacPushService(deviceService: devices)
+        : WindowsPushService(deviceService: devices);
+    final coordinator = DesktopPushCoordinator(
+      push: push,
+      sync: sync,
+      lifecycle: lifecycle,
+    );
+    if (!await coordinator.start()) {
+      push.dispose();
+      return;
+    }
+    // The token belongs to the install, but it is stored on the signed-in
+    // account's device row, so a new account needs it written again.
+    var userId = auth.currentUserId;
+    await _desktopPushAuthSubscription?.cancel();
+    _desktopPushAuthSubscription = auth.authStateChanges.listen((state) {
+      final id = state.session?.user.id;
+      if (id == null || id == userId) return;
+      userId = id;
+      unawaited(push.reregister());
+    });
+    debugPrint('[Main] ✅ Desktop push started');
+  } on Object catch (e) {
+    debugPrint('[Main] Desktop push unavailable: $e');
   }
 }
 

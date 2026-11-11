@@ -351,6 +351,21 @@ class SettingsService implements ISettingsService {
 
   // ========== FEATURE FLAGS ==========
 
+  @override
+  Future<bool> isDesktopPushEnabled() async {
+    try {
+      final config = await Supabase.instance.client
+          .from('app_config')
+          .select('enabled')
+          .eq('key', 'desktop_push_enabled')
+          .maybeSingle();
+      return config?['enabled'] as bool? ?? false;
+    } on Exception catch (e) {
+      debugPrint('[Settings] ⚠️  Failed to check desktop push flag: $e');
+      return false;
+    }
+  }
+
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   @override
   Future<bool> isHybridModeEnabled() async {

@@ -225,6 +225,15 @@ class ClipboardSyncService implements IClipboardSyncService {
   void Function(ClipboardItem item)? onClipboardSent;
 
   @override
+  void Function()? onPollFoundClip;
+
+  @override
+  void checkForNewClips() {
+    if (_isDisposed) return;
+    unawaited(_pollForNewClipboards(queueIfBusy: true));
+  }
+
+  @override
   Future<void> initialize() async {
     debugPrint('[ClipboardSyncService] Initializing...');
 
@@ -1748,6 +1757,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       if (canBlameRealtime && channelGeneration == _realtimeGeneration) {
         _noteRealtimeMissedAClip();
       }
+      onPollFoundClip?.call();
 
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.

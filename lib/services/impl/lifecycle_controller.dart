@@ -169,7 +169,33 @@ class LifecycleController implements ILifecycleController {
     }
 
     // Locked or asleep, connections are paused; unlock starts it again.
-    if (_powerState == PowerState.awake) _startTrayHealthCheck();
+    if (_powerState == PowerState.awake) {
+      _startTrayHealthCheck();
+      _applyPushConnection();
+    }
+  }
+
+  bool _desktopPushActive = false;
+
+  @override
+  bool get desktopPushActive => _desktopPushActive;
+
+  @override
+  set desktopPushActive(bool active) {
+    if (active == _desktopPushActive) return;
+    _desktopPushActive = active;
+    debugPrint('[Lifecycle] Desktop push ${active ? "active" : "inactive"}');
+    if (_powerState == PowerState.awake) _applyPushConnection();
+  }
+
+  /// Close realtime in the tray while push reaches this desktop; open it
+  /// otherwise. Both calls are no-ops when the connection is already so.
+  void _applyPushConnection() {
+    if (_isInTrayMode && _desktopPushActive) {
+      _clipboardSyncService.pauseRealtime();
+    } else {
+      _clipboardSyncService.resumeRealtime();
+    }
   }
 
   void _startTrayHealthCheck() =>
@@ -200,6 +226,10 @@ class LifecycleController implements ILifecycleController {
     }
     // The window is up, so the process is not throttled: no check needed.
     _clipboardSyncService.stopPolling();
+    // Push may have closed realtime in the tray; the open window wants it.
+    if (_desktopPushActive && _powerState == PowerState.awake) {
+      _clipboardSyncService.resumeRealtime();
+    }
   }
 
   @override
@@ -392,7 +422,10 @@ class LifecycleController implements ILifecycleController {
     // Always resume to realtime (user just woke system/unlocked screen)
     switchToRealtime();
     // switchToRealtime stops the check; still in the tray, it is needed.
-    if (_isInTrayMode) _startTrayHealthCheck();
+    if (_isInTrayMode) {
+      _startTrayHealthCheck();
+      _applyPushConnection();
+    }
 
     // Not awaited, but safe against a lock that lands while it reads
     // settings: the stop that lock makes invalidates this refresh, so it

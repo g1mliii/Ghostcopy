@@ -12,6 +12,7 @@ add_executable(${BINARY_NAME} WIN32
   "main.cpp"
   "package_context.cpp"
   "power_monitor.cpp"
+  "push_channel.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"

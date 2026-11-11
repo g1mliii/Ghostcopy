@@ -30,6 +30,14 @@ class _RecordingSyncService implements IClipboardSyncService {
   void Function(ClipboardItem item)? onClipboardSent;
 
   @override
+  void Function()? onPollFoundClip;
+
+  int checks = 0;
+
+  @override
+  void checkForNewClips() => checks++;
+
+  @override
   Future<void> initialize() async {}
 
   @override
@@ -248,6 +256,73 @@ void main() {
 
       controller.dispose();
       async.flushTimers();
+    });
+  });
+
+  group('with desktop push active', () {
+    test('the tray closes realtime and the window reopens it', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+
+        controller.desktopPushActive = true;
+        expect(sync.realtimePaused, isFalse, reason: 'window still open');
+
+        controller.enterTrayMode();
+        expect(sync.realtimePaused, isTrue);
+        expect(sync.polling, isTrue, reason: 'the health check stays on');
+
+        controller.exitTrayMode();
+        expect(sync.realtimePaused, isFalse);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
+    test('losing push in the tray reopens realtime', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        controller
+          ..enterTrayMode()
+          ..desktopPushActive = true;
+        expect(sync.realtimePaused, isTrue);
+
+        controller.desktopPushActive = false;
+        expect(sync.realtimePaused, isFalse);
+
+        controller.dispose();
+        async.flushTimers();
+      });
+    });
+
+    test('unlocking in the tray leaves realtime closed', () {
+      fakeAsync((async) {
+        final controller = LifecycleController(
+          clipboardSyncService: sync,
+          settingsService: settings,
+        )..initialize();
+        async.elapse(const Duration(seconds: 1));
+        controller
+          ..enterTrayMode()
+          ..desktopPushActive = true
+          ..onScreenLock()
+          ..onScreenUnlock();
+        async.elapse(const Duration(seconds: 1));
+
+        expect(sync.realtimePaused, isTrue);
+        expect(sync.polling, isTrue);
+
+        controller.dispose();
+        async.flushTimers();
+      });
     });
   });
 

@@ -4,6 +4,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
+import { sendWnsRaw, wnsConfigured } from './wns.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -203,9 +204,9 @@ Deno.serve(async (req)=>{
     ].includes(device_type)) {
       return json({ error: 'Invalid device_type' }, 400);
     }
-    // Note: Desktop-only filtering is now handled by database trigger.
-    // This edge function is only called if mobile devices are targeted.
-    // See: supabase/migrations/20260104000002_replace_webhook_with_smart_trigger.sql
+    // The insert trigger calls this only when a targeted device holds a push
+    // token - FCM for phones and macOS, WNS for Windows. See
+    // supabase/migrations/20261111120000_desktop_push.sql.
     // ------------------------------------------------------------------
     // FETCH CLIPBOARD ITEM TO DETERMINE CONTENT TYPE & CONTENT
     // ------------------------------------------------------------------
@@ -244,7 +245,7 @@ Deno.serve(async (req)=>{
     const targetText = target_device_types && target_device_types.length > 0 ? target_device_types.join(', ') : 'all devices';
     console.log(`[Notification] User ${userId} sending ${contentType} from ${device_type} to ${targetText}`);
     // Query devices table for FCM tokens.
-    let query = db.from('devices').select('id, device_type, device_name, fcm_token').eq('user_id', userId).neq('device_type', device_type); // Skip self-notifications: don't send to sending device type
+    let query = db.from('devices').select('id, device_type, device_name, fcm_token, wns_channel_uri').eq('user_id', userId).neq('device_type', device_type); // Skip self-notifications: don't send to sending device type
     // Filter by target device types if specified
     if (target_device_types && target_device_types.length > 0) {
       query = query.in('device_type', target_device_types);
@@ -284,12 +285,38 @@ Deno.serve(async (req)=>{
     // an iPhone that stopped receiving showed only devices_failed: 1, with
     // nothing to tell an APNs credential problem from a dead token.
     const failures = [];
+    const warnings = [];
+    // A desktop's push is a wake-up, not a notification: the app is running
+    // in the tray, fetches the clip itself and shows its own toast. So no
+    // alert, no sound, nothing in Notification Center - just the row id.
+    const wakeData = {
+      clipboard_id: clipboard_id.toString(),
+      device_type: device_type,
+      content_type: contentType
+    };
+    // macOS: a silent APNs push through FCM. 'background' push type with
+    // priority 5 is what Apple requires for content-available.
+    const macWakeMessage = (token: string)=>({
+        token,
+        data: wakeData,
+        apns: {
+          headers: {
+            'apns-push-type': 'background',
+            'apns-priority': '5'
+          },
+          payload: {
+            aps: {
+              'content-available': 1
+            }
+          }
+        }
+      });
     if (admin.apps.length > 0) {
       // Filter out devices without tokens
       const validDevices = devices.filter((device)=>typeof device.fcm_token === 'string' && device.fcm_token.length > 0);
       if (validDevices.length > 0) {
         // Construct message payloads
-        const messages = validDevices.map((device)=>({
+        const messages = validDevices.map((device)=>device.device_type === 'macos' ? macWakeMessage(device.fcm_token) : ({
             token: device.fcm_token,
             notification: {
               title: notificationTitle,
@@ -406,7 +433,44 @@ Deno.serve(async (req)=>{
     } else {
       console.error('[Notification] Firebase Admin not initialized (Check secrets)');
     }
-    const warnings = [];
+    // ------------------------------------------------------------------
+    // WNS (packaged Windows desktops)
+    // ------------------------------------------------------------------
+    const windowsDevices = devices.filter((device)=>device.device_type === 'windows' && typeof device.wns_channel_uri === 'string' && device.wns_channel_uri.length > 0);
+    if (windowsDevices.length > 0) {
+      if (!wnsConfigured()) {
+        // Not a failure of the device: it still has realtime and the tray
+        // health check. Said in the response so it is visible in
+        // net._http_response.
+        warnings.push(`WNS credentials not configured; ${windowsDevices.length} Windows device(s) not pushed`);
+      } else {
+        const results = await Promise.all(windowsDevices.map((device)=>sendWnsRaw(device.wns_channel_uri, clipboard_id.toString())));
+        const goneDeviceIds: string[] = [];
+        results.forEach((result, idx)=>{
+          if (result.ok) {
+            successCount++;
+            return;
+          }
+          failureCount++;
+          failures.push({
+            device_type: 'windows',
+            device_name: windowsDevices[idx].device_name ?? null,
+            code: result.code,
+            message: result.message
+          });
+          if (result.gone) goneDeviceIds.push(windowsDevices[idx].id);
+        });
+        if (goneDeviceIds.length > 0) {
+          // The app asks for a fresh channel on its next launch.
+          const { error: clearError } = await supabaseAdmin.from('devices').update({
+            wns_channel_uri: null
+          }).in('id', goneDeviceIds);
+          if (clearError) {
+            console.error('[Notification] Failed to clear expired WNS channels:', clearError);
+          }
+        }
+      }
+    }
     if (lastActiveUpdate != null) {
       const { error: lastActiveError } = await lastActiveUpdate;
       if (lastActiveError) {

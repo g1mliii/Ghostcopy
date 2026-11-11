@@ -493,6 +493,32 @@ class DeviceService implements IDeviceService {
   }
 
   @override
+  Future<bool> updateWnsChannelUri(String channelUri) async {
+    _ensureInitialized();
+    if (_supabase.auth.currentUser == null || _currentDeviceId == null) {
+      debugPrint('[DeviceService] ⚠️ Cannot store WNS channel: not registered');
+      return false;
+    }
+    try {
+      await _supabase
+          .from('devices')
+          .update({
+            'wns_channel_uri': channelUri,
+            'last_active': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', _currentDeviceId!);
+      // Length only: the URI is a credential for pushing to this install.
+      debugPrint(
+        '[DeviceService] ✅ WNS channel stored (${channelUri.length} chars)',
+      );
+      return true;
+    } on Exception catch (e) {
+      debugPrint('[DeviceService] ❌ Failed to store WNS channel: $e');
+      return false;
+    }
+  }
+
+  @override
   Future<void> updateLastActive() async {
     _ensureInitialized();
     _ensureAuthenticated();

@@ -58,6 +58,11 @@ abstract class IDeviceService {
   /// Desktop devices don't use FCM tokens.
   Future<void> updateFcmToken(String fcmToken);
 
+  /// Store this Windows desktop's WNS channel URI on its row; true when it
+  /// is there after. Channel URIs expire after 30 days, so the app asks for
+  /// a fresh one on every launch and calls this each time.
+  Future<bool> updateWnsChannelUri(String channelUri);
+
   /// Update last active timestamp for current device
   ///
   /// Can be called periodically to track device activity.
