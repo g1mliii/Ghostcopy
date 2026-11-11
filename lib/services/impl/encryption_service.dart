@@ -214,8 +214,10 @@ class EncryptionService implements IEncryptionService {
   }
 
   @override
-  Future<bool> hasPassphrase() async {
-    final passphrase = await _secureStorage.read(key: _passphraseKey);
+  Future<bool> hasPassphrase(String userId) async {
+    final passphrase = await _secureStorage.read(
+      key: _passphraseKeyFor(userId),
+    );
     return passphrase != null && passphrase.isNotEmpty;
   }
 

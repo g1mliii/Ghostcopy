@@ -42,6 +42,7 @@ import '../viewmodels/spotlight_viewmodel.dart';
 import '../widgets/auth_panel.dart';
 import '../widgets/cached_clipboard_image.dart';
 import '../widgets/file_preview_widget.dart';
+import '../widgets/ghost_loading_indicator.dart';
 import '../widgets/settings_panel.dart';
 
 /// Platform types for device selection
@@ -119,10 +120,17 @@ class _SpotlightScreenState extends State<SpotlightScreen>
   late PausableAnimationController _pausableHistorySlideController;
   late PausableAnimationController _pausableSettingsSlideController;
   late PausableAnimationController _pausableAuthSlideController;
-  late final _HiddenListener _hiddenListener = _HiddenListener(() {
-    _hiddenSinceFocus = true;
-    _viewModel.onSpotlightHidden();
-  });
+  late final ValueNotifier<bool> _loadingMotionEnabled = ValueNotifier(
+    !_lifecycleController.isInTrayMode,
+  );
+  late final _HiddenListener _hiddenListener = _HiddenListener(
+    onHidden: () {
+      _loadingMotionEnabled.value = false;
+      _hiddenSinceFocus = true;
+      _viewModel.onSpotlightHidden();
+    },
+    onShown: () => _loadingMotionEnabled.value = true,
+  );
 
   /// Whether the window went back to the tray since it last had focus. A
   /// pinned window regains focus every time it is clicked into, and the
@@ -405,7 +413,15 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       setState(() => _activePanel = SpotlightPanel.none);
       // The composer is showing again. Not after Create Account, which
       // opened a panel of its own and has already had its answer.
-      if (panel != SpotlightPanel.auth) _viewModel.offerAccountIfDue();
+      if (panel == SpotlightPanel.history) _textFieldFocusNode.requestFocus();
+      if (panel != SpotlightPanel.auth) {
+        unawaited(
+          _viewModel.offerCardsIfDue(
+            composerVisible: () =>
+                mounted && _activePanel == SpotlightPanel.none,
+          ),
+        );
+      }
     }
   }
 
@@ -460,6 +476,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     } on Exception catch (e) {
       debugPrint('Error removing pausable controllers: $e');
     }
+    _loadingMotionEnabled.dispose();
 
     try {
       // Dispose in reverse order of creation
@@ -916,6 +933,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                                             _buildAccountOffer(),
                                             const SizedBox(height: 10),
                                           ],
+                                          if (_viewModel
+                                              .showEncryptionOffer) ...[
+                                            _buildEncryptionOffer(),
+                                            const SizedBox(height: 10),
+                                          ],
                                           _buildTextField(),
                                           const SizedBox(height: 10),
                                           // Empty for JSON and plain text, so
@@ -1029,9 +1051,54 @@ class _SpotlightScreenState extends State<SpotlightScreen>
     unawaited(_authSlideController.forward());
   }
 
+  /// Open Settings from the encryption card. The switch is there, with the
+  /// passphrase dialog and its checks; this does not grow a second way in.
+  /// Opens Settings scrolled to the switch, rather than at the top of the
+  /// list. Hides the card without snoozing it: following its button is not
+  /// "not now", and the run's one showing is used either way.
+  Future<void> _openEncryptionSettings() async {
+    _viewModel.hideEncryptionOffer();
+    _revealEncryptionOnOpen = true;
+    await _openSettings();
+  }
+
+  /// Read by the next settings panel built, then cleared.
+  bool _revealEncryptionOnOpen = false;
+
+  /// The card suggesting encryption. The rules for when it shows live in
+  /// SpotlightViewModel.offerEncryptionIfDue.
+  Widget _buildEncryptionOffer() {
+    return _buildOfferCard(
+      icon: Icons.lock_outline,
+      message:
+          'Use end-to-end encryption for new clips you sync from this device.',
+      actionLabel: 'Turn on in Settings',
+      onAction: _openEncryptionSettings,
+      onDismiss: _viewModel.dismissEncryptionOffer,
+    );
+  }
+
   /// The card asking a guest to make an account. The rules for when it shows
   /// live in SpotlightViewModel.showAccountOffer.
   Widget _buildAccountOffer() {
+    return _buildOfferCard(
+      icon: Icons.cloud_done_outlined,
+      message: 'Keep your clips if you reinstall or switch computers.',
+      actionLabel: 'Create account',
+      onAction: _openCreateAccount,
+      onDismiss: _viewModel.dismissAccountOffer,
+    );
+  }
+
+  /// One quiet card above the composer: a line of why, "Not now", and the
+  /// action.
+  Widget _buildOfferCard({
+    required IconData icon,
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+    required VoidCallback onDismiss,
+  }) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
@@ -1047,15 +1114,11 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.cloud_done_outlined,
-                size: 18,
-                color: GhostColors.primary,
-              ),
+              Icon(icon, size: 18, color: GhostColors.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Keep your clips if you reinstall or switch computers.',
+                  message,
                   style: GhostTypography.caption.copyWith(
                     color: GhostColors.textPrimary,
                   ),
@@ -1070,7 +1133,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
             runSpacing: 4,
             children: [
               TextButton(
-                onPressed: _viewModel.dismissAccountOffer,
+                onPressed: onDismiss,
                 style: TextButton.styleFrom(
                   foregroundColor: GhostColors.textMuted,
                   visualDensity: VisualDensity.compact,
@@ -1078,12 +1141,12 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 child: const Text('Not now'),
               ),
               FilledButton(
-                onPressed: _openCreateAccount,
+                onPressed: onAction,
                 style: FilledButton.styleFrom(
                   backgroundColor: GhostColors.primary,
                   visualDensity: VisualDensity.compact,
                 ),
-                child: const Text('Create account'),
+                child: Text(actionLabel),
               ),
             ],
           ),
@@ -1734,41 +1797,47 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         ),
-        child: busy
-            ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (busy)
+              _withLoadingMotion(
+                const GhostLoadingIndicator.compact(color: Colors.white),
               )
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.send, size: 18, color: Colors.white),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Send',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(
-                    '⏎',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.whiteAlpha70,
-                    ),
-                  ),
-                ],
+            else
+              const Icon(Icons.send, size: 18, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(
+              _viewModel.isRestoringDraft
+                  ? 'Restoring draft…'
+                  : busy
+                  ? 'Sending…'
+                  : 'Send',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
               ),
+            ),
+            if (!busy) ...[
+              const SizedBox(width: 16),
+              Text(
+                '⏎',
+                style: TextStyle(fontSize: 12, color: GhostColors.whiteAlpha70),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
+
+  Widget _withLoadingMotion(Widget child) => ValueListenableBuilder<bool>(
+    valueListenable: _loadingMotionEnabled,
+    child: child,
+    builder: (context, enabled, child) =>
+        TickerMode(enabled: enabled, child: child!),
+  );
 
   /// Build error message
   Widget _buildErrorMessage() {
@@ -1784,14 +1853,23 @@ class _SpotlightScreenState extends State<SpotlightScreen>
           Icon(Icons.error_outline, size: 16, color: Colors.red.shade400),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              _viewModel.errorMessage!,
-              style: TextStyle(fontSize: 12, color: Colors.red.shade400),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(
+                _viewModel.errorMessage!,
+                style: TextStyle(fontSize: 12, color: Colors.red.shade400),
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  bool _consumeRevealEncryption() {
+    final reveal = _revealEncryptionOnOpen;
+    _revealEncryptionOnOpen = false;
+    return reveal;
   }
 
   /// Build settings panel (slide-in from left)
@@ -1851,6 +1929,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
                 commandLineToolService: _commandLineToolService,
                 deviceService: _deviceService,
                 encryptionService: EncryptionService.instance,
+                revealEncryption: _consumeRevealEncryption(),
                 onEncryptionChanged: _viewModel.refreshHistory,
                 onClose: _handleSettingsClose,
                 onOpenAuth: () async {
@@ -1979,14 +2058,10 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       unawaited(_windowService.hideSpotlight());
     }
 
-    // 2. Perform copy in background
-    // We act as if it succeeded immediately to the user
-    try {
-      await _viewModel.handleHistoryItemCopy(item);
-    } on Exception catch (e) {
-      // If copy fails, we might want to show a system notification since window is hidden
-      debugPrint('[Spotlight] Copy failed after hide: $e');
-    }
+    // 2. Perform copy in background. The ViewModel reports its own
+    // failures: under the composer when pinned, as a system notification
+    // when the window is hiding.
+    await _viewModel.handleHistoryItemCopy(item);
 
     // Reset panel state for next time
     if (hide && mounted) {
@@ -2025,14 +2100,16 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       child: Container(
         width: 280,
         decoration: SpotlightScreen._rightPanelDecoration,
-        child: _HistoryPanelContent(
-          historyItems: _viewModel.historyItems,
-          isLoading: _viewModel.isLoadingHistory,
-          clipboardRepository: _clipboardRepo,
-          notificationService: _notificationService,
-          onClose: _handleHistoryClose,
-          onItemTap: _handleHistoryItemCopy,
-          onItemDelete: _handleHistoryItemDelete,
+        child: FocusScope(
+          child: SpotlightHistoryPanel(
+            historyItems: _viewModel.historyItems,
+            isLoading: _viewModel.isLoadingHistory,
+            clipboardRepository: _clipboardRepo,
+            notificationService: _notificationService,
+            onClose: _handleHistoryClose,
+            onItemTap: _handleHistoryItemCopy,
+            onItemDelete: _handleHistoryItemDelete,
+          ),
         ),
       ),
     );
@@ -2043,7 +2120,7 @@ class _SpotlightScreenState extends State<SpotlightScreen>
       bottom: 0,
       child: SlideTransition(
         position: _historySlideAnimation,
-        child: panelContent,
+        child: _withLoadingMotion(panelContent),
       ),
     );
   }
@@ -2115,8 +2192,8 @@ class _PlatformChip extends StatelessWidget {
 
 /// History panel content - manages its own search/filter state to prevent
 /// parent setState rebuilds from cascading into the history list.
-class _HistoryPanelContent extends StatefulWidget {
-  const _HistoryPanelContent({
+class SpotlightHistoryPanel extends StatefulWidget {
+  const SpotlightHistoryPanel({
     required this.historyItems,
     required this.isLoading,
     required this.clipboardRepository,
@@ -2124,6 +2201,7 @@ class _HistoryPanelContent extends StatefulWidget {
     required this.onItemTap,
     required this.onItemDelete,
     this.notificationService,
+    super.key,
   });
 
   final List<ClipboardItem> historyItems;
@@ -2135,11 +2213,14 @@ class _HistoryPanelContent extends StatefulWidget {
   final void Function(ClipboardItem item) onItemDelete;
 
   @override
-  State<_HistoryPanelContent> createState() => _HistoryPanelContentState();
+  State<SpotlightHistoryPanel> createState() => _HistoryPanelContentState();
 }
 
-class _HistoryPanelContentState extends State<_HistoryPanelContent> {
+class _HistoryPanelContentState extends State<SpotlightHistoryPanel> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode(debugLabel: 'History search');
+  final FocusNode _firstClipFocus = FocusNode(debugLabel: 'First clip');
+  final ScrollController _resultsScroll = ScrollController();
   String _searchQuery = '';
   List<ClipboardItem> _filteredItems = [];
   Timer? _filterTimer;
@@ -2149,10 +2230,11 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
   void initState() {
     super.initState();
     _filteredItems = widget.historyItems;
+    _searchFocus.requestFocus();
   }
 
   @override
-  void didUpdateWidget(_HistoryPanelContent oldWidget) {
+  void didUpdateWidget(SpotlightHistoryPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Re-apply filter when source items actually change
     // Check reference equality (fast path for most updates)
@@ -2165,18 +2247,63 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
   void dispose() {
     _filterTimer?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
+    _firstClipFocus.dispose();
+    _resultsScroll.dispose();
     super.dispose();
   }
 
-  void _filterHistory(String query) {
+  void _filterHistory(String _) {
     _filterTimer?.cancel();
-    _filterTimer = Timer(_searchDebounceDelay, () {
-      if (!mounted) return;
-      setState(() {
-        _searchQuery = query;
-        _applyFilter();
-      });
+    _filterTimer = Timer(_searchDebounceDelay, _applyPendingQuery);
+  }
+
+  void _applyPendingQuery() {
+    _filterTimer?.cancel();
+    final query = _searchController.text.trim();
+    if (!mounted || query == _searchQuery) return;
+    setState(() {
+      _searchQuery = query;
+      _applyFilter();
     });
+    if (_resultsScroll.hasClients) _resultsScroll.jumpTo(0);
+  }
+
+  void _focusFirstClip() {
+    _applyPendingQuery();
+    if (widget.isLoading || _filteredItems.isEmpty) return;
+    if (_resultsScroll.hasClients) _resultsScroll.jumpTo(0);
+    // Applying a pending query or scrolling can mount a new first row.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchFocus.hasPrimaryFocus) {
+        _firstClipFocus.requestFocus();
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _copyFirstClip() {
+    _applyPendingQuery();
+    if (!widget.isLoading && _filteredItems.isNotEmpty) {
+      widget.onItemTap(_filteredItems.first);
+    }
+  }
+
+  String? _headingFor(BuildContext context, int index) {
+    final day = _filteredItems[index].createdAt.toLocal();
+    if (index > 0 &&
+        DateUtils.isSameDay(
+          day,
+          _filteredItems[index - 1].createdAt.toLocal(),
+        )) {
+      return null;
+    }
+    final now = DateTime.now();
+    if (DateUtils.isSameDay(day, now)) return 'Today';
+    if (DateUtils.isSameDay(day, DateUtils.addDaysToDate(now, -1))) {
+      return 'Yesterday';
+    }
+    return MaterialLocalizations.of(context).formatShortDate(day);
   }
 
   void _applyFilter() {
@@ -2230,7 +2357,10 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
         // Search bar
         _HistorySearchBar(
           controller: _searchController,
+          focusNode: _searchFocus,
           onChanged: _filterHistory,
+          onBrowse: _focusFirstClip,
+          onCopy: _copyFirstClip,
         ),
         // Locked-clips banner. Outside the list for the same reason as mobile:
         // undecryptable clips are removed from the list, so when readable ones
@@ -2277,7 +2407,7 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
         Expanded(
           child: widget.isLoading
               ? const Center(
-                  child: CircularProgressIndicator(color: GhostColors.primary),
+                  child: GhostLoadingIndicator(label: 'Loading history…'),
                 )
               : _filteredItems.isEmpty
               ? Center(
@@ -2343,7 +2473,8 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                 )
               : RepaintBoundary(
                   child: ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    controller: _resultsScroll,
+                    padding: const EdgeInsets.only(bottom: 8),
                     physics: const ClampingScrollPhysics(),
                     scrollCacheExtent: const ScrollCacheExtent.pixels(
                       200,
@@ -2352,25 +2483,65 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
                     itemCount: _filteredItems.length,
                     itemBuilder: (context, index) {
                       final item = _filteredItems[index];
+                      final heading = _headingFor(context, index);
                       return RepaintBoundary(
                         key: ValueKey<String>(item.id),
-                        child: _HistoryItemContent(
-                          item: item,
-                          clipboardRepository: widget.clipboardRepository,
-                          notificationService: widget.notificationService,
-                          timeAgo: timeago.format(
-                            item.createdAt,
-                            locale: 'en_short',
-                          ),
-                          device: platformLabel(item.deviceType),
-                          onDelete: () => widget.onItemDelete(item),
-                          onTap: () => widget.onItemTap(item),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (heading != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  8,
+                                  16,
+                                  4,
+                                ),
+                                child: Semantics(
+                                  header: true,
+                                  child: Text(
+                                    heading,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: GhostColors.textMuted,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            _HistoryItemContent(
+                              item: item,
+                              focusNode: index == 0 ? _firstClipFocus : null,
+                              clipboardRepository: widget.clipboardRepository,
+                              notificationService: widget.notificationService,
+                              timeAgo: timeago.format(
+                                item.createdAt,
+                                locale: 'en_short',
+                              ),
+                              device: platformLabel(item.deviceType),
+                              onDelete: () => widget.onItemDelete(item),
+                              onTap: () => widget.onItemTap(item),
+                            ),
+                          ],
                         ),
                       );
                     },
                   ),
                 ),
         ),
+        if (!widget.isLoading && _filteredItems.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+            child: Semantics(
+              label:
+                  'Arrow keys to browse, Enter to copy, Shift F10 for actions',
+              excludeSemantics: true,
+              child: Text(
+                '↑ ↓  Browse    ↵  Copy    ⇧ F10  Actions',
+                style: TextStyle(fontSize: 11, color: GhostColors.textMuted),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -2378,10 +2549,19 @@ class _HistoryPanelContentState extends State<_HistoryPanelContent> {
 
 /// Search bar widget that manages its own state to prevent parent rebuilds
 class _HistorySearchBar extends StatefulWidget {
-  const _HistorySearchBar({required this.controller, required this.onChanged});
+  const _HistorySearchBar({
+    required this.controller,
+    required this.focusNode,
+    required this.onChanged,
+    required this.onBrowse,
+    required this.onCopy,
+  });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final ValueChanged<String> onChanged;
+  final VoidCallback onBrowse;
+  final VoidCallback onCopy;
 
   @override
   State<_HistorySearchBar> createState() => _HistorySearchBarState();
@@ -2410,40 +2590,49 @@ class _HistorySearchBarState extends State<_HistorySearchBar> {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(12),
-      child: TextField(
-        controller: widget.controller,
-        onChanged: widget.onChanged,
-        style: TextStyle(color: GhostColors.textPrimary, fontSize: 13),
-        decoration: InputDecoration(
-          hintText: 'Search clips...',
-          hintStyle: TextStyle(color: GhostColors.textMuted, fontSize: 13),
-          prefixIcon: Icon(
-            Icons.search,
-            size: 18,
-            color: GhostColors.textMuted,
-          ),
-          suffixIcon: widget.controller.text.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.clear, size: 16),
-                  color: GhostColors.textMuted,
-                  tooltip: 'Clear search',
-                  onPressed: () {
-                    widget.controller.clear();
-                    widget.onChanged('');
-                  },
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                )
-              : null,
-          filled: true,
-          fillColor: GhostColors.surface,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide.none,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.arrowDown): widget.onBrowse,
+        },
+        child: TextField(
+          controller: widget.controller,
+          focusNode: widget.focusNode,
+          onEditingComplete: widget.controller.clearComposing,
+          onSubmitted: (_) => widget.onCopy(),
+          onChanged: widget.onChanged,
+          style: TextStyle(color: GhostColors.textPrimary, fontSize: 13),
+          decoration: InputDecoration(
+            hintText: 'Search clips...',
+            hintStyle: TextStyle(color: GhostColors.textMuted, fontSize: 13),
+            prefixIcon: Icon(
+              Icons.search,
+              size: 18,
+              color: GhostColors.textMuted,
+            ),
+            suffixIcon: widget.controller.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 16),
+                    color: GhostColors.textMuted,
+                    tooltip: 'Clear search',
+                    onPressed: () {
+                      widget.controller.clear();
+                      widget.onChanged('');
+                      widget.focusNode.requestFocus();
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  )
+                : null,
+            filled: true,
+            fillColor: GhostColors.surface,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 8,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide.none,
+            ),
           ),
         ),
       ),
@@ -2455,6 +2644,7 @@ class _HistorySearchBarState extends State<_HistorySearchBar> {
 class _HistoryItemContent extends StatefulWidget {
   const _HistoryItemContent({
     required this.item,
+    required this.focusNode,
     required this.clipboardRepository,
     required this.notificationService,
     required this.timeAgo,
@@ -2464,6 +2654,7 @@ class _HistoryItemContent extends StatefulWidget {
   });
 
   final ClipboardItem item;
+  final FocusNode? focusNode;
   final IClipboardRepository clipboardRepository;
   final INotificationService? notificationService;
   final String timeAgo;
@@ -2477,6 +2668,11 @@ class _HistoryItemContent extends StatefulWidget {
 
 class _HistoryItemContentState extends State<_HistoryItemContent> {
   final ValueNotifier<bool> _isHovered = ValueNotifier(false);
+  final MenuController _menuController = MenuController();
+  final FocusNode _menuFocus = FocusNode(
+    debugLabel: 'Clip actions',
+    skipTraversal: true,
+  );
   bool _isExpanded = false;
   // Perf: Cache lowercase device string to avoid creating new String per build
   late String _deviceLower = widget.device.toLowerCase();
@@ -2492,6 +2688,7 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   @override
   void dispose() {
     _isHovered.dispose();
+    _menuFocus.dispose();
     super.dispose();
   }
 
@@ -2626,61 +2823,6 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     }
   }
 
-  void _showContextMenu(BuildContext context, Offset position) {
-    if (!mounted) return;
-    final overlayState = Overlay.of(context);
-    final overlay = overlayState.context.findRenderObject()! as RenderBox;
-
-    showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(
-        position & const Size(40, 40),
-        Offset.zero & overlay.size,
-      ),
-      items: [
-        const PopupMenuItem<String>(
-          value: 'copy',
-          child: Row(
-            children: [
-              Icon(Icons.content_copy, size: 16),
-              SizedBox(width: 12),
-              Text('Copy to Clipboard'),
-            ],
-          ),
-        ),
-        if (widget.item.requiresDownload)
-          const PopupMenuItem<String>(
-            value: 'save',
-            child: Row(
-              children: [
-                Icon(Icons.save_alt, size: 16),
-                SizedBox(width: 12),
-                Text('Save to Computer...'),
-              ],
-            ),
-          ),
-        const PopupMenuItem<String>(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(Icons.delete_outline, size: 16, color: Colors.red),
-              SizedBox(width: 12),
-              Text('Delete', style: TextStyle(color: Colors.red)),
-            ],
-          ),
-        ),
-      ],
-    ).then((value) {
-      if (value == 'copy') {
-        widget.onTap();
-      } else if (value == 'save') {
-        _handleSaveToComputer();
-      } else if (value == 'delete') {
-        _handleDelete();
-      }
-    });
-  }
-
   /// Build the payload for dragging this clip out of the app.
   ///
   /// Files and images are offered as real files so Explorer/Finder accept a
@@ -2723,12 +2865,14 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
   Widget build(BuildContext context) {
     // Perf: Merged GestureDetector+MouseRegion+InkWell into single InkWell
     // with onSecondaryTapDown. Reduces hit-test layers from 5 to 2 per item.
-    final content = Material(
+    final row = Material(
       color: Colors.transparent,
       child: InkWell(
+        focusNode: widget.focusNode,
+        focusColor: GhostColors.accentSoft,
         onTap: widget.onTap,
         onSecondaryTapDown: (details) {
-          _showContextMenu(context, details.globalPosition);
+          _menuController.open(position: details.localPosition);
         },
         onHover: (hovering) => _isHovered.value = hovering,
         hoverColor: GhostColors.surfaceAlpha70,
@@ -2764,6 +2908,27 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       ),
                     ),
                   ],
+                  IconButton(
+                    focusNode: _menuFocus,
+                    tooltip: 'Clip actions',
+                    constraints: const BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                    icon: Icon(
+                      Icons.more_horiz,
+                      size: 17,
+                      color: GhostColors.textSecondary,
+                    ),
+                    onPressed: () {
+                      if (_menuController.isOpen) {
+                        _menuController.close();
+                      } else {
+                        _menuController.open();
+                      }
+                    },
+                  ),
                 ],
               ),
               const SizedBox(height: 6),
@@ -2838,6 +3003,44 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
       ),
     );
 
+    final content = MenuAnchor(
+      controller: _menuController,
+      childFocusNode: _menuFocus,
+      consumeOutsideTap: true,
+      style: const MenuStyle(alignment: AlignmentDirectional.bottomEnd),
+      menuChildren: [
+        MenuItemButton(
+          autofocus: true,
+          leadingIcon: const Icon(Icons.content_copy, size: 16),
+          onPressed: widget.onTap,
+          child: const Text('Copy to Clipboard'),
+        ),
+        if (widget.item.requiresDownload)
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.save_alt, size: 16),
+            onPressed: _handleSaveToComputer,
+            child: const Text('Save to Computer…'),
+          ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.delete_outline, size: 16),
+          onPressed: _handleDelete,
+          style: MenuItemButton.styleFrom(
+            foregroundColor: GhostColors.errorLight,
+          ),
+          child: const Text('Delete'),
+        ),
+      ],
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.f10, shift: true):
+              _menuController.open,
+          const SingleActivator(LogicalKeyboardKey.contextMenu):
+              _menuController.open,
+        },
+        child: row,
+      ),
+    );
+
     // No drag-out on Linux. The window is XWayland, and KWin 6.7's
     // XWayland-to-Wayland drag bridge sends a foreign object in
     // wl_data_device.enter when the drag crosses plasmashell, which kills
@@ -2861,15 +3064,16 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
 /// Tells the ViewModel when Spotlight goes back to the tray. A Pausable
 /// because that is the one hook every hideSpotlight goes through.
 class _HiddenListener implements Pausable {
-  _HiddenListener(this._onHidden);
+  _HiddenListener({required this.onHidden, required this.onShown});
 
-  final VoidCallback _onHidden;
-
-  @override
-  void pause() => _onHidden();
+  final VoidCallback onHidden;
+  final VoidCallback onShown;
 
   @override
-  void resume() {}
+  void pause() => onHidden();
+
+  @override
+  void resume() => onShown();
 }
 
 class _HoverableIconButton extends StatefulWidget {

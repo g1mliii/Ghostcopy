@@ -1,8 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/locator.dart';
+import 'package:ghostcopy/main.dart' show applyHotkey, applySendHotkey;
 import 'package:ghostcopy/services/hotkey_service.dart';
 import 'package:ghostcopy/services/impl/hotkey_service.dart';
+import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/widgets/hotkey_capture_field.dart';
+import 'package:mocktail/mocktail.dart';
+
+class _Hotkeys extends Mock implements IHotkeyService {}
+
+class _Settings extends Mock implements ISettingsService {}
 
 /// Regression tests for the global hotkey.
 ///
@@ -12,6 +22,37 @@ import 'package:ghostcopy/ui/widgets/hotkey_capture_field.dart';
 /// was registered at all. Persistence did not exist either: startup always
 /// re-registered the hardcoded default.
 void main() {
+  test(
+    'Spotlight rechecks conflicts after a pending send registration',
+    () async {
+      const key = HotKey(key: 'k', ctrl: true);
+      final hotkeys = _Hotkeys();
+      final settings = _Settings();
+      locator
+        ..registerSingleton<IHotkeyService>(hotkeys)
+        ..registerSingleton<ISettingsService>(settings);
+      addTearDown(locator.reset);
+      final registered = Completer<void>();
+      when(
+        () => hotkeys.registerHotkey(key, any()),
+      ).thenAnswer((_) => registered.future);
+      when(() => hotkeys.unregisterHotkey(key)).thenAnswer((_) async {});
+      when(() => settings.setSendHotkey(key)).thenAnswer((_) async {});
+      when(() => settings.setSendHotkey(null)).thenAnswer((_) async {});
+
+      final sending = applySendHotkey(key);
+      final spotlight = expectLater(
+        applyHotkey(key),
+        throwsA(isA<UnsupportedHotkeyException>()),
+      );
+      registered.complete();
+      await sending;
+      await spotlight;
+      verify(() => hotkeys.registerHotkey(key, any())).called(1);
+      await applySendHotkey(null);
+    },
+  );
+
   group('HotKey identity', () {
     test('structurally identical hotkeys are equal', () {
       const a = HotKey(key: 's', ctrl: true, shift: true);

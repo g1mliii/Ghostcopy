@@ -18,6 +18,9 @@ abstract class IClipboardSyncService {
   /// Initialize the service (call once at startup)
   Future<void> initialize();
 
+  /// Send the current clipboard to the saved default devices.
+  Future<void> sendCurrentClipboard();
+
   /// Start clipboard monitoring for auto-send
   /// Called when user enables auto-send in settings
   void startClipboardMonitoring();
@@ -58,7 +61,8 @@ abstract class IClipboardSyncService {
   /// Pause realtime subscription (keeps subscription for resume)
   void pauseRealtime();
 
-  /// Resume realtime subscription
+  /// Resume realtime and check for missed clips, including when the channel
+  /// stayed open while the window was hidden.
   void resumeRealtime();
 
   /// Start polling mode (HTTP polling every N minutes)

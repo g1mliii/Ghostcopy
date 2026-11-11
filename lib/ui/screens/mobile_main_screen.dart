@@ -19,6 +19,7 @@ import '../../services/transformer_service.dart';
 import '../../utils/platform_label.dart';
 import '../coalesced_rebuild.dart';
 import '../device_type_icon.dart';
+import '../layout/capped_page.dart';
 import '../layout/side_safe_area.dart';
 import '../layout/two_pane.dart';
 import '../platform_adaptive.dart';
@@ -28,11 +29,30 @@ import '../theme/spacing.dart';
 import '../theme/typography.dart';
 import '../viewmodels/mobile_main_viewmodel.dart';
 import '../widgets/cached_clipboard_image.dart';
+import '../widgets/ghost_loading_indicator.dart';
 import '../widgets/ghost_toast.dart';
 import '../widgets/native_toast.dart';
 import '../widgets/share_progress_overlay.dart';
 import '../widgets/smart_action_buttons.dart';
 import 'mobile_settings_screen.dart';
+
+enum _HistoryFilter {
+  all('All'),
+  text('Text'),
+  images('Images'),
+  files('Files');
+
+  const _HistoryFilter(this.label);
+
+  final String label;
+
+  bool matches(ClipboardItem item) => switch (this) {
+    all => true,
+    text => !item.isImage && !item.isFile,
+    images => item.isImage,
+    files => item.isFile,
+  };
+}
 
 /// Width of the compose pane in the two-pane layout, for a screen [width]
 /// wide.
@@ -53,9 +73,10 @@ const double _headingGap = 6;
 /// else on the page adds to it: see _collapsedPageFloor.
 const double _minCollapsedPageHeight = 420;
 
-/// [child] in an [Expanded] when [expand], as is otherwise.
-Widget _expandedIf(bool expand, Widget child) =>
-    expand ? Expanded(child: child) : child;
+/// [child] in a loose [Flexible] when [grow], as is otherwise: it may take
+/// up to the room left in its column, but only as much as it needs.
+Widget _flexibleIf(bool grow, Widget child) =>
+    grow ? Flexible(child: child) : child;
 
 const _notificationChannel = MethodChannel(
   'com.ghostcopy.ghostcopy/notifications',
@@ -105,6 +126,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// to the composer. Presentation only, so it lives here and not in the
   /// ViewModel. See [_buildSingleColumnBody].
   bool _historyCollapsed = false;
+  _HistoryFilter _historyFilter = _HistoryFilter.all;
 
   /// Keeps the composer's field the same element across the collapsed and
   /// expanded layouts, which build it under different parents. Without it a
@@ -704,48 +726,37 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleSend() async {
-    // Check if sending image or text
-    if (_viewModel.clipboardContent?.hasImage ?? false) {
-      await _viewModel.handleSend(
-        _pasteController.text,
-        onSendSuccess: () {
-          Adaptive.successFeedback();
-          if (mounted) {
-            _pasteController.clear();
-            showGhostToast(
-              context,
-              'Image sent successfully',
-              icon: Icons.image,
-              type: GhostToastType.success,
-            );
-          }
-        },
-      );
-      return;
+    final attachment = _viewModel.clipboardContent;
+    final text = _pasteController.text;
+    if (attachment?.hasImage != true && attachment?.hasFile != true) {
+      final content = text.trim();
+      if (content.isEmpty) {
+        _viewModel.setSendError('Please paste or type content to send');
+        return;
+      }
+
+      final isSensitive = await _viewModel.checkSensitiveData(content);
+      if (!mounted) return;
+      if (isSensitive && !await _showSensitiveDataWarning()) return;
+
+      // Check that the draft still matches the one we checked.
+      if (!mounted ||
+          _pasteController.text != text ||
+          !identical(_viewModel.clipboardContent, attachment)) {
+        return;
+      }
     }
 
-    final content = _pasteController.text.trim();
-    if (content.isEmpty) {
-      _viewModel.setSendError('Please paste or type content to send');
-      return;
-    }
-
-    // Security check
-    final isSensitive = await _viewModel.checkSensitiveData(content);
-    if (isSensitive) {
-      final shouldContinue = await _showSensitiveDataWarning();
-      if (!shouldContinue) return;
-    }
-
+    final destination = sendDestinationLabel(_viewModel.selectedDeviceTypes);
     await _viewModel.handleSend(
-      _pasteController.text,
+      text,
       onSendSuccess: () {
         Adaptive.successFeedback();
         if (mounted) {
-          _pasteController.clear();
+          if (_pasteController.text == text) _pasteController.clear();
           showGhostToast(
             context,
-            'Sent successfully',
+            'Sent to $destination',
             icon: Icons.send,
             type: GhostToastType.success,
           );
@@ -941,17 +952,9 @@ class _MobileMainScreenState extends State<MobileMainScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Adaptive.progressIndicator(
+                  const GhostLoadingIndicator(
                     size: 24,
-                    color: GhostColors.primary,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Preparing to share…',
-                    style: GhostTypography.body.copyWith(
-                      fontSize: 13,
-                      color: GhostColors.textMuted,
-                    ),
+                    label: 'Preparing to share…',
                   ),
                 ],
               ),
@@ -964,7 +967,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// [_minCollapsedPageHeight] plus room for whatever else is showing.
   ///
-  /// The page is a fixed height, so everything in it but the composer's text
+  /// The page height is capped, so everything in it but the composer's text
   /// field has to fit under it, or the field is squeezed to nothing and the
   /// column overflows. The allowances are generous on purpose: too much only
   /// scrolls the page a little with the keyboard up, too little overflows.
@@ -985,9 +988,11 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   /// Phones and narrow windows: one column, capped so it stays readable.
   ///
-  /// History can be folded away from its heading, and the composer then grows
-  /// to fill the screen - for writing something long without a five-line box
-  /// and a list of old clips under it. The two-pane layout has no need: there
+  /// History can be folded away from its heading, and the composer can then
+  /// grow past five lines with its text, up to the screen - for writing
+  /// something long without a five-line box and a list of old clips under
+  /// it. It still starts at three lines: folding history lifts the cap, it
+  /// does not stretch an empty box. The two-pane layout has no need: there
   /// the composer already has a column of its own.
   Widget _buildSingleColumnBody(BuildContext context) {
     // One padded column for the whole page, so the composer, chips, button
@@ -999,13 +1004,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       GhostSpacing.gutter,
       24 + MediaQuery.viewPaddingOf(context).bottom,
     );
-    // The same page either way; collapsed, the composer takes the spare
-    // height and history is only its heading.
+    // The same page either way; collapsed, history is only its heading and
+    // the composer may grow into the room it left - as its text needs, not
+    // all at once. An empty composer stays a few lines tall rather than a
+    // screen-high box with a hint at the top of it.
     final page = [
-      _expandedIf(
-        _historyCollapsed,
-        _buildPasteArea(expand: _historyCollapsed),
-      ),
+      _flexibleIf(_historyCollapsed, _buildPasteArea(grow: _historyCollapsed)),
       const SizedBox(height: 15),
       _buildDeviceSelector(),
       const SizedBox(height: 13),
@@ -1044,30 +1048,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 slivers: [
                   if (_historyCollapsed)
-                    // History folded away: the composer takes the room it
-                    // left, and the chips, Send and the history heading sit at
-                    // the bottom of the screen instead of under a short box.
-                    //
-                    // A fixed height - the viewport's, or more when that is too
-                    // short - rather than SliverFillRemaining, which sizes to
-                    // its child's intrinsic height: that is the full height of
-                    // the composer's TEXT, so a long paste grew the box past the
-                    // screen instead of scrolling inside it. With the keyboard
-                    // up on a small phone the floor makes the page scroll
-                    // rather than squash the composer.
+                    // History folded away: see CappedPage. The cap is the
+                    // viewport, or the floor when that is taller, so a small
+                    // phone scrolls the page rather than squash the composer.
                     SliverToBoxAdapter(
-                      child: SizedBox(
-                        height: math.max(
+                      child: CappedPage(
+                        maxHeight: math.max(
                           viewport.maxHeight,
                           _collapsedPageFloor(context),
                         ),
-                        child: Padding(
-                          padding: singleColumnPadding,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: page,
-                          ),
-                        ),
+                        padding: singleColumnPadding,
+                        children: page,
                       ),
                     )
                   else
@@ -1298,26 +1289,20 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   /// The composer: one surface holding the text field, any staged
-  /// attachment, and the attach control.
-  ///
-  /// Previously a card containing a separately-bordered text field, which read
-  /// as a card inside a card, under a "Paste & Send" heading that only
-  /// restated the placeholder below it. The heading is gone and the field is
-  /// borderless in every state - including focus, which inherited a 2px
-  /// primary outline from the theme and lit the whole box up bright purple.
-  /// Focus is now shown by the surface border alone.
-  /// The composer: one surface holding the text field, any staged
   /// attachment, and a toolbar.
   ///
   /// Previously a card containing a separately-bordered text field - a card
   /// inside a card - under a "Paste & Send" heading that only restated the
   /// placeholder below it. The field is borderless in EVERY state: setting
   /// only `border` left focusedBorder falling back to the theme's 2px primary
-  /// outline, which lit the whole box up on focus.
-  /// The composer. With [expand] it fills the height its parent gives it,
-  /// the text field taking all of it but the toolbar, rather than sizing to
-  /// three-to-five lines.
-  Widget _buildPasteArea({bool expand = false}) {
+  /// outline, which lit the whole box up on focus. Focus is shown by the
+  /// surface border alone.
+  ///
+  /// It sizes to its text: three lines empty, growing as text is added.
+  /// Normally it stops at five lines and scrolls; with [grow] - in a column
+  /// that bounds it - it keeps growing with its text up to the height it is
+  /// given, and scrolls from there.
+  Widget _buildPasteArea({bool grow = false}) {
     final sendError = _viewModel.sendErrorMessage;
     final hasAttachment =
         (_viewModel.clipboardContent?.hasFile ?? false) ||
@@ -1341,7 +1326,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
           // the separating instead.
         ),
         child: Column(
-          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (hasAttachment) ...[
@@ -1352,8 +1337,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                 _buildImagePreview(),
             ],
             // Its own layer: the cursor repaints this and nothing else.
-            _expandedIf(
-              expand,
+            _flexibleIf(
+              grow,
               // The field scrolls its own text, and those scroll events
               // bubble. The page's keyboardDismissBehavior.onDrag does not
               // check where a drag came from, so scrolling back up through a
@@ -1381,13 +1366,12 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                       // Phones do not unfocus on a tap elsewhere by default, so there was
                       // no way to put the keyboard away and stay on this screen.
                       onTapOutside: (_) => _pasteFocusNode.unfocus(),
-                      // In the scrolling page the height is unbounded, so
-                      // minLines sizes the empty field. With history
-                      // collapsed it is given a height and fills it.
-                      expands: expand,
-                      minLines: expand ? null : 3,
-                      maxLines: expand ? null : 5,
-                      textAlignVertical: TextAlignVertical.top,
+                      // Sized by its text from three lines up. In the
+                      // scrolling page the height is unbounded, so it stops
+                      // at five. With history collapsed it is bounded by the
+                      // room left on screen instead, and grows to that.
+                      minLines: 3,
+                      maxLines: grow ? null : 5,
                       keyboardType: TextInputType.multiline,
                       style: TextStyle(
                         fontSize: 16,
@@ -1441,16 +1425,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        sendError,
-                        // Collapsed, the page is a fixed height and
-                        // _collapsedPageFloor allows this two lines; a longer
-                        // message wrapping freely overflowed the column.
-                        maxLines: expand ? 2 : null,
-                        overflow: expand ? TextOverflow.ellipsis : null,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: GhostColors.errorLight,
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          sendError,
+                          // Collapsed, the page height is capped and
+                          // _collapsedPageFloor allows this two lines; a longer
+                          // message wrapping freely overflowed the column.
+                          maxLines: grow ? 2 : null,
+                          overflow: grow ? TextOverflow.ellipsis : null,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: GhostColors.errorLight,
+                          ),
                         ),
                       ),
                     ),
@@ -1601,7 +1588,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       child: FilledButton.icon(
         onPressed: _viewModel.isSending ? null : _handleSend,
         icon: _viewModel.isSending
-            ? Adaptive.progressIndicator(size: 18, color: Colors.white)
+            ? const GhostLoadingIndicator.compact(color: Colors.white)
             : const Icon(Icons.send_rounded, size: 18),
         label: Text(_viewModel.isSending ? 'Sending…' : _sendButtonLabel()),
         style: FilledButton.styleFrom(
@@ -1622,14 +1609,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// Counting "Devices" was wrong for the same reason the chips were: a
   /// selection is a platform, and one platform can cover several machines, so
   /// "Send to 1 Device" was a miscount whenever a type had more than one.
-  String _sendButtonLabel() {
-    final selected = _viewModel.selectedDeviceTypes;
-    if (selected.isEmpty) return 'Send to all devices';
-    if (selected.length == 1) {
-      return 'Send to ${platformLabel(selected.first)}';
-    }
-    return 'Send to ${selected.length} platforms';
-  }
+  String _sendButtonLabel() =>
+      'Send to ${sendDestinationLabel(_viewModel.selectedDeviceTypes)}';
 
   /// Banner shown whenever this device holds clips it cannot decrypt.
   ///
@@ -1736,10 +1717,17 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  List<ClipboardItem> get _visibleHistory {
+    final items = _viewModel.filteredHistoryItems;
+    return _historyFilter == _HistoryFilter.all
+        ? items
+        : items.where(_historyFilter.matches).toList();
+  }
+
   /// The history heading. When [collapsible], tapping it folds the section
   /// away or back, with a chevron saying which.
   Widget _buildHistoryHeading({bool collapsible = false}) {
-    final count = _viewModel.filteredHistoryItems.length;
+    final count = _visibleHistory.length;
     // Saved on this phone and not refreshed - it may be behind.
     final detail = _viewModel.showingSavedHistory
         ? '$count saved · offline'
@@ -1799,7 +1787,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Widget _buildHistorySection({bool collapsible = false}) {
-    final items = _viewModel.filteredHistoryItems;
+    final items = _visibleHistory;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1808,17 +1796,19 @@ class _MobileMainScreenState extends State<MobileMainScreen>
         // The tap target already pads the collapsible heading.
         if (!collapsible) const SizedBox(height: _headingGap),
         _buildHistorySearch(),
+        if (_viewModel.historyItems.isNotEmpty ||
+            _historyFilter != _HistoryFilter.all) ...[
+          const SizedBox(height: _headingGap),
+          _buildHistoryFilters(),
+        ],
         const SizedBox(height: GhostSpacing.sectionTight),
         // Suppressed during pull-to-refresh: the indicator the user dragged
         // already reports that reload. See isRefreshing.
         if (_viewModel.historyLoading && !_viewModel.isRefreshing)
-          SizedBox(
+          const SizedBox(
             height: 120,
             child: Center(
-              child: Adaptive.progressIndicator(
-                size: 28,
-                color: GhostColors.primary,
-              ),
+              child: GhostLoadingIndicator(label: 'Loading history…'),
             ),
           )
         else if (_viewModel.historyError != null)
@@ -1831,6 +1821,8 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             icon: Icons.content_paste_off_outlined,
             message: _viewModel.historySearchQuery.isNotEmpty
                 ? 'No clips match your search'
+                : _historyFilter != _HistoryFilter.all
+                ? 'No clips in this category'
                 : 'Nothing here yet. Send something to get started.',
           )
         else
@@ -1858,6 +1850,33 @@ class _MobileMainScreenState extends State<MobileMainScreen>
                   ],
                 ],
               ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHistoryFilters() {
+    return Wrap(
+      spacing: 6,
+      children: [
+        for (final filter in _HistoryFilter.values)
+          ChoiceChip(
+            label: Text(filter.label),
+            selected: _historyFilter == filter,
+            onSelected: (_) => setState(() => _historyFilter = filter),
+            showCheckmark: false,
+            selectedColor: GhostColors.accentSoft,
+            backgroundColor: GhostColors.surface,
+            labelStyle: TextStyle(
+              color: _historyFilter == filter
+                  ? GhostColors.accentText
+                  : GhostColors.textSecondary,
+            ),
+            side: BorderSide(
+              color: _historyFilter == filter
+                  ? GhostColors.accentBorder
+                  : GhostColors.border,
             ),
           ),
       ],

@@ -124,7 +124,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _clipboardMonitorTimer;
   String _lastMonitoredClipboard = '';
   bool _isMonitoring = false;
-  bool _isCheckingClipboard = false;
+  Completer<void>? _clipboardCheck;
 
   @override
   bool get isMonitoring => _isMonitoring;
@@ -133,7 +133,8 @@ class ClipboardSyncService implements IClipboardSyncService {
   Timer? _pollingTimer;
   bool _isPolling = false;
 
-  /// A poll asked for while one was running - the catch-up on resume, say.
+  /// A follow-up requested while a poll was running, such as a catch-up on
+  /// resume or a fresh read after realtime advanced during the request.
   /// Run once the current one finishes rather than dropped: the running poll
   /// may already have read the newest id, and a row after it would otherwise
   /// wait for the next timer tick, or forever once realtime has taken over.
@@ -142,6 +143,22 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// The newest clipboard row already seen, by realtime or by a poll, so a
   /// poll never runs a clip through auto-receive a second time.
   String? _lastPolledItemId;
+
+  /// The baseline of a poll that gave way because realtime moved the
+  /// baseline while it ran. Rows between this and the new baseline were
+  /// never delivered - a catch-up after a rejoin exists to find exactly
+  /// those - so the poll that follows starts from here.
+  String? _pendingGapFrom;
+
+  /// The older of two row ids; null counts as neither.
+  static String? _olderId(String? a, String? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    final ai = int.tryParse(a);
+    final bi = int.tryParse(b);
+    if (ai == null || bi == null) return a;
+    return ai <= bi ? a : b;
+  }
 
   /// Whether [_lastPolledItemId] has been established for this account,
   /// including as "no clips at all". Null alone cannot say: an empty account
@@ -174,9 +191,26 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   // Rate limiting for send operations
   DateTime? _lastSendTime;
+
+  /// Completed [_autoSend]s, so a manual send can tell whether one finished
+  /// while it waited behind the in-flight clipboard check.
+  int _sendsCompleted = 0;
   static const Duration _minSendInterval = Duration(milliseconds: 500);
 
   int _clipboardWritesInProgress = 0;
+
+  bool _clipboardUnavailableForSend({required bool manual}) {
+    if (_isDisposed) return true;
+    if (_clipboardWritesInProgress == 0) return false;
+    if (manual) {
+      _notificationService?.showToast(
+        message:
+            'Clipboard is being updated. Try sending again when it finishes.',
+        type: NotificationType.warning,
+      );
+    }
+    return true;
+  }
 
   // Pending background operations for clean shutdown (Fix #10)
 
@@ -470,7 +504,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
     }
 
-    if (_isForThisDevice(
+    if (ClipboardRepository.isForThisDevice(
       record['device_name'] as String?,
       ClipboardItem.parseTargetDeviceTypes(record['target_device_type']),
     )) {
@@ -714,26 +748,10 @@ class ClipboardSyncService implements IClipboardSyncService {
 
   bool _canReceive(ClipboardItem item) =>
       item.userId == _supabaseClient.auth.currentUser?.id &&
-      _isForThisDevice(item.deviceName, item.targetDeviceTypes);
-
-  /// Whether a clip sent by [senderName] to [targets] is this device's to
-  /// receive. The realtime filter and [_canReceive] share it, so the two
-  /// paths cannot drift apart again.
-  ///
-  /// The sender check is a plain inequality, deliberately: null guards that
-  /// used to be here made it false whenever either side had no name, and
-  /// mobile sends device_name: null on every path. That meant a clip sent
-  /// from the phone never triggered auto-receive on the desktop - the
-  /// Mobile -> Desktop half of sync - and it only appeared to work because
-  /// the polling fallback compared the same two values without the guards.
-  ///
-  /// Known limit: this identifies devices by name, so two machines sharing a
-  /// hostname will not receive from each other. Fixing that needs a device id
-  /// on the clipboard row.
-  static bool _isForThisDevice(String? senderName, List<String>? targets) =>
-      senderName != ClipboardRepository.getCurrentDeviceName() &&
-      (targets == null ||
-          targets.contains(ClipboardRepository.getCurrentDeviceType()));
+      ClipboardRepository.isForThisDevice(
+        item.deviceName,
+        item.targetDeviceTypes,
+      );
 
   /// Copy a clipboard item to the system clipboard, supporting multiple content types
   ///
@@ -1011,18 +1029,29 @@ class ClipboardSyncService implements IClipboardSyncService {
     }
   }
 
-  Future<void> _checkClipboardForAutoSend() async {
-    if (_clipboardWritesInProgress > 0 || _isDisposed || _isCheckingClipboard) {
-      return;
+  @override
+  Future<void> sendCurrentClipboard() =>
+      _checkClipboardForAutoSend(manual: true);
+
+  Future<void> _checkClipboardForAutoSend({bool manual = false}) async {
+    // A manual send that waits behind a send of the same copy - an auto-send
+    // tick, or an earlier press during a slow upload - must not send it again,
+    // so the duplicate check is only bypassed when nothing was sent meanwhile.
+    final sendsBefore = _sendsCompleted;
+    while (_clipboardCheck != null) {
+      if (!manual) return;
+      await _clipboardCheck!.future;
     }
+    if (_clipboardUnavailableForSend(manual: manual)) return;
     // A slow native read/upload can outlive the timer interval. Keep only one
     // payload in flight instead of accumulating reads and duplicate work.
-    _isCheckingClipboard = true;
+    _clipboardCheck = Completer<void>();
     try {
       // Nothing written to the pasteboard since the last tick means the
       // payload cannot have changed, so the full read is skipped entirely.
       final changeCount = await _readClipboardChangeCount();
-      if (changeCount != null &&
+      if (!manual &&
+          changeCount != null &&
           (changeCount == _lastClipboardChangeCount ||
               (changeCount == _emptyReadChangeCount &&
                   _emptyReads >= _maxFailedReads))) {
@@ -1031,13 +1060,23 @@ class ClipboardSyncService implements IClipboardSyncService {
 
       // Read clipboard using ClipboardService (supports all formats)
       final clipboardContent = await _clipboardService.read();
-      if (_clipboardWritesInProgress > 0 || _isDisposed) return;
+      if (_clipboardUnavailableForSend(manual: manual)) return;
 
       // The counter is committed only once the read has actually produced
       // something, so a read that failed - a clipboard briefly held open by
       // another process, an image callback that throws - is retried on the
       // next tick rather than that copy never being auto-sent.
       if (clipboardContent.isEmpty) {
+        if (manual) {
+          _notificationService?.showToast(
+            message: clipboardContent.readFailed
+                ? 'Could not read the clipboard. Try sending again.'
+                : 'Clipboard is empty. Copy something first.',
+            type: clipboardContent.readFailed
+                ? NotificationType.warning
+                : NotificationType.info,
+          );
+        }
         // Remembered separately so the same empty state is not read forever:
         // a genuinely undecodable item - a flavour read() cannot handle - once,
         // a failing read up to [_maxFailedReads] times. Otherwise a copied
@@ -1064,14 +1103,18 @@ class ClipboardSyncService implements IClipboardSyncService {
       final contentHash = _calculateClipboardContentHash(clipboardContent);
 
       // Skip if unchanged (compare hashes instead of raw content)
-      if (contentHash == _lastMonitoredClipboard) {
+      if (!manual && contentHash == _lastMonitoredClipboard) {
         return;
       }
 
       _lastMonitoredClipboard = contentHash;
 
+      // A press sends the copy even if it was sent before - unless a send of
+      // it finished while this press waited.
+      if (manual && _sendsCompleted == sendsBefore) _lastSentContentHash = '';
+
       // Rate limiting
-      if (_lastSendTime != null) {
+      if (!manual && _lastSendTime != null) {
         final timeSinceLastSend = DateTime.now().difference(_lastSendTime!);
         if (timeSinceLastSend < _minSendInterval) {
           debugPrint('[ClipboardSyncService] Auto-send rate limited');
@@ -1080,11 +1123,30 @@ class ClipboardSyncService implements IClipboardSyncService {
       }
 
       // Security check (only for text content)
+      String? readableHtml;
       if (clipboardContent.hasText) {
-        final detection = await _securityService.detectSensitiveDataAsync(
-          clipboardContent.text!,
-        );
+        final text = clipboardContent.text!;
+        var detection = await _securityService.detectSensitiveDataAsync(text);
+        if (!detection.isSensitive && manual && clipboardContent.hasHtml) {
+          // The stored markup and the text it renders can expose different secrets.
+          final html = clipboardContent.html!;
+          readableHtml = html.length > 10240
+              ? await compute<String, String>(htmlToPlainText, html)
+              : htmlToPlainText(html);
+          if (readableHtml != text) {
+            detection = await _securityService.detectSensitiveDataAsync(
+              readableHtml,
+            );
+          }
+        }
         if (detection.isSensitive) {
+          if (manual) {
+            _notificationService?.showToast(
+              message:
+                  'Clipboard was not sent because it contains sensitive text.',
+              type: NotificationType.warning,
+            );
+          }
           debugPrint(
             '[ClipboardSyncService] Auto-send blocked: ${detection.type?.label} detected',
           );
@@ -1101,6 +1163,7 @@ class ClipboardSyncService implements IClipboardSyncService {
           clipboardContent.fileBytes!,
           clipboardContent.filename!,
           clipboardContent.mimeType,
+          manual: manual,
         );
       } else if (clipboardContent.hasImage) {
         debugPrint(
@@ -1109,18 +1172,46 @@ class ClipboardSyncService implements IClipboardSyncService {
         await _autoSendImage(
           clipboardContent.imageBytes!,
           clipboardContent.mimeType!,
+          manual: manual,
+        );
+      } else if (manual && clipboardContent.hasHtml) {
+        await _autoSend(
+          noun: 'HTML',
+          manual: manual,
+          contentHash: contentHash,
+          insert: (context) => _clipboardRepository.insertRichText(
+            userId: context.userId,
+            deviceType: context.deviceType,
+            deviceName: context.deviceName,
+            content: clipboardContent.html!,
+            format: RichTextFormat.html,
+            targetDeviceTypes: context.targetDeviceTypes,
+          ),
+          message: (targets) => 'Sent HTML to $targets',
+          failureMessage: 'Could not send HTML',
+          // The readable text, when it was derived and screened above;
+          // otherwise the HTML, which is converted and screened only if an
+          // integration is on.
+          afterInsert: (context) => _fireIntegrations(
+            content: readableHtml ?? clipboardContent.html!,
+            deviceType: context.deviceType,
+            direction: 'sent',
+            isHtml: readableHtml == null,
+            screened: readableHtml != null,
+          ),
         );
       } else if (clipboardContent.hasText) {
         final textContent = clipboardContent.text!;
         debugPrint(
           '[ClipboardSyncService] Auto-sending text (${textContent.length} chars)',
         );
-        await _autoSendClipboard(textContent);
+        await _autoSendClipboard(textContent, manual: manual);
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Clipboard check failed: $e');
     } finally {
-      _isCheckingClipboard = false;
+      _clipboardCheck!.complete();
+      _clipboardCheck = null;
     }
   }
 
@@ -1206,11 +1297,21 @@ class ClipboardSyncService implements IClipboardSyncService {
     required Future<ClipboardItem> Function(_AutoSendContext context) insert,
     required String Function(String targetText) message,
     required String failureMessage,
+    bool manual = false,
     void Function(_AutoSendContext context)? afterInsert,
   }) async {
     try {
       final userId = _supabaseClient.auth.currentUser?.id;
-      if (userId == null) return;
+      if (userId == null) {
+        if (manual) {
+          _notificationService?.showToast(
+            message:
+                'Clipboard was not sent. Sign in or wait for your session to reconnect.',
+            type: NotificationType.warning,
+          );
+        }
+        return;
+      }
 
       if (contentHash == _lastSentContentHash) {
         debugPrint('[ClipboardSyncService] Skipping duplicate $noun');
@@ -1237,6 +1338,7 @@ class ClipboardSyncService implements IClipboardSyncService {
       afterInsert?.call(context);
 
       _lastSendTime = DateTime.now();
+      _sendsCompleted++;
       onClipboardSent?.call(result);
 
       _notificationService?.showToast(
@@ -1266,14 +1368,17 @@ class ClipboardSyncService implements IClipboardSyncService {
       };
 
   /// Auto-send clipboard content
-  Future<void> _autoSendClipboard(String content) async {
+  Future<void> _autoSendClipboard(String content, {bool manual = false}) async {
+    final failureMessage = manual
+        ? 'Could not send clipboard'
+        : 'Auto-send failed';
     final String processedContent;
     try {
       processedContent = await _applyUrlShortening(content);
     } on Exception catch (e) {
       debugPrint('[ClipboardSyncService] Auto-send content failed: $e');
       _notificationService?.showToast(
-        message: 'Auto-send failed',
+        message: failureMessage,
         type: NotificationType.error,
       );
       return;
@@ -1281,6 +1386,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     await _autoSend(
       noun: 'content',
+      manual: manual,
       contentHash: _calculateContentHash(processedContent),
       insert: (context) => _clipboardRepository.insert(
         ClipboardItem(
@@ -1293,8 +1399,9 @@ class ClipboardSyncService implements IClipboardSyncService {
           createdAt: DateTime.now(),
         ),
       ),
-      message: (targets) => 'Auto-sent to $targets',
-      failureMessage: 'Auto-send failed',
+      message: (targets) =>
+          manual ? 'Sent to $targets' : 'Auto-sent to $targets',
+      failureMessage: failureMessage,
       afterInsert: (context) {
         // Non-blocking. processedContent is plaintext - insert() encrypts
         // inside the repository.
@@ -1311,7 +1418,11 @@ class ClipboardSyncService implements IClipboardSyncService {
   }
 
   /// Auto-send image content
-  Future<void> _autoSendImage(Uint8List imageBytes, String mimeType) async {
+  Future<void> _autoSendImage(
+    Uint8List imageBytes,
+    String mimeType, {
+    bool manual = false,
+  }) async {
     final contentType = ContentType.fromMimeType(mimeType);
     if (contentType == null || !contentType.isImage) {
       debugPrint('[ClipboardSyncService] Unsupported image type: $mimeType');
@@ -1322,6 +1433,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     await _autoSend(
       noun: 'image',
+      manual: manual,
       contentHash: _calculateClipboardContentHash(
         ClipboardContent.image(imageBytes, mimeType),
       ),
@@ -1343,8 +1455,9 @@ class ClipboardSyncService implements IClipboardSyncService {
   Future<void> _autoSendFile(
     Uint8List fileBytes,
     String filename,
-    String? mimeType,
-  ) async {
+    String? mimeType, {
+    bool manual = false,
+  }) async {
     final fileTypeInfo = FileTypeService.instance.detectFromBytes(
       fileBytes,
       filename,
@@ -1353,6 +1466,7 @@ class ClipboardSyncService implements IClipboardSyncService {
 
     await _autoSend(
       noun: 'file',
+      manual: manual,
       contentHash: _calculateClipboardContentHash(
         ClipboardContent.file(fileBytes, filename, mimeType),
       ),
@@ -1584,11 +1698,13 @@ class ClipboardSyncService implements IClipboardSyncService {
   @override
   void resumeRealtime() {
     _realtimePaused = false;
-    if (_realtimeChannel != null) return; // Already active
+    if (_realtimeChannel == null) {
+      debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
+      _subscribeToRealtimeUpdates();
+    }
 
-    debugPrint('[ClipboardSync] ▶️  Resuming realtime subscription');
-    _subscribeToRealtimeUpdates();
-
+    // A retained channel can have silently stopped delivering in the tray.
+    // Catch up even when it exists, so a missed clip also triggers a rejoin.
     // A subscription only sees rows inserted after it opens. Anything that
     // landed since the last poll - a file sent from Finder's context menu,
     // which inserts straight through the repository, or a clip from the
@@ -1606,9 +1722,7 @@ class ClipboardSyncService implements IClipboardSyncService {
   void startPolling({Duration interval = const Duration(minutes: 5)}) {
     if (_pollingTimer != null) return; // Already polling
 
-    debugPrint(
-      '[ClipboardSync] 🔄 Starting polling mode (${interval.inMinutes} min)',
-    );
+    debugPrint('[ClipboardSync] 🔄 Starting polling mode (every $interval)');
 
     _pollingTimer = Timer.periodic(interval, (_) async {
       await _pollForNewClipboards();
@@ -1640,6 +1754,7 @@ class ClipboardSyncService implements IClipboardSyncService {
     _dropRealtimeChannel();
     _autoReceiveDebounceTimer?.cancel();
     _lastPolledItemId = null;
+    _pendingGapFrom = null;
     _baselineReady = false;
     _claimedIds.clear();
     _failedFetchIds.clear();
@@ -1683,16 +1798,43 @@ class ClipboardSyncService implements IClipboardSyncService {
     // catch-up has run, can be blamed for what the poll finds. Rows from
     // before the join were never that channel's to deliver.
     final canBlameRealtime = _realtimeJoined && !_realtimeCatchUpPending;
+    final channelGeneration = _realtimeGeneration;
     _realtimeCatchUpPending = false;
     try {
       debugPrint('[ClipboardSync] 🔍 Polling for new items...');
 
       final userId = _supabaseClient.auth.currentUser?.id;
+      final previousId = _lastPolledItemId;
+      final wasReady = _baselineReady;
+      // Where delivery starts. An account that had no clips at all: every
+      // row before the newest is new too.
+      final startedFrom = previousId ?? (wasReady ? '0' : null);
       final latestId = await _clipboardRepository.getLatestItemId();
       if (_isDisposed ||
           userId != _supabaseClient.auth.currentUser?.id ||
-          latestId == null ||
-          latestId == _lastPolledItemId) {
+          latestId == null) {
+        return;
+      }
+      if (latestId == _lastPolledItemId) {
+        // Nothing new, but a poll that gave way may have left a gap behind
+        // the row realtime delivered.
+        final gapFrom = _pendingGapFrom;
+        _pendingGapFrom = null;
+        if (gapFrom != null &&
+            await _deliverSkippedClips(after: gapFrom, latest: latestId) > 0) {
+          onClipboardReceived?.call();
+        }
+        return;
+      }
+
+      // The HTTP snapshot can predate a realtime insert that arrived while
+      // the request was in flight. Read again against the new baseline so
+      // we neither replay old clips nor tear down a healthy channel - and
+      // remember where this one started, so the rows before the realtime
+      // insert are still delivered.
+      if (_lastPolledItemId != previousId || _baselineReady != wasReady) {
+        _pendingGapFrom = _olderId(_pendingGapFrom, startedFrom);
+        _pollRequested = true;
         return;
       }
 
@@ -1700,17 +1842,16 @@ class ClipboardSyncService implements IClipboardSyncService {
       // the channel believes it is subscribed, it should have delivered this
       // already - so it is broken whatever it claims, and saying so here is
       // the only evidence available.
-      if (canBlameRealtime) _noteRealtimeMissedAClip();
+      if (canBlameRealtime && channelGeneration == _realtimeGeneration) {
+        _noteRealtimeMissedAClip();
+      }
 
       // Fetch/decrypt only when the ID changes. The receive path rechecks
       // ownership, sender and targets before touching the system clipboard.
-      final previousId = _lastPolledItemId;
-      final wasReady = _baselineReady;
       _lastPolledItemId = latestId;
       _baselineReady = true;
-      // An account that had no clips at all: everything before the newest is
-      // new too.
-      final after = previousId ?? (wasReady ? '0' : null);
+      final after = _olderId(_pendingGapFrom, startedFrom);
+      _pendingGapFrom = null;
       if (after != null) {
         await _deliverSkippedClips(after: after, latest: latestId);
       }
@@ -1741,13 +1882,16 @@ class ClipboardSyncService implements IClipboardSyncService {
   /// Clips that arrived between two polls, older than [latest] and newer than
   /// [after]. Only the newest is worth copying, but the integrations are
   /// meant to see every clip - as they do on the realtime path.
-  Future<void> _deliverSkippedClips({
+  ///
+  /// Returns how many were delivered.
+  Future<int> _deliverSkippedClips({
     required String after,
     required String latest,
   }) async {
     final afterId = int.tryParse(after);
     final latestId = int.tryParse(latest);
-    if (afterId == null || latestId == null) return;
+    if (afterId == null || latestId == null) return 0;
+    var delivered = 0;
     try {
       // Below the full-history limit, so the repository does not prune its
       // media cache against this partial list.
@@ -1757,12 +1901,16 @@ class ClipboardSyncService implements IClipboardSyncService {
         return id != null && id > afterId && id < latestId;
       }).toList()..sort((a, b) => int.parse(a.id).compareTo(int.parse(b.id)));
       for (final item in skipped) {
-        if (_isDisposed) return;
-        if (_canReceive(item) && _claim(item.id)) _deliverReceived(item);
+        if (_isDisposed) break;
+        if (_canReceive(item) && _claim(item.id)) {
+          _deliverReceived(item);
+          delivered++;
+        }
       }
     } on Exception catch (e) {
       debugPrint('[ClipboardSync] Could not deliver skipped clips: $e');
     }
+    return delivered;
   }
 
   bool _isDisposed = false;

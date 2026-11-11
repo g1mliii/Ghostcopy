@@ -197,6 +197,76 @@ void main() {
         .setMockMethodCallHandler(clipboardChangeChannel, null);
   });
 
+  test('send shortcut reports a missing session', () async {
+    when(() => auth.currentUser).thenReturn(null);
+    clipboardValue = ClipboardContent.text('current selection');
+    await service.sendCurrentClipboard();
+    verify(
+      () => notifier.showToast(
+        message:
+            'Clipboard was not sent. Sign in or wait for your session to reconnect.',
+        type: NotificationType.warning,
+      ),
+    ).called(1);
+    verifyNever(() => repository.insert(any()));
+  });
+
+  test(
+    'send shortcut reads and sends unchanged text with monitoring off',
+    () async {
+      clipboardValue = ClipboardContent.text('current selection');
+      when(
+        settings.getAutoSendTargetDevices,
+      ).thenAnswer((_) async => {'android'});
+      when(() => repository.insert(any())).thenAnswer(
+        (call) async => call.positionalArguments.first as ClipboardItem,
+      );
+      await service.sendCurrentClipboard();
+      await service.sendCurrentClipboard();
+      verify(clipboard.read).called(2);
+      final items = verify(
+        () => repository.insert(captureAny()),
+      ).captured.cast<ClipboardItem>();
+      expect(items, hasLength(2));
+      for (final item in items) {
+        expect(item.content, 'current selection');
+        expect(item.targetDeviceTypes, ['android']);
+      }
+    },
+  );
+
+  testWidgets('send shortcut does not resend a copy auto-sent while waiting', (
+    tester,
+  ) async {
+    clipboardValue = ClipboardContent.text('copied');
+    when(
+      settings.getAutoSendTargetDevices,
+    ).thenAnswer((_) async => {'android'});
+    final inserted = Completer<void>();
+    when(() => repository.insert(any())).thenAnswer((call) async {
+      await inserted.future;
+      return call.positionalArguments.first as ClipboardItem;
+    });
+    service.startClipboardMonitoring();
+    await tester.pump(const Duration(seconds: 5));
+    verify(() => repository.insert(any())).called(1); // auto-send in flight
+    final manualSend = service.sendCurrentClipboard();
+    inserted.complete();
+    await tester.pump();
+    await manualSend;
+    verifyNever(() => repository.insert(any()));
+    service.stopClipboardMonitoring();
+  });
+
+  test('send shortcut reports an empty clipboard', () async {
+    await service.sendCurrentClipboard();
+    verify(
+      () => notifier.showToast(
+        message: 'Clipboard is empty. Copy something first.',
+      ),
+    ).called(1);
+  });
+
   testWidgets('slow clipboard reads do not overlap timer ticks', (
     tester,
   ) async {
@@ -218,12 +288,14 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     }
     verify(clipboard.read).called(1);
+    final manualSend = service.sendCurrentClipboard();
+    verifyNever(clipboard.read);
     pending.completeError(Exception('Temporary read failure'));
-    await tester.pump();
     when(
       clipboard.read,
     ).thenAnswer((_) async => const ClipboardContent.empty());
-    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    await manualSend;
     verify(clipboard.read).called(1);
     service.stopClipboardMonitoring();
   });
@@ -256,6 +328,23 @@ void main() {
           content: content,
         ),
       ).called(1);
+
+  test(
+    'send shortcut blocks a sensitive value split across HTML tags',
+    () async {
+      clipboardValue = ClipboardContent.html(
+        '<span>41111111</span><span>11111111</span>',
+      );
+      when(
+        () => security.detectSensitiveDataAsync('4111111111111111'),
+      ).thenAnswer((_) async => const DetectionResult(isSensitive: true));
+      await service.sendCurrentClipboard();
+      verify(
+        () => security.detectSensitiveDataAsync('4111111111111111'),
+      ).called(1);
+      verifyZeroInteractions(repository);
+    },
+  );
 
   testWidgets('manual text sends reach both integrations', (tester) async {
     service.notifyManualSend('manual clip');
@@ -389,6 +478,51 @@ void main() {
 
       verify(channel.unsubscribe).called(1);
       verifyNever(() => channel.subscribe(any()));
+    });
+
+    testWidgets('resuming a retained silent channel catches up and rejoins', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      // The tray poll has not run yet when the user opens Spotlight.
+      service.startPolling();
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      service
+        ..stopPolling()
+        ..resumeRealtime();
+      await settle(tester);
+
+      verify(channel.unsubscribe).called(1);
+      verify(() => channel.subscribe(any())).called(1);
+      verify(() => clipboard.writeText('clip 2')).called(1);
+      verifyVaultGot('clip 2');
+    });
+
+    testWidgets('resuming a healthy retained channel only checks for clips', (
+      tester,
+    ) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+      clearInteractions(repository);
+
+      service.resumeRealtime();
+      await settle(tester);
+
+      verify(repository.getLatestItemId).called(1);
+      verifyNever(channel.unsubscribe);
+      verifyNever(() => channel.subscribe(any()));
+      verifyNever(() => clipboard.writeText(any()));
     });
 
     // A second missed clip inside the 30 s rejoin cooldown was refused, and
@@ -581,17 +715,117 @@ void main() {
       verify(() => repository.getById('1')).called(1);
       verify(() => webhook.sendWebhook(any(), any())).called(1);
 
-      // Idle in the tray: the lifecycle drops realtime for polling.
+      // The tray fallback checks the same row while realtime stays open.
       when(repository.getLatestItemId).thenAnswer((_) async => '1');
-      service
-        ..pauseRealtime()
-        ..startPolling(interval: const Duration(seconds: 1));
+      service.startPolling(interval: const Duration(seconds: 1));
       await tester.pump(const Duration(seconds: 1));
       await settle(tester);
 
       verifyNever(() => repository.getById('1'));
       verifyNever(() => webhook.sendWebhook(any(), any()));
       verify(() => clipboard.writeText('clip 1')).called(1);
+      service.stopPolling();
+    });
+
+    testWidgets('a slow poll cannot replay an old clip or rejoin after '
+        'realtime advances', (tester) async {
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('2')).thenAnswer((_) async => clip('2'));
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+      clearInteractions(channel);
+
+      final slow = Completer<String?>();
+      when(repository.getLatestItemId).thenAnswer((_) => slow.future);
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+
+      onInsert(
+        PostgresChangePayload(
+          schema: 'public',
+          table: 'clipboard',
+          commitTimestamp: DateTime(2026),
+          eventType: PostgresChangeEvent.insert,
+          newRecord: {'id': 2, 'device_name': 'remote-device'},
+          oldRecord: const {},
+          errors: null,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await settle(tester);
+      when(repository.getLatestItemId).thenAnswer((_) async => '2');
+      slow.complete('1');
+      await settle(tester);
+
+      verifyNever(() => channel.subscribe(any()));
+      verifyNever(() => repository.getById('1'));
+      verify(() => clipboard.writeText('clip 2')).called(1);
+      verifyNever(() => clipboard.writeText('clip 1'));
+
+      // A later tick still catches a clip that the channel really missed.
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+
+      verify(() => channel.subscribe(any())).called(1);
+      verify(() => clipboard.writeText('clip 3')).called(1);
+      service.stopPolling();
+    });
+
+    testWidgets('a poll that gives way to realtime still delivers the clips '
+        'before it', (tester) async {
+      // Baseline 1. Clip 2 lands while the channel is down; the catch-up
+      // poll is in flight when clip 3 arrives over realtime.
+      when(repository.getLatestItemId).thenAnswer((_) async => '1');
+      when(() => repository.getById('3')).thenAnswer((_) async => clip('3'));
+      service.resumeRealtime();
+      await settle(tester);
+      onStatus(RealtimeSubscribeStatus.subscribed, null);
+      await settle(tester);
+
+      final slow = Completer<String?>();
+      when(repository.getLatestItemId).thenAnswer((_) => slow.future);
+      service.startPolling(interval: const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+
+      onInsert(
+        PostgresChangePayload(
+          schema: 'public',
+          table: 'clipboard',
+          commitTimestamp: DateTime(2026),
+          eventType: PostgresChangeEvent.insert,
+          newRecord: {'id': 3, 'device_name': 'remote-device'},
+          oldRecord: const {},
+          errors: null,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await settle(tester);
+      verifyVaultGot('clip 3');
+
+      when(repository.getLatestItemId).thenAnswer((_) async => '3');
+      when(
+        () => repository.getHistory(limit: 10),
+      ).thenAnswer((_) async => [clip('3'), clip('2'), clip('1')]);
+      slow.complete('2');
+      await settle(tester);
+
+      // Clip 2 reaches the vault once; 3 is not delivered again, and
+      // nothing older than the baseline is.
+      verifyVaultGot('clip 2');
+      verifyNever(
+        () => obsidian.appendToVault(
+          deviceType: any(named: 'deviceType'),
+          direction: any(named: 'direction'),
+          vaultPath: any(named: 'vaultPath'),
+          fileName: any(named: 'fileName'),
+          content: any(named: 'content', that: isNot('clip 2')),
+        ),
+      );
+      verifyNever(() => clipboard.writeText('clip 2'));
       service.stopPolling();
     });
 
@@ -901,8 +1135,7 @@ void main() {
   testWidgets('polling does not deliver a clip realtime already delivered', (
     tester,
   ) async {
-    // The lifecycle controller swaps realtime for polling when idle. The first
-    // poll finds the newest row - the one realtime just handled.
+    // The first fallback poll finds the row realtime just handled.
     when(() => repository.getById('1')).thenAnswer((_) async => clip('1'));
     when(repository.getLatestItemId).thenAnswer((_) async => '1');
 
@@ -1316,6 +1549,14 @@ void main() {
         () => repository.downloadFile(any()),
       ).thenAnswer((_) => download.future);
       await receive(tester); // clip 1 is now downloading
+      await service.sendCurrentClipboard();
+      verify(
+        () => notifier.showToast(
+          message:
+              'Clipboard is being updated. Try sending again when it finishes.',
+          type: NotificationType.warning,
+        ),
+      ).called(1);
 
       pasteboard++; // the user copies in another app
       when(repository.getLatestItemId).thenAnswer((_) async => '2');

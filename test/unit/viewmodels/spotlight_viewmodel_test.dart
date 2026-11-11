@@ -13,6 +13,7 @@ import 'package:ghostcopy/services/account_prompt_store.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/clipboard_service.dart';
 import 'package:ghostcopy/services/clipboard_sync_service.dart';
+import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/notification_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/services/transformer_service.dart';
@@ -45,6 +46,9 @@ class _MockSettingsService extends Mock implements ISettingsService {}
 class _MockWindowService extends Mock implements IWindowService {}
 
 class _TestClipboardSyncService implements IClipboardSyncService {
+  @override
+  Future<void> sendCurrentClipboard() async {}
+
   @override
   void ensureRealtimeConnected() {}
 
@@ -103,11 +107,13 @@ class _TestClipboardSyncService implements IClipboardSyncService {
   void dispose() {}
 }
 
+class _MockEncryptionService extends Mock implements IEncryptionService {}
+
 class _TestNotificationService implements INotificationService {
   final List<(String message, NotificationType type)> toasts =
       <(String, NotificationType)>[];
 
-  /// Raised without an overlay, by the headless send-file path.
+  /// Notifications sent directly to the OS.
   final List<(String message, NotificationType type)> systemNotifications =
       <(String, NotificationType)>[];
 
@@ -201,99 +207,141 @@ void main() {
     viewModel.dispose();
   });
 
-  test('copying from history marks the clipboard as freshly changed', () async {
-    // Smart auto-receive reads this to avoid overwriting a copy the user
-    // just made. A refactor once dropped the call and nothing noticed.
-    final clipboard = _MockClipboardService();
-    when(() => clipboard.writeText(any())).thenAnswer((_) async {});
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+  group('history copy confirmation', () {
+    late _MockClipboardService clipboard;
+    late SpotlightViewModel copying;
 
-    await copying.handleHistoryItemCopy(
-      _clipboardItem(id: '1', content: 'hello'),
-    );
+    setUp(() {
+      clipboard = _MockClipboardService();
+      when(() => clipboard.writeText(any())).thenAnswer((_) async {});
+      copying = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        clipboardService: clipboard,
+      );
+      addTearDown(copying.dispose);
+    });
 
-    verify(() => clipboard.writeText('hello')).called(1);
-    expect(clipboardSyncService.modificationTimeUpdates, 1);
-  });
+    test('a pinned window confirms the copy with a toast', () async {
+      await copying.setPin(SpotlightPin.open);
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
 
-  test('a failed media download is not counted as a copy', () async {
-    // downloadFile answers null for a missing path, a failed download or a
-    // failed decrypt. Nothing reaches the clipboard, so smart receive must
-    // not start guarding it.
-    final clipboard = _MockClipboardService();
-    when(
-      () => clipboardRepository.downloadFile(any()),
-    ).thenAnswer((_) async => null);
-    when(
-      () => clipboardRepository.lastDownloadWasOffline(any()),
-    ).thenReturn(false);
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+      expect(notificationService.toasts, [
+        ('Copied to clipboard', NotificationType.success),
+      ]);
+      expect(notificationService.systemNotifications, isEmpty);
+    });
 
-    await copying.handleHistoryItemCopy(
-      ClipboardItem(
-        id: 'img',
-        userId: 'user-123',
-        content: '',
-        deviceType: 'ios',
-        createdAt: DateTime(2026),
-        contentType: ContentType.imagePng,
-        storagePath: 'user-123/img',
-      ),
-    );
+    test('a window hidden by the copy raises no notification', () async {
+      // With no window the toast would be a system notification, for a copy
+      // the user made by clicking a moment ago.
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
 
-    expect(clipboardSyncService.modificationTimeUpdates, 0);
-    expect(copying.errorMessage, isNotNull);
-    verifyNever(() => clipboard.writeImage(any()));
-  });
+      verify(() => clipboard.writeText('hello')).called(1);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, isEmpty);
+      expect(clipboardSyncService.modificationTimeUpdates, 1);
+    });
 
-  test('copying a file that never downloaded, offline, says so', () async {
-    // Offline history shows the clip; its file lives in storage.
-    final clipboard = _MockClipboardService();
-    when(
-      () => clipboardRepository.downloadFile(any()),
-    ).thenAnswer((_) async => null);
-    when(
-      () => clipboardRepository.lastDownloadWasOffline(any()),
-    ).thenReturn(true);
-    final copying = SpotlightViewModel(
-      authService: authService,
-      clipboardRepository: clipboardRepository,
-      clipboardSyncService: clipboardSyncService,
-      transformerService: transformerService,
-      notificationService: notificationService,
-      clipboardService: clipboard,
-    );
-    addTearDown(copying.dispose);
+    test('a copy exception is reported without its details', () async {
+      when(() => clipboard.writeText(any())).thenThrow(
+        const FileSystemException('Access denied', r'C:\Temp\private.txt'),
+      );
 
-    await copying.handleHistoryItemCopy(
-      ClipboardItem(
-        id: 'img',
-        userId: 'user-123',
-        content: '',
-        deviceType: 'ios',
-        createdAt: DateTime(2026),
-        contentType: ContentType.imagePng,
-        storagePath: 'user-123/img',
-      ),
-    );
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
 
-    expect(copying.errorMessage, offlineFileMessage);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, [
+        ('Failed to copy to clipboard', NotificationType.error),
+      ]);
+      expect(clipboardSyncService.modificationTimeUpdates, 0);
+      // Reported once: not also left under the composer for the next opening.
+      expect(copying.errorMessage, isNull);
+    });
+
+    test('a pinned window shows a failure in place', () async {
+      await copying.setPin(SpotlightPin.open);
+      when(
+        () => clipboard.writeText(any()),
+      ).thenThrow(Exception('clipboard busy'));
+
+      await copying.handleHistoryItemCopy(
+        _clipboardItem(id: '1', content: 'hello'),
+      );
+
+      expect(copying.errorMessage, 'Failed to copy to clipboard');
+      expect(notificationService.systemNotifications, isEmpty);
+    });
+
+    test('a failed media download is not counted as a copy', () async {
+      // downloadFile answers null for a missing path, a failed download or a
+      // failed decrypt. Nothing reaches the clipboard, so smart receive must
+      // not start guarding it.
+      when(
+        () => clipboardRepository.downloadFile(any()),
+      ).thenAnswer((_) async => null);
+      when(
+        () => clipboardRepository.lastDownloadWasOffline(any()),
+      ).thenReturn(false);
+
+      await copying.handleHistoryItemCopy(
+        ClipboardItem(
+          id: 'img',
+          userId: 'user-123',
+          content: '',
+          deviceType: 'ios',
+          createdAt: DateTime(2026),
+          contentType: ContentType.imagePng,
+          storagePath: 'user-123/img',
+        ),
+      );
+
+      expect(clipboardSyncService.modificationTimeUpdates, 0);
+      expect(notificationService.toasts, isEmpty);
+      expect(notificationService.systemNotifications, [
+        (
+          'Could not copy - the file could not be downloaded',
+          NotificationType.error,
+        ),
+      ]);
+      verifyNever(() => clipboard.writeImage(any()));
+    });
+
+    test('copying a file that never downloaded, offline, says so', () async {
+      // Offline history shows the clip; its file lives in storage.
+      when(
+        () => clipboardRepository.downloadFile(any()),
+      ).thenAnswer((_) async => null);
+      when(
+        () => clipboardRepository.lastDownloadWasOffline(any()),
+      ).thenReturn(true);
+
+      await copying.handleHistoryItemCopy(
+        ClipboardItem(
+          id: 'img',
+          userId: 'user-123',
+          content: '',
+          deviceType: 'ios',
+          createdAt: DateTime(2026),
+          contentType: ContentType.imagePng,
+          storagePath: 'user-123/img',
+        ),
+      );
+
+      expect(
+        notificationService.systemNotifications.single.$1,
+        offlineFileMessage,
+      );
+    });
   });
 
   testWidgets('plain typing pauses do not repeatedly rebuild the window', (
@@ -488,6 +536,30 @@ void main() {
     expect(notificationService.toasts.last.$2, NotificationType.success);
   });
 
+  test('send confirmation names the destination used by the upload', () async {
+    when(() => authService.currentUserId).thenReturn('user-123');
+    final upload = Completer<ClipboardItem>();
+    when(
+      () => clipboardRepository.insert(any()),
+    ).thenAnswer((_) => upload.future);
+
+    viewModel
+      ..togglePlatform('macos')
+      ..updateContent('hello');
+    final sending = viewModel.handleSend();
+    viewModel
+      ..togglePlatform('macos')
+      ..togglePlatform('ios');
+    upload.complete(_clipboardItem(id: '123', content: 'hello'));
+    await sending;
+
+    final item =
+        verify(() => clipboardRepository.insert(captureAny())).captured.single
+            as ClipboardItem;
+    expect(item.targetDeviceTypes, ['macos']);
+    expect(notificationService.toasts.last.$1, 'Sent to macOS');
+  });
+
   test('an offline send says there is no internet connection', () async {
     when(() => authService.currentUserId).thenReturn('user-123');
     when(
@@ -633,6 +705,210 @@ void main() {
       expect(notificationService.toasts.last.$2, NotificationType.success);
     },
   );
+
+  group('encryption offer', () {
+    const userId = 'user-123';
+    late DateTime now;
+    late AccountPromptStore store;
+    late bool gameMode;
+    late _MockEncryptionService encryption;
+    late ValueNotifier<int> keyRevision;
+    late SpotlightViewModel offering;
+
+    Future<void> build({
+      bool sent = true,
+      bool anonymous = false,
+      bool enabled = false,
+      bool storedPassphrase = false,
+    }) async {
+      SharedPreferences.setMockInitialValues({
+        if (sent) 'account_offer_has_sent': true,
+      });
+      now = DateTime(2026, 11, 10);
+      store = AccountPromptStore(
+        await SharedPreferences.getInstance(),
+        clock: () => now,
+      );
+      gameMode = false;
+      encryption = _MockEncryptionService();
+      keyRevision = ValueNotifier(0);
+      addTearDown(keyRevision.dispose);
+      when(() => encryption.keyRevision).thenReturn(keyRevision);
+      when(() => encryption.isEnabled()).thenAnswer((_) async => enabled);
+      when(
+        () => encryption.hasPassphrase(userId),
+      ).thenAnswer((_) async => storedPassphrase);
+      when(() => authService.currentUserId).thenReturn(userId);
+      when(() => authService.isAnonymous).thenReturn(anonymous);
+      when(
+        () => authService.refreshIfAwaitingConfirmation(),
+      ).thenAnswer((_) async {});
+      offering = SpotlightViewModel(
+        authService: authService,
+        clipboardRepository: clipboardRepository,
+        clipboardSyncService: clipboardSyncService,
+        transformerService: transformerService,
+        notificationService: notificationService,
+        accountPromptStore: store,
+        encryptionService: encryption,
+        isGameModeActive: () => gameMode,
+      );
+      addTearDown(offering.dispose);
+    }
+
+    test('shows on opening when encryption is off', () async {
+      await build();
+
+      await offering.onWindowFocused();
+
+      expect(offering.showEncryptionOffer, isTrue);
+    });
+
+    test('never shows when encryption is already on', () async {
+      await build(enabled: true);
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('a stored passphrase not yet derived counts as on', () async {
+      // At startup the key can still be on its way.
+      await build(storedPassphrase: true);
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('waits for the first send', () async {
+      await build(sent: false);
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('stays quiet during Game Mode', () async {
+      await build();
+      gameMode = true;
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test(
+      'Game Mode starting during the check leaves the offer available',
+      () async {
+        await build();
+        when(() => encryption.hasPassphrase(userId)).thenAnswer((_) async {
+          gameMode = true;
+          return false;
+        });
+
+        await offering.onWindowFocused();
+        expect(offering.showEncryptionOffer, isFalse);
+
+        gameMode = false;
+        when(
+          () => encryption.hasPassphrase(userId),
+        ).thenAnswer((_) async => false);
+        await offering.offerEncryptionIfDue();
+        expect(offering.showEncryptionOffer, isTrue);
+      },
+    );
+
+    test(
+      'discards the passphrase check after the active account changes',
+      () async {
+        await build();
+        when(() => encryption.hasPassphrase(userId)).thenAnswer((_) async {
+          when(() => authService.currentUserId).thenReturn('another-user');
+          return false;
+        });
+
+        await offering.onWindowFocused();
+
+        expect(offering.showEncryptionOffer, isFalse);
+      },
+    );
+
+    test('a guest is asked for an account, not for both', () async {
+      await build(anonymous: true);
+
+      await offering.onWindowFocused();
+
+      expect(offering.showAccountOffer, isTrue);
+      expect(offering.showEncryptionOffer, isFalse);
+
+      // Nor on the next opening of the same run.
+      offering
+        ..dismissAccountOffer()
+        ..onSpotlightHidden();
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('a guest who snoozed the account card is not asked either', () async {
+      await build(anonymous: true);
+      await store.snoozeOffer();
+
+      await offering.onWindowFocused();
+
+      expect(offering.showAccountOffer, isFalse);
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('following the card to Settings does not snooze it', () async {
+      await build();
+      await offering.onWindowFocused();
+
+      offering.hideEncryptionOffer();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(offering.showEncryptionOffer, isFalse);
+      expect(store.isEncryptionOfferSnoozed, isFalse);
+    });
+
+    test('"Not now" keeps it away for thirty days', () async {
+      await build();
+      await offering.onWindowFocused();
+      offering.dismissEncryptionOffer();
+      expect(offering.showEncryptionOffer, isFalse);
+      await Future<void>.delayed(Duration.zero);
+
+      now = now.add(const Duration(days: 29));
+      expect(store.isEncryptionOfferSnoozed, isTrue);
+      now = now.add(const Duration(days: 2));
+      expect(store.isEncryptionOfferSnoozed, isFalse);
+    });
+
+    test('shows once per run, not on every opening', () async {
+      await build();
+      await offering.onWindowFocused();
+      offering.onSpotlightHidden();
+
+      await offering.onWindowFocused();
+
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('turning encryption on takes the card away', () async {
+      await build();
+      await offering.onWindowFocused();
+      expect(offering.showEncryptionOffer, isTrue);
+
+      keyRevision.value++;
+
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+
+    test('a panel opened during the check keeps the card back', () async {
+      await build();
+      var composerVisible = true;
+      when(() => encryption.isEnabled()).thenAnswer((_) async {
+        composerVisible = false;
+        return false;
+      });
+
+      await offering.onWindowFocused(composerVisible: () => composerVisible);
+
+      expect(offering.showEncryptionOffer, isFalse);
+    });
+  });
 
   group('account offer', () {
     late DateTime now;
