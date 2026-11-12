@@ -40,7 +40,10 @@ class WindowsPushService implements IDesktopPushService {
   @override
   Future<bool> start() async {
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'received' && !_pushes.isClosed) _pushes.add(null);
+      if (call.method == 'received' && !_pushes.isClosed) {
+        debugPrint('[WindowsPush] Push received');
+        _pushes.add(null);
+      }
     });
     final ok = await _createAndStore();
     if (ok) {
@@ -75,6 +78,7 @@ class WindowsPushService implements IDesktopPushService {
       if (uri == _storedUri) return true;
       final stored = await _deviceService.updateWnsChannelUri(uri);
       if (stored) _storedUri = uri;
+      debugPrint('[WindowsPush] Channel ${stored ? "stored" : "not stored"}');
       return stored;
     } on PlatformException catch (e) {
       // "unpackaged" is the expected answer for a dev build.

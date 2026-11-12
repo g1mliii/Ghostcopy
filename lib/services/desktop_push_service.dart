@@ -67,6 +67,7 @@ class DesktopPushCoordinator {
 
   Future<bool> start() async {
     final started = await _push.start();
+    debugPrint('[DesktopPush] ${started ? "Started" : "Unavailable"}');
     if (!started) return false;
     _subscription = _push.pushes.listen((_) => _onPush());
     final previous = _previousOnPollFoundClip = _sync.onPollFoundClip;
@@ -78,6 +79,7 @@ class DesktopPushCoordinator {
   }
 
   void _onPush() {
+    debugPrint('[DesktopPush] Push received - polling for the clip');
     _missedPushTimer?.cancel();
     _missedPushTimer = null;
     _lastPushAt = clock.now();

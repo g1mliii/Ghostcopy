@@ -29,6 +29,7 @@ import 'services/command_line_tool_service.dart';
 import 'services/crash_reporting_service.dart';
 import 'services/desktop_push_service.dart';
 import 'services/device_service.dart';
+import 'services/diagnostic_file_log.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
 import 'services/game_mode_service.dart';
@@ -312,8 +313,17 @@ Future<void> _appMain(
   // logs on the 5-second clipboard tick and once per history item, so in
   // release that is a steady drip of string building and timer work for output
   // nobody can read. Silence it there; debug and profile builds are untouched.
+  //
+  // The exception is how clips reach a desktop - realtime, push, the tray
+  // poll - which goes to a small log file instead, since a release build
+  // gives no other way to see it. See DiagnosticFileLog.
   if (kReleaseMode) {
-    debugPrint = (message, {wrapWidth}) {};
+    if (Platform.isWindows || Platform.isMacOS) {
+      debugPrint = DiagnosticFileLog.print;
+      unawaited(DiagnosticFileLog.open());
+    } else {
+      debugPrint = (message, {wrapWidth}) {};
+    }
   }
 
   // Suppress RawKeyboard assertion errors on Windows (known Flutter issue)
