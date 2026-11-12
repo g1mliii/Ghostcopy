@@ -116,6 +116,40 @@ void main() {
     expect(ClipLink.detect('https://youtu.be/')?.kind, ClipLinkKind.web);
   });
 
+  test('Apple options and place identities survive Android opens', () {
+    for (final url in [
+      'https://maps.apple.com/frame?center=40.753035,-73.981846&map=satellite&span=0.05,0.05',
+      'https://maps.apple.com/frame?center=40.753035,-73.981846&heading=90',
+      'https://maps.apple.com/frame?coordinate=40.753035,-73.981846&pitch=45&distance=200&mode=follow',
+      'https://maps.apple.com/place?place-id=I521E602783BA9605&name=The%20Met',
+      'https://maps.apple.com/?auid=123&q=The%20Met',
+      'https://maps.apple.com/look-around?coordinate=40.75,-73.98&heading=90',
+    ]) {
+      expect(ClipLink.detect(url)!.openUri('android').toString(), url);
+    }
+    final plain = ClipLink.detect(
+      'https://maps.apple.com/frame?center=40.75,-73.98',
+    )!;
+    expect(plain.openUri('android').toString(), 'geo:40.75,-73.98');
+  });
+
+  test('geo coordinates must fall inside WGS84 bounds', () {
+    for (final coordinates in [
+      '95,200',
+      '-91,0',
+      '0,-181',
+      '90.001,180',
+      '90,180.001',
+      '99999999999999999999999999999999999999,0',
+    ]) {
+      expect(ClipLink.detect('geo:$coordinates'), isNull);
+      expect(ClipLink.detect('geo:$coordinates?q=Bank'), isNull);
+    }
+    for (final coordinates in ['90,180', '-90,-180', '0,180']) {
+      expect(ClipLink.detect('geo:$coordinates')?.kind, ClipLinkKind.map);
+    }
+  });
+
   group('ClipLink.detect', () {
     test('web links, with the host as the label', () {
       final link = ClipLink.detect('https://www.example.com/a/b?c=d')!;
