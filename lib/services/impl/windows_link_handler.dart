@@ -9,8 +9,8 @@ import 'package:image/image.dart' as img;
 import '../link_handler_service.dart';
 import 'link_handler_service.dart';
 
-/// Windows: the shell's association for the link's scheme, which honours the
-/// user's choice in Settings > Default apps.
+/// Windows: the shell's association for the complete web URL or scheme,
+/// honoring the user's choice in Settings > Default apps.
 ///
 /// Two kinds of handler come back, and their icons are found differently:
 ///
@@ -29,13 +29,15 @@ import 'link_handler_service.dart';
 class WindowsLinkHandlerService extends CachingLinkHandlerService {
   WindowsLinkHandlerService() : super(platform: 'windows');
 
-  /// The shell associates a whole scheme with one app.
+  /// Apps for Websites can route different web URLs to different apps.
   @override
-  String cacheKeyFor(Uri uri) => uri.scheme;
+  String cacheKeyFor(Uri uri) => uri.isScheme('https') || uri.isScheme('http')
+      ? uri.toString()
+      : uri.scheme;
 
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {
-    final found = await compute(_handlerForScheme, uri.scheme);
+    final found = await compute(_handlerForUri, uri.toString());
     if (found == null) return null;
     final (:name, :png, :pngFile) = found;
     return LinkHandler(
@@ -61,16 +63,35 @@ typedef _FoundIcon = ({Uint8List? png, String? pngFile});
 /// successful CoInitializeEx - S_FALSE, already initialised, included - is
 /// balanced before returning. RPC_E_CHANGED_MODE (negative) is a thread
 /// someone else initialised differently, and is not ours to undo.
-_FoundHandler? _handlerForScheme(String scheme) {
+_FoundHandler? _handlerForUri(String url) {
+  final uri = Uri.parse(url);
+  final web = uri.isScheme('https') || uri.isScheme('http');
+  var association = web ? url : uri.scheme;
+  var flags =
+      _assocfInitIgnoreUnknown |
+      (web ? _assocfIsFullUri | _assocfAppToApp : _assocfIsProtocol);
   final com = _coInitializeEx(nullptr, 2); // COINIT_APARTMENTTHREADED
   try {
-    final name = _resolveIndirect(
-      _assocQuery(scheme, _assocStrFriendlyAppName),
+    var name = _resolveIndirect(
+      _assocQuery(association, _assocStrFriendlyAppName, flags),
     );
+    // FULL_URI reports no association when no Apps for Websites rule takes
+    // the URL. ShellExecute then uses the ordinary protocol default too.
+    if ((name == null || name.isEmpty) && web) {
+      association = uri.scheme;
+      flags = _assocfInitIgnoreUnknown | _assocfIsProtocol;
+      name = _resolveIndirect(
+        _assocQuery(association, _assocStrFriendlyAppName, flags),
+      );
+    }
     if (name == null || name.isEmpty) return null;
     final icon =
-        _iconFromReference(_assocQuery(scheme, _assocStrAppIconReference)) ??
-        _iconFromReference(_assocQuery(scheme, _assocStrDefaultIcon));
+        _iconFromReference(
+          _assocQuery(association, _assocStrAppIconReference, flags),
+        ) ??
+        _iconFromReference(
+          _assocQuery(association, _assocStrDefaultIcon, flags),
+        );
     return (name: name, png: icon?.png, pngFile: icon?.pngFile);
   } finally {
     if (com >= 0) _coUninitialize();
@@ -91,6 +112,8 @@ final _coUninitialize = _ole32.lookupFunction<Void Function(), void Function()>(
 
 // AssocQueryStringW.
 const _assocfIsProtocol = 0x1000;
+const _assocfIsFullUri = 0x4000;
+const _assocfAppToApp = 0x10000;
 const _assocfInitIgnoreUnknown = 0x400;
 const _assocStrFriendlyAppName = 4;
 const _assocStrDefaultIcon = 15;
@@ -268,15 +291,15 @@ final class _BitmapInfoHeader extends Struct {
   external int biClrImportant;
 }
 
-/// One association string for a URL scheme, or null if there is none.
-String? _assocQuery(String scheme, int what) => using((arena) {
+/// One association string for a full web URL or protocol.
+String? _assocQuery(String association, int what, int flags) => using((arena) {
   const capacity = 1024;
   final out = arena<Uint16>(capacity).cast<Utf16>();
   final chars = arena<Uint32>()..value = capacity;
   final status = _assocQueryString(
-    _assocfIsProtocol | _assocfInitIgnoreUnknown,
+    flags,
     what,
-    scheme.toNativeUtf16(allocator: arena),
+    association.toNativeUtf16(allocator: arena),
     nullptr,
     out,
     chars,

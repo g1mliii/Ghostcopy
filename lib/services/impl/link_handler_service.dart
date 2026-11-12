@@ -1,16 +1,11 @@
-import 'dart:async';
-import 'dart:io';
-
 import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
-import 'package:path/path.dart' as path;
 
 import '../../models/clip_link.dart';
-import '../../utils/xdg.dart';
 import '../link_handler_service.dart';
-import 'command_line_tool_service.dart' show ProcessRunner;
+export 'linux_link_handler.dart';
 
 /// The caching every platform shares: one lookup per [cacheKeyFor], refreshed
 /// after [maxAge] so a default app changed while GhostCopy sits in the tray
@@ -37,8 +32,7 @@ abstract class CachingLinkHandlerService implements ILinkHandlerService {
   @protected
   Future<LinkHandler?> lookUp(Uri uri);
 
-  /// The part of [uri] this platform's answer depends on - never the whole
-  /// URI, or every web link would be a lookup of its own.
+  /// The parts of [uri] that can change the application chosen by the OS.
   String cacheKeyFor(Uri uri);
 
   @override
@@ -128,21 +122,13 @@ class ChannelLinkHandlerService extends CachingLinkHandlerService {
 
   final MethodChannel _channel;
 
-  /// Both route web links by more than the host - google.com/maps opens
-  /// Google Maps and google.com/search the browser, docs.google.com/document
-  /// opens Docs and /spreadsheets Sheets. An Android intent filter can match a
-  /// path at any depth, and a macOS universal link's associated-domains
-  /// components can match the query and fragment too, so a web link keys on
-  /// everything but the scheme's own defaults: path on Android, the whole URL
-  /// on macOS. A `geo:` or `tel:` path is the place or number itself, so other
-  /// schemes key on the scheme.
+  /// Web routing can depend on the query and fragment as well as the path:
+  /// Android Dynamic App Links and macOS universal links both support them.
+  /// The bounded LRU limits the extra entries. Other schemes use the scheme.
   @override
-  String cacheKeyFor(Uri uri) {
-    final web = uri.isScheme('https') || uri.isScheme('http');
-    if (!web) return uri.scheme;
-    if (platform == 'macos') return uri.toString();
-    return '${uri.scheme}:${uri.host}${uri.path}';
-  }
+  String cacheKeyFor(Uri uri) => uri.isScheme('https') || uri.isScheme('http')
+      ? uri.toString()
+      : uri.scheme;
 
   @override
   Future<LinkHandler?> lookUp(Uri uri) async {
@@ -157,100 +143,5 @@ class ChannelLinkHandlerService extends CachingLinkHandlerService {
       name: name,
       icon: icon is Uint8List && icon.isNotEmpty ? MemoryImage(icon) : null,
     );
-  }
-}
-
-/// Linux: `xdg-mime` names the default handler's desktop entry, whose `Name`
-/// and `Icon` keys give the rest.
-///
-/// The icon is looked up in the hicolor theme, which every app installs into
-/// because it is the fallback theme, and then in pixmaps. PNG only: an app
-/// that ships just an SVG gets its name but keeps the generic glyph, since
-/// drawing SVG would mean a new dependency for one icon.
-class LinuxLinkHandlerService extends CachingLinkHandlerService {
-  LinuxLinkHandlerService({ProcessRunner? runProcess, this.environment})
-    : _run = runProcess ?? Process.run,
-      super(platform: 'linux');
-
-  final ProcessRunner _run;
-
-  /// The XDG variables to resolve data directories from; the process's own
-  /// when null.
-  final Map<String, String>? environment;
-
-  /// xdg-mime associates a whole scheme with one app.
-  @override
-  String cacheKeyFor(Uri uri) => uri.scheme;
-
-  // Nearest the glyph first: it is drawn at 32px, so 64px covers a 2x
-  // screen, and a 256px icon decoded for it is 16 times the pixels.
-  static const _iconSizes = ['64x64', '96x96', '128x128', '48x48', '256x256'];
-
-  @override
-  Future<LinkHandler?> lookUp(Uri uri) async {
-    final result = await _run('xdg-mime', [
-      'query',
-      'default',
-      'x-scheme-handler/${uri.scheme}',
-    ]).timeout(const Duration(seconds: 3));
-    if (result.exitCode != 0) return null;
-    final desktopId = result.stdout.toString().trim();
-    if (!desktopId.endsWith('.desktop')) return null;
-
-    final env = environment ?? Platform.environment;
-    final dataDirs = xdgDataDirs(env);
-    final entry = [
-      for (final dir in dataDirs)
-        for (final relative in desktopEntryPaths(desktopId))
-          File(path.join(dir, 'applications', relative)),
-    ].where((file) => file.existsSync()).firstOrNull;
-    if (entry == null) return null;
-
-    final keys = parseDesktopEntry(await entry.readAsString());
-    // The name the user's desktop shows, in their language.
-    final name = localizedEntryValue(keys, 'Name', env);
-    if (name == null || name.isEmpty) return null;
-    final icon = _iconFile(keys['Icon'], dataDirs);
-    return LinkHandler(name: name, icon: icon == null ? null : FileImage(icon));
-  }
-
-  /// Where under `applications/` the entry for [desktopId] can be.
-  ///
-  /// A desktop file ID is its path below `applications/` with each `/` made
-  /// a `-`, so `kde4-kmail.desktop` may be `kde4/kmail.desktop`. Every way of
-  /// reading the dashes back is a candidate, the literal name first; an ID
-  /// with more than a few dashes is tried as written only.
-  @visibleForTesting
-  static List<String> desktopEntryPaths(String desktopId) {
-    final parts = desktopId.split('-');
-    if (parts.length == 1 || parts.length > 5) return [desktopId];
-    var paths = [parts.first];
-    for (final part in parts.skip(1)) {
-      paths = [
-        for (final prefix in paths) ...['$prefix-$part', '$prefix/$part'],
-      ];
-    }
-    return paths;
-  }
-
-  File? _iconFile(String? icon, List<String> dataDirs) {
-    if (icon == null || icon.isEmpty) return null;
-    if (path.isAbsolute(icon)) {
-      final file = File(icon);
-      return icon.endsWith('.png') && file.existsSync() ? file : null;
-    }
-    for (final dir in dataDirs) {
-      for (final size in _iconSizes) {
-        final file = File(
-          path.join(dir, 'icons', 'hicolor', size, 'apps', '$icon.png'),
-        );
-        if (file.existsSync()) return file;
-      }
-    }
-    for (final dir in dataDirs) {
-      final file = File(path.join(dir, 'pixmaps', '$icon.png'));
-      if (file.existsSync()) return file;
-    }
-    return null;
   }
 }
