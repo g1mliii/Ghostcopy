@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 /// What kind of openable thing a clip is.
 enum ClipLinkKind { web, map, email, phone }
 
@@ -322,6 +324,16 @@ class ClipLink {
               )) {
             return uri;
           }
+          final avoid = (uri.queryParametersAll['avoid'] ?? const <String>[])
+              .expand((value) => value.split(','))
+              .map((value) => value.trim());
+          if (avoid.any(
+            (value) =>
+                value.isNotEmpty &&
+                !const {'tolls', 'highways'}.contains(value),
+          )) {
+            return uri;
+          }
           if (uri.path == '/look-around') {
             // Preserve the panorama intent. Apple-only place IDs and
             // addresses cannot supply a Street View viewpoint.
@@ -450,6 +462,7 @@ class _MapPlace {
     this.query,
     this.latLng,
     this.center,
+    this.zoom,
     this.isShortLink = false,
   });
 
@@ -463,6 +476,9 @@ class _MapPlace {
   /// `center` on a `/search` link. A pin at [latLng] is labelled with [query];
   /// a search for [query] near [center] finds whatever is there.
   final String? center;
+
+  /// Android geo zoom, from world (0) to buildings (21).
+  final int? zoom;
 
   /// `maps.apple/p/...` or `maps.app.goo.gl/...`: only the redirect knows the
   /// place.
@@ -771,6 +787,11 @@ class _MapPlace {
     }
     final latLng = _latLngOrNull(coords);
     if (latLng == null) return null;
+    final requestedZoom = int.tryParse(uri.queryParameters['z'] ?? '');
+    final zoom =
+        requestedZoom != null && requestedZoom >= 0 && requestedZoom <= 21
+        ? requestedZoom
+        : null;
     final query = uri.queryParameters['q']?.trim();
     // Android's q=lat,lng(label) selects a pin independently of the geo:
     // path, which may be 0,0 or the map's search center.
@@ -783,6 +804,7 @@ class _MapPlace {
           _MapSource.geo,
           query: label.isEmpty ? null : label,
           latLng: pin,
+          zoom: zoom,
         );
       }
     }
@@ -790,7 +812,7 @@ class _MapPlace {
     // A numeric q identifies its own pin; the geo path only biases a
     // textual search. Signed and decimal zeroes all mean an unscoped search.
     if (_latLngOrNull(query) case final pin?) {
-      return _MapPlace(_MapSource.geo, latLng: pin);
+      return _MapPlace(_MapSource.geo, latLng: pin, zoom: zoom);
     }
     final zero = latLng.split(',').every((part) => double.parse(part) == 0);
     final location = zero ? null : latLng;
@@ -800,6 +822,7 @@ class _MapPlace {
       query: hasQuery ? query : null,
       latLng: hasQuery ? null : location,
       center: hasQuery ? location : null,
+      zoom: zoom,
     );
   }
 
@@ -840,21 +863,35 @@ class _MapPlace {
   /// `maps:` otherwise, which only the Maps app does. Nearby searches use
   /// the unified web route on both platforms to preserve their search center.
   Uri toAppleMaps({required bool web}) {
-    if (query != null && center != null) {
+    if (query != null && (center != null || zoom != null)) {
       return Uri.https('maps.apple.com', '/search', {
         'query': query,
-        'center': center,
+        'center': ?center,
+        if (zoom != null) 'span': _searchSpan,
       });
     }
     final params = Uri(
       queryParameters: {
         if (query != null) 'q': query,
         if (latLng != null) 'll': latLng,
+        if (zoom != null) 'z': zoom.toString(),
       },
     ).query;
     return Uri.parse(
       web ? 'https://maps.apple.com/?$params' : 'maps://?$params',
     );
+  }
+
+  // Apple search uses an angular span rather than a numeric zoom. Approximate
+  // a Web Mercator tile's bounds at this latitude; the app chooses its viewport.
+  String get _searchSpan {
+    final longitude = 360 / math.pow(2, zoom!);
+    final latitude = double.parse((center ?? '0,0').split(',').first);
+    final latitudeSpan = (longitude * math.cos(latitude * math.pi / 180)).clamp(
+      0.0000001,
+      180,
+    );
+    return '${latitudeSpan.toStringAsFixed(7)},${longitude.toStringAsFixed(7)}';
   }
 
   /// A search, or a pin. With both a query and coordinates the search is
@@ -867,7 +904,14 @@ class _MapPlace {
       return Uri(
         scheme: 'https',
         host: 'www.google.com',
-        pathSegments: ['maps', 'search', query!, '@$near,15z'],
+        pathSegments: ['maps', 'search', query!, '@$near,${zoom ?? 15}z'],
+      );
+    }
+    if (near != null && zoom != null) {
+      return Uri(
+        scheme: 'https',
+        host: 'www.google.com',
+        pathSegments: ['maps', 'place', near, '@$near,${zoom}z'],
       );
     }
     return Uri.https('www.google.com', '/maps/search/', {
