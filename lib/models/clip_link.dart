@@ -1950,8 +1950,8 @@ class _MapPlace {
   Uri toAppleMaps({required bool web}) {
     if (query != null && center != null) {
       return Uri.https('maps.apple.com', '/search', {
-        'query': query!,
-        'center': center!,
+        'query': query,
+        'center': center,
       });
     }
     final params = Uri(
