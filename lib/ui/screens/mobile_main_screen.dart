@@ -120,6 +120,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   final FocusNode _pasteFocusNode = FocusNode();
   bool _composerFocused = false;
   Timer? _reviewTimer;
+  int _reviewGeneration = 0;
 
   // Flutter platform widgets (must stay in widget)
   final TextEditingController _pasteController = TextEditingController();
@@ -267,7 +268,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// mutated from four places (typing, auto-paste, and two clears after send),
   /// and hand-syncing all of them is how this kind of flag goes stale.
   void _syncComposerLength() {
-    if (_pasteController.text.isNotEmpty) _reviewTimer?.cancel();
+    if (_pasteController.text.isNotEmpty) _cancelReviewPrompt();
     // Synchronous with the change, so a paste flips this before the frame that
     // lays the text out - and before handwriting's measuring runs after it.
     final length = _pasteController.text.length;
@@ -290,7 +291,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   @override
   void dispose() {
-    _reviewTimer?.cancel();
+    _cancelReviewPrompt();
     _splashTimeout?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pasteFocusNode.dispose();
@@ -325,7 +326,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// Handle app lifecycle changes
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) _reviewTimer?.cancel();
+    if (state != AppLifecycleState.resumed) _cancelReviewPrompt();
     if (state == AppLifecycleState.paused) {
       _viewModel.onAppPaused();
       // Decoded images are the largest thing this app holds, and backgrounded
@@ -733,7 +734,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleSend() async {
-    _reviewTimer?.cancel();
+    _cancelReviewPrompt();
     final attachment = _viewModel.clipboardContent;
     final text = _pasteController.text;
     if (attachment?.hasImage != true && attachment?.hasFile != true) {
@@ -774,17 +775,24 @@ class _MobileMainScreenState extends State<MobileMainScreen>
     );
   }
 
+  void _cancelReviewPrompt() {
+    _reviewGeneration++;
+    _reviewTimer?.cancel();
+  }
+
   Future<void> _scheduleReviewAfterSend() async {
     final reviews = locator.maybeGet<IAppReviewService>();
     if (reviews == null) return;
+    final generation = _reviewGeneration;
     await reviews.recordSuccessfulSend();
-    if (!mounted) return;
+    if (!mounted || generation != _reviewGeneration) return;
     _reviewTimer?.cancel();
     _reviewTimer = Timer(const Duration(seconds: 5), () {
       unawaited(
         reviews.maybeRequestReview(
           canPresent: () =>
               mounted &&
+              generation == _reviewGeneration &&
               WidgetsBinding.instance.lifecycleState ==
                   AppLifecycleState.resumed &&
               ModalRoute.of(context)?.isCurrent == true &&
@@ -823,7 +831,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _navigateToSettings({bool openPassphraseRestore = false}) async {
-    _reviewTimer?.cancel();
+    _cancelReviewPrompt();
     final authService = locator<IAuthService>();
     final userBefore = authService.currentUserId;
 
