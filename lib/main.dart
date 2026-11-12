@@ -314,11 +314,11 @@ Future<void> _appMain(
   // release that is a steady drip of string building and timer work for output
   // nobody can read. Silence it there; debug and profile builds are untouched.
   //
-  // The exception is how clips reach a desktop - realtime, push, the tray
-  // poll - which goes to a small log file instead, since a release build
-  // gives no other way to see it. See DiagnosticFileLog.
+  // A test build can opt in to a small log file of how clips reach a desktop
+  // - realtime, push, the tray poll - since a release build gives no other
+  // way to see it. Off in production. See DiagnosticFileLog.
   if (kReleaseMode) {
-    if (Platform.isWindows || Platform.isMacOS) {
+    if (DiagnosticFileLog.enabled && (Platform.isWindows || Platform.isMacOS)) {
       debugPrint = DiagnosticFileLog.print;
       unawaited(DiagnosticFileLog.open());
     } else {

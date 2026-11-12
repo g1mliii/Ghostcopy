@@ -1,3 +1,7 @@
+// The switch below is a build-time choice: only a test build turns the log
+// on, so --dart-define is the way in.
+// ignore_for_file: do_not_use_environment
+
 import 'dart:async';
 import 'dart:io';
 
@@ -16,6 +20,10 @@ import 'package:path_provider/path_provider.dart';
 /// `<app support>/logs/ghostcopy.log`. A packaged Windows build's app support
 /// folder is the package's own, which Windows deletes with it.
 ///
+/// Off in production. A test build turns it on with
+/// `--dart-define=GHOSTCOPY_DIAGNOSTIC_LOG=true`, e.g.
+/// `flutter build windows --release --dart-define=GHOSTCOPY_DIAGNOSTIC_LOG=true`.
+///
 /// Bounded: once the file passes [maxBytes] it is renamed to
 /// `ghostcopy.1.log` on the next launch, and nothing more is written in a
 /// session that reaches twice that.
@@ -23,6 +31,8 @@ class DiagnosticFileLog {
   DiagnosticFileLog._();
 
   static const int maxBytes = 512 * 1024;
+
+  static const bool enabled = bool.fromEnvironment('GHOSTCOPY_DIAGNOSTIC_LOG');
 
   /// Lines kept. Everything else debugPrint is given in release is dropped,
   /// as it was before this existed.
