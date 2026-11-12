@@ -91,6 +91,9 @@ class StorageService implements IStorageService {
   Future<Uint8List> downloadFile(String storagePath) async {
     try {
       debugPrint('[StorageService] ↓ Downloading from R2: $storagePath');
+      // Two round trips, timed apart: the edge function that signs the URL
+      // can be slow to wake, which is a different fix from a slow transfer.
+      final timer = Stopwatch()..start();
 
       // The bucket is PRIVATE. It used to be public and this method fetched
       // the public r2.dev URL directly, but public access is now
@@ -102,6 +105,7 @@ class StorageService implements IStorageService {
         'path': storagePath,
       });
 
+      final signedMs = timer.elapsedMilliseconds;
       final downloadUrl = presign['downloadUrl'] as String?;
       if (downloadUrl == null || downloadUrl.isEmpty) {
         throw StorageException('No download URL returned for $storagePath');
@@ -118,7 +122,11 @@ class StorageService implements IStorageService {
       }
 
       final bytes = response.bodyBytes;
-      debugPrint('[StorageService] ✓ Downloaded: ${bytes.length} bytes');
+      debugPrint(
+        '[StorageService] ✓ Downloaded: ${bytes.length} bytes '
+        '(sign URL ${signedMs}ms, transfer '
+        '${timer.elapsedMilliseconds - signedMs}ms)',
+      );
 
       return bytes;
     } catch (e) {

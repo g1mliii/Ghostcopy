@@ -8,9 +8,11 @@ project(runner LANGUAGES CXX)
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
+  "gpu_watchdog.cpp"
   "main.cpp"
   "package_context.cpp"
   "power_monitor.cpp"
+  "push_channel.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -75,7 +77,17 @@ target_link_libraries(${BINARY_NAME} PRIVATE "Wtsapi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib")
 # C++/WinRT, for Windows.ApplicationModel.StartupTask in package_context.cpp.
 target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
+# The tripwire device GpuWatchdog keeps, in gpu_watchdog.cpp.
+target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Explicit native regression target; kept out of app builds and bundles.
+add_executable(clipboard_flush_guard_test EXCLUDE_FROM_ALL
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../test/windows/clipboard_flush_guard_test.cpp")
+apply_standard_settings(clipboard_flush_guard_test)
+target_include_directories(clipboard_flush_guard_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(clipboard_flush_guard_test PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")

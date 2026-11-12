@@ -1,12 +1,16 @@
 #include "flutter_window.h"
 
+#include <algorithm>
+#include <cwchar>
 #include <optional>
+#include <string>
 #include <flutter/standard_method_codec.h>
 #include <wtsapi32.h>
 
 #include "flutter/generated_plugin_registrant.h"
 #include "package_context.h"
 #include "power_monitor.h"
+#include "push_channel.h"
 
 namespace {
 
@@ -18,6 +22,24 @@ constexpr wchar_t kStartupTaskId[] = L"GhostCopyStartup";
 // triggered by. WM_APP is the range reserved for an application's own
 // messages, so it cannot collide with anything Windows or Flutter sends.
 constexpr UINT kFlushClipboardMessage = WM_APP + 1;
+
+// Posted by GpuWatchdog when the GPU has been reset under the app.
+constexpr UINT kGpuResetMessage = WM_APP + 2;
+
+// Posted by PushChannel from its worker thread and WinRT event handler, so
+// the Flutter channel is only touched on this thread.
+constexpr UINT kPushChannelReadyMessage = WM_APP + 3;
+constexpr UINT kPushReceivedMessage = WM_APP + 4;
+
+// Passed to the copy started after a GPU reset. The pid flag is read in
+// main.cpp, before the engine starts.
+constexpr wchar_t kAfterGpuResetFlag[] = L"--after-gpu-reset";
+constexpr wchar_t kWaitForPidFlag[] = L"--wait-for-pid=";
+
+// A copy started after a reset defers another restart until it has lived this
+// long, so repeated resets cannot cause a rapid restart loop.
+constexpr ULONGLONG kGpuResetRestartGuardMs = 30000;
+constexpr UINT_PTR kGpuResetRestartTimerId = 2;
 
 // WM_TIMER id for retrying a flush that found the clipboard open elsewhere.
 // Another process holding it open is routine - a clipboard manager, or the
@@ -162,6 +184,11 @@ bool FlutterWindow::OnCreate() {
         result->Success(flutter::EncodableValue(ok != 0));
       });
 
+  // WNS for the packaged build; see push_channel.h.
+  push_channel_ = std::make_unique<PushChannel>(
+      flutter_controller_->engine()->messenger(), GetHandle(),
+      kPushChannelReadyMessage, kPushReceivedMessage);
+
   // Initialize power monitor for system sleep/wake/lock events
   power_monitor_ =
       std::make_unique<PowerMonitor>(flutter_controller_->engine());
@@ -171,6 +198,15 @@ bool FlutterWindow::OnCreate() {
 
   // WM_CLIPBOARDUPDATE on every clipboard change; see MessageHandler.
   AddClipboardFormatListener(GetHandle());
+
+  created_at_ = ::GetTickCount64();
+  // One-shot uploads do not need rendered surfaces. Restarting one as a tray
+  // app would interrupt the upload and lose its result notification.
+  const auto& arguments = project_.dart_entrypoint_arguments();
+  if (std::find(arguments.begin(), arguments.end(), "--send-file") ==
+      arguments.end()) {
+    gpu_watchdog_ = std::make_unique<GpuWatchdog>(GetHandle(), kGpuResetMessage);
+  }
 
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     if (flutter_controller_) {
@@ -217,11 +253,10 @@ int64_t FlutterWindow::ClipboardChangeCount() {
 // the smart action buttons all go through the clipboard, and therefore through
 // here.
 //
-// Flushing renders each format and hands ownership back to the system, so the
-// clipboard still holds the data and GetClipboardOwner becomes null. That ends
-// the recursion this would otherwise have: the flush changes the sequence
-// number, which posts one more WM_CLIPBOARDUPDATE, and by then this process no
-// longer owns the clipboard so nothing flushes again.
+// OLE can retain this process's owner window after flushing. Each flush can
+// emit another WM_CLIPBOARDUPDATE, so ownership alone cannot prevent a feedback
+// loop. Remember the post-flush sequence and skip notifications for that same
+// clipboard state. A genuinely new copy (even from this process) still flushes.
 //
 // The cost is rendering large formats up front rather than only if something
 // asks. Bounded here: a clip is at most 100 KB of text or a 10 MB file
@@ -233,6 +268,8 @@ void FlutterWindow::FlushOwnedClipboard() {
   DWORD owner_process = 0;
   GetWindowThreadProcessId(owner, &owner_process);
   if (owner_process != GetCurrentProcessId()) return;
+  const DWORD sequence = GetClipboardSequenceNumber();
+  if (!clipboard_flush_guard_.NeedsFlush(sequence)) return;
   // The flush itself moves the sequence number, and that is not a copy. When
   // the counter has already seen everything up to now - the usual case, since
   // the WM_CLIPBOARDUPDATE that posted this counted the write - absorb the
@@ -241,7 +278,7 @@ void FlutterWindow::FlushOwnedClipboard() {
   // smart auto-receive would only offer the next clip instead of taking it.
   // If something is still uncounted, leave it: the next WM_CLIPBOARDUPDATE
   // counts it and the flush together, once.
-  const bool counted = GetClipboardSequenceNumber() == last_clipboard_sequence_;
+  const bool counted = sequence == last_clipboard_sequence_;
   // Only meaningful for data this process put there with OLE; harmless
   // otherwise, and the owner check above already narrows it to our own.
   const HRESULT hr = ::OleFlushClipboard();
@@ -257,7 +294,9 @@ void FlutterWindow::FlushOwnedClipboard() {
     }
     return;
   }
-  if (counted) last_clipboard_sequence_ = GetClipboardSequenceNumber();
+  const DWORD completed_sequence = GetClipboardSequenceNumber();
+  clipboard_flush_guard_.DidFlush(completed_sequence);
+  if (counted) last_clipboard_sequence_ = completed_sequence;
 }
 
 void FlutterWindow::OnDestroy() {
@@ -265,6 +304,7 @@ void FlutterWindow::OnDestroy() {
   WTSUnRegisterSessionNotification(GetHandle());
   RemoveClipboardFormatListener(GetHandle());
   ::KillTimer(GetHandle(), kFlushRetryTimerId);
+  ::KillTimer(GetHandle(), kGpuResetRestartTimerId);
 
   // Clean up power monitor
   if (power_monitor_) {
@@ -274,6 +314,7 @@ void FlutterWindow::OnDestroy() {
   clipboard_change_channel_ = nullptr;
   packaging_channel_ = nullptr;
   memory_channel_ = nullptr;
+  push_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -327,7 +368,8 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       // synchronous flush can re-enter HandleTopLevelWindowProc, including
       // with the very WM_CLIPBOARDUPDATE the flush itself raises. Posting
       // lets the current message finish first.
-      if (!flush_posted_) {
+      if (!flush_posted_ &&
+          clipboard_flush_guard_.NeedsFlush(GetClipboardSequenceNumber())) {
         flush_posted_ = true;
         ::PostMessage(hwnd, kFlushClipboardMessage, 0, 0);
       }
@@ -342,7 +384,24 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       FlushOwnedClipboard();
       break;
 
+    case kGpuResetMessage:
+      RestartAfterGpuReset();
+      return 0;
+
+    case kPushChannelReadyMessage:
+      if (push_channel_) push_channel_->OnChannelReady();
+      return 0;
+
+    case kPushReceivedMessage:
+      if (push_channel_) push_channel_->OnReceived();
+      return 0;
+
     case WM_TIMER:
+      if (wparam == kGpuResetRestartTimerId) {
+        ::KillTimer(hwnd, kGpuResetRestartTimerId);
+        RestartAfterGpuReset();
+        return 0;
+      }
       if (wparam == kFlushRetryTimerId) {
         ::KillTimer(hwnd, kFlushRetryTimerId);
         FlushOwnedClipboard();
@@ -352,4 +411,51 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+// Swaps this process, its Flutter surfaces lost with the GPU, for a fresh one.
+//
+// The new copy starts hidden in the tray, as a login launch does, and waits
+// for this one to exit before it starts its engine (main.cpp): otherwise
+// SingleInstance would find this copy still holding the port, hand it the
+// arguments and quit, leaving the white window behind. This one quits the way
+// Quit in the tray does, so the usual teardown runs.
+//
+// If the new copy cannot be started, this one stays: a white window is a
+// better place to be left than no app at all.
+void FlutterWindow::RestartAfterGpuReset() {
+  const ULONGLONG elapsed = ::GetTickCount64() - created_at_;
+  if (std::wcsstr(::GetCommandLineW(), kAfterGpuResetFlag) != nullptr &&
+      elapsed < kGpuResetRestartGuardMs) {
+    // The one-shot watchdog will not notify us again. Retain the reset by
+    // scheduling recovery at the end of the guard instead of discarding it.
+    // If the timer cannot be created, recover now rather than stay blank.
+    if (::SetTimer(GetHandle(), kGpuResetRestartTimerId,
+                   static_cast<UINT>(kGpuResetRestartGuardMs - elapsed),
+                   nullptr) != 0) {
+      return;
+    }
+  }
+
+  std::wstring exe(32768, L'\0');
+  const DWORD length =
+      ::GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+  if (length == 0 || length >= exe.size()) {
+    return;
+  }
+  exe.resize(length);
+
+  std::wstring command = L"\"" + exe + L"\" --launched-at-startup " +
+                         kAfterGpuResetFlag + L" " + kWaitForPidFlag +
+                         std::to_wstring(::GetCurrentProcessId());
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION process{};
+  if (!::CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE,
+                        0, nullptr, nullptr, &startup, &process)) {
+    return;
+  }
+  ::CloseHandle(process.hThread);
+  ::CloseHandle(process.hProcess);
+  ::PostQuitMessage(0);
 }

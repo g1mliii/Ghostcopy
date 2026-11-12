@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/locator.dart';
@@ -108,6 +109,50 @@ void main() {
 
   tearDown(locator.reset);
 
+  testWidgets('keeps sign-in safe without blocking the iOS edge-back swipe', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(900, 600)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(left: 47, right: 47, bottom: 21);
+    addTearDown(tester.view.reset);
+
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        theme: ThemeData(platform: TargetPlatform.iOS),
+        home: const Scaffold(body: Text('Previous screen')),
+      ),
+    );
+    unawaited(
+      navigatorKey.currentState!.push<void>(
+        CupertinoPageRoute<void>(
+          builder: (_) =>
+              MobileWelcomeScreen(onAuthComplete: () => completions++),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getRect(find.byType(Scaffold)),
+      const Rect.fromLTRB(47, 0, 853, 600),
+    );
+    expect(
+      tester.getRect(find.byType(Navigator)),
+      const Rect.fromLTWH(0, 0, 900, 600),
+    );
+
+    await tester.dragFrom(const Offset(1, 300), const Offset(750, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MobileWelcomeScreen), findsNothing);
+    expect(find.text('Previous screen'), findsOneWidget);
+    expect(completions, 0);
+  });
+
   Future<void> signUp(WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -129,6 +174,25 @@ void main() {
     await tester.tap(find.text('Sign Up').last);
     await tester.pumpAndSettle();
   }
+
+  // App Review rejected 1.0.8 asking for a demo QR code: the screen opened on
+  // a live camera, and an iPad with no desktop app had nothing to point it at.
+  testWidgets('opens on Sign In, with the QR scanner one tab over', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MobileWelcomeScreen(onAuthComplete: () => completions++),
+      ),
+    );
+
+    expect(find.widgetWithText(TextField, 'Email'), findsOneWidget);
+    expect(find.textContaining('No computer nearby?'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('Sign In')).dx,
+      lessThan(tester.getTopLeft(find.text('Scan QR')).dx),
+    );
+  });
 
   testWidgets('waits on the welcome screen for the confirmation', (
     tester,

@@ -8,8 +8,9 @@ import '../fcm_service.dart';
 
 /// Concrete implementation of IFcmService
 ///
-/// Manages FCM token lifecycle for mobile push notifications.
-/// Desktop platforms should not use this service.
+/// Manages the FCM token for phones, and for macOS desktop push
+/// (MacPushService), which asks without the notification permission.
+/// Windows and Linux do not use it.
 class FcmService implements IFcmService {
   FcmService({
     FirebaseMessaging? messaging,
@@ -72,12 +73,12 @@ class FcmService implements IFcmService {
   }
 
   @override
-  Future<String?> getToken() async {
+  Future<String?> getToken({bool requirePermission = true}) async {
     _ensureInitialized();
 
     try {
       // Request permissions first
-      final hasPermission = await requestPermissions();
+      final hasPermission = !requirePermission || await requestPermissions();
       if (!hasPermission) {
         debugPrint('[FcmService] ⚠️ Notification permissions not granted');
         return null;

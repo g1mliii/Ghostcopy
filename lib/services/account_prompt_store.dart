@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// What the app remembers about guest accounts between launches: which guest
 /// a phone was linked into by QR, and when a desktop last asked its guest to
-/// make an account.
+/// make an account or its user to turn on encryption.
 ///
 /// Not part of ISettingsService: nothing here is a preference the user sets,
 /// and none of it belongs in a settings screen.
@@ -20,6 +20,13 @@ class AccountPromptStore {
   static const String _keyLinkedGuest = 'qr_linked_guest_user_id';
   static const String _keyHasSent = 'account_offer_has_sent';
   static const String _keySnoozedUntil = 'account_offer_snoozed_until';
+  static const String _keyEncryptionSnoozedUntil =
+      'encryption_offer_snoozed_until';
+
+  /// How long "Not now" keeps the encryption offer away. Longer than the
+  /// account one: declining an account is often "later", while declining
+  /// encryption is usually a decision, and Settings is always there.
+  static const Duration encryptionSnooze = Duration(days: 30);
 
   final SharedPreferences _prefs;
   final DateTime Function() _clock;
@@ -42,15 +49,24 @@ class AccountPromptStore {
     if (!hasSent) await _prefs.setBool(_keyHasSent, true);
   }
 
-  bool get isOfferSnoozed {
-    final until = _prefs.getInt(_keySnoozedUntil);
+  bool get isOfferSnoozed => _isSnoozed(_keySnoozedUntil);
+
+  Future<void> snoozeOffer() => _snooze(_keySnoozedUntil, snooze);
+
+  // ========== DESKTOP ENCRYPTION OFFER ==========
+
+  bool get isEncryptionOfferSnoozed => _isSnoozed(_keyEncryptionSnoozedUntil);
+
+  Future<void> snoozeEncryptionOffer() =>
+      _snooze(_keyEncryptionSnoozedUntil, encryptionSnooze);
+
+  bool _isSnoozed(String key) {
+    final until = _prefs.getInt(key);
     return until != null && _clock().millisecondsSinceEpoch < until;
   }
 
-  Future<void> snoozeOffer() => _prefs.setInt(
-    _keySnoozedUntil,
-    _clock().add(snooze).millisecondsSinceEpoch,
-  );
+  Future<void> _snooze(String key, Duration duration) =>
+      _prefs.setInt(key, _clock().add(duration).millisecondsSinceEpoch);
 }
 
 /// Whether a phone launching with [user] goes straight to the main screen.

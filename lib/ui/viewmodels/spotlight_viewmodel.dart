@@ -15,6 +15,7 @@ import '../../services/auth_service.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/clipboard_sync_service.dart';
 import '../../services/crash_reporting_service.dart';
+import '../../services/encryption_service.dart';
 import '../../services/file_type_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/settings_service.dart';
@@ -22,6 +23,7 @@ import '../../services/temp_file_service.dart';
 import '../../services/transformer_service.dart';
 import '../../services/window_service.dart';
 import '../../utils/network_errors.dart';
+import '../../utils/platform_label.dart';
 
 /// ViewModel for SpotlightScreen - handles business logic and state
 ///
@@ -49,6 +51,7 @@ class SpotlightViewModel extends ChangeNotifier {
     required this._notificationService,
     IClipboardService? clipboardService,
     this._accountPromptStore,
+    this._encryptionService,
     this._isGameModeActive,
     Stream<bool>? gameModeChanges,
     this._settingsService,
@@ -60,6 +63,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _gameModeSubscription = gameModeChanges?.listen((_) {
       if (isPinned) unawaited(_applyPin());
     });
+    _encryptionService?.keyRevision.addListener(hideEncryptionOffer);
   }
 
   final IAuthService _authService;
@@ -78,6 +82,9 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Null turns the account offer and the guest badge off entirely.
   final AccountPromptStore? _accountPromptStore;
+
+  /// Null turns the encryption offer off.
+  final IEncryptionService? _encryptionService;
   final bool Function()? _isGameModeActive;
 
   // ========== SEND STATE ==========
@@ -308,6 +315,15 @@ class SpotlightViewModel extends ChangeNotifier {
   /// read, so an upgrade finishing while it is up takes it away at once.
   bool get showAccountOffer => _accountOfferVisible && _authService.isAnonymous;
 
+  // ========== ENCRYPTION OFFER ==========
+
+  bool _encryptionOfferVisible = false;
+  bool _encryptionOfferShownThisRun = false;
+
+  /// The card suggesting end-to-end encryption to someone who has not turned
+  /// it on. Never beside the account offer: one request at a time.
+  bool get showEncryptionOffer => _encryptionOfferVisible && !showAccountOffer;
+
   /// The small "Guest" label in the header, the way to an account that is
   /// always there and never interrupts.
   bool get showGuestBadge =>
@@ -513,8 +529,28 @@ class SpotlightViewModel extends ChangeNotifier {
     } on Exception catch (e) {
       debugPrint('[SpotlightVM] Confirmation check failed: $e');
     }
-    if (composerVisible?.call() ?? true) offerAccountIfDue();
+    if (composerVisible?.call() ?? true) {
+      await offerCardsIfDue(composerVisible: composerVisible);
+    }
   }
+
+  /// The one card a run may show, account first: on focus, and when a
+  /// panel closes, since an opening that began behind one never got its
+  /// chance at focus.
+  Future<void> offerCardsIfDue({bool Function()? composerVisible}) async {
+    offerAccountIfDue();
+    await offerEncryptionIfDue(composerVisible: composerVisible);
+  }
+
+  /// What every card waits for: an open Spotlight, a first send behind it,
+  /// no card shown yet this run, and no Game Mode, which exists so nothing
+  /// asks for attention.
+  bool _offerGateOpen(AccountPromptStore store) =>
+      _spotlightOpen &&
+      store.hasSent &&
+      !_accountOfferShownThisRun &&
+      !_encryptionOfferShownThisRun &&
+      !(_isGameModeActive?.call() ?? false);
 
   /// Spotlight went back to the tray. A card the user looked at and left is
   /// this run's one showing, so it does not come back on the next opening.
@@ -527,12 +563,18 @@ class SpotlightViewModel extends ChangeNotifier {
     _composerRevision++;
     _restore = null;
     _accountOfferVisible = false;
+    _encryptionOfferVisible = false;
     _releaseComposerForHide();
     if (_visibleState != before) notifyListeners();
   }
 
-  Object get _visibleState =>
-      (_content, _clipboardContent, _detectedContentType, _accountOfferVisible);
+  Object get _visibleState => (
+    _content,
+    _clipboardContent,
+    _detectedContentType,
+    _accountOfferVisible,
+    _encryptionOfferVisible,
+  );
 
   /// Give back what a hidden window has no use for. Auto-paste's content
   /// goes entirely - the next opening reads the clipboard again anyway. A
@@ -664,11 +706,8 @@ class SpotlightViewModel extends ChangeNotifier {
   /// one never got its chance at focus.
   void offerAccountIfDue() {
     final store = _accountPromptStore;
-    if (store == null || _accountOfferShownThisRun || !_spotlightOpen) return;
-    if (!_authService.isAnonymous || !store.hasSent || store.isOfferSnoozed) {
-      return;
-    }
-    if (_isGameModeActive?.call() ?? false) return;
+    if (store == null || !_offerGateOpen(store)) return;
+    if (!_authService.isAnonymous || store.isOfferSnoozed) return;
     _accountOfferShownThisRun = true;
     _accountOfferVisible = true;
     notifyListeners();
@@ -683,6 +722,62 @@ class SpotlightViewModel extends ChangeNotifier {
     if (store != null) unawaited(store.snoozeOffer());
     if (!_accountOfferVisible) return;
     _accountOfferVisible = false;
+    notifyListeners();
+  }
+
+  /// Suggest encryption, at most once per run of the app.
+  ///
+  /// Under the account offer's rules - after the first send, not while "Not
+  /// now" holds, not during Game Mode - and only in a run that has not
+  /// already asked for an account: two requests in one sitting is one too
+  /// many. Not shown when a key is loaded or a passphrase is stored, which
+  /// covers the moment at startup before the stored one has been derived.
+  ///
+  /// [composerVisible] is asked again after the checks, which are async: a
+  /// panel can open during them.
+  Future<void> offerEncryptionIfDue({bool Function()? composerVisible}) async {
+    final store = _accountPromptStore;
+    final encryption = _encryptionService;
+    if (store == null || encryption == null) return;
+    if (!_offerGateOpen(store) || store.isEncryptionOfferSnoozed) return;
+    // A guest is asked for an account, not a passphrase: a guest's key lives
+    // only on this device, and the account card is the one to keep showing.
+    if (_authService.isAnonymous) return;
+    final userId = _authService.currentUserId;
+    if (userId == null) return;
+    final hides = _hideCount;
+    try {
+      if (await encryption.isEnabled() ||
+          await encryption.hasPassphrase(userId)) {
+        return;
+      }
+    } on Exception catch (e) {
+      debugPrint('[SpotlightVM] Could not read encryption state: $e');
+      return;
+    }
+    // Asked again: the window can hide, the account change, another card
+    // show or Game Mode start during the reads above.
+    if (_isDisposed || hides != _hideCount) return;
+    if (userId != _authService.currentUserId || !_offerGateOpen(store)) return;
+    if (!(composerVisible?.call() ?? true)) return;
+    _encryptionOfferShownThisRun = true;
+    _encryptionOfferVisible = true;
+    notifyListeners();
+  }
+
+  /// "Not now": keeps the card away for its snooze.
+  void dismissEncryptionOffer() {
+    final store = _accountPromptStore;
+    if (store != null) unawaited(store.snoozeEncryptionOffer());
+    hideEncryptionOffer();
+  }
+
+  /// Take the card down without snoozing it - its button on the way to
+  /// Settings, or a key arriving while it is up (turned on in Settings, or
+  /// the stored passphrase finishing its derivation).
+  void hideEncryptionOffer() {
+    if (!_encryptionOfferVisible) return;
+    _encryptionOfferVisible = false;
     notifyListeners();
   }
 
@@ -890,11 +985,7 @@ class SpotlightViewModel extends ChangeNotifier {
         debugPrint('[SpotlightVM] ↑ Sent text: ${sentText.length} chars');
       }
 
-      final targetText = _selectedPlatforms.isEmpty
-          ? 'all devices'
-          : _selectedPlatforms.length == 1
-          ? _selectedPlatforms.first.toLowerCase()
-          : '${_selectedPlatforms.length} device types';
+      final targetText = sendDestinationLabel(targetDevicesList);
 
       debugPrint('Sent clipboard to $targetText');
 
@@ -972,12 +1063,33 @@ class SpotlightViewModel extends ChangeNotifier {
 
   /// Handle copying a history item to clipboard
   ///
-  /// UI callback:
-  /// - onCopySuccess: Called after copy (to close history panel)
-  Future<void> handleHistoryItemCopy(
-    ClipboardItem item, {
-    VoidCallback? onCopySuccess,
-  }) async {
+  /// Unpinned, the screen hides Spotlight as the copy starts - it reads the
+  /// same [keepsOpen] - so the window closing is the confirmation: a toast
+  /// raised with no window to draw in becomes an OS notification for a copy
+  /// the user just made by hand. Decided here rather than passed in, so the
+  /// screen cannot forget to say so.
+  ///
+  /// A failure goes to a system notification directly when hidden: the
+  /// window may still be closing, so an overlay would be drawn unseen. It
+  /// is not also put under the composer, where it would greet the next
+  /// opening for an action not taken there.
+  Future<void> handleHistoryItemCopy(ClipboardItem item) async {
+    final windowHidden = !keepsOpen;
+    Future<void> fail(String message) async {
+      if (!windowHidden) {
+        _setError(message);
+        return;
+      }
+      try {
+        await _notificationService.showSystemNotification(
+          message: message,
+          type: NotificationType.error,
+        );
+      } on Exception catch (e) {
+        debugPrint('[SpotlightVM] Failed to notify about copy failure: $e');
+      }
+    }
+
     try {
       // Media is downloaded first, and downloadFile returns null when the
       // storage path is missing, the download fails or decryption does.
@@ -988,7 +1100,7 @@ class SpotlightViewModel extends ChangeNotifier {
           ? await _clipboardRepo.downloadFile(item)
           : null;
       if ((item.isImage || item.isFile) && bytes == null) {
-        _setError(
+        await fail(
           _clipboardRepo.lastDownloadWasOffline(item)
               ? offlineFileMessage
               : 'Could not copy - the file could not be downloaded',
@@ -1044,15 +1156,15 @@ class SpotlightViewModel extends ChangeNotifier {
       // dropped this call and staleness quietly stopped working.
       _syncService.updateClipboardModificationTime();
 
-      _notificationService.showToast(
-        message: 'Copied to clipboard',
-        type: NotificationType.success,
-      );
-
-      onCopySuccess?.call();
+      if (!windowHidden) {
+        _notificationService.showToast(
+          message: 'Copied to clipboard',
+          type: NotificationType.success,
+        );
+      }
     } on Exception catch (e) {
-      _setError('Failed to copy: $e');
       debugPrint('[SpotlightVM] Failed to copy history item: $e');
+      await fail('Failed to copy to clipboard');
     }
   }
 
@@ -1184,6 +1296,7 @@ class SpotlightViewModel extends ChangeNotifier {
     _errorClearTimer?.cancel();
     _errorClearTimer = null;
     _gameModeSubscription?.cancel();
+    _encryptionService?.keyRevision.removeListener(hideEncryptionOffer);
     _gameModeSubscription = null;
 
     // Hand the callbacks back as they were before initialize

@@ -733,11 +733,15 @@ class ClipboardRepository implements IClipboardRepository {
   ) async {
     try {
       debugPrint('[Repository] ↓ Downloading: $storagePath');
+      final timer = Stopwatch()..start();
 
       final raw = await _storageService.downloadFile(storagePath);
       _offlineDownloads.remove(storagePath);
 
-      debugPrint('[Repository] ✓ Downloaded: ${raw.length} bytes');
+      debugPrint(
+        '[Repository] ✓ Downloaded: ${raw.length} bytes '
+        'in ${timer.elapsedMilliseconds}ms',
+      );
 
       // Persist the bytes EXACTLY as received - still encrypted when the clip
       // is encrypted - so a restart does not pay for this download again.
@@ -778,8 +782,12 @@ class ClipboardRepository implements IClipboardRepository {
       );
       return null;
     }
+    final timer = Stopwatch()..start();
     final bytes = await _encryptionService.decryptBytes(raw);
-    debugPrint('[Repository] 🔓 Decrypted to ${bytes.length} bytes');
+    debugPrint(
+      '[Repository] 🔓 Decrypted to ${bytes.length} bytes '
+      'in ${timer.elapsedMilliseconds}ms',
+    );
     return bytes;
   }
 
@@ -1618,10 +1626,15 @@ class ClipboardRepository implements IClipboardRepository {
         }
       } else if (Platform.isIOS) {
         final ios = await info.iosInfo;
-        // Since iOS 16 `name` returns the model, not what the user called the
-        // phone - that needs an Apple-granted entitlement. So "iPhone 15 Pro"
-        // rather than "Subai's iPhone". Still enough to tell a phone from an
-        // iPad or a simulator, which is what the unique index needs.
+        // What the user called the phone - "Subaig's iPhone" - through the
+        // user-assigned-device-name entitlement (Runner.entitlements). Without
+        // it iOS 16+ returns only the model ("iPhone"), which is what a build
+        // signed without the entitlement still shows. The suffix stays either
+        // way: the unique index is on the name, and two phones can share one
+        // ("iPhone", or two both set up as "Subaig's iPhone"); one would
+        // overwrite the other's row and push token. Device.displayName hides
+        // it. DeviceService uses the stable suffix to rename the existing row
+        // in place, including when notification permission is denied.
         final model = ios.utsname.machine.trim();
         final readable = ios.name.trim();
         final stableId =
@@ -1651,6 +1664,24 @@ class ClipboardRepository implements IClipboardRepository {
 
   static String _capitalize(String value) =>
       value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
+
+  /// Whether a clip sent by [senderName] to [targets] is this device's to
+  /// receive. Desktop and mobile both ask this before copying a clip unasked,
+  /// so the rule lives in one place: they had drifted apart once already.
+  ///
+  /// The sender check is a plain inequality: a device never receives its own
+  /// clip, and an unnamed sender is someone else unless this device is
+  /// unnamed too. Null or empty targets mean every device - an empty list is
+  /// never a deliberate "nobody".
+  ///
+  /// Known limit: devices are told apart by name, so two machines sharing a
+  /// hostname, or two phones of the same platform, do not receive from each
+  /// other. Fixing that needs a device id on the clipboard row.
+  static bool isForThisDevice(String? senderName, List<String>? targets) =>
+      senderName != getCurrentDeviceName() &&
+      (targets == null ||
+          targets.isEmpty ||
+          targets.contains(getCurrentDeviceType()));
 
   static String? getCurrentDeviceName() {
     if (_deviceNameResolved) return _cachedDeviceName;

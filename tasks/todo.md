@@ -43,6 +43,20 @@ flutter_secure_storage's key for a data file that is deleted with the package.
 
 ## iOS: open
 
+- [ ] **iPhone Duo - check on the simulator before the next iOS build**
+      (Xcode 27.1 iPhone Duo simulator). `SideSafeArea`
+      (`lib/ui/layout/side_safe_area.dart`, PR #106) keeps content out of the
+      status strip down the right edge. Confirm closed (cover display, both
+      orientations) and fully open that nothing sits under the strip, and that
+      the strip shows the app background rather than a black bar. Then try
+      **half-folded**: the crease is a reserved region that Apple's own
+      layouts move around automatically, but ours is custom Flutter, and it
+      is not known whether Flutter on iOS reports the crease to us. Check that
+      neither the composer nor the history list, nor the divider between the
+      two panes, lands in the crease. If something does, screenshot it - the
+      fix is to read the fold and split around it. Retake the App Store
+      screenshots afterwards, and add Duo ones for the "optimized for iPhone
+      Duo" badge
 - [ ] **Share extension rewrite - confirm on device** (merged to main in
       `7d1f6d2`, `ios/ShareExtension/ShareViewController.swift`).
       The package's loader asked a document for `public.text`, got a file URL
@@ -72,12 +86,16 @@ flutter_secure_storage's key for a data file that is deleted with the package.
       on a phone holding a passphrase written by an older build - a fresh
       install cannot show it. Simulator Keychain items survive uninstalls,
       which disguised this last time
-- [ ] **Device-name entitlement - requested, awaiting Apple's approval.**
-      `com.apple.developer.device-information.user-assigned-device-name`.
-      Cosmetic: device rows already stay unique via the `identifierForVendor`
-      suffix ("iPhone 15 Pro - a1b2c3d4"). Once granted, add the key to
-      `ios/Runner/Runner.entitlements`; `initializeDeviceName()` already
-      prefers `ios.name`
+- [ ] **Device-name entitlement - granted, in `Runner.entitlements`.**
+      `com.apple.developer.device-information.user-assigned-device-name`, for
+      `com.ghostcopy.ghostcopy`. Enable it on that App ID under Certificates,
+      Identifiers & Profiles (or let Xcode's automatic signing add it) so the
+      provisioning profile carries it, or signing fails. Then on a phone:
+      the device list and chips should read "Subaig's iPhone", not "iPhone";
+      the `· 1A2B3C4D` uniqueness suffix is still stored but hidden by
+      `Device.displayName`. The first launch registers a new row under the
+      new name and `_releaseTokenFromStaleRows` drops the old one, so only
+      one entry should be left for the phone
 - [ ] `flutter logs` returns nothing from a profile build on device. The
       background isolate is only observable by writing files to the app
       container and reading them with `devicectl device info files`

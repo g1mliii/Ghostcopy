@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../repositories/clipboard_repository.dart';
 import '../../utils/platform_label.dart';
 import '../device_service.dart';
+import '../saved_device_list.dart';
 
 /// Concrete implementation of IDeviceService
 ///
@@ -13,11 +14,20 @@ import '../device_service.dart';
 /// Desktop devices register without FCM tokens.
 /// Mobile devices will add FCM tokens when implemented.
 class DeviceService implements IDeviceService {
-  /// Constructor with optional Supabase client for testing
-  DeviceService({SupabaseClient? supabaseClient})
-    : _supabase = supabaseClient ?? Supabase.instance.client;
+  /// Constructor with optional client and device identity providers for testing.
+  DeviceService({
+    SupabaseClient? supabaseClient,
+    String Function()? deviceTypeProvider,
+    String? Function()? deviceNameProvider,
+  }) : _supabase = supabaseClient ?? Supabase.instance.client,
+       _deviceTypeProvider =
+           deviceTypeProvider ?? ClipboardRepository.getCurrentDeviceType,
+       _deviceNameProvider =
+           deviceNameProvider ?? ClipboardRepository.getCurrentDeviceName;
 
   final SupabaseClient _supabase;
+  final String Function() _deviceTypeProvider;
+  final String? Function() _deviceNameProvider;
   bool _initialized = false;
   String? _currentDeviceId;
 
@@ -61,6 +71,55 @@ class DeviceService implements IDeviceService {
     if (_supabase.auth.currentUser == null) {
       throw StateError('User not authenticated. Cannot register device.');
     }
+  }
+
+  /// Rename this installation's existing iOS row without needing a push token.
+  ///
+  /// The entitlement changes the readable prefix, but keeps the stable suffix.
+  /// Reusing the row preserves its id (saved destinations) and any stored token.
+  /// Returns older duplicates and their tokens for safe cleanup after registration.
+  Future<List<({String id, String? fcmToken})>> _migrateIosRegistration({
+    required String userId,
+    required String deviceType,
+    required String currentName,
+  }) async {
+    if (deviceType != 'ios') return const [];
+    final suffix = RegExp(
+      r' · [0-9A-Fa-f]{8}$',
+    ).firstMatch(currentName)?.group(0);
+    if (suffix == null) return const [];
+
+    final rows = await _supabase
+        .from('devices')
+        .select('id,device_name,fcm_token')
+        .eq('user_id', userId)
+        .eq('device_type', deviceType)
+        .like('device_name', '%$suffix');
+    final staleRows = rows
+        .where((row) => row['device_name'] != currentName)
+        .toList();
+
+    if (staleRows.isNotEmpty &&
+        !rows.any((row) => row['device_name'] == currentName)) {
+      final previous = staleRows.removeAt(0);
+      await _supabase
+          .from('devices')
+          .update({'device_name': currentName})
+          .eq('user_id', userId)
+          .eq('device_type', deviceType)
+          .eq('id', previous['id'] as String)
+          .select('id')
+          .single();
+    }
+
+    // Lookup/rename failures deliberately propagate to registration's handler:
+    // inserting anyway would recreate the duplicate on every tokenless launch.
+    return staleRows
+        .map(
+          (row) =>
+              (id: row['id'] as String, fcmToken: row['fcm_token'] as String?),
+        )
+        .toList();
   }
 
   /// Free this device's push token from whatever row still holds it.
@@ -147,13 +206,18 @@ class DeviceService implements IDeviceService {
 
     try {
       final userId = _supabase.auth.currentUser!.id;
-      final deviceType = ClipboardRepository.getCurrentDeviceType();
+      final deviceType = _deviceTypeProvider();
       final deviceName =
-          ClipboardRepository.getCurrentDeviceName() ??
-          '${platformLabel(deviceType)} Device';
+          _deviceNameProvider() ?? '${platformLabel(deviceType)} Device';
 
       debugPrint(
         '[DeviceService] Registering device: $deviceType ($deviceName)',
+      );
+
+      final staleIosRows = await _migrateIosRegistration(
+        userId: userId,
+        deviceType: deviceType,
+        currentName: deviceName,
       );
 
       await _releaseTokenFromStaleRows(
@@ -180,10 +244,38 @@ class DeviceService implements IDeviceService {
             if (fcmToken != null && fcmToken.isNotEmpty) 'fcm_token': fcmToken,
             'last_active': DateTime.now().toUtc().toIso8601String(),
           }, onConflict: 'user_id,device_type,device_name')
-          .select('id')
+          .select('id,fcm_token')
           .single();
 
       _currentDeviceId = response['id'] as String;
+
+      if (staleIosRows.isNotEmpty) {
+        final storedToken = response['fcm_token'] as String?;
+        if ((storedToken == null || storedToken.isEmpty) &&
+            (fcmToken == null || fcmToken.isEmpty)) {
+          final staleToken = staleIosRows
+              .map((row) => row.fcmToken)
+              .where((token) => token != null && token.isNotEmpty)
+              .firstOrNull;
+          // claim_fcm_token transfers ownership atomically if the unique index
+          // rejects the update. Keep the old row if transfer cannot be confirmed.
+          if (staleToken != null && !await _applyFcmToken(staleToken)) {
+            _invalidateCache();
+            return false;
+          }
+        }
+        try {
+          await _supabase
+              .from('devices')
+              .delete()
+              .eq('user_id', userId)
+              .eq('device_type', deviceType)
+              .inFilter('id', staleIosRows.map((row) => row.id).toList());
+        } on Exception catch (e) {
+          // Registration succeeded. A later launch can retry stale-row cleanup.
+          debugPrint('[DeviceService] Could not remove stale iOS rows: $e');
+        }
+      }
 
       debugPrint(
         '[DeviceService] ✅ Device registered successfully (ID: $_currentDeviceId)',
@@ -244,8 +336,23 @@ class DeviceService implements IDeviceService {
     return await _fetchDevices() ?? [];
   }
 
+  @override
+  Future<List<Device>> getSavedDevices() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return const [];
+    return SavedDeviceList.load(userId);
+  }
+
   /// The devices from the server, cached; null when the fetch failed.
   Future<List<Device>?> _fetchDevices() async {
+    // Read before the request: a sign-out while it is out clears the saved
+    // list, and this fetch must not write it back afterwards.
+    final savedGeneration = SavedDeviceList.generation;
+    // And edits: a rename or removal accepted while the request is out may
+    // not be in this answer, so it is applied to it before anything is
+    // cached or saved.
+    final editsBefore = _editsDuringFetch.length;
+    _fetchesOut++;
     try {
       final userId = _supabase.auth.currentUser!.id;
 
@@ -255,13 +362,40 @@ class DeviceService implements IDeviceService {
           .eq('user_id', userId)
           .order('last_active', ascending: false);
 
-      final devices = (response as List)
+      var devices = (response as List)
           .map((json) => Device.fromJson(json as Map<String, dynamic>))
           .toList();
+
+      // The account changed while the request was out - a switch straight
+      // to another account, which clears nothing. This list is the old
+      // account's: caching or saving it would show it to the new one.
+      bool stillOwner() => _supabase.auth.currentUser?.id == userId;
+      if (!stillOwner()) {
+        debugPrint('[DeviceService] Account changed mid-fetch - dropped');
+        return null;
+      }
+
+      // Edits the server accepted while this was out: the answer may predate
+      // them, and the server has them, so the answer with them applied is
+      // the server's list. Saved as such - not skipped, which lost whatever
+      // else the answer brought (a device added elsewhere). An edit accepted
+      // after this point queues its own update behind this save.
+      for (final (:owner, :change) in _editsDuringFetch.skip(editsBefore)) {
+        if (owner == userId) devices = change(devices);
+      }
 
       // Update cache
       _cachedDevices = devices;
       _lastDeviceFetch = DateTime.now();
+      // And the copy the next launch draws first. See SavedDeviceList.
+      unawaited(
+        SavedDeviceList.save(
+          userId,
+          devices,
+          generation: savedGeneration,
+          stillOwner: stillOwner,
+        ),
+      );
 
       debugPrint(
         '[DeviceService] Fetched and cached ${devices.length} device(s)',
@@ -276,6 +410,9 @@ class DeviceService implements IDeviceService {
     } on Exception catch (e) {
       debugPrint('[DeviceService] ❌ Failed to fetch devices: $e');
       return null;
+    } finally {
+      // Kept only while a fetch is out to apply them to; see _updateSaved.
+      if (--_fetchesOut == 0) _editsDuringFetch.clear();
     }
   }
 
@@ -356,6 +493,32 @@ class DeviceService implements IDeviceService {
   }
 
   @override
+  Future<bool> updateWnsChannelUri(String channelUri) async {
+    _ensureInitialized();
+    if (_supabase.auth.currentUser == null || _currentDeviceId == null) {
+      debugPrint('[DeviceService] ⚠️ Cannot store WNS channel: not registered');
+      return false;
+    }
+    try {
+      // Claimed rather than written: it also takes the URI off a row of an
+      // account this install has left, which RLS would not let us touch.
+      final claimed = await _supabase.rpc<bool>(
+        'claim_wns_channel',
+        params: {'p_device_id': _currentDeviceId, 'p_uri': channelUri},
+      );
+      // Length only: the URI is a credential for pushing to this install.
+      debugPrint(
+        '[DeviceService] WNS channel ${claimed ? "stored" : "not stored"} '
+        '(${channelUri.length} chars)',
+      );
+      return claimed;
+    } on Exception catch (e) {
+      debugPrint('[DeviceService] ❌ Failed to store WNS channel: $e');
+      return false;
+    }
+  }
+
+  @override
   Future<void> updateLastActive() async {
     _ensureInitialized();
     _ensureAuthenticated();
@@ -431,6 +594,9 @@ class DeviceService implements IDeviceService {
       return false;
     }
 
+    // The account the edit was made in: the saved list it updates is that
+    // one's, even if the account changes while the request is out.
+    final userId = _supabase.auth.currentUser?.id;
     try {
       await _supabase
           .from('devices')
@@ -441,6 +607,15 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device was updated
       _invalidateCache();
+      _updateSaved(
+        userId,
+        (devices) => [
+          for (final device in devices)
+            device.id == deviceId
+                ? device.copyWith(deviceName: trimmedName)
+                : device,
+        ],
+      );
 
       return true;
     } on PostgrestException catch (e) {
@@ -465,6 +640,8 @@ class DeviceService implements IDeviceService {
       return false;
     }
 
+    // As in updateDeviceName.
+    final userId = _supabase.auth.currentUser?.id;
     try {
       await _supabase.from('devices').delete().eq('id', deviceId);
 
@@ -472,6 +649,13 @@ class DeviceService implements IDeviceService {
 
       // Invalidate cache since device was removed
       _invalidateCache();
+      _updateSaved(
+        userId,
+        (devices) => [
+          for (final device in devices)
+            if (device.id != deviceId) device,
+        ],
+      );
 
       return true;
     } on PostgrestException catch (e) {
@@ -505,6 +689,27 @@ class DeviceService implements IDeviceService {
     return _cachedDevices != null &&
         _lastDeviceFetch != null &&
         DateTime.now().difference(_lastDeviceFetch!) < _cacheExpiry;
+  }
+
+  /// Renames and removals the server accepted while a fetch was out. That
+  /// fetch's answer may predate them; see _fetchDevices. Each carries the
+  /// account it was made in, and applies only to that account's fetches.
+  final _editsDuringFetch =
+      <({String owner, List<Device> Function(List<Device> devices) change})>[];
+  int _fetchesOut = 0;
+
+  /// Carry a change the server has accepted into the saved list, so the next
+  /// launch does not draw the list from before it. See SavedDeviceList.update.
+  /// [userId] is the account the edit was made in, read before its request.
+  void _updateSaved(
+    String? userId,
+    List<Device> Function(List<Device> devices) change,
+  ) {
+    if (userId == null) return;
+    if (_fetchesOut > 0) {
+      _editsDuringFetch.add((owner: userId, change: change));
+    }
+    unawaited(SavedDeviceList.update(userId, change));
   }
 
   /// Invalidate the device cache

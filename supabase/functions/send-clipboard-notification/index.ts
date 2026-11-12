@@ -4,6 +4,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
+import { sendWnsRaw, wnsConfigured } from './wns.ts';
+import { fcmMessageFor, fcmTargets, pushTargets, recipientDevices, wnsTargets } from './messages.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
 // This prevents "App already exists" errors and speeds up warm starts.
 const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
@@ -163,6 +165,7 @@ Deno.serve(async (req)=>{
     // Handle webhook payload vs client invocation
     let clipboard_id = null;
     let device_type = null;
+    let sender_name: string | null = null;
     let target_device_types;
     let content_preview = null;
     let clipboardItemFromWebhook = null;
@@ -171,6 +174,7 @@ Deno.serve(async (req)=>{
       const record = body.record;
       clipboard_id = record.id;
       device_type = record.device_type;
+      sender_name = typeof record.device_name === 'string' ? record.device_name : null;
       target_device_types = normalizeTargetDeviceTypes(record.target_device_type);
       clipboardItemFromWebhook = {
         id: record.id,
@@ -203,9 +207,9 @@ Deno.serve(async (req)=>{
     ].includes(device_type)) {
       return json({ error: 'Invalid device_type' }, 400);
     }
-    // Note: Desktop-only filtering is now handled by database trigger.
-    // This edge function is only called if mobile devices are targeted.
-    // See: supabase/migrations/20260104000002_replace_webhook_with_smart_trigger.sql
+    // The insert trigger calls this only when a targeted device holds a push
+    // token - FCM for phones and macOS, WNS for Windows. See
+    // supabase/migrations/20261111120000_desktop_push.sql.
     // ------------------------------------------------------------------
     // FETCH CLIPBOARD ITEM TO DETERMINE CONTENT TYPE & CONTENT
     // ------------------------------------------------------------------
@@ -215,13 +219,14 @@ Deno.serve(async (req)=>{
       // Recency check: only allow notifications for items created in the last 5 minutes.
       // Prevents replay-based notification spam using old clipboard_ids.
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: dbItem, error: clipboardError } = await db.from('clipboard').select('id, content_type, rich_text_format, file_size_bytes, content').eq('id', clipboard_id).eq('user_id', userId) // Security: ensure user owns this item
+      const { data: dbItem, error: clipboardError } = await db.from('clipboard').select('id, device_name, content_type, rich_text_format, file_size_bytes, content').eq('id', clipboard_id).eq('user_id', userId) // Security: ensure user owns this item
       .gte('created_at', fiveMinutesAgo).single();
       if (clipboardError || !dbItem) {
         console.error('[Notification] Failed to fetch clipboard item:', clipboardError);
         return json({ error: 'Clipboard item not found' }, 404);
       }
       clipboardItem = dbItem;
+      sender_name = dbItem.device_name ?? null;
     }
     const contentType = clipboardItem.content_type || 'text';
     const isImage = contentType.startsWith('image_');
@@ -244,7 +249,7 @@ Deno.serve(async (req)=>{
     const targetText = target_device_types && target_device_types.length > 0 ? target_device_types.join(', ') : 'all devices';
     console.log(`[Notification] User ${userId} sending ${contentType} from ${device_type} to ${targetText}`);
     // Query devices table for FCM tokens.
-    let query = db.from('devices').select('id, device_type, device_name, fcm_token').eq('user_id', userId).neq('device_type', device_type); // Skip self-notifications: don't send to sending device type
+    let query = db.from('devices').select('id, device_type, device_name, fcm_token, wns_channel_uri').eq('user_id', userId);
     // Filter by target device types if specified
     if (target_device_types && target_device_types.length > 0) {
       query = query.in('device_type', target_device_types);
@@ -256,7 +261,7 @@ Deno.serve(async (req)=>{
       // net._http_response - the logs do not carry console output.
       return json({ error: 'Failed to query devices', detail: devicesError.message ?? String(devicesError) }, 500);
     }
-    const devices = rawDevices ?? [];
+    const devices = recipientDevices(rawDevices ?? [], device_type, sender_name);
     if (devices.length === 0) {
       console.log('[Notification] No devices found with FCM tokens');
       return json({
@@ -284,76 +289,28 @@ Deno.serve(async (req)=>{
     // an iPhone that stopped receiving showed only devices_failed: 1, with
     // nothing to tell an APNs credential problem from a dead token.
     const failures = [];
+    const warnings = [];
+    // Desktop push can be switched off after desktops have registered; their
+    // rows keep their tokens, so the flag is honoured here, at sending.
+    const { data: desktopPushFlag } = await supabaseAdmin.from('app_config').select('enabled').eq('key', 'desktop_push_enabled').maybeSingle();
+    const targets = pushTargets(devices, desktopPushFlag?.enabled === true);
+    const clip = {
+      clipboardId: clipboard_id.toString(),
+      senderType: device_type,
+      contentType,
+      title: notificationTitle,
+      body: notificationBody,
+      isMedia: isImage || isFile
+    };
+    // WNS sends start now and are collected after FCM: the two do not depend
+    // on each other, and awaiting one before starting the other added a full
+    // external round trip to every clip for an account with both.
+    const windowsDevices = wnsTargets(targets);
+    const wnsSends = windowsDevices.length > 0 && wnsConfigured() ? Promise.all(windowsDevices.map((device)=>sendWnsRaw(device.wns_channel_uri as string, clip.clipboardId))) : null;
     if (admin.apps.length > 0) {
-      // Filter out devices without tokens
-      const validDevices = devices.filter((device)=>typeof device.fcm_token === 'string' && device.fcm_token.length > 0);
+      const validDevices = fcmTargets(targets);
       if (validDevices.length > 0) {
-        // Construct message payloads
-        const messages = validDevices.map((device)=>({
-            token: device.fcm_token,
-            notification: {
-              title: notificationTitle,
-              body: notificationBody
-            },
-            data: {
-              // Data values MUST be strings in FCM
-              clipboard_id: clipboard_id.toString(),
-              device_type: device_type,
-              content_type: contentType
-            },
-            // Tapping routes straight to CopyActivity - a translucent, no-history
-            // activity that writes the clipboard and finishes - instead of cold
-            // starting the full Flutter app (~2.5s, and visibly "opens GhostCopy").
-            //
-            // Safe despite CopyActivity being exported="false": the click_action
-            // PendingIntent is constructed by the FCM SDK inside this app's own
-            // process, and Android permits same-UID callers to start non-exported
-            // components. No other app can reach COPY_ACTION.
-            //
-            // The push still carries no clipboard value - CopyActivity reads the
-            // plaintext the background isolate cached on arrival, and falls back to
-            // opening the app when that cache misses.
-            android: {
-              priority: 'high',
-              notification: {
-                clickAction: 'com.ghostcopy.ghostcopy.COPY_ACTION',
-                channelId: 'ghostcopy_notifications'
-              }
-            },
-            // APNs configuration for iOS.
-            //
-            // No category, because iOS notifications carry no long-press
-            // actions: the Copy button needed the clip already staged on the
-            // device by a background isolate, and iOS wake-ups are throttled on
-            // battery and usage and refused outright for a swiped-away app, so
-            // it worked only sometimes. Tapping opens the app and copies, for
-            // text and files alike. See AppDelegate.swift.
-            //
-            // No content-available either, for the same reason - waking the app
-            // to prefetch a clip nothing will read is just battery.
-            //
-            // The alert is overridden here because the shared `notification`
-            // above says "Tap to copy", which is true on Android, where the tap
-            // routes to CopyActivity and the app never appears. On iOS the tap
-            // opens GhostCopy, so promising a bare copy would misdescribe what
-            // happens next.
-            apns: {
-              headers: {
-                'apns-priority': '10'
-              },
-              payload: {
-                aps: {
-                  'mutable-content': 1,
-                  alert: {
-                    title: notificationTitle,
-                    body: isImage || isFile
-                      ? 'Tap to open in GhostCopy'
-                      : 'Tap to open and copy'
-                  }
-                }
-              }
-            }
-          }));
+        const messages = validDevices.map((device)=>fcmMessageFor(device, clip));
         try {
           const batchResponse = await admin.messaging().sendEach(messages);
           successCount = batchResponse.successCount;
@@ -406,7 +363,43 @@ Deno.serve(async (req)=>{
     } else {
       console.error('[Notification] Firebase Admin not initialized (Check secrets)');
     }
-    const warnings = [];
+    // ------------------------------------------------------------------
+    // WNS (packaged Windows desktops)
+    // ------------------------------------------------------------------
+    if (windowsDevices.length > 0) {
+      if (wnsSends == null) {
+        // Not a failure of the device: it still has realtime and the tray
+        // health check. Said in the response so it is visible in
+        // net._http_response.
+        warnings.push(`WNS credentials not configured; ${windowsDevices.length} Windows device(s) not pushed`);
+      } else {
+        const results = await wnsSends;
+        const goneDeviceIds: string[] = [];
+        results.forEach((result, idx)=>{
+          if (result.ok) {
+            successCount++;
+            return;
+          }
+          failureCount++;
+          failures.push({
+            device_type: 'windows',
+            device_name: windowsDevices[idx].device_name ?? null,
+            code: result.code,
+            message: result.message
+          });
+          if (result.gone) goneDeviceIds.push(windowsDevices[idx].id);
+        });
+        if (goneDeviceIds.length > 0) {
+          // The app asks for a fresh channel on its next launch.
+          const { error: clearError } = await supabaseAdmin.from('devices').update({
+            wns_channel_uri: null
+          }).in('id', goneDeviceIds);
+          if (clearError) {
+            console.error('[Notification] Failed to clear expired WNS channels:', clearError);
+          }
+        }
+      }
+    }
     if (lastActiveUpdate != null) {
       const { error: lastActiveError } = await lastActiveUpdate;
       if (lastActiveError) {

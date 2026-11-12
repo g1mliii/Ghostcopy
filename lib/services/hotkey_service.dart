@@ -112,3 +112,15 @@ class UnsupportedHotkeyException implements Exception {
   @override
   String toString() => 'UnsupportedHotkeyException: unsupported key "$key"';
 }
+
+/// The combination is already GhostCopy's other global shortcut.
+///
+/// A subtype of [UnsupportedHotkeyException] so existing handlers still treat
+/// it as a refusal, while Settings can say why instead of calling a perfectly
+/// valid key unsupported.
+class HotkeyInUseException extends UnsupportedHotkeyException {
+  HotkeyInUseException(HotKey hotkey) : super(hotkey.key);
+
+  @override
+  String toString() => 'HotkeyInUseException: "$key" is already in use';
+}

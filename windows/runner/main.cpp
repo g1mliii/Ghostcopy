@@ -34,6 +34,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // under 60 seconds. --send-file is a one-shot upload that should never come
   // back as a tray app; a second instance handing its arguments over also
   // registers, but it exits before any update could catch it.
+  // Started by a copy whose GPU was reset under it (FlutterWindow::
+  // RestartAfterGpuReset): wait for that copy to exit before starting the
+  // engine, so SingleInstance finds the port free rather than handing these
+  // arguments to the dying copy and quitting. Bounded, in case it hangs on
+  // the way out; then this copy goes on and SingleInstance decides.
+  if (const wchar_t* pid_flag = std::wcsstr(command_line, L"--wait-for-pid=")) {
+    const DWORD pid = static_cast<DWORD>(
+        std::wcstoul(pid_flag + std::wcslen(L"--wait-for-pid="), nullptr, 10));
+    if (HANDLE previous = ::OpenProcess(SYNCHRONIZE, FALSE, pid)) {
+      ::WaitForSingleObject(previous, 15000);
+      ::CloseHandle(previous);
+    }
+  }
+
   if (std::wcsstr(command_line, L"--send-file") == nullptr) {
     ::RegisterApplicationRestart(
         L"--launched-at-startup",
