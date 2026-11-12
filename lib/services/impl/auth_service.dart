@@ -14,6 +14,7 @@ import '../auth_service.dart';
 import '../device_service.dart';
 import '../encryption_service.dart';
 import '../google_sign_in_config.dart';
+import '../saved_device_list.dart';
 import 'encryption_service.dart';
 import 'pkce_verifier_store.dart';
 
@@ -1047,6 +1048,10 @@ class AuthService implements IAuthService {
 
     // A confirmation asked for before signing out is not one to act on after.
     await _clearPendingConfirmation();
+
+    // The device names the chips are drawn from before the network answers.
+    // Reads already check the owner; this keeps them off disk after sign-out.
+    await SavedDeviceList.clear();
 
     debugPrint('[AuthService] Reset encryption and repository state');
   }

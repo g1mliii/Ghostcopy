@@ -21,8 +21,23 @@ class DevicePanel extends StatefulWidget {
 
 class _DevicePanelState extends State<DevicePanel> {
   List<Device>? _cachedDevices;
+
+  /// Whether the spinner shows: a fetch is out and there is nothing to show
+  /// in the meantime.
   bool _isLoading = false;
+
+  /// Whether a fetch is out at all. Separate from [_isLoading], which goes
+  /// false as soon as a saved list is drawn - guarding on that let a refresh
+  /// tapped meanwhile start a second fetch, and the slower of the two won.
+  bool _fetching = false;
+
   String? _error;
+
+  /// Renames and removals that have succeeded while this panel is open, as
+  /// changes to a device list. A fetch that started before one finished
+  /// answers with the list from before it; the edits made since are applied
+  /// to that answer rather than lost under it.
+  final _edits = <List<Device> Function(List<Device> devices)>[];
 
   @override
   void initState() {
@@ -30,32 +45,45 @@ class _DevicePanelState extends State<DevicePanel> {
     _loadDevices();
   }
 
-  Future<void> _loadDevices({bool forceRefresh = false}) async {
-    if (_isLoading) return;
+  /// Fetch the devices, drawing the list the last launch saved while that
+  /// runs on first open, rather than a spinner. See fetchDevicesShowingSaved.
+  Future<void> _loadDevices() async {
+    if (_fetching) return;
+    _fetching = true;
 
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
-    try {
-      final devices = await widget.deviceService.getUserDevices(
-        forceRefresh: forceRefresh,
-      );
-      if (mounted) {
+    final editsBefore = _edits.length;
+    var devices = await fetchDevicesShowingSaved(
+      widget.deviceService,
+      onSaved: (saved) {
+        if (!mounted || _cachedDevices != null) return;
         setState(() {
-          _cachedDevices = devices;
+          _cachedDevices = saved;
           _isLoading = false;
         });
-      }
-    } on Exception catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to load devices: $e';
-          _isLoading = false;
-        });
-      }
+      },
+    );
+    // The saved list is drawn and usable while the fetch is out, so a rename
+    // or removal can finish before it answers. The server accepted it, so the
+    // answer plus the edit is the server's list now - and keeps whatever else
+    // the answer brought, which asking again could lose to a failed request.
+    for (final edit in _edits.skip(editsBefore)) {
+      if (devices != null) devices = edit(devices);
     }
+    _fetching = false;
+    if (!mounted) return;
+    setState(() {
+      if (devices != null) {
+        _cachedDevices = devices;
+      } else if (_cachedDevices == null) {
+        _error = 'Failed to load devices. Check your connection.';
+      }
+      _isLoading = false;
+    });
   }
 
   Future<bool> _handleRename(String deviceId, String newName) async {
@@ -63,33 +91,41 @@ class _DevicePanelState extends State<DevicePanel> {
       deviceId,
       newName,
     );
-    // mounted, not just success: the panel can be closed while the rename is
-    // in flight, and setState after dispose throws.
-    if (success && mounted) {
-      // Update local cache to reflect name change
-      setState(() {
-        _cachedDevices = _cachedDevices?.map((device) {
-          if (device.id == deviceId) {
-            return device.copyWith(deviceName: newName);
-          }
-          return device;
-        }).toList();
-      });
+    if (success) {
+      _applyEdit(
+        (devices) => [
+          for (final device in devices)
+            device.id == deviceId
+                ? device.copyWith(deviceName: newName)
+                : device,
+        ],
+      );
     }
     return success;
   }
 
   Future<bool> _handleRemove(String deviceId) async {
     final success = await widget.deviceService.removeDevice(deviceId);
-    if (success && mounted) {
-      // Remove from local cache
-      setState(() {
-        _cachedDevices = _cachedDevices
-            ?.where((d) => d.id != deviceId)
-            .toList();
-      });
+    if (success) {
+      _applyEdit(
+        (devices) => [
+          for (final device in devices)
+            if (device.id != deviceId) device,
+        ],
+      );
     }
     return success;
+  }
+
+  /// Draws a rename or removal the server has accepted, and keeps it for a
+  /// fetch still out to apply to its answer.
+  void _applyEdit(List<Device> Function(List<Device> devices) edit) {
+    _edits.add(edit);
+    // The panel can be closed while the request is in flight, and setState
+    // after dispose throws.
+    if (!mounted) return;
+    final devices = _cachedDevices;
+    if (devices != null) setState(() => _cachedDevices = edit(devices));
   }
 
   @override
@@ -102,7 +138,7 @@ class _DevicePanelState extends State<DevicePanel> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'YOUR DEVICES',
                 style: TextStyle(
                   fontSize: 11,
@@ -115,7 +151,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 16),
                   color: GhostColors.textMuted,
-                  onPressed: () => _loadDevices(forceRefresh: true),
+                  onPressed: _loadDevices,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
                     minWidth: 24,
@@ -151,7 +187,7 @@ class _DevicePanelState extends State<DevicePanel> {
                   Expanded(
                     child: Text(
                       _error!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         color: GhostColors.textSecondary,
                       ),
@@ -167,7 +203,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Icon(
                     Icons.devices_other,
@@ -224,7 +260,7 @@ class _DevicePanelState extends State<DevicePanel> {
                 color: GhostColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(

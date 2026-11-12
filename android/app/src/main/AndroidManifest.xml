@@ -97,6 +97,19 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+            <!-- Several items at once: photos picked together, or an app that
+                 shares a link alongside its preview. normalizeSharedAttachments
+                 in MainActivity already handles SEND_MULTIPLE; without this
+                 filter Android never offered GhostCopy for it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <!-- Direct Share; see MainActivity.publishShareShortcut. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/share_targets" />
         </activity>
 
         <!-- Transparent copy activity for notifications -->

@@ -116,6 +116,9 @@ def verify(app, require_updater=False, sparkle_bin=None):
         check(any(fnmatch.fnmatchcase(group, pattern) for pattern in allowed.get('keychain-access-groups', [])), 'Profile does not authorize Keychain group')
     # Restricted like the Keychain group: signed in but missing from the
     # profile, and macOS refuses to launch the app at all.
+    if 'com.apple.developer.aps-environment' in entitlements:
+        check(entitlements['com.apple.developer.aps-environment'] == 'production', 'Release build is not on the production APNs environment')
+        check(allowed.get('com.apple.developer.aps-environment') == 'production', 'Profile does not authorize push; app will not launch')
     if 'com.apple.developer.applesignin' in entitlements:
         check('com.apple.developer.applesignin' in allowed, 'Profile does not authorize Sign in with Apple; app will not launch')
     with tempfile.TemporaryDirectory() as directory:

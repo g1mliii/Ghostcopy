@@ -16,7 +16,26 @@ class SettingsService implements ISettingsService {
   SharedPreferences? _prefs;
   bool _initialized = false;
 
+  @override
+  Future<AppThemeMode> getThemeMode() async {
+    _ensureInitialized();
+    final saved = _prefs!.getString(_keyThemeMode);
+    return AppThemeMode.values.firstWhere(
+      (mode) => mode.name == saved,
+      orElse: () => AppThemeMode.system,
+    );
+  }
+
+  @override
+  Future<void> setThemeMode(AppThemeMode mode) async {
+    _ensureInitialized();
+    if (!await _prefs!.setString(_keyThemeMode, mode.name)) {
+      throw Exception('Could not save appearance preference');
+    }
+  }
+
   // Settings keys
+  static const String _keyThemeMode = 'theme_mode';
   static const String _keyAutoSendEnabled = 'auto_send_enabled';
   static const String _keyStaleDurationMinutes =
       'clipboard_stale_duration_minutes';
@@ -224,6 +243,24 @@ class SettingsService implements ISettingsService {
     return HotKey.fromStorageString(_prefs!.getString(_keyHotkey));
   }
 
+  static const _keySendHotkey = 'send_clipboard_hotkey';
+
+  @override
+  Future<HotKey?> getSendHotkey() async {
+    _ensureInitialized();
+    return HotKey.fromStorageString(_prefs!.getString(_keySendHotkey));
+  }
+
+  @override
+  Future<void> setSendHotkey(HotKey? hotkey) async {
+    _ensureInitialized();
+    if (hotkey == null) {
+      await _prefs!.remove(_keySendHotkey);
+    } else {
+      await _prefs!.setString(_keySendHotkey, hotkey.toStorageString());
+    }
+  }
+
   @override
   Future<void> setHotkey(HotKey hotkey) async {
     _ensureInitialized();
@@ -351,26 +388,28 @@ class SettingsService implements ISettingsService {
 
   // ========== FEATURE FLAGS ==========
 
+  @override
+  Future<bool> isDesktopPushEnabled() => _readFlag('desktop_push_enabled');
+
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   @override
-  Future<bool> isHybridModeEnabled() async {
+  Future<bool> isHybridModeEnabled() => _readFlag('hybrid_mode_enabled');
+
+  /// A feature flag from the app_config table; false when it is missing or
+  /// cannot be read.
+  Future<bool> _readFlag(String key) async {
     try {
       final config = await Supabase.instance.client
           .from('app_config')
           .select('enabled')
-          .eq('key', 'hybrid_mode_enabled')
+          .eq('key', key)
           .maybeSingle();
-
-      final isEnabled = config?['enabled'] as bool? ?? false;
-
-      debugPrint(
-        '[Settings] 🎛️  Hybrid mode: ${isEnabled ? "ENABLED" : "DISABLED"}',
-      );
-
-      return isEnabled;
+      final enabled = config?['enabled'] as bool? ?? false;
+      debugPrint('[Settings] 🎛️  $key: $enabled');
+      return enabled;
     } on Exception catch (e) {
-      debugPrint('[Settings] ⚠️  Failed to check hybrid mode flag: $e');
-      return false; // Default to disabled if error
+      debugPrint('[Settings] ⚠️  Failed to read flag $key: $e');
+      return false;
     }
   }
 

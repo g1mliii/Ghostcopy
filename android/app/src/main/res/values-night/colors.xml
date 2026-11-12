@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark launcher icon and launch/window background for system dark mode. -->
+    <color name="ghost_icon_background">#FF0F0F13</color>
+    <color name="ghost_background">#FF0F0F13</color>
+</resources>

@@ -15,5 +15,9 @@
 	<array>
 		<string>$(AppIdentifierPrefix)com.ghostcopy.ghostcopy</string>
 	</array>
+	<!-- No APNs entitlement here, deliberately: it is restricted, so a local
+	     `flutter run -d macos` would need a development profile with Push
+	     before it could even launch. Debug builds stay on realtime; test push
+	     with a release build. -->
 </dict>
 </plist>

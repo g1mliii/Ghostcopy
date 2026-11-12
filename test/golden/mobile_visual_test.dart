@@ -14,261 +14,242 @@ import 'package:ghostcopy/ui/theme/typography.dart';
 ///
 /// Run: flutter test --update-goldens test/golden/mobile_visual_test.dart
 void main() {
-  testWidgets('mobile send screen chrome', (tester) async {
-    tester.view
-      ..physicalSize = const Size(1080, 1600)
-      ..devicePixelRatio = 3.0;
-    addTearDown(tester.view.reset);
+  final android = TargetPlatformVariant.only(TargetPlatform.android);
+  testWidgets(
+    'mobile send screen chrome',
+    (tester) async {
+      tester.view
+        ..physicalSize = const Size(1200, 1600)
+        ..devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.darkTheme,
-        home: Scaffold(
-          backgroundColor: GhostColors.background,
-          appBar: AppBar(
-            toolbarHeight: 62,
-            titleSpacing: GhostSpacing.gutter,
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.platformTheme,
+          home: Scaffold(
             backgroundColor: GhostColors.background,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            surfaceTintColor: Colors.transparent,
-            title: Row(
+            appBar: AppBar(
+              toolbarHeight: 62,
+              titleSpacing: GhostSpacing.gutter,
+              backgroundColor: GhostColors.background,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              surfaceTintColor: Colors.transparent,
+              title: Text(
+                'GhostCopy',
+                style: GhostTypography.headline.copyWith(
+                  fontSize: 17,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () {},
+                  color: GhostColors.textMuted,
+                  tooltip: 'Settings',
+                ),
+                const SizedBox(width: 1),
+              ],
+            ),
+            body: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                GhostSpacing.gutter,
+                8,
+                GhostSpacing.gutter,
+                24,
+              ),
               children: [
-                Container(
-                  width: 30,
-                  height: 30,
+                // Composer
+                DecoratedBox(
                   decoration: BoxDecoration(
-                    color: GhostColors.primary,
-                    borderRadius: BorderRadius.circular(9),
+                    color: GhostColors.surface,
+                    borderRadius: BorderRadius.circular(
+                      GhostSpacing.surfaceRadius,
+                    ),
+                    border: Border.all(color: GhostColors.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                        child: Text(
+                          'Paste or type something…',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: GhostColors.textMuted,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                      Divider(height: 1, color: GhostColors.border),
+                      Padding(
+                        // 14 here plus Material's 2dp inset inside a zero-padding
+                        // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
+                        // the text above it and the history rows below. Measured from rendered
+                        // pixels rather than derived, because the button's internal geometry is
+                        // not obvious from its API.
+                        padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
+                        child: Row(
+                          children: [
+                            TextButton.icon(
+                              onPressed: () {},
+                              icon: const Icon(
+                                Icons.attach_file_rounded,
+                                size: 17,
+                              ),
+                              label: const Text('Attach'),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                foregroundColor: GhostColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  'GhostCopy',
-                  style: GhostTypography.headline.copyWith(
-                    fontSize: 17,
-                    letterSpacing: -0.2,
+                const SizedBox(height: 15),
+                // Chips
+                SizedBox(
+                  height: GhostSpacing.chipHeight,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _chip('All devices', Icons.devices_rounded, true),
+                      const SizedBox(width: 8),
+                      _chip('Windows', Icons.laptop_windows, false),
+                      const SizedBox(width: 8),
+                      _chip('Android', Icons.phone_android, false),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 13),
+                // Send button
+                SizedBox(
+                  height: GhostSpacing.sendButtonHeight,
+                  child: FilledButton.icon(
+                    onPressed: () {},
+                    icon: const Icon(Icons.send_rounded, size: 18),
+                    label: const Text('Send to all devices'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: GhostColors.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          GhostSpacing.buttonRadius,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: GhostSpacing.sectionLoose),
+                // History
+                Row(
+                  children: [
+                    Text(
+                      'Clipboard history',
+                      style: GhostTypography.headline.copyWith(fontSize: 15),
+                    ),
+                    const SizedBox(width: 7),
+                    Text(
+                      '3 recent',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: GhostColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: GhostColors.surface,
+                    borderRadius: BorderRadius.circular(
+                      GhostSpacing.controlRadius,
+                    ),
+                    border: Border.all(color: GhostColors.border),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.search_rounded,
+                        size: 18,
+                        color: GhostColors.textMuted,
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Search clips…',
+                        style: TextStyle(color: GhostColors.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: GhostSpacing.sectionTight),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: GhostColors.surface,
+                    borderRadius: BorderRadius.circular(
+                      GhostSpacing.surfaceRadius,
+                    ),
+                    border: Border.all(color: GhostColors.border),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(
+                      GhostSpacing.surfaceRadiusInner,
+                    ),
+                    child: Column(
+                      children: [
+                        _row('Some copied text from the desktop app', null),
+                        Divider(
+                          height: 1,
+                          indent: 16,
+                          endIndent: 16,
+                          color: GhostColors.border,
+                        ),
+                        _row('report.pdf', Icons.picture_as_pdf),
+                        Divider(
+                          height: 1,
+                          indent: 16,
+                          endIndent: 16,
+                          color: GhostColors.border,
+                        ),
+                        _row('notes.txt', Icons.text_snippet),
+                      ],
+                    ),
                   ),
                 ),
               ],
             ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: () {},
-                color: GhostColors.textMuted,
-                tooltip: 'Settings',
-              ),
-              const SizedBox(width: 1),
-            ],
-          ),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              GhostSpacing.gutter,
-              8,
-              GhostSpacing.gutter,
-              24,
-            ),
-            children: [
-              // Composer
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: GhostColors.surface,
-                  borderRadius: BorderRadius.circular(
-                    GhostSpacing.surfaceRadius,
-                  ),
-                  border: Border.all(color: GhostColors.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
-                      child: Text(
-                        'Paste or type something…',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: GhostColors.textMuted,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 40),
-                    const Divider(height: 1, color: GhostColors.border),
-                    Padding(
-                      // 14 here plus Material's 2dp inset inside a zero-padding
-                      // TextButton.icon puts the Attach glyph at 16dp - the same left edge as
-                      // the text above it and the history rows below. Measured from rendered
-                      // pixels rather than derived, because the button's internal geometry is
-                      // not obvious from its API.
-                      padding: const EdgeInsets.fromLTRB(14, 4, 12, 5),
-                      child: Row(
-                        children: [
-                          TextButton.icon(
-                            onPressed: () {},
-                            icon: const Icon(
-                              Icons.attach_file_rounded,
-                              size: 17,
-                            ),
-                            label: const Text('Attach'),
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              foregroundColor: GhostColors.textMuted,
-                            ),
-                          ),
-                          const Spacer(),
-                          const Flexible(
-                            child: Text(
-                              'Nothing to send yet',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: GhostColors.textMuted,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 15),
-              // Chips
-              SizedBox(
-                height: GhostSpacing.chipHeight,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: [
-                    _chip('All devices', Icons.devices_rounded, true),
-                    const SizedBox(width: 8),
-                    _chip('Windows', Icons.laptop_windows, false),
-                    const SizedBox(width: 8),
-                    _chip('Android', Icons.phone_android, false),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 13),
-              // Send button
-              SizedBox(
-                height: GhostSpacing.sendButtonHeight,
-                child: FilledButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.send_rounded, size: 18),
-                  label: const Text('Send to all devices'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: GhostColors.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        GhostSpacing.buttonRadius,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: GhostSpacing.sectionLoose),
-              // History
-              Row(
-                children: [
-                  Text(
-                    'Clipboard history',
-                    style: GhostTypography.headline.copyWith(fontSize: 15),
-                  ),
-                  const SizedBox(width: 7),
-                  const Text(
-                    '3 recent',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: GhostColors.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Container(
-                height: 46,
-                decoration: BoxDecoration(
-                  color: GhostColors.surface,
-                  borderRadius: BorderRadius.circular(
-                    GhostSpacing.controlRadius,
-                  ),
-                  border: Border.all(color: GhostColors.border),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                alignment: Alignment.centerLeft,
-                child: const Row(
-                  children: [
-                    Icon(
-                      Icons.search_rounded,
-                      size: 18,
-                      color: GhostColors.textMuted,
-                    ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Search clips…',
-                      style: TextStyle(color: GhostColors.textMuted),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: GhostSpacing.sectionTight),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: GhostColors.surface,
-                  borderRadius: BorderRadius.circular(
-                    GhostSpacing.surfaceRadius,
-                  ),
-                  border: Border.all(color: GhostColors.border),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(
-                    GhostSpacing.surfaceRadiusInner,
-                  ),
-                  child: Column(
-                    children: [
-                      _row('Some copied text from the desktop app', null),
-                      const Divider(
-                        height: 1,
-                        indent: 16,
-                        endIndent: 16,
-                        color: GhostColors.border,
-                      ),
-                      _row('report.pdf', Icons.picture_as_pdf),
-                      const Divider(
-                        height: 1,
-                        indent: 16,
-                        endIndent: 16,
-                        color: GhostColors.border,
-                      ),
-                      _row('notes.txt', Icons.text_snippet),
-                    ],
-                  ),
-                ),
-              ),
-            ],
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    await expectLater(
-      find.byType(MaterialApp),
-      matchesGoldenFile('mobile_send_screen.png'),
-    );
-    // Skipped in normal runs on purpose. This is a diagnostic for LOOKING at
-    // the design - the emulator cannot screenshot this app, so a golden is the
-    // only way to see rendered pixels. It is not a regression gate: the test
-    // environment substitutes a fixed-width fallback font whose glyphs are far
-    // wider than the real ones, so text-dependent layout differs from the
-    // device and would fail for reasons that say nothing about the app.
-    //
-    // To look at the current design:
-    //   flutter test --update-goldens test/golden/mobile_visual_test.dart
-    // then open test/golden/mobile_send_screen.png
-  }, skip: true);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('mobile_send_screen.png'),
+      );
+      // Skipped in normal runs on purpose. This is a diagnostic for LOOKING at
+      // the design - the emulator cannot screenshot this app, so a golden is the
+      // only way to see rendered pixels. It is not a regression gate: the test
+      // environment substitutes a fixed-width fallback font whose glyphs are far
+      // wider than the real ones, so text-dependent layout differs from the
+      // device and would fail for reasons that say nothing about the app.
+      //
+      // To look at the current design:
+      //   flutter test --update-goldens test/golden/mobile_visual_test.dart
+      // then open test/golden/mobile_send_screen.png
+    },
+    skip: !autoUpdateGoldenFiles,
+    variant: android,
+  );
 }
 
 Widget _chip(String label, IconData icon, bool selected) {
@@ -337,13 +318,13 @@ Widget _row(String preview, IconData? fileIcon) {
                   preview,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     color: GhostColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 7),
-                const Wrap(
+                Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 5,
                   children: [
@@ -392,11 +373,7 @@ Widget _row(String preview, IconData? fileIcon) {
               ],
             ),
           ),
-          const Icon(
-            Icons.copy_rounded,
-            size: 18,
-            color: GhostColors.textMuted,
-          ),
+          Icon(Icons.copy_rounded, size: 18, color: GhostColors.textMuted),
           const SizedBox(width: 12),
         ],
       ),

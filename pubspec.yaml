@@ -21,7 +21,7 @@ publish_to: 'none'
 # build so far therefore reported itself to Sentry as 1.0.0+5 no matter what
 # was in it. Bumped to match the other platforms; raise it for each build that
 # leaves this machine.
-version: 1.0.10+27
+version: 1.0.13+31
 
 environment:
   sdk: ^3.12.0
@@ -50,7 +50,6 @@ dependencies:
   # (user_id, device_type, device_name) - so a second device of the same
   # platform overwrites the first's row and takes its FCM token with it.
   device_info_plus: ^11.5.0
-  encrypt: ^5.0.3
   # Direct, for PackagedAppData's package-name lookup.
   ffi: ^2.2.0
   file_picker: ^11.0.3
@@ -101,6 +100,13 @@ dependencies:
   tray_manager: ^0.5.3
   url_launcher: ^6.3.0
   window_manager: ^0.5.1
+
+# Native registration must report conflicts and suppress held-key repeats.
+dependency_overrides:
+  hotkey_manager_linux:
+    path: packages/hotkey_manager_linux
+  hotkey_manager_windows:
+    path: packages/hotkey_manager_windows
 
 dev_dependencies:
   # Deterministic timer control for the lifecycle controller's idle switching.
@@ -210,7 +216,7 @@ msix_config:
   # draft submission is not: delete the package in Partner Center and the same
   # version uploads again. So a rebuild during drafting can keep its number,
   # and only a released version forces a bump.
-  msix_version: 1.0.26.0
+  msix_version: 1.0.31.0
   logo_path: assets\icons\app_icon.png
   capabilities: internetClient
   # The Store signs the package; a signature applied here would be replaced.

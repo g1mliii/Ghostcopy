@@ -5,7 +5,9 @@ enum ConnectionMode {
   /// Active WebSocket connection for realtime updates
   realtime,
 
-  /// Periodic HTTP polling (used after 15 min inactivity in tray)
+  /// Idle in the tray for 15 minutes. Only a label now: realtime stays open,
+  /// and the tray health check runs whenever the window is hidden, idle or
+  /// not
   polling,
 
   /// All connections paused (system sleep or screen lock)
@@ -102,7 +104,16 @@ abstract class ILifecycleController {
   /// Switch to realtime mode (WebSocket)
   void switchToRealtime();
 
-  /// Switch to polling mode (HTTP every 5 min)
+  /// Whether OS push (FCM on macOS, WNS on Windows) is proven to reach this
+  /// desktop. While true, the realtime connection is closed whenever the
+  /// window is in the tray: push says a clip arrived, and the tray health
+  /// check catches anything a push missed. Reopened when the window shows.
+  bool get desktopPushActive;
+  set desktopPushActive(bool active);
+
+  /// Mark the desktop idle in the tray. Realtime stays open, and the tray
+  /// health check (see LifecycleController.trayHealthCheckInterval) keeps
+  /// running
   void switchToPolling();
 
   // ========== POWER STATE (System State) ==========

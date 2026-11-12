@@ -111,6 +111,90 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('stays clear of a side safe-area inset', (tester) async {
+    // An iPhone Duo cover screen: the status strip is 84pt down the right.
+    // The 320pt toast centred on 380pt would reach x = 350, under the strip.
+    tester.view
+      ..physicalSize = const Size(380, 800)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+
+    final context = await pumpHost(tester);
+    showGhostToast(context, 'A message long enough to want the full width');
+    await tester.pumpAndSettle();
+
+    final toast = tester.getRect(
+      find
+          .ancestor(
+            of: find.textContaining('A message'),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    expect(toast.left, greaterThanOrEqualTo(0));
+    expect(toast.right, lessThanOrEqualTo(380 - 84));
+    await finishToast(tester);
+  });
+
+  testWidgets('announces the toast without blocking the control below it', (
+    tester,
+  ) async {
+    var taps = 0;
+    late BuildContext context;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (hostContext) {
+            context = hostContext;
+            return Scaffold(
+              body: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => taps++,
+                child: const SizedBox.expand(),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    final semantics = tester.ensureSemantics();
+    showGhostToast(context, 'Sent');
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('Sent'), findsOneWidget);
+    final announcement = tester.getSemantics(find.bySemanticsLabel('Sent'));
+    expect(
+      announcement.getSemanticsData().flagsCollection.isLiveRegion,
+      isTrue,
+    );
+    semantics.dispose();
+
+    await tester.tapAt(tester.getCenter(find.text('Sent')));
+    expect(taps, 1);
+    await finishToast(tester);
+  });
+
+  testWidgets('reduced motion keeps the toast in place during its fade', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final context = await pumpHost(tester);
+    showGhostToast(context, 'Copied');
+    await tester.pump();
+
+    final slide = tester.widget<SlideTransition>(
+      find.ancestor(
+        of: find.text('Copied'),
+        matching: find.byType(SlideTransition),
+      ),
+    );
+    expect(slide.position.value, Offset.zero);
+    await finishToast(tester);
+  });
+
   testWidgets('can show a toast after its previous overlay is disposed', (
     tester,
   ) async {

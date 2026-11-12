@@ -18,8 +18,17 @@ enum AutoReceiveBehavior {
   final String label;
 }
 
+/// Appearance preference. System follows the device's current brightness.
+enum AppThemeMode { system, light, dark }
+
 /// Abstract interface for app settings management
 abstract class ISettingsService {
+  /// Saved appearance override, defaulting to [AppThemeMode.system].
+  Future<AppThemeMode> getThemeMode();
+
+  /// Persist the appearance [mode] across launches.
+  Future<void> setThemeMode(AppThemeMode mode);
+
   /// Get auto-send enabled setting (default: false)
   Future<bool> getAutoSendEnabled();
 
@@ -81,6 +90,12 @@ abstract class ISettingsService {
   /// silently discarded whatever the user had chosen.
   Future<void> setHotkey(HotKey hotkey);
 
+  /// Read the optional send shortcut.
+  Future<HotKey?> getSendHotkey();
+
+  /// Save or clear the send shortcut.
+  Future<void> setSendHotkey(HotKey? hotkey);
+
   Future<bool> getAutoShortenUrls();
 
   /// Set auto-shorten URLs enabled setting
@@ -141,6 +156,11 @@ abstract class ISettingsService {
   /// Check if hybrid mode is enabled (from Supabase app_config table)
   /// Returns false by default if error or not found
   Future<bool> isHybridModeEnabled();
+
+  /// Whether desktops may use OS push (FCM on macOS, WNS on Windows) in
+  /// place of an always-open realtime connection while in the tray. From
+  /// the app_config table; false on any error.
+  Future<bool> isDesktopPushEnabled();
 
   /// Initialize settings service
   Future<void> initialize();

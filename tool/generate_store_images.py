@@ -37,7 +37,8 @@ ICON_SHARE = 0.62
 def canvas(width: int, height: int) -> Image.Image:
     """The icon centred on the brand background.
 
-    The icon is a purple tile, so it needs a surround that is not also purple.
+    The icon is a white tile, so it sits on the dark brand background - on
+    the Store's white page it would otherwise have no edge.
     """
     base = Image.new("RGBA", (width, height), BACKGROUND + (255,))
     edge = int(min(width, height) * ICON_SHARE)
