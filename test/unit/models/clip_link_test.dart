@@ -375,6 +375,9 @@ void main() {
       for (final (url, service) in [
         ('https://us02web.zoom.us/j/81234567890?pwd=abc', 'Zoom'),
         ('https://zoom.us/j/81234567890', 'Zoom'),
+        ('https://zoom.us/w/81234567890', 'Zoom'),
+        ('https://zoom.us/s/81234567890', 'Zoom'),
+        ('https://zoom.us/my/teamroom', 'Zoom'),
         ('https://zoom.us/wc/join/81234567890', 'Zoom'),
         ('https://zoom.us/wc/81234567890/start', 'Zoom'),
         ('https://meet.google.com/abc-defg-hij', 'Google Meet'),
@@ -413,6 +416,9 @@ void main() {
         'https://zoom.us/wc/join/signin',
         'https://zoom.us/wc/start',
         'https://zoom.us/wc/not-a-meeting/start',
+        'https://zoom.us/j/not-a-meeting',
+        'https://zoom.us/w/123',
+        'https://zoom.us/s/123456789012',
         'https://g.co/meet/',
         'https://g.co/meetsetup/device',
         'https://g.co.example.com/meet/classroom',
@@ -480,6 +486,7 @@ void main() {
       for (final (url, service) in [
         ('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'YouTube'),
         ('https://youtu.be/dQw4w9WgXcQ', 'YouTube'),
+        ('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', 'YouTube'),
         ('https://vimeo.com/123456', 'Vimeo'),
         ('https://www.twitch.tv/somebody', 'Twitch'),
         ('https://www.tiktok.com/@user/video/1', 'TikTok'),
@@ -487,6 +494,13 @@ void main() {
         final link = ClipLink.detect(url);
         expect(link?.kind, ClipLinkKind.video, reason: url);
         expect(link!.actionLabel, 'Watch on $service');
+      }
+      for (final url in [
+        'https://www.youtube-nocookie.com/embed/',
+        'https://www.youtube-nocookie.com/watch?v=dQw4w9WgXcQ',
+        'https://youtube-nocookie.com.example.com/embed/dQw4w9WgXcQ',
+      ]) {
+        expect(ClipLink.detect(url)!.kind, ClipLinkKind.web, reason: url);
       }
     });
 
@@ -1010,6 +1024,40 @@ void main() {
         'todoist://today',
         'obsidian://open?vault=Notes&file=Inbox',
         'craftdocs://open?blockId=1&spaceId=2',
+      ]) {
+        expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
+      }
+    });
+
+    test('navigation routes need their destination', () {
+      for (final text in [
+        'tg://resolve',
+        'tg://resolve?domain=',
+        'tg://resolve?domain=%20&profile',
+        'tg://join',
+        'tg://join?invite=',
+        'tg://privatepost?channel=123',
+        'tg://privatepost?post=456',
+        'sgnl://addstickers',
+        'sgnl://addstickers?pack_id=abc',
+        'sgnl://addstickers?pack_id=abc&pack_key=',
+        'sgnl://signal.me/',
+        'sgnl://signal.me/#p/',
+        'sgnl://signal.me/#eu/',
+        'sgnl://signal.me/#notes',
+        'sgnl://signal.group/',
+      ]) {
+        expect(ClipLink.detect(text), isNull, reason: text);
+      }
+      for (final text in [
+        'tg://resolve?domain=telegram&profile',
+        'tg://join?invite=inviteHash',
+        'tg://privatepost?channel=123&post=456',
+        'sgnl://addstickers?pack_id=abc&pack_key=def',
+        'sgnl://signal.me/#p/+15555550123',
+        'sgnl://signal.me/#eu/usernameToken',
+        'sgnl://signal.group/#groupInviteToken',
+        'todoist://today',
       ]) {
         expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
       }

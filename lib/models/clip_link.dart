@@ -283,7 +283,8 @@ class ClipLink {
           // Zoom, and Zoom for Government.
           (_hostIs(h, 'zoom.us') || _hostIs(h, 'zoomgov.com')) &&
           switch (_lowerSegments(u)) {
-            ['j' || 'my' || 'w' || 's', _, ...] => true,
+            ['my', _, ...] => true,
+            ['j' || 'w' || 's', final id, ...] => _zoomMeetingId.hasMatch(id),
             // Both orders used by the Zoom Web App, including host links.
             ['wc', 'join', final id] ||
             ['wc', final id, 'join' || 'start'] => _zoomMeetingId.hasMatch(id),
@@ -376,7 +377,11 @@ class ClipLink {
     (
       ClipLinkKind.video,
       'YouTube',
-      (h, u) => h == 'youtube.com' || h == 'm.youtube.com' || h == 'youtu.be',
+      (h, u) =>
+          h == 'youtube.com' ||
+          h == 'm.youtube.com' ||
+          h == 'youtu.be' ||
+          (h == 'youtube-nocookie.com' && _idAfter(u, const ['embed'])),
     ),
     (ClipLinkKind.video, 'Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
     (ClipLinkKind.video, 'Twitch', (h, u) => _hostIs(h, 'twitch.tv')),
@@ -548,6 +553,7 @@ class ClipLink {
       if (uri.queryParameters.keys.any((key) => !allowed.contains(key))) {
         return null;
       }
+      if (!_navigationHasTarget(scheme, route.toLowerCase(), uri)) return null;
     }
     var (kind, name) = app;
     // Teams links go to chats, channels, files and tabs as well as meetings;
@@ -571,6 +577,28 @@ class ClipLink {
       }
     }
     return ClipLink._(kind, target, name, service: name);
+  }
+
+  /// These routes require a destination; merely opening their app is not a
+  /// successful navigation. Other routes, such as Todoist's today view,
+  /// intentionally do not need query parameters.
+  static bool _navigationHasTarget(String scheme, String route, Uri uri) {
+    bool parameter(String key) =>
+        (uri.queryParameters[key] ?? '').trim().isNotEmpty;
+    return switch ((scheme, route)) {
+      ('tg', 'resolve') => parameter('domain'),
+      ('tg', 'privatepost') => parameter('channel') && parameter('post'),
+      ('tg', 'join') => parameter('invite'),
+      ('sgnl', 'addstickers') => parameter('pack_id') && parameter('pack_key'),
+      ('sgnl', 'signal.group') => uri.fragment.trim().isNotEmpty,
+      ('sgnl', 'signal.me') => switch (Uri.decodeComponent(
+        uri.fragment,
+      ).split('/')) {
+        ['p' || 'eu', final target] => target.trim().isNotEmpty,
+        _ => false,
+      },
+      _ => true,
+    };
   }
 
   static final _localHost = RegExp(
