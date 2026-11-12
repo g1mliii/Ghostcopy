@@ -150,6 +150,69 @@ void main() {
     }
   });
 
+  test('video services distinguish media from search and profile pages', () {
+    for (final url in [
+      'https://vimeo.com/search?q=beatles',
+      'https://vimeo.com/user123',
+      'https://vimeo.com/channels/staffpicks',
+      'https://www.tiktok.com/@user',
+      'https://www.tiktok.com/search?q=music',
+      'https://www.tiktok.com/@user/video/not-an-id',
+      'https://www.twitch.tv/directory',
+      'https://www.twitch.tv/search?term=x',
+      'https://player.twitch.tv/',
+      'https://clips.twitch.tv/embed',
+    ]) {
+      expect(ClipLink.detect(url)?.kind, ClipLinkKind.web, reason: url);
+    }
+    for (final url in [
+      'https://vimeo.com/123456',
+      'https://vimeo.com/123456/privateHash',
+      'https://player.vimeo.com/video/123456',
+      'https://vimeo.com/channels/staffpicks/123456',
+      'https://vimeo.com/groups/music/videos/123456',
+      'https://vimeo.com/event/123456',
+      'https://www.tiktok.com/@user/video/123456',
+      'https://www.tiktok.com/embed/v2/123456',
+      'https://vm.tiktok.com/shareToken/',
+      'https://www.twitch.tv/somebody',
+      'https://www.twitch.tv/videos/123456',
+      'https://www.twitch.tv/somebody/clip/ClipToken',
+      'https://clips.twitch.tv/ClipToken',
+      'https://player.twitch.tv/?channel=somebody',
+    ]) {
+      expect(ClipLink.detect(url)?.kind, ClipLinkKind.video, reason: url);
+    }
+  });
+
+  test('Zoom app links validate conference numbers', () {
+    for (final scheme in ['zoommtg', 'zoomus']) {
+      for (final id in ['', 'not-a-meeting', '123', '123456789012']) {
+        expect(
+          ClipLink.detect('$scheme://zoom.us/join?confno=$id')?.kind,
+          ClipLinkKind.app,
+        );
+      }
+      expect(
+        ClipLink.detect('$scheme://zoom.us/join?confno=1234567890')?.kind,
+        ClipLinkKind.meeting,
+      );
+    }
+  });
+
+  test('bare IPv4 links reject octal-looking octets', () {
+    for (final host in [
+      '010.0.0.1',
+      '010.0.0.1:8080',
+      '192.168.001.1',
+      '127.000.0.1',
+    ]) {
+      expect(ClipLink.detect(host), isNull, reason: host);
+    }
+    expect(ClipLink.detect('00127.0.0.1')?.kind, isNot(ClipLinkKind.web));
+    expect(ClipLink.detect('10.0.0.1')?.kind, ClipLinkKind.web);
+  });
+
   group('ClipLink.detect', () {
     test('web links, with the host as the label', () {
       final link = ClipLink.detect('https://www.example.com/a/b?c=d')!;

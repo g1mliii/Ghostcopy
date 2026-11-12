@@ -195,8 +195,8 @@ class ClipLink {
     // artists.spotify.com), which are pages about the service.
     final media = _segments(uri).isNotEmpty && !_aboutSite.hasMatch(site);
     for (final (kind, name, matches) in _webServices) {
-      if ((kind == ClipLinkKind.music || kind == ClipLinkKind.video) &&
-          !media) {
+      if ((kind == ClipLinkKind.music && !media) ||
+          (kind == ClipLinkKind.video && _aboutSite.hasMatch(site))) {
         continue;
       }
       if (matches(site, uri)) return ClipLink._(kind, uri, name, service: name);
@@ -382,9 +382,9 @@ class ClipLink {
           (h == 'youtu.be' && _segments(u).length == 1) ||
           (h == 'youtube-nocookie.com' && _idAfter(u, const ['embed'])),
     ),
-    (ClipLinkKind.video, 'Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
-    (ClipLinkKind.video, 'Twitch', (h, u) => _hostIs(h, 'twitch.tv')),
-    (ClipLinkKind.video, 'TikTok', (h, u) => _hostIs(h, 'tiktok.com')),
+    (ClipLinkKind.video, 'Vimeo', _vimeoVideo),
+    (ClipLinkKind.video, 'Twitch', _twitchVideo),
+    (ClipLinkKind.video, 'TikTok', _tiktokVideo),
   ];
 
   /// Custom-scheme links into apps, by scheme.
@@ -429,6 +429,105 @@ class ClipLink {
     'craftdocs': (ClipLinkKind.app, 'Craft'),
     'drafts': (ClipLinkKind.app, 'Drafts'),
   };
+
+  static final _videoId = RegExp(r'^[1-9]\d*$');
+
+  static bool _vimeoVideo(String host, Uri uri) {
+    final segments = _segments(uri);
+    if (host == 'player.vimeo.com') {
+      return switch (segments) {
+        ['video', final id] => _videoId.hasMatch(id),
+        _ => false,
+      };
+    }
+    if (host != 'vimeo.com') return false;
+    return switch (segments) {
+      ['channels', _, final id] => _videoId.hasMatch(id),
+      ['groups', _, 'videos', final id] => _videoId.hasMatch(id),
+      ['showcase' || 'album', _, 'video', final id] => _videoId.hasMatch(id),
+      ['ondemand', _, final id] => _videoId.hasMatch(id),
+      ['event', final id] => _videoId.hasMatch(id),
+      [final id] || [final id, _] => _videoId.hasMatch(id),
+      _ => false,
+    };
+  }
+
+  static const _twitchPages = {
+    'directory',
+    'downloads',
+    'jobs',
+    'p',
+    'settings',
+    'subscriptions',
+    'inventory',
+    'drops',
+    'search',
+    'videos',
+    'clip',
+    'turbo',
+    'prime',
+    'login',
+    'signup',
+    'wallet',
+    'friends',
+    'messages',
+    'collections',
+    'following',
+    'broadcast',
+    'store',
+    'products',
+    'moderator',
+    'dashboard',
+    'team',
+    'teams',
+    'creatorcamp',
+    'annual-recap',
+    'recap',
+  };
+  static final _twitchChannel = RegExp(r'^[a-z0-9_]{1,25}$');
+
+  static bool _twitchVideo(String host, Uri uri) {
+    final segments = _segments(uri);
+    if (host == 'player.twitch.tv') {
+      return segments.isEmpty &&
+          ((uri.queryParameters['channel'] ?? '').isNotEmpty ||
+              (uri.queryParameters['video'] ?? '').isNotEmpty);
+    }
+    if (host == 'clips.twitch.tv') {
+      return switch (segments) {
+        ['embed'] => (uri.queryParameters['clip'] ?? '').isNotEmpty,
+        [final id] => id.isNotEmpty,
+        _ => false,
+      };
+    }
+    if (!const {'twitch.tv', 'm.twitch.tv', 'go.twitch.tv'}.contains(host)) {
+      return false;
+    }
+    return switch (segments) {
+      ['videos', final id] => _videoId.hasMatch(id),
+      [_, 'clip', final id] => id.isNotEmpty,
+      [final channel] =>
+        _twitchChannel.hasMatch(channel.toLowerCase()) &&
+            !_twitchPages.contains(channel.toLowerCase()),
+      _ => false,
+    };
+  }
+
+  static bool _tiktokVideo(String host, Uri uri) {
+    final segments = _segments(uri);
+    if (host == 'vm.tiktok.com' || host == 'vt.tiktok.com') {
+      return segments.length == 1;
+    }
+    if (host != 'tiktok.com' && host != 'm.tiktok.com') return false;
+    return switch (segments) {
+      [final user, 'video', final id] =>
+        user.startsWith('@') && user.length > 1 && _videoId.hasMatch(id),
+      ['embed', 'v2', final id] ||
+      ['player', 'v1', final id] => _videoId.hasMatch(id),
+      ['t', final token] => token.isNotEmpty,
+      _ => false,
+    };
+  }
 
   static bool _youtubeVideo(Uri uri) => switch (_lowerSegments(uri)) {
     ['watch'] => (uri.queryParameters['v'] ?? '').trim().isNotEmpty,
@@ -569,10 +668,10 @@ class ClipLink {
     if (scheme == 'msteams' && !_teamsMeetingPath.hasMatch(hostPath)) {
       kind = ClipLinkKind.app;
     }
-    // A Zoom link joins the meeting its confno names; without one it only
-    // opens Zoom.
+    // A Zoom link joins only a valid conference number; otherwise it opens
+    // the app without claiming that the link identifies a meeting.
     if ((scheme == 'zoommtg' || scheme == 'zoomus') &&
-        (uri.queryParameters['confno'] ?? '').isEmpty) {
+        !_zoomMeetingId.hasMatch(uri.queryParameters['confno'] ?? '')) {
       kind = ClipLinkKind.app;
     }
     var target = uri;
@@ -668,7 +767,13 @@ class ClipLink {
     if (match?.group(2) != null) {
       // An IPv4 address: four octets, each a byte.
       final address = match!.group(1)!;
-      final octets = address.split('.').map(int.parse).toList();
+      final parts = address.split('.');
+      // Browsers interpret a leading zero as octal, while int.parse uses
+      // decimal. Never approve one host and then navigate to another.
+      if (parts.any((part) => part.length > 1 && part.startsWith('0'))) {
+        return null;
+      }
+      final octets = parts.map(int.parse).toList();
       if (octets.any((o) => o > 255)) return null;
       // Bare, only a local machine. With a port or path, a public server
       // too - but never multicast, broadcast or the reserved blocks, which
