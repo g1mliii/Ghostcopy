@@ -6,7 +6,10 @@
 
 #include <memory>
 
+#include "clipboard_flush_guard.h"
+#include "gpu_watchdog.h"
 #include "power_monitor.h"
+#include "push_channel.h"
 #include "win32_window.h"
 
 // A window that does nothing but host a Flutter view.
@@ -50,6 +53,7 @@ class FlutterWindow : public Win32Window {
   /// True while a deferred flush is already queued, so a burst of clipboard
   /// updates collapses into one rather than filling the message queue.
   bool flush_posted_ = false;
+  ClipboardFlushGuard clipboard_flush_guard_;
 
   /// Retries left for a flush that failed because another process had the
   /// clipboard open. Reset whenever a fresh flush is posted.
@@ -58,6 +62,15 @@ class FlutterWindow : public Win32Window {
 
   // Power state monitor for sleep/wake/lock events
   std::unique_ptr<PowerMonitor> power_monitor_;
+
+  // WNS raw notifications for the packaged build.
+  std::unique_ptr<PushChannel> push_channel_;
+
+  // Restarts the app when the GPU is reset under it; see GpuWatchdog and
+  // RestartAfterGpuReset.
+  std::unique_ptr<GpuWatchdog> gpu_watchdog_;
+  ULONGLONG created_at_ = 0;
+  void RestartAfterGpuReset();
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

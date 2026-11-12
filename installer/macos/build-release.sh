@@ -18,7 +18,26 @@ git status --porcelain --untracked-files=normal > "$output/source-dirty.txt"
 # Keep host build-dependency debug info; Xcode still strips the shipped app.
 export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true
 export CARGO_PROFILE_RELEASE_STRIP=none
-flutter build macos --release --config-only "$@"
+# Desktop push (MacPushService) uses the iOS app's Firebase configuration:
+# the Mac app has the same bundle id, so it is the same Firebase app and the
+# same APNs key. Without the plist the build simply has no push and stays on
+# realtime - say so, rather than fail a release over it.
+firebase_plist="$root/ios/Runner/GoogleService-Info.plist"
+firebase_defines=()
+if [[ -f "$firebase_plist" ]]; then
+    plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$firebase_plist"; }
+    firebase_defines=(
+        "--dart-define=GHOSTCOPY_FIREBASE_API_KEY=$(plist_value API_KEY)"
+        "--dart-define=GHOSTCOPY_FIREBASE_APP_ID=$(plist_value GOOGLE_APP_ID)"
+        "--dart-define=GHOSTCOPY_FIREBASE_SENDER_ID=$(plist_value GCM_SENDER_ID)"
+        "--dart-define=GHOSTCOPY_FIREBASE_PROJECT_ID=$(plist_value PROJECT_ID)"
+    )
+else
+    echo "warning: $firebase_plist not found - this build has no desktop push" >&2
+fi
+# The ${x[@]+...} form: macOS ships bash 3.2, where an empty array is
+# "unbound" under set -u.
+flutter build macos --release --config-only ${firebase_defines[@]+"${firebase_defines[@]}"} "$@"
 xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
     -configuration Release -destination 'generic/platform=macOS' \
     -archivePath "$output/GhostCopy.xcarchive" -allowProvisioningUpdates archive

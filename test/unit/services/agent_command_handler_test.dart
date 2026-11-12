@@ -269,7 +269,7 @@ void main() {
           id: 'd1',
           userId: 'user-1',
           deviceType: 'ios',
-          deviceName: 'iPhone',
+          deviceName: 'iPhone · 1A2B3C4D',
           lastActive: DateTime.utc(2026, 10),
           createdAt: DateTime.utc(2026),
         ),
@@ -277,7 +277,7 @@ void main() {
           id: 'd2',
           userId: 'user-1',
           deviceType: 'macos',
-          deviceName: 'Mac',
+          deviceName: 'Office · DEADBEEF',
           lastActive: DateTime.utc(2026, 10),
           createdAt: DateTime.utc(2026),
         ),
@@ -289,6 +289,7 @@ void main() {
     final listed = reply['devices']! as List<Map<String, Object?>>;
     expect(listed.map((d) => d['this_device']), [false, true]);
     expect(listed.first['type'], 'ios');
+    expect(listed.map((d) => d['name']), ['iPhone', 'Office · DEADBEEF']);
   });
 
   test('bad input never reaches the repository', () async {

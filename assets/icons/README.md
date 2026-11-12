@@ -28,13 +28,16 @@ because the new generator did not write it. One generator, one source of truth.
 | `tray_icon_linux_light_panel.png` | Linux panels with a light colour scheme (dark ghost) |
 | `tray_icon.png` | Flutter-side previews that want a PNG |
 
-`app_icon.png`, `logo_dark.png` and `logo_white.png` are the shared 1024px
-brand art used by the Flutter UI and the mobile/msix packaging. They are not
-produced by the generator.
+`app_icon.png`, `logo_purple.png`, `logo_dark.png` and `logo_white.png` are
+the shared 1024px brand art. `app_icon.png` is the light app icon (indigo ghost
+on a white squircle) and is msix_config's `logo_path`, so every Windows Store
+tile and the packaged taskbar icon come from it; it is also the Linux icon.
+`logo_purple.png` is the indigo ghost alone, for the in-app splash and welcome
+screen.
 
 ## Why the tray icon is not the app icon
 
-The app icon is the white ghost inside its indigo squircle. At the 16px the
+The app icon is the indigo ghost inside a white squircle. At the 16px the
 tray actually renders, that container eats most of the canvas and the ghost
 turns to mush, so the tray uses the bare ghost scaled to fill the frame.
 
@@ -45,8 +48,8 @@ what this used to ship — disappears entirely on a light taskbar.
 This is `bare_mark()` in the generator. `tray_icon.ico` uses it in indigo,
 and the Linux pair uses it monochrome; the preview PNG is still the tile.
 
-Linux is monochrome because Plasma's own tray icons are, and the indigo tile
-looked out of place among them. AppIndicator hands Plasma a file path, which it
+Linux is monochrome because Plasma's own tray icons are, and a coloured tile
+would look out of place among them. AppIndicator hands Plasma a file path, which it
 never recolours, so `tray_service.dart` picks white or dark ink from the
 `[Colors:Window]` background in kdeglobals at startup. A generator change that regenerated
 "every icon drawn with tile()" once put the Windows tray back on the squircle

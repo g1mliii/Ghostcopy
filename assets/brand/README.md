@@ -9,7 +9,7 @@ DYLD_LIBRARY_PATH=/opt/homebrew/lib python3 tool/generate_brand_assets.py
 
 | File | Use |
 |------|-----|
-| `logo-white.svg` | The mark, flat white, eyes knocked out with `fill-rule="evenodd"`. Source for almost everything: app icons on the purple tile, launch screens, notification icon, in-app header. |
+| `logo-white.svg` | The mark, flat white, eyes knocked out with `fill-rule="evenodd"`. Source for almost everything: the generator recolours it indigo for the app icons (on a white tile, or near-black for the dark variants), launch screens and in-app logo, and uses it white for the notification and themed icons. |
 | `logo-black.svg` | Same geometry in black. macOS menu bar only - a template image there must be black, or it disappears in a light menu bar. |
 | `logo-colour.svg` | The original three-colour artwork (outline, body, tail shading). Kept for print and marketing at large sizes. Deliberately not used for app icons: at 40pt, where iOS draws the icon in Settings and Spotlight, the outline and the grey shading turn to mush. |
 

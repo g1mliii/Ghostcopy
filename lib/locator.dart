@@ -5,6 +5,7 @@ import 'services/account_prompt_store.dart';
 import 'services/auth_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/game_mode_service.dart';
+import 'services/impl/encryption_service.dart';
 import 'services/notification_service.dart';
 import 'services/settings_service.dart';
 import 'services/transformer_service.dart';
@@ -28,6 +29,7 @@ void setupLocator() {
       transformerService: locator<ITransformerService>(),
       notificationService: locator<INotificationService>(),
       accountPromptStore: locator.maybeGet<AccountPromptStore>(),
+      encryptionService: EncryptionService.instance,
       isGameModeActive: gameMode == null ? null : () => gameMode.isActive,
       gameModeChanges: gameMode?.isActiveStream,
       settingsService: locator.maybeGet<ISettingsService>(),

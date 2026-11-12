@@ -92,6 +92,7 @@ screenshots, no tracing, no IP, clip text stripped on the device).
 | User Content - Other User Content | Yes | Yes | App Functionality | Clip text and files |
 | Identifiers - User ID | Yes | Yes | App Functionality | Supabase account ID |
 | Identifiers - Device ID | Yes | Yes | App Functionality | Push token per device, and the vendor-ID suffix in the device name |
+| Other Data - device name | Yes | Yes | App Functionality | The name the user gave the phone (user-assigned-device-name entitlement), so their own device list says which is which. It can contain their name; it is never shown to anyone else and is not in crash reports |
 | Contact Info - Name | Yes | Yes | App Functionality | Google sign-in asks for the profile scope, so Supabase stores the Google name (never shown by the app) |
 | Diagnostics - Crash Data | Yes | **No** | App Functionality | Sentry crash reports; no user id is attached |
 | Diagnostics - Other Diagnostic Data | Yes | **No** | App Functionality | Sentry error reports: device model, OS and app version, stack traces |
@@ -125,9 +126,18 @@ is a legal question - confirm rather than assume.
 ## Sign-in information for review
 
 Sign-in required: **Yes** - provide a demo account. The iOS welcome screen has
-no guest path: a new user scans a QR code from the desktop app, signs in, or
-signs up, and email sign-up waits on a confirmation email the reviewer would
+no guest path: a new user signs in, signs up, or scans a QR code from the
+desktop app, and email sign-up waits on a confirmation email the reviewer would
 not receive.
+
+There is no demo QR code to give, and none is needed. The QR is minted by the
+desktop app on demand, expires after five minutes, is single-use, and is
+useless without the 6-digit PIN shown beside it - a static image in the review
+notes could not work, and a long-lived token that could would be a standing
+way into the demo account. 1.0.8 (24) was rejected under 2.1(a) asking for one
+anyway, because the welcome screen opened on a live camera headed "Scan QR".
+From 1.0.10 it opens on Sign In and the QR tab is labelled optional; the notes
+below say so up front.
 
 Create it before submitting (for example `appreview@ghostcopy.app`, a real
 inbox you control), confirm the email, and leave it with no passphrase so the
@@ -137,18 +147,27 @@ to show. The same account is what the screenshots are taken with.
 
 ## Notes for the reviewer
 
+> No QR code is needed to review this app. Sign in with the demo account
+> above: on the first screen, the Sign In tab is already selected - enter the
+> email and password and tap Login. Every feature is reachable from there.
+>
 > GhostCopy syncs the clipboard between a user's own devices, so its main
 > feature needs a second device. The attached screen recording shows the full
 > round trip between GhostCopy for Mac and an iPhone.
 >
-> Sign in with the demo account above (Sign In > Login). To try it on one
-> device: paste text into the composer and send. It appears in the history below. Sharing a photo or file to GhostCopy
-> from the share sheet sends it the same way.
+> To try it on one device: paste text into the composer and send. It appears
+> in the history below. Sharing a photo or file to GhostCopy from the share
+> sheet sends it the same way.
 >
-> The desktop app is a free download at https://ghostcopy.app/download. To pair
-> them, choose Link New Device in the desktop app's settings. On the iPhone, open
-> Settings > Sign In or Create Account, scan the QR code, and type the PIN the
-> desktop shows.
+> The QR code is an optional shortcut for linking a phone to the desktop app.
+> It is generated on demand by GhostCopy for Mac (Settings > Link New Device),
+> expires after five minutes, can be used once, and only works together with
+> the 6-digit PIN shown beside it - so a fixed demo QR code cannot be provided.
+> If you want to try it: install the desktop app (free at
+> https://ghostcopy.app/download), sign in with the same demo account, choose
+> Link New Device. On the iPad, open Settings > Sign Out and confirm. Reopen
+> Settings > Sign In or Create Account, select the Scan QR tab, scan the code
+> shown on the desktop, and enter its 6-digit PIN.
 >
 > Encryption is optional and off by default. Setting a passphrase in Settings
 > encrypts clips on the device before upload.
@@ -159,6 +178,31 @@ to show. The same account is what the screenshots are taken with.
 >
 > Push notifications are used only to deliver clips the user sent to this
 > device. Tapping one copies the clip (text) or opens the share sheet (files).
+
+## Reply to App Review - 1.0.8 (24), 2.1(a) demo QR code
+
+Sent in Resolution Center with the 1.0.10 build attached to the version, and
+the notes above pasted into App Review Information > Notes:
+
+> Hello, and thank you for the review.
+>
+> GhostCopy does not need a QR code to be used or reviewed. The QR code is an
+> optional shortcut for linking a phone to our desktop app: the desktop app
+> generates it on demand, it expires after five minutes, it can be used once,
+> and it only works together with a 6-digit PIN shown beside it. For that
+> reason a fixed demo QR code or image cannot be provided.
+>
+> Please sign in with the demo account in App Review Information instead: on
+> the first screen, select Sign In, enter the email and password, and tap
+> Login. All features are available from there - send a clip from the
+> composer, view history, share a photo or file to GhostCopy from the share
+> sheet, and manage devices and the account in Settings.
+>
+> We understand the first screen made the QR code look required. In the new
+> build the app opens on Sign In, and the QR tab is labelled as optional.
+>
+> A screen recording of the full flow between GhostCopy for Mac and an iPhone
+> is attached.
 
 ## Screen recording for review (to record)
 
@@ -177,6 +221,12 @@ Keep it under a minute, show both screens in one take, no cuts:
 Required: 6.9" iPhone (1320 x 2868, iPhone 18 Pro Max simulator) and 13" iPad
 (2064 x 2752, iPad Pro 13-inch simulator), because the app targets iPad.
 Raw captures are in `docs/app-store-screenshots/`.
+
+iPhone Duo screenshots are optional, and supplying them is what puts the
+"optimized for iPhone Duo" badge on the product page. Take them on the iPhone
+Duo simulator in Xcode 27.1 or later, open and closed. Retake any taken before
+`SideSafeArea` (`lib/ui/layout/side_safe_area.dart`): until then the status
+strip down the right edge sat over the composer and history.
 
 Screenshot protection does not affect captures on iOS: it only blurs the
 app-switcher preview, and is off by default.

@@ -18,3 +18,11 @@ String platformLabel(String deviceType) => switch (deviceType.toLowerCase()) {
         ? deviceType
         : deviceType[0].toUpperCase() + deviceType.substring(1),
 };
+
+/// Describes which device platforms a send targets.
+/// An empty or absent [platforms] selection means every device.
+String sendDestinationLabel(Iterable<String>? platforms) {
+  if (platforms == null || platforms.isEmpty) return 'all devices';
+  if (platforms.length == 1) return platformLabel(platforms.first);
+  return '${platforms.length} platforms';
+}

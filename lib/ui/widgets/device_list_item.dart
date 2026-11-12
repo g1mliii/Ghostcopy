@@ -93,7 +93,10 @@ class _DeviceListItemState extends State<DeviceListItem> {
       return;
     }
 
-    final success = await widget.onRename(widget.device.id, newName);
+    final success = await widget.onRename(
+      widget.device.id,
+      '$newName${widget.device.registrationSuffix}',
+    );
     if (success && mounted) {
       setState(() => _isEditing = false);
     }
@@ -160,8 +163,10 @@ class _DeviceListItemState extends State<DeviceListItem> {
                             ? TextField(
                                 controller: _nameController,
                                 autofocus: true,
-                                maxLength: 255,
-                                style: const TextStyle(
+                                maxLength:
+                                    255 -
+                                    widget.device.registrationSuffix.length,
+                                style: TextStyle(
                                   fontSize: 13,
                                   color: GhostColors.textPrimary,
                                   fontWeight: FontWeight.w600,
@@ -193,7 +198,7 @@ class _DeviceListItemState extends State<DeviceListItem> {
                                         widget.device.displayName,
                                         overflow: TextOverflow.ellipsis,
                                         maxLines: 1,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 13,
                                           color: GhostColors.textPrimary,
                                           fontWeight: FontWeight.w600,
@@ -238,21 +243,21 @@ class _DeviceListItemState extends State<DeviceListItem> {
                       Text(
                         widget.device.deviceType[0].toUpperCase() +
                             widget.device.deviceType.substring(1),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
                       ),
                       Text(
                         ' · ',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),
                       ),
                       Text(
                         _getRelativeTime(),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: GhostColors.textMuted,
                         ),

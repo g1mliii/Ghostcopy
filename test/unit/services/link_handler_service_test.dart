@@ -9,6 +9,7 @@ import 'package:ghostcopy/services/impl/link_handler_service.dart';
 import 'package:ghostcopy/services/impl/windows_link_handler.dart';
 import 'package:ghostcopy/services/link_handler_service.dart';
 import 'package:ghostcopy/utils/xdg.dart';
+import 'package:path/path.dart' as path;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -178,10 +179,16 @@ void main() {
 
     setUp(() {
       root = Directory.systemTemp.createTempSync('link_handler');
+      // XDG_DATA_DIRS is colon-separated. A Windows drive prefix would be
+      // parsed as another entry; root these fixtures on the current drive.
+      final fixtureRoot = path.joinAll([
+        path.separator,
+        ...path.split(root.path).skip(1),
+      ]);
       env = {
-        'HOME': '${root.path}/home',
-        'XDG_DATA_HOME': '${root.path}/home/share',
-        'XDG_DATA_DIRS': '${root.path}/usr/share',
+        'HOME': path.join(fixtureRoot, 'home'),
+        'XDG_DATA_HOME': path.join(fixtureRoot, 'home', 'share'),
+        'XDG_DATA_DIRS': path.join(fixtureRoot, 'usr', 'share'),
       };
     });
 
@@ -222,8 +229,17 @@ Name=New Window
       final handler = await service('firefox.desktop\n').handlerFor(web);
       expect(handler!.name, 'Firefox');
       expect(
-        (handler.icon! as FileImage).file.path,
-        '${root.path}/usr/share/icons/hicolor/128x128/apps/firefox.png',
+        path.normalize((handler.icon! as FileImage).file.absolute.path),
+        path.join(
+          root.path,
+          'usr',
+          'share',
+          'icons',
+          'hicolor',
+          '128x128',
+          'apps',
+          'firefox.png',
+        ),
       );
     });
 
@@ -259,10 +275,13 @@ Name=New Window
       );
       write('usr/share/pixmaps/p.png', 'png');
       expect(
-        ((await service('p.desktop').handlerFor(web))!.icon! as FileImage)
-            .file
-            .path,
-        '${root.path}/usr/share/pixmaps/p.png',
+        path.normalize(
+          ((await service('p.desktop').handlerFor(web))!.icon! as FileImage)
+              .file
+              .absolute
+              .path,
+        ),
+        path.join(root.path, 'usr', 'share', 'pixmaps', 'p.png'),
       );
 
       write(
@@ -345,7 +364,7 @@ Name[pt_BR]=Editor de texto
 
   test('xdgDataDirs follows the spec', () {
     expect(xdgDataDirs({'HOME': '/home/u'}), [
-      '/home/u/.local/share',
+      path.join('/home/u', '.local', 'share'),
       '/usr/local/share',
       '/usr/share',
     ]);
@@ -359,7 +378,7 @@ Name[pt_BR]=Editor de texto
     );
     expect(
       xdgDataDirs({'HOME': '/home/u', 'XDG_DATA_HOME': 'relative'}).first,
-      '/home/u/.local/share',
+      path.join('/home/u', '.local', 'share'),
     );
   });
 

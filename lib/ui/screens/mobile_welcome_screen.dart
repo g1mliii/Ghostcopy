@@ -13,6 +13,7 @@ import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../utils/auth_errors.dart';
 import '../guest_clips_guard.dart';
+import '../layout/side_safe_area.dart';
 import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -66,7 +67,15 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   StreamSubscription<AuthState>? _authSub;
 
   // QR scanning state
-  static const int _qrTabIndex = 0;
+  //
+  // Sign In comes first and QR second. App Review (2.1(a), 1.0.8) tested on an
+  // iPad with no desktop app, landed on a live camera asking for a QR code,
+  // and rejected the build asking for a demo QR code - the screen read as if
+  // linking were the only way in. Signing in works on its own; the QR is the
+  // shortcut for someone who already has the desktop app open beside them.
+  // Opening on Sign In also keeps the camera, and its permission prompt, off
+  // the first screen until the user asks for it.
+  static const int _qrTabIndex = 1;
   bool _qrScanning = false;
   String? _qrError;
 
@@ -76,16 +85,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
-
-    // The controller starts on the QR tab, and a TabController listener only
-    // fires on a *change* - so nothing created the scanner on first launch and
-    // the tab sat on its "Switch to this tab to activate scanner" placeholder
-    // until the user switched away and back. Create it for the starting tab.
-    //
-    // Unconditional: the controller is built with the default initialIndex and
-    // _qrTabIndex is 0, so the guard that used to be here could not be false.
-    // Assigned directly rather than through setState: build has not run yet.
-    _scannerController = _newScannerController();
 
     // A sign-up from here has no guest to upgrade, so it ends with no session
     // until the address is confirmed. Tapping the emailed link on this phone
@@ -128,13 +127,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     widget.onAuthComplete();
   }
 
-  /// The scanner's configuration, in one place.
-  ///
-  /// Built here and again on the first switch to the QR tab; written out twice
-  /// it was two places to change a detection setting.
-  MobileScannerController _newScannerController() =>
-      MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
-
   @override
   void dispose() {
     // Dispose all resources to prevent memory leaks
@@ -157,7 +149,9 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // QR tab - initialize scanner if not already initialized (Fix #18)
       // Create controller OUTSIDE setState, then trigger rebuild
       if (_scannerController == null) {
-        final controller = _newScannerController();
+        final controller = MobileScannerController(
+          detectionSpeed: DetectionSpeed.noDuplicates,
+        );
         setState(() {
           _scannerController = controller;
         });
@@ -174,6 +168,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Rebuild explicit palette colors when the application's theme changes.
+    Theme.of(context);
+    return SideSafeArea(child: _buildPage(context));
+  }
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       backgroundColor: GhostColors.background,
       body: SafeArea(
@@ -199,7 +199,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
-                    children: [_buildQRScanTab(), _buildAuthTab()],
+                    children: [_buildAuthTab(), _buildQRScanTab()],
                   ),
                 ),
               ],
@@ -226,11 +226,11 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                 side: BorderSide(color: GhostColors.glassBorder),
               ),
             ),
-            // The real mark, not a generic Material copy glyph. White variant:
-            // this sits on GhostColors.surface, which is near-black.
+            // The real mark, not a generic Material copy glyph: the dark
+            // icon's indigo ghost, eyes cut out to the near-black surface.
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Image.asset('assets/icons/logo_white.png'),
+              child: Image.asset('assets/icons/logo_purple.png'),
             ),
           ),
           const SizedBox(height: 16),
@@ -303,13 +303,13 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         labelStyle: GhostTypography.body.copyWith(fontWeight: FontWeight.w600),
         tabs: [
           Tab(
-            icon: const Icon(Icons.qr_code_scanner),
-            text: 'Scan QR',
+            icon: const Icon(Icons.login),
+            text: 'Sign In',
             height: _tabHeight(context),
           ),
           Tab(
-            icon: const Icon(Icons.login),
-            text: 'Sign In',
+            icon: const Icon(Icons.qr_code_scanner),
+            text: 'Scan QR',
             height: _tabHeight(context),
           ),
         ],
@@ -344,7 +344,10 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Scan QR code from desktop app to link devices anonymously',
+                    'Optional: if the GhostCopy desktop app is open on your '
+                    'computer, choose Link New Device in its settings and scan '
+                    'the code it shows. No computer nearby? Use Sign In '
+                    'instead.',
                     style: GhostTypography.caption.copyWith(
                       color: GhostColors.textSecondary,
                     ),
@@ -591,7 +594,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
         child: Text(
           'Forgot Password?',
           style: GhostTypography.caption.copyWith(
-            color: GhostColors.primary,
+            color: GhostColors.actionText,
             decoration: TextDecoration.underline,
           ),
         ),
@@ -685,7 +688,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
   Widget _buildDivider() {
     return Row(
       children: [
-        const Expanded(child: Divider(color: GhostColors.surface)),
+        Expanded(child: Divider(color: GhostColors.surface)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
@@ -695,7 +698,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
             ),
           ),
         ),
-        const Expanded(child: Divider(color: GhostColors.surface)),
+        Expanded(child: Divider(color: GhostColors.surface)),
       ],
     );
   }
@@ -751,7 +754,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
 
               return AlertDialog(
                 backgroundColor: GhostColors.surface,
-                title: const Text(
+                title: Text(
                   'Enter PIN',
                   style: TextStyle(color: GhostColors.textPrimary),
                 ),
@@ -773,7 +776,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                       keyboardType: TextInputType.number,
                       maxLength: 6,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: GhostColors.textPrimary,
                         fontSize: 24,
                         letterSpacing: 8,
@@ -783,7 +786,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                         counterText: '',
                         errorText: error,
                         hintText: '000000',
-                        hintStyle: const TextStyle(
+                        hintStyle: TextStyle(
                           color: GhostColors.textMuted,
                           letterSpacing: 8,
                         ),
@@ -1229,10 +1232,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text(
-                        'OK',
-                        style: TextStyle(color: GhostColors.primary),
-                      ),
+                      child: const Text('OK'),
                     ),
                   ],
                 ),

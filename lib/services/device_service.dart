@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/device.dart';
 
 export '../models/device.dart';
@@ -36,6 +38,14 @@ abstract class IDeviceService {
   /// [forceRefresh] bypasses cache and fetches fresh data from server.
   Future<List<Device>> getUserDevices({bool forceRefresh = false});
 
+  /// The list the last successful fetch returned for this account, read from
+  /// disk; empty when there is none or no one is signed in.
+  ///
+  /// For drawing the devices before [getUserDevices] answers on a cold start.
+  /// It can be out of date, so show it only until that fetch returns. Push
+  /// tokens are not kept, so [Device.fcmToken] is always null here.
+  Future<List<Device>> getSavedDevices();
+
   /// A fresh fetch, or null when it failed - which [getUserDevices] reports
   /// as an empty list, the same as an account with none. For a caller that
   /// has to tell the two apart. Each call carries its own answer, so
@@ -47,6 +57,11 @@ abstract class IDeviceService {
   /// Only applicable for mobile devices (Android/iOS).
   /// Desktop devices don't use FCM tokens.
   Future<void> updateFcmToken(String fcmToken);
+
+  /// Store this Windows desktop's WNS channel URI on its row; true when it
+  /// is there after. Channel URIs expire after 30 days, so the app asks for
+  /// a fresh one on every launch and calls this each time.
+  Future<bool> updateWnsChannelUri(String channelUri);
 
   /// Update last active timestamp for current device
   ///
@@ -79,4 +94,38 @@ abstract class IDeviceService {
 
   /// Dispose resources
   void dispose();
+}
+
+/// Fetch the user's devices, handing [onSaved] the list the last launch saved
+/// first, so a screen can draw it instead of a spinner. See SavedDeviceList.
+///
+/// Returns the fetched list, or null when the fetch failed. [onSaved] runs at
+/// most once, and only when its list beat a successful fetch or the fetch
+/// failed - on failure this waits for it, so by the time null comes back the
+/// caller knows whether a saved list is on screen to keep.
+///
+/// Through fetchUserDevices rather than getUserDevices: that one reports a
+/// failure as [], the same as an account with no devices, and a saved list
+/// must survive the first and be replaced by the second.
+Future<List<Device>?> fetchDevicesShowingSaved(
+  IDeviceService devices, {
+  required void Function(List<Device> saved) onSaved,
+}) async {
+  var fetched = false;
+  final showingSaved = devices.getSavedDevices().then((saved) {
+    if (!fetched && saved.isNotEmpty) onSaved(saved);
+  }, onError: (Object e) => debugPrint('[Devices] Saved list not read: $e'));
+
+  List<Device>? result;
+  try {
+    result = await devices.fetchUserDevices();
+  } on Exception catch (e) {
+    debugPrint('[Devices] Failed to load devices: $e');
+  }
+  if (result != null) {
+    fetched = true;
+  } else {
+    await showingSaved;
+  }
+  return result;
 }

@@ -18,6 +18,9 @@ abstract class IClipboardSyncService {
   /// Initialize the service (call once at startup)
   Future<void> initialize();
 
+  /// Send the current clipboard to the saved default devices.
+  Future<void> sendCurrentClipboard();
+
   /// Start clipboard monitoring for auto-send
   /// Called when user enables auto-send in settings
   void startClipboardMonitoring();
@@ -36,6 +39,15 @@ abstract class IClipboardSyncService {
   /// Callback when clipboard is auto-sent
   /// Used by UI for feedback
   void Function(ClipboardItem item)? onClipboardSent;
+
+  /// Called when a poll - not realtime - finds an unseen clip addressed to
+  /// this device from another device in the current account.
+  /// Desktop push uses it to notice a clip its push never announced.
+  void Function()? onPollFoundClip;
+
+  /// Look for new clips now, the way the tray health check does. A desktop
+  /// push calls this: the push says only that something arrived.
+  void checkForNewClips();
 
   /// Update clipboard modification time
   /// Called by UI when user manually copies/pastes to track clipboard staleness
@@ -58,7 +70,8 @@ abstract class IClipboardSyncService {
   /// Pause realtime subscription (keeps subscription for resume)
   void pauseRealtime();
 
-  /// Resume realtime subscription
+  /// Resume realtime and check for missed clips, including when the channel
+  /// stayed open while the window was hidden.
   void resumeRealtime();
 
   /// Start polling mode (HTTP polling every N minutes)

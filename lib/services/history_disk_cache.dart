@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../utils/serial_queue.dart';
+
 // Strings (including the large clip bodies) are immutable. Copy containers
 // before queuing so a realtime list or nested metadata can be reused safely.
 Object? _snapshotHistoryValue(Object? value) => switch (value) {
@@ -60,14 +62,7 @@ class HistoryDiskCache {
   ///
   /// Otherwise a save that began just before a sign-out could land after the
   /// clear meant to follow it, leaving the previous account's clips on disk.
-  Future<void> _tail = Future<void>.value();
-
-  Future<void> _serial(Future<void> Function() op) {
-    final next = _tail.then((_) => op());
-    // A failed op must not wedge every one queued behind it.
-    _tail = next.catchError((Object _) {});
-    return next;
-  }
+  final _queue = SerialQueue();
 
   Future<Directory?> _directory() {
     if (_disabled) return Future<Directory?>.value();
@@ -114,7 +109,7 @@ class HistoryDiskCache {
             10240;
     // Reserve the queue position before yielding to the isolate. Otherwise
     // a sign-out clear could finish before encoding, then be undone by save.
-    return _serial(() async {
+    return _queue.run(() async {
       final String encoded;
       try {
         encoded = large
@@ -145,7 +140,7 @@ class HistoryDiskCache {
   Future<List<Map<String, dynamic>>> load(String userId) async {
     // Behind any write already queued, so a load never sees a half-applied
     // save or a clear that has been asked for but not yet run.
-    await _tail;
+    await _queue.idle;
     try {
       final dir = await _directory();
       if (dir == null) return const [];
@@ -171,7 +166,7 @@ class HistoryDiskCache {
   /// Drop one clip from the stored history, so a deleted clip does not come
   /// back the next time the app opens offline.
   Future<void> remove(String id) {
-    return _serial(() async {
+    return _queue.run(() async {
       final dir = await _directory();
       if (dir == null) return;
       final file = _file(dir);
@@ -199,7 +194,7 @@ class HistoryDiskCache {
 
   /// Delete the stored history. Called on sign-out and account switch.
   Future<void> clear() {
-    return _serial(() async {
+    return _queue.run(() async {
       final dir = await _directory();
       if (dir == null) return;
       await _quietDelete(_file(dir));

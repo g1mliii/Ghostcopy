@@ -27,7 +27,9 @@ import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
 import 'services/command_line_tool_service.dart';
 import 'services/crash_reporting_service.dart';
+import 'services/desktop_push_service.dart';
 import 'services/device_service.dart';
+import 'services/diagnostic_file_log.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
 import 'services/game_mode_service.dart';
@@ -42,6 +44,7 @@ import 'services/impl/linux_auto_start_service.dart';
 import 'services/impl/linux_clipboard_reader.dart';
 import 'services/impl/linux_hotkey_service.dart';
 import 'services/impl/linux_power_service.dart';
+import 'services/impl/macos_push_service.dart';
 import 'services/impl/notification_service.dart';
 import 'services/impl/pkce_verifier_store.dart';
 import 'services/impl/security_service.dart';
@@ -50,6 +53,7 @@ import 'services/impl/transformer_service.dart';
 import 'services/impl/tray_service.dart';
 import 'services/impl/window_service.dart';
 import 'services/impl/windows_package_service.dart';
+import 'services/impl/windows_push_service.dart';
 import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
 import 'services/obsidian_service.dart';
@@ -73,6 +77,8 @@ import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/theme/appearance.dart';
+import 'ui/theme/colors.dart';
 import 'ui/tray_menu_lifecycle.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
 import 'ui/widgets/tray_menu_window.dart';
@@ -307,8 +313,17 @@ Future<void> _appMain(
   // logs on the 5-second clipboard tick and once per history item, so in
   // release that is a steady drip of string building and timer work for output
   // nobody can read. Silence it there; debug and profile builds are untouched.
+  //
+  // A test build can opt in to a small log file of how clips reach a desktop
+  // - realtime, push, the tray poll - since a release build gives no other
+  // way to see it. Off in production. See DiagnosticFileLog.
   if (kReleaseMode) {
-    debugPrint = (message, {wrapWidth}) {};
+    if (DiagnosticFileLog.enabled && (Platform.isWindows || Platform.isMacOS)) {
+      debugPrint = DiagnosticFileLog.print;
+      unawaited(DiagnosticFileLog.open());
+    } else {
+      debugPrint = (message, {wrapWidth}) {};
+    }
   }
 
   // Suppress RawKeyboard assertion errors on Windows (known Flutter issue)
@@ -466,7 +481,7 @@ Future<void> _appMain(
     // Initialize core services first
     final trayService = TrayService();
     final hotkeyService = LinuxClipboardReader.isWayland
-        ? LinuxHotkeyService()
+        ? LinuxHotkeyService(onSendClipboard: _invokeSendClipboard)
         : HotkeyService();
     final gameModeService = GameModeService();
     final settingsService = SettingsService();
@@ -679,6 +694,25 @@ Future<void> _appMain(
       }),
     );
 
+    // After the device row exists, which the push token is written to.
+    // Not awaited: on macOS it waits on APNs, and nothing here needs it.
+    unawaited(
+      startDesktopPush(
+        settings: locator<ISettingsService>(),
+        devices: deviceService,
+        auth: authService,
+        sync: clipboardSyncService,
+        lifecycle: lifecycleController,
+      ),
+    );
+
+    // The window starts hidden, and tray mode is otherwise entered only by
+    // hideSpotlight. Without this a desktop launched at login and never
+    // opened ran neither the tray health check nor the push takeover.
+    // Linux's first-launch Spotlight goes through showSpotlight, which
+    // leaves tray mode again.
+    if (!windowService.isVisible) lifecycleController.enterTrayMode();
+
     runApp(MyApp(launchedAtStartup: launchedAtStartup));
   } else {
     // Mobile app - initialize Firebase and FCM (optional)
@@ -704,6 +738,7 @@ Future<void> _appMain(
       ClipboardRepository.initializeDeviceName(),
       settingsService.initialize(),
     ]);
+    appAppearance.value = await settingsService.getThemeMode();
     debugPrint('[App] ✅ Settings service initialized for mobile');
     // Before runApp: MyApp.initState reads it synchronously to decide whether
     // the welcome screen shows. The prefs instance is already loaded above.
@@ -856,16 +891,7 @@ Future<void> _appMain(
     // top and its content still begins below the cutout.
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        // Transparent, not coloured: the AppBar behind it supplies the colour.
-        statusBarColor: Colors.transparent,
-        // Light glyphs, because everything behind them is the dark theme.
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark, // iOS reads this one
-        systemNavigationBarColor: Colors.transparent,
-        systemNavigationBarIconBrightness: Brightness.light,
-        systemNavigationBarContrastEnforced: false,
-      ),
+      appearanceOverlayStyle(isLight: GhostColors.isLight),
     );
 
     runApp(
@@ -1065,7 +1091,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
       // only when nothing has been saved. This used to always register the
       // hardcoded default, so a customised shortcut was discarded on restart.
       _onHotkeyPressed = _handleHotkeySpotlight;
-      unawaited(_registerSavedHotkey());
+      unawaited(_registerDesktopShortcuts());
       if (Platform.isLinux && !widget.launchedAtStartup) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_handleHotkeySpotlight());
@@ -1502,14 +1528,23 @@ class _MyAppState extends State<MyApp> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: _navigatorKey,
-      title: 'GhostCopy',
-      theme: AppTheme.darkTheme,
-      // No overscroll stretch or glow anywhere in the app.
-      scrollBehavior: Adaptive.scrollBehavior,
-      debugShowCheckedModeBanner: false,
-      home: _buildHome(),
+    return AppearanceBuilder(
+      builder: (context) => MaterialApp(
+        navigatorKey: _navigatorKey,
+        title: 'GhostCopy',
+        theme: AppTheme.platformTheme,
+        themeAnimationDuration: Duration.zero,
+        builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+          value: appearanceOverlayStyle(isLight: GhostColors.isLight),
+          child: child!,
+        ),
+        // No overscroll stretch or glow anywhere in the app.
+        scrollBehavior: Adaptive.scrollBehavior,
+        debugShowCheckedModeBanner: false,
+        // Keep the Navigator full-width for iOS edge-back gestures. Mobile
+        // screens apply horizontal safe areas inside their route content.
+        home: _buildHome(),
+      ),
     );
   }
 
@@ -1615,24 +1650,94 @@ void _invokeHotkeyCallback() {
 /// Single entry point so the Spotlight callback is wired in exactly one place.
 /// Throws [UnsupportedHotkeyException] if the key cannot be registered; the
 /// previous registration is left in place in that case, and nothing is saved.
-Future<void> applyHotkey(HotKey hotkey) async {
+Future<void> applyHotkey(HotKey hotkey) => _queueHotkeyUpdate(() async {
+  if (hotkey == _activeSendHotkey) throw HotkeyInUseException(hotkey);
   final hotkeyService = locator<IHotkeyService>();
 
   // Register first: if the new combo is rejected, the old one must survive and
   // nothing should be written to settings.
   await hotkeyService.registerHotkey(hotkey, _invokeHotkeyCallback);
 
-  if (hotkey != _activeHotkey) {
-    await hotkeyService.unregisterHotkey(_activeHotkey);
+  final previous = _activeHotkey;
+  if (previous != null && hotkey != previous) {
+    await hotkeyService.unregisterHotkey(previous);
   }
   _activeHotkey = hotkey;
 
   await locator<ISettingsService>().setHotkey(hotkey);
   debugPrint('[Hotkey] Applied ${hotkey.toStorageString()}');
-}
+});
 
 /// The shortcut currently registered with the OS.
-HotKey _activeHotkey = defaultHotkey;
+HotKey? _activeHotkey;
+HotKey? _activeSendHotkey;
+
+void _invokeSendClipboard() {
+  unawaited(locator<IClipboardSyncService>().sendCurrentClipboard());
+}
+
+Future<void> _hotkeyUpdates = Future<void>.value();
+
+Future<void> _queueHotkeyUpdate(Future<void> Function() update) {
+  final result = _hotkeyUpdates.then((_) => update());
+  // Report failures to the caller while allowing later changes to proceed.
+  _hotkeyUpdates = result.then<void>(
+    (_) {},
+    onError: (Object _, StackTrace _) {},
+  );
+  return result;
+}
+
+Future<void> _registerDesktopShortcuts() => _queueHotkeyUpdate(() async {
+  await _registerSavedHotkey();
+  if (locator<IHotkeyService>().managedBySystem) return;
+  // A failure here is often transient - another app holding the combination
+  // at login, or the Spotlight shortcut having fallen back onto it - so the
+  // saved shortcut is kept and retried on the next launch, as the Spotlight
+  // one is. Settings shows only what is actually registered.
+  try {
+    final saved = await locator<ISettingsService>().getSendHotkey();
+    if (saved != null) await _registerSendHotkey(saved);
+  } on Exception catch (e) {
+    debugPrint('[Hotkey] Could not restore send shortcut: $e');
+  }
+});
+
+Future<void> _registerSendHotkey(HotKey? hotkey) async {
+  if (hotkey != null && hotkey == _activeHotkey) {
+    throw HotkeyInUseException(hotkey);
+  }
+  final service = locator<IHotkeyService>();
+  final previous = _activeSendHotkey;
+  if (previous == hotkey) return;
+  if (hotkey != null) {
+    await service.registerHotkey(hotkey, _invokeSendClipboard);
+  }
+  if (previous != null) {
+    try {
+      await service.unregisterHotkey(previous);
+    } on Object {
+      // Leave exactly one send shortcut live: the one still recorded.
+      if (hotkey != null) await service.unregisterHotkey(hotkey);
+      rethrow;
+    }
+  }
+  _activeSendHotkey = hotkey;
+}
+
+/// The shortcuts actually registered with the OS, once pending registrations
+/// have settled - not the saved ones, which a conflict at login can leave
+/// unregistered.
+Future<({HotKey? spotlight, HotKey? send})> registeredHotkeys() async {
+  await _hotkeyUpdates;
+  return (spotlight: _activeHotkey, send: _activeSendHotkey);
+}
+
+/// Apply or clear the global send shortcut.
+Future<void> applySendHotkey(HotKey? hotkey) => _queueHotkeyUpdate(() async {
+  await _registerSendHotkey(hotkey);
+  await locator<ISettingsService>().setSendHotkey(hotkey);
+});
 
 /// Register the saved global hotkey, falling back to [defaultHotkey].
 ///
@@ -2056,6 +2161,51 @@ Future<void> startAuthAndDevice(
         context: 'register_current_device',
       ),
     );
+  }
+}
+
+// ignore: cancel_subscriptions - lives as long as the app does
+StreamSubscription<AuthState>? _desktopPushAuthSubscription;
+
+/// Let OS push stand in for the tray's realtime connection, on macOS (FCM)
+/// and the packaged Windows build (WNS). Off unless the desktop_push_enabled
+/// flag is on, and a desktop where push cannot start keeps realtime as before.
+/// See DesktopPushCoordinator.
+Future<void> startDesktopPush({
+  required ISettingsService settings,
+  required IDeviceService devices,
+  required IAuthService auth,
+  required IClipboardSyncService sync,
+  required ILifecycleController lifecycle,
+}) async {
+  if (!Platform.isMacOS && !Platform.isWindows) return;
+  try {
+    if (!await settings.isDesktopPushEnabled()) return;
+    final push = Platform.isMacOS
+        ? MacPushService(deviceService: devices)
+        : WindowsPushService(deviceService: devices);
+    final coordinator = DesktopPushCoordinator(
+      push: push,
+      sync: sync,
+      lifecycle: lifecycle,
+    );
+    if (!await coordinator.start()) {
+      push.dispose();
+      return;
+    }
+    // The token belongs to the install, but it is stored on the signed-in
+    // account's device row, so a new account needs it written again.
+    var userId = auth.currentUserId;
+    await _desktopPushAuthSubscription?.cancel();
+    _desktopPushAuthSubscription = auth.authStateChanges.listen((state) {
+      final id = state.session?.user.id;
+      if (id == null || id == userId) return;
+      userId = id;
+      unawaited(push.reregister());
+    });
+    debugPrint('[Main] ✅ Desktop push started');
+  } on Object catch (e) {
+    debugPrint('[Main] Desktop push unavailable: $e');
   }
 }
 
