@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
 import 'package:flutter/painting.dart';
@@ -53,16 +52,18 @@ void main() {
     () async {
       const channel = MethodChannel('com.ghostcopy/link_handler');
       final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        expect(call.method, 'handlerFor');
-        expect(call.arguments, {'url': 'https:'});
-        return {
-          'name': 'Themed browser',
-          'icon': Uint8List.fromList([1, 2, 3]),
-        };
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            ..setMockMethodCallHandler(channel, (call) async {
+              expect(call.method, 'handlerFor');
+              expect(call.arguments, {'url': 'https:'});
+              return {
+                'name': 'Themed browser',
+                'icon': Uint8List.fromList([1, 2, 3]),
+              };
+            });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(channel, null);
       });
-      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
       final handler = await LinuxLinkHandlerService().lookUp(
         Uri.parse('https://example.com'),
       );
