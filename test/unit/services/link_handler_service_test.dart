@@ -83,6 +83,44 @@ void main() {
       expect(search.icon, isNull);
     });
 
+    test('Android query and fragment routes keep their own handlers', () async {
+      answer = (url) => {
+        'name': url.endsWith('#native') || url.endsWith('?app=1')
+            ? 'Native'
+            : 'Browser',
+      };
+      final service = ChannelLinkHandlerService(
+        platform: 'android',
+        channel: channel,
+      );
+      final browser = ClipLink.detect('https://example.com/open?app=0')!;
+      final native = ClipLink.detect('https://example.com/open?app=1')!;
+      final fragment = ClipLink.detect(
+        'https://example.com/open?app=0#native',
+      )!;
+      expect((await service.handlerFor(browser))!.name, 'Browser');
+      expect((await service.handlerFor(native))!.name, 'Native');
+      expect((await service.handlerFor(fragment))!.name, 'Native');
+      expect((await service.handlerFor(browser))!.name, 'Browser');
+      expect(asked, hasLength(3));
+    });
+
+    test('Android ports keep their own handlers', () async {
+      answer = (url) => {
+        'name': Uri.parse(url).port == 8443 ? 'Native' : 'Browser',
+      };
+      final service = ChannelLinkHandlerService(
+        platform: 'android',
+        channel: channel,
+      );
+      final browser = ClipLink.detect('https://example.com/open')!;
+      final native = ClipLink.detect('https://example.com:8443/open')!;
+      expect((await service.handlerFor(browser))!.name, 'Browser');
+      expect((await service.handlerFor(native))!.name, 'Native');
+      expect((await service.handlerFor(browser))!.name, 'Browser');
+      expect(asked, hasLength(2));
+    });
+
     test('one app is one LinkHandler, however many sites it opens', () async {
       answer = (_) => {
         'name': 'Safari',
@@ -179,8 +217,6 @@ void main() {
 
     setUp(() {
       root = Directory.systemTemp.createTempSync('link_handler');
-      // XDG_DATA_DIRS is colon-separated. A Windows drive prefix would be
-      // parsed as another entry; root these fixtures on the current drive.
       final fixtureRoot = path.joinAll([
         path.separator,
         ...path.split(root.path).skip(1),
@@ -194,124 +230,109 @@ void main() {
 
     tearDown(() => root.deleteSync(recursive: true));
 
-    void write(String relative, String contents) {
-      File('${root.path}/$relative')
+    File write(String relative, List<int> bytes) {
+      final file = File(path.join(root.path, relative))
         ..createSync(recursive: true)
-        ..writeAsStringSync(contents);
+        ..writeAsBytesSync(bytes);
+      return file;
     }
 
-    LinuxLinkHandlerService service(String stdout, {int exitCode = 0}) {
-      return LinuxLinkHandlerService(
-        environment: env,
-        runProcess: (executable, arguments) async {
-          expect(executable, 'xdg-mime');
-          expect(arguments, ['query', 'default', 'x-scheme-handler/https']);
-          return ProcessResult(0, exitCode, stdout, '');
-        },
-      );
-    }
+    LinuxLinkHandlerService service({
+      List<String> names = const ['browser'],
+      String? iconPath,
+    }) => LinuxLinkHandlerService(
+      lookup: (scheme) async {
+        expect(scheme, 'https');
+        return (
+          name: 'GIO browser',
+          png: await readLinuxLinkIcon(
+            names: names,
+            iconPath: iconPath,
+            environment: env,
+          ),
+        );
+      },
+    );
 
     final web = ClipLink.detect('https://example.com')!;
 
-    test('names the default app and finds its hicolor icon', () async {
-      write('usr/share/applications/firefox.desktop', '''
-[Desktop Entry]
-Name[fr]=Firefox Navigateur
-Name=Firefox
-Icon=firefox
-
-[Desktop Action new-window]
-Name=New Window
-''');
-      write('usr/share/icons/hicolor/128x128/apps/firefox.png', 'png');
-      write('usr/share/icons/hicolor/48x48/apps/firefox.png', 'small');
-
-      final handler = await service('firefox.desktop\n').handlerFor(web);
-      expect(handler!.name, 'Firefox');
-      expect(
-        path.normalize((handler.icon! as FileImage).file.absolute.path),
-        path.join(
-          root.path,
-          'usr',
-          'share',
-          'icons',
-          'hicolor',
-          '128x128',
-          'apps',
-          'firefox.png',
-        ),
-      );
+    test('uses the resolved app name and nearest hicolor icon', () async {
+      write('usr/share/icons/hicolor/128x128/apps/browser.png', [128]);
+      write('usr/share/icons/hicolor/64x64/apps/browser.png', [64]);
+      final handler = await service().handlerFor(web);
+      expect(handler!.name, 'GIO browser');
+      expect((handler.icon! as MemoryImage).bytes, [64]);
     });
 
-    test('a user entry wins over the system one', () async {
-      write(
-        'usr/share/applications/browser.desktop',
-        '[Desktop Entry]\nName=System\n',
-      );
-      write(
-        'home/share/applications/browser.desktop',
-        '[Desktop Entry]\nName=Mine\n',
-      );
-      final handler = await service('browser.desktop').handlerFor(web);
-      expect(handler!.name, 'Mine');
+    test('user icons take priority over system icons', () async {
+      write('usr/share/icons/hicolor/64x64/apps/browser.png', [1]);
+      write('home/share/icons/hicolor/64x64/apps/browser.png', [2]);
+      final handler = await service().handlerFor(web);
+      expect((handler!.icon! as MemoryImage).bytes, [2]);
+    });
+
+    test('legacy user icons take priority over XDG icons', () async {
+      write('home/share/icons/hicolor/64x64/apps/browser.png', [1]);
+      write('home/.icons/hicolor/64x64/apps/browser.png', [2]);
+      final handler = await service().handlerFor(web);
+      expect((handler!.icon! as MemoryImage).bytes, [2]);
+    });
+
+    test('tries themed fallbacks, pixmaps and local file icons', () async {
+      write('usr/share/pixmaps/fallback.png', [3]);
+      final handler = await service(
+        names: ['missing', 'fallback'],
+      ).handlerFor(web);
+      expect((handler!.icon! as MemoryImage).bytes, [3]);
+      final file = write('opt/browser.png', [4]);
+      final local = await service(iconPath: file.path).handlerFor(web);
+      expect((local!.icon! as MemoryImage).bytes, [4]);
+    });
+
+    test('missing or SVG-only artwork retains the app name', () async {
+      write('usr/share/icons/hicolor/scalable/apps/browser.svg', [1]);
+      final handler = await service().handlerFor(web);
+      expect(handler!.name, 'GIO browser');
       expect(handler.icon, isNull);
     });
 
-    test('an SVG-only icon keeps the name and drops the icon', () async {
-      write(
-        'usr/share/applications/b.desktop',
-        '[Desktop Entry]\nName=B\nIcon=b\n',
-      );
-      write('usr/share/icons/hicolor/scalable/apps/b.svg', '<svg/>');
-      final handler = await service('b.desktop').handlerFor(web);
-      expect(handler!.name, 'B');
+    test('refresh loads an icon replaced at the same path', () async {
+      var now = DateTime(2026);
+      await withClock(Clock(() => now), () async {
+        final file = write('opt/browser.png', [1, 2, 3]);
+        final instance = service(iconPath: file.path);
+        final original = await instance.handlerFor(web);
+        file.writeAsBytesSync([4, 5, 6]);
+        now = now.add(
+          CachingLinkHandlerService.maxAge + const Duration(seconds: 1),
+        );
+        final refreshed = await instance.handlerFor(web);
+        expect((refreshed!.icon! as MemoryImage).bytes, [4, 5, 6]);
+        expect(refreshed, isNot(same(original)));
+        expect(instance.cachedHandlerFor(web), same(refreshed));
+      });
+    });
+
+    test('oversized artwork falls back without losing the app', () async {
+      final file = write('opt/huge.png', List.filled(1024 * 1024 + 1, 0));
+      final handler = await service(iconPath: file.path).handlerFor(web);
+      expect(handler!.name, 'GIO browser');
       expect(handler.icon, isNull);
     });
 
-    test('pixmaps and absolute icon paths', () async {
-      write(
-        'usr/share/applications/p.desktop',
-        '[Desktop Entry]\nName=P\nIcon=p\n',
-      );
-      write('usr/share/pixmaps/p.png', 'png');
+    test('no association gives the generic glyph', () async {
+      final instance = LinuxLinkHandlerService(lookup: (_) async => null);
+      expect(await instance.handlerFor(web), isNull);
+    });
+
+    test('native GIO lookup handles an unregistered scheme', () async {
       expect(
-        path.normalize(
-          ((await service('p.desktop').handlerFor(web))!.icon! as FileImage)
-              .file
-              .absolute
-              .path,
+        await LinuxLinkHandlerService().lookUp(
+          Uri.parse('ghostcopy-test-unregistered://item'),
         ),
-        path.join(root.path, 'usr', 'share', 'pixmaps', 'p.png'),
+        isNull,
       );
-
-      write(
-        'usr/share/applications/a.desktop',
-        '[Desktop Entry]\nName=A\nIcon=${root.path}/opt/a/icon.png\n',
-      );
-      write('opt/a/icon.png', 'png');
-      expect(
-        ((await service('a.desktop').handlerFor(web))!.icon! as FileImage)
-            .file
-            .path,
-        '${root.path}/opt/a/icon.png',
-      );
-    });
-
-    test('no default, or an entry that is not installed, is null', () async {
-      expect(await service('', exitCode: 1).handlerFor(web), isNull);
-      expect(await service('\n').handlerFor(web), isNull);
-      expect(await service('gone.desktop').handlerFor(web), isNull);
-    });
-  });
-
-  test('a nested desktop file ID is found under its subdirectory', () {
-    expect(LinuxLinkHandlerService.desktopEntryPaths('firefox.desktop'), [
-      'firefox.desktop',
-    ]);
-    expect(LinuxLinkHandlerService.desktopEntryPaths('kde4-kmail.desktop'), [
-      'kde4-kmail.desktop',
-      'kde4/kmail.desktop',
-    ]);
+    }, skip: !Platform.isLinux);
   });
 
   test('the cache keeps at most maxEntries lookups', () async {
@@ -398,14 +419,16 @@ Name[pt_BR]=Editor de texto
     final macos = ChannelLinkHandlerService(platform: 'macos');
     final android = ChannelLinkHandlerService(platform: 'android');
 
-    // Windows and Linux: the scheme decides, whatever the kind of link.
-    for (final service in [windows, linux]) {
-      expect(key(service, 'https://a.com/x'), key(service, 'https://b.org/y'));
-      expect(
-        key(service, 'https://a.com/x'),
-        key(service, 'https://www.google.com/maps/place/x'),
-      );
-    }
+    // GIO chooses a default per scheme; Windows resolves full web URLs.
+    expect(key(linux, 'https://a.com/x'), key(linux, 'https://b.org/y'));
+    expect(
+      key(windows, 'https://a.com/x'),
+      isNot(key(windows, 'https://b.org/y')),
+    );
+    expect(
+      key(windows, 'https://a.com/x?app=1'),
+      isNot(key(windows, 'https://a.com/x?app=0')),
+    );
     // macOS: the whole URL, which universal links can match on.
     expect(key(macos, 'https://a.com/x'), isNot(key(macos, 'https://b.org/x')));
     expect(key(macos, 'https://a.com/x'), isNot(key(macos, 'https://a.com/y')));
@@ -413,9 +436,7 @@ Name[pt_BR]=Editor de texto
       key(macos, 'https://a.com/x?app=1'),
       isNot(key(macos, 'https://a.com/x?app=0')),
     );
-    // Android: per host and path - Docs and Sheets apart, Google Maps apart
-    // from Google search, and routes that differ deeper down apart too. The
-    // query is not part of it.
+    // Android Dynamic App Links can also route by query and fragment.
     expect(
       key(android, 'https://docs.google.com/document/d/1'),
       isNot(key(android, 'https://docs.google.com/spreadsheets/d/1')),
@@ -426,7 +447,7 @@ Name[pt_BR]=Editor de texto
     );
     expect(
       key(android, 'https://example.com/a?x=1'),
-      key(android, 'https://example.com/a?x=2'),
+      isNot(key(android, 'https://example.com/a?x=2')),
     );
     expect(
       key(android, 'https://www.google.com/maps/place/x'),
@@ -435,6 +456,14 @@ Name[pt_BR]=Editor de texto
     // A geo: or tel: path is the place or number itself.
     expect(key(android, 'geo:1.0,2.0'), key(android, 'geo:3.0,4.0'));
   });
+
+  test('native Windows lookup resolves a complete web URL', () async {
+    final handler = await WindowsLinkHandlerService().lookUp(
+      Uri.parse('https://example.com/open?app=1#details'),
+    );
+    expect(handler, isNotNull);
+    expect(handler!.name, isNotEmpty);
+  }, skip: !Platform.isWindows);
 }
 
 class _MutableHandlerService extends CachingLinkHandlerService {
