@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://ghostcopy.app/download/macos"><img src="https://img.shields.io/badge/Download_for_Mac-6670FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac" /></a>
-  <a href="https://testflight.apple.com/join/62aWHQzj"><img src="https://img.shields.io/badge/iPhone_on_TestFlight-6670FF?style=for-the-badge&logo=appstore&logoColor=white" alt="iPhone on TestFlight" /></a>
+  <a href="https://apps.apple.com/app/id6811251899"><img src="https://img.shields.io/badge/Get_for_iPhone-6670FF?style=for-the-badge&logo=appstore&logoColor=white" alt="Get for iPhone on the App Store" /></a>
   <a href="https://apps.microsoft.com/detail/9NW0TTGMSF80"><img src="https://img.shields.io/badge/Get_for_Windows-6670FF?style=for-the-badge&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDBoMTF2MTFIMHpNMTMgMGgxMXYxMUgxM3pNMCAxM2gxMXYxMUgwek0xMyAxM2gxMXYxMUgxM3oiLz48L3N2Zz4%3D" alt="Get for Windows" /></a>
   <a href="https://ghostcopy.app/download/linux"><img src="https://img.shields.io/badge/Download_for_Linux-6670FF?style=for-the-badge&logo=linux&logoColor=white" alt="Download for Linux" /></a>
 </p>
@@ -48,7 +48,7 @@
 | Platform | Status | How |
 |---|---|---|
 | **macOS** 14+ | Available | [Download the .dmg](https://ghostcopy.app/download/macos) &mdash; signed and notarized by Apple, and keeps itself up to date |
-| **iPhone** iOS 16+ | Public beta | [Join on TestFlight](https://testflight.apple.com/join/62aWHQzj) &mdash; install TestFlight, open the link on your iPhone, tap Accept |
+| **iPhone** iOS 16+ | Available | [Get it on the App Store](https://apps.apple.com/app/id6811251899) &mdash; push notifications and tap&#8209;to&#8209;copy, with the share sheet for sending |
 | **Windows** 10/11 | Available | [Get it from the Microsoft Store](https://apps.microsoft.com/detail/9NW0TTGMSF80) &mdash; signed by Microsoft, and updates itself |
 | **Linux** x86-64 | Available | [Download the .tar.gz](https://ghostcopy.app/download/linux) &mdash; KDE Plasma 6 on Wayland; installs for your user without sudo, and updates itself |
 | **Android** 8+ | Next | [Get told when it lands](https://ghostcopy.app/download#notify) |
