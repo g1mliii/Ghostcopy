@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 
 import '../../utils/xdg.dart';
@@ -14,11 +15,12 @@ import 'link_handler_service.dart';
 typedef LinuxLinkHandlerData = ({String name, Uint8List? png});
 
 /// GIO is the association backend used by url_launcher's GTK/GIO launcher.
-/// Lookup and file access run in an isolate; no helper process is spawned.
+/// The desktop runner uses GTK for the selected icon theme and async SVG
+/// loading. Headless GIO/file fallbacks run in an isolate without subprocesses.
 class LinuxLinkHandlerService extends CachingLinkHandlerService {
   LinuxLinkHandlerService({
     Future<LinuxLinkHandlerData?> Function(String scheme)? lookup,
-  }) : _lookup = lookup ?? _lookupInIsolate,
+  }) : _lookup = lookup ?? _lookupWithDesktopTheme,
        super(platform: 'linux');
 
   final Future<LinuxLinkHandlerData?> Function(String scheme) _lookup;
@@ -35,6 +37,27 @@ class LinuxLinkHandlerService extends CachingLinkHandlerService {
       // Fresh bytes let the shared cache detect an icon replaced in place.
       icon: found.png == null ? null : MemoryImage(found.png!),
     );
+  }
+}
+
+const _desktopChannel = MethodChannel('com.ghostcopy/link_handler');
+
+Future<LinuxLinkHandlerData?> _lookupWithDesktopTheme(String scheme) async {
+  try {
+    final result = await _desktopChannel.invokeMapMethod<String, Object?>(
+      'handlerFor',
+      {'url': '$scheme:'},
+    );
+    final name = result?['name'];
+    if (name is! String || name.isEmpty) return null;
+    final icon = result?['icon'];
+    return (
+      name: name,
+      png: icon is Uint8List && icon.isNotEmpty ? icon : null,
+    );
+  } on MissingPluginException {
+    // Headless tests and an older runner can still resolve GIO associations.
+    return _lookupInIsolate(scheme);
   }
 }
 

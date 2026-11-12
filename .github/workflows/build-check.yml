@@ -57,7 +57,7 @@ jobs:
           clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev
           libayatana-appindicator3-dev libkeybinder-3.0-dev liblzma-dev
           libcurl4-openssl-dev libssl-dev libwayland-dev libwayland-bin
-          desktop-file-utils
+          desktop-file-utils xvfb librsvg2-common
       - name: Test native clipboard events
         run: bash test/linux/run_native_tests.sh
       - name: Test installation and updates

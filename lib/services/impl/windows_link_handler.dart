@@ -424,20 +424,56 @@ Uint8List? _iconToPng(int icon, Arena arena) {
     if (lines == 0) return null;
 
     final bgra = Uint8List.fromList(pixels.asTypedList(byteCount));
-    // Older icons keep transparency in the mask and leave alpha at zero, which
-    // would draw nothing at all. Opaque is closer to right than invisible.
-    var anyAlpha = false;
-    for (var i = 3; i < bgra.length; i += 4) {
-      if (bgra[i] != 0) {
-        anyAlpha = true;
-        break;
+    Uint8List? andMask;
+    if (!_hasAlpha(bgra)) {
+      final maskBitmap = arena<_Bitmap>();
+      if (mask == 0 ||
+          _getObject(mask, sizeOf<_Bitmap>(), maskBitmap.cast()) == 0 ||
+          maskBitmap.ref.bmWidth != width ||
+          maskBitmap.ref.bmHeight != height) {
+        return null;
       }
-    }
-    if (!anyAlpha) {
-      for (var i = 3; i < bgra.length; i += 4) {
-        bgra[i] = 255;
+      // A one-bit AND mask is MSB-first, with DWORD-aligned scanlines.
+      final stride = ((width + 31) ~/ 32) * 4;
+      final maskHeader = arena<Uint8>(
+        sizeOf<_BitmapInfoHeader>() + 8,
+      ).cast<_BitmapInfoHeader>();
+      maskHeader.ref
+        ..biSize = sizeOf<_BitmapInfoHeader>()
+        ..biWidth = width
+        ..biHeight = -height
+        ..biPlanes = 1
+        ..biBitCount = 1
+        ..biCompression = 0
+        ..biClrUsed = 2;
+      final maskPixels = arena<Uint8>(stride * height);
+      final maskDc = _getDC(0);
+      if (maskDc == 0) return null;
+      try {
+        if (_getDIBits(
+              maskDc,
+              mask,
+              0,
+              height,
+              maskPixels.cast(),
+              maskHeader.cast(),
+              0,
+            ) !=
+            height) {
+          return null;
+        }
+      } finally {
+        _releaseDC(0, maskDc);
       }
+      andMask = Uint8List.fromList(maskPixels.asTypedList(stride * height));
     }
+    if (!restoreWindowsIconAlpha(
+      bgra,
+      width: width,
+      height: height,
+      andMask: andMask,
+    ))
+      return null;
     final image = img.Image.fromBytes(
       width: width,
       height: height,
@@ -450,4 +486,39 @@ Uint8List? _iconToPng(int icon, Arena arena) {
     _deleteObject(color);
     _deleteObject(mask);
   }
+}
+
+bool _hasAlpha(Uint8List pixels) {
+  for (var i = 3; i < pixels.length; i += 4) {
+    if (pixels[i] != 0) return true;
+  }
+  return false;
+}
+
+/// Restores legacy HICON transparency from a top-down one-bit [andMask].
+/// Existing alpha in [bgra] takes precedence over the mask. Invalid bitmap
+/// sizes or an absent legacy mask return false instead of guessing opacity.
+@visibleForTesting
+bool restoreWindowsIconAlpha(
+  Uint8List bgra, {
+  required int width,
+  required int height,
+  Uint8List? andMask,
+}) {
+  if (width <= 0 ||
+      height <= 0 ||
+      width > 1024 ||
+      height > 1024 ||
+      bgra.length != width * height * 4)
+    return false;
+  if (_hasAlpha(bgra)) return true;
+  final stride = ((width + 31) ~/ 32) * 4;
+  if (andMask == null || andMask.length != stride * height) return false;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final transparent = andMask[y * stride + x ~/ 8] & (0x80 >> (x % 8)) != 0;
+      bgra[(y * width + x) * 4 + 3] = transparent ? 0 : 255;
+    }
+  }
+  return true;
 }

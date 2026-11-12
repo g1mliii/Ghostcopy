@@ -73,6 +73,8 @@ class ClipLink {
     r'(?:[A-Za-z]{2,}|xn--[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)$',
   );
   static final _phoneChars = RegExp(r'^\+?[0-9()\-. ]+$');
+  static final _explicitPhoneChars = RegExp(r'^\+?[0-9A-Fa-f*#()\-. ]+$');
+  static final _phoneSeparators = RegExp(r'[()\-. ]');
   // No-break and narrow no-break spaces: what a number copied from a web
   // page, PDF or document is often spaced with (`+33 1 42 68 53 00`).
   static final _noBreakSpace = RegExp('[\u00A0\u202F]');
@@ -1097,17 +1099,24 @@ class ClipLink {
   /// says what it is, so [explicit] lifts the formatting requirement.
   static ClipLink? _phone(String text, {bool explicit = false}) {
     final number = text.trim().replaceAll(_noBreakSpace, ' ');
-    if (!_phoneChars.hasMatch(number)) return null;
+    if (!(explicit ? _explicitPhoneChars : _phoneChars).hasMatch(number)) {
+      return null;
+    }
+    // Service symbols and hexadecimal identifiers belong to local plans;
+    // a global (+) telephone number still contains decimal digits only.
+    if (number.startsWith('+') && !_phoneChars.hasMatch(number)) return null;
     // No number is written with a leading minus: that is a negative
     // quantity or a longitude (`-122.4194`).
-    if (number.startsWith('-') ||
-        _ipv4.hasMatch(number) ||
-        _date.hasMatch(number) ||
-        _ssn.hasMatch(number)) {
+    if (!explicit &&
+        (number.startsWith('-') ||
+            _ipv4.hasMatch(number) ||
+            _date.hasMatch(number) ||
+            _ssn.hasMatch(number))) {
       return null;
     }
     final digits = number.replaceAll(_nonDigit, '');
-    if (digits.isEmpty ||
+    final identifier = number.replaceAll(_phoneSeparators, '');
+    if (identifier.replaceFirst('+', '').isEmpty ||
         (!explicit && (digits.length < 7 || digits.length > 15))) {
       return null;
     }
@@ -1138,7 +1147,9 @@ class ClipLink {
         return null;
       }
     }
-    final dialled = international ? '+$digits' : digits;
+    final dialled = explicit
+        ? identifier
+        : (international ? '+$digits' : digits);
     return ClipLink._(
       ClipLinkKind.phone,
       Uri(scheme: 'tel', path: dialled),
