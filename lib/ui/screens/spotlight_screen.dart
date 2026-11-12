@@ -3075,10 +3075,13 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
             onPressed: () => unawaited(_openLink(link)),
             child: ClipLinkActionText(link: link),
           ),
-        if (clipLinkAlternate(_link) case final alternate?)
+        if ((_link, clipLinkAlternate(_link)) case (
+          final link?,
+          final alternate?,
+        ))
           MenuItemButton(
             leadingIcon: Icon(clipLinkAlternateIcon(alternate), size: 16),
-            onPressed: () => unawaited(_openLink(_link!, alternate: true)),
+            onPressed: () => unawaited(_openLink(link, alternate: true)),
             child: Text(alternate.label),
           ),
         MenuItemButton(

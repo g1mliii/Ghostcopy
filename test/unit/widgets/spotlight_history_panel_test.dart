@@ -219,4 +219,38 @@ void main() {
     },
     variant: desktopPlatforms,
   );
+  testWidgets(
+    'alternate menu callback retains its link after a row refresh',
+    (tester) async {
+      final previousLauncher = UrlLauncherPlatform.instance;
+      final launcher = _FakeLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+      const song = 'https://music.apple.com/ca/album/x/1';
+      final createdAt = DateTime.now();
+      ClipboardItem item(String content) => ClipboardItem(
+        id: 'song',
+        userId: 'user',
+        content: content,
+        deviceType: 'android',
+        createdAt: createdAt,
+      );
+      clips = [item(song)];
+      await pumpPanel(tester);
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.more_horiz).first);
+      await tester.pumpAndSettle();
+      final callback = tester
+          .widget<MenuItemButton>(
+            find.widgetWithText(MenuItemButton, 'Find on other services'),
+          )
+          .onPressed!;
+      clips = [item('plain text after refresh')];
+      await pumpPanel(tester);
+      callback();
+      await tester.pumpAndSettle();
+      expect(launcher.launched, ['https://song.link/$song']);
+      expect(tester.takeException(), isNull);
+    },
+    variant: desktopPlatforms,
+  );
 }

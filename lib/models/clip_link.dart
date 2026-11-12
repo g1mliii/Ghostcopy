@@ -378,9 +378,8 @@ class ClipLink {
       ClipLinkKind.video,
       'YouTube',
       (h, u) =>
-          h == 'youtube.com' ||
-          h == 'm.youtube.com' ||
-          h == 'youtu.be' ||
+          ((h == 'youtube.com' || h == 'm.youtube.com') && _youtubeVideo(u)) ||
+          (h == 'youtu.be' && _segments(u).length == 1) ||
           (h == 'youtube-nocookie.com' && _idAfter(u, const ['embed'])),
     ),
     (ClipLinkKind.video, 'Vimeo', (h, u) => _hostIs(h, 'vimeo.com')),
@@ -431,6 +430,12 @@ class ClipLink {
     'drafts': (ClipLinkKind.app, 'Drafts'),
   };
 
+  static bool _youtubeVideo(Uri uri) => switch (_lowerSegments(uri)) {
+    ['watch'] => (uri.queryParameters['v'] ?? '').trim().isNotEmpty,
+    ['shorts' || 'embed' || 'live', final target] => target.trim().isNotEmpty,
+    _ => false,
+  };
+
   static final _edgeSlashes = RegExp(r'^/+|/+$');
 
   static final _teamsMeetingPath = RegExp(
@@ -479,7 +484,10 @@ class ClipLink {
           routes: {'open', 'search'},
           params: {'vault', 'file', 'path', 'query'},
         ),
-        'drafts': (routes: {'open', 'x-callback-url/open'}, params: {'uuid'}),
+        'drafts': (
+          routes: {'open', 'x-callback-url/open'},
+          params: {'uuid', 'title', 'marker'},
+        ),
         'bear': (
           routes: {
             'x-callback-url/open-note',
@@ -586,6 +594,16 @@ class ClipLink {
     bool parameter(String key) =>
         (uri.queryParameters[key] ?? '').trim().isNotEmpty;
     return switch ((scheme, route)) {
+      ('drafts', 'open' || 'x-callback-url/open') =>
+        parameter('uuid') || parameter('title'),
+      ('todoist', 'task' || 'project') => parameter('id'),
+      ('craftdocs', 'open') => parameter('blockId') && parameter('spaceId'),
+      ('bear', 'x-callback-url/open-note') =>
+        parameter('id') || parameter('title'),
+      ('bear', 'x-callback-url/open-tag') => parameter('name'),
+      ('things', 'show') => parameter('id') || parameter('query'),
+      ('obsidian', 'open') =>
+        parameter('vault') || parameter('file') || parameter('path'),
       ('tg', 'resolve') => parameter('domain'),
       ('tg', 'privatepost') => parameter('channel') && parameter('post'),
       ('tg', 'join') => parameter('invite'),

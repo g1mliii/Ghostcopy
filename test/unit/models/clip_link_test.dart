@@ -88,6 +88,34 @@ void main() {
     }
   });
 
+  test('YouTube video actions require a playable target', () {
+    for (final path in [
+      'results?search_query=beatles',
+      'feed/subscriptions',
+      'channel/UCabc',
+      'watch',
+      'watch?v=',
+      'shorts/',
+      'embed/',
+      'live/',
+    ]) {
+      expect(
+        ClipLink.detect('https://www.youtube.com/$path')?.kind,
+        ClipLinkKind.web,
+        reason: path,
+      );
+    }
+    for (final path in ['watch?v=abc', 'shorts/abc', 'embed/abc', 'live/abc']) {
+      expect(
+        ClipLink.detect('https://www.youtube.com/$path')?.kind,
+        ClipLinkKind.video,
+        reason: path,
+      );
+    }
+    expect(ClipLink.detect('https://youtu.be/abc')?.kind, ClipLinkKind.video);
+    expect(ClipLink.detect('https://youtu.be/')?.kind, ClipLinkKind.web);
+  });
+
   group('ClipLink.detect', () {
     test('web links, with the host as the label', () {
       final link = ClipLink.detect('https://www.example.com/a/b?c=d')!;
@@ -1090,6 +1118,17 @@ void main() {
 
     test('navigation routes need their destination', () {
       for (final text in [
+        'todoist://task',
+        'todoist://project?id=%20',
+        'drafts://open',
+        'drafts://x-callback-url/open?uuid=',
+        'craftdocs://open',
+        'craftdocs://open?blockId=1',
+        'craftdocs://open?spaceId=2',
+        'bear://x-callback-url/open-note',
+        'bear://x-callback-url/open-tag',
+        'things:///show',
+        'obsidian://open',
         'tg://resolve',
         'tg://resolve?domain=',
         'tg://resolve?domain=%20&profile',
@@ -1117,6 +1156,15 @@ void main() {
         'sgnl://signal.me/#eu/usernameToken',
         'sgnl://signal.group/#groupInviteToken',
         'todoist://today',
+        'todoist://upcoming',
+        'todoist://inbox',
+        'todoist://task?id=1',
+        'todoist://project?id=2',
+        'drafts://open?title=Notes&marker=Introduction',
+        'craftdocs://open?blockId=1&spaceId=2',
+        'bear://x-callback-url/open-note?title=Notes',
+        'bear://x-callback-url/open-tag?name=work',
+        'obsidian://open?vault=Notes',
       ]) {
         expect(ClipLink.detect(text)?.kind, ClipLinkKind.app, reason: text);
       }
