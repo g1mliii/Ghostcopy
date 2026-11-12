@@ -68,7 +68,7 @@ class ClipLink {
   static final _email = RegExp(
     // The last label is letters, or punycode for a non-Latin top-level
     // domain (`xn--p1ai`).
-    r'^[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@'
+    r'''^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@'''
     r'(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
     r'(?:[A-Za-z]{2,}|xn--[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)$',
   );
