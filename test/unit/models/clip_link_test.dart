@@ -786,4 +786,28 @@ void main() {
       expect(ClipLink.detect('tel:'), isNull);
     },
   );
+  test(
+    'explicit local telephone identifiers preserve service and hex symbols',
+    () {
+      for (final target in [
+        'tel:*123%23;phone-context=example.com',
+        'tel:AB12%23;phone-context=example.com',
+        'tel:aBcD;phone-context=example.com',
+        'tel:*123%23',
+      ]) {
+        final link = ClipLink.detect(target)!;
+        expect(link.kind, ClipLinkKind.phone);
+        expect(link.uri.toString(), target);
+      }
+      for (final text in [
+        '*123#',
+        'AB12#',
+        'tel:+AB',
+        'tel:+1*2',
+        'tel:(-.)',
+      ]) {
+        expect(ClipLink.detect(text), isNull, reason: text);
+      }
+    },
+  );
 }
