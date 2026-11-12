@@ -254,13 +254,13 @@ class ClipLink {
   /// `/meet/<name>` or `/join/<name>`.
   static bool _webexMeeting(Uri uri) {
     final s = _lowerSegments(uri);
-    for (var i = 0; i < s.length; i++) {
-      if (s[i] == 'j.php') {
-        return (uri.queryParameters['MTID'] ?? '').isNotEmpty;
-      }
-      if ((s[i] == 'meet' || s[i] == 'join') && i + 1 < s.length) return true;
+    if (s.length == 2 && (s.first == 'meet' || s.first == 'join')) {
+      return true;
     }
-    return false;
+    // Invitation endpoints may live beneath the site's tenant prefix.
+    return s.isNotEmpty &&
+        s.last == 'j.php' &&
+        (uri.queryParameters['MTID'] ?? '').trim().isNotEmpty;
   }
 
   /// Whether [uri]'s path starts with the segments of [route] and then an
@@ -651,7 +651,17 @@ class ClipLink {
     // A scheme with nothing after it (`zoommtg://`, `spotify:/`) opens
     // nothing.
     if (route.isEmpty) return null;
-    if (_editorSchemes.contains(scheme) && uri.host != 'file') return null;
+    if (_editorSchemes.contains(scheme) &&
+        (uri.host != 'file' ||
+            !uri.pathSegments.any(
+              (part) => part
+                  .replaceAll('/', '')
+                  .replaceAll(r'\', '')
+                  .trim()
+                  .isNotEmpty,
+            ))) {
+      return null;
+    }
     if (_navigation[scheme] case (:final routes, params: final allowed)?) {
       if (!routes.contains(route.toLowerCase())) return null;
       // A navigation route can still be told to act - Drafts' `open` runs
@@ -1409,6 +1419,7 @@ class ClipLink {
   static const _shortMusicHosts = {
     'spotify.link',
     'deezer.page.link',
+    'link.deezer.com',
     'on.soundcloud.com',
     'pandora.app.link',
   };
@@ -1511,6 +1522,13 @@ class ClipLink {
     // A link to anything but a song or album - Liked Songs, a search, a
     // radio station, a Mix, a profile, an artist's merch - is nothing
     // song.link resolves. Short links are given the benefit of the doubt.
+    if (uri.host == 'link.deezer.com' &&
+        !switch (_segments(uri)) {
+          ['s', final token] => token.trim().isNotEmpty,
+          _ => false,
+        }) {
+      return null;
+    }
     if (!_shortMusicHosts.contains(uri.host) && !_namesSongOrAlbum) {
       return null;
     }

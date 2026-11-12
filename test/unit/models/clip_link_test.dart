@@ -527,6 +527,36 @@ void main() {
       }
     });
 
+    test(
+      'decimal coordinates include both poles and reject outside bounds',
+      () {
+        for (final text in ['90.000,45.000', '-90.000,-180.000']) {
+          expect(ClipLink.detect(text)?.kind, ClipLinkKind.map, reason: text);
+        }
+        for (final text in ['90.001,45.000', '-90.001,45.000']) {
+          expect(ClipLink.detect(text), isNull, reason: text);
+        }
+      },
+    );
+
+    test('editor file routes need an actual file destination', () {
+      for (final scheme in ['vscode', 'vscode-insiders', 'cursor']) {
+        for (final suffix in ['', '/', '/%20', '/%2F', '/%5C']) {
+          expect(ClipLink.detect('$scheme://file$suffix'), isNull);
+        }
+        for (final file in [
+          '/home/u/a.dart:12:4',
+          '/c:/work/a.dart',
+          '/my%20file',
+        ]) {
+          expect(
+            ClipLink.detect('$scheme://file$file')?.kind,
+            ClipLinkKind.app,
+          );
+        }
+      }
+    });
+
     test('coordinates, decimal and degrees', () {
       final decimal = ClipLink.detect('43.64263, -79.38712')!;
       expect(decimal.kind, ClipLinkKind.map);
@@ -1498,6 +1528,8 @@ void main() {
           'https://teams.microsoft.com/l/meetup-join-notes',
           'msteams:/l/meeting/',
           'msteams:/l/call/',
+          'https://developer.webex.com/docs/meet/example',
+          'https://help.webex.com/docs/join/example',
           'https://acme.webex.com/meet/',
           'https://acme.webex.com/join/',
           'https://acme.webex.com/acme/j.php-notes',
@@ -1517,6 +1549,8 @@ void main() {
         }
         for (final text in [
           'https://zoom.us/my/alice',
+          'https://acme.webex.com/meet/alice',
+          'https://acme.webex.com/join/alice',
           'https://acme.webex.com/acme/j.php?MTID=m123',
           'https://meet.google.com/abc-defg-hij/',
           'https://whereby.com/team-standup/',
@@ -1591,6 +1625,9 @@ void main() {
           'https://music.apple.com/us/browse',
           'https://music.apple.com/us/playlist/album/pl.abc',
           'https://artist.bandcamp.com/merch/shirt',
+          'https://link.deezer.com/',
+          'https://link.deezer.com/s/',
+          'https://link.deezer.com/marketing',
           'https://www.deezer.com/search/beatles',
           'https://www.deezer.com/album/',
           'https://tidal.com/browse/mix/abc',
@@ -1622,6 +1659,7 @@ void main() {
           'https://artist.bandcamp.com/track/song',
           'https://www.deezer.com/us/album/302127',
           'https://soundcloud.com/forss/flickermood',
+          'https://link.deezer.com/s/30oXe8DYL07mXVrubf8IP',
           'https://on.soundcloud.com/AbCd',
           'https://www.pandora.com/artist/the-beatles/abbey-road/come-together/TRabc123',
           'https://www.pandora.com/artist/the-beatles/abbey-road/ALabc123',
