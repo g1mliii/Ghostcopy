@@ -63,10 +63,15 @@ class MainFlutterWindow: NSWindow {
     }
 
     super.awakeFromNib()
-    
+
     // Ensure window is hidden at launch (prevents ghost window)
     // Flutter code (window_manager) will show it when ready
     self.orderOut(nil)
+  }
+
+  /// A push AppDelegate received, for MacPushService. Carries only the row id.
+  func forwardRemoteNotification(_ userInfo: [String: Any]) {
+    pushChannel?.invokeMethod("remoteNotification", arguments: userInfo["clipboard_id"] as? String)
   }
 
   /// Every way the Spotlight leaves the screen comes through here, so this

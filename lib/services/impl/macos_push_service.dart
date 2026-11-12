@@ -80,6 +80,12 @@ class MacPushService implements IDesktopPushService {
         );
       }
       FirebaseMessaging.onBackgroundMessage(_onBackgroundMessage);
+      // Silent pushes to a backgrounded app arrive here, from AppDelegate:
+      // firebase_messaging's own path did not deliver them on macOS.
+      _nativeChannel.setMethodCallHandler((call) async {
+        if (call.method == 'remoteNotification')
+          _wake('native ${call.arguments}');
+      });
       // Now that Firebase exists to receive the APNs token. The plugin's own
       // launch-time registration ran before it did, and skipped.
       await _nativeChannel.invokeMethod<void>('registerForRemoteNotifications');
@@ -94,13 +100,9 @@ class MacPushService implements IDesktopPushService {
       if (token == null) return false;
       _token = token;
 
-      void wake(Object? _) {
-        if (!_pushes.isClosed) _pushes.add(null);
-      }
-
       _subscriptions
-        ..add(FirebaseMessaging.onMessage.listen(wake))
-        ..add(_backgroundPushes.stream.listen(wake))
+        ..add(FirebaseMessaging.onMessage.listen((_) => _wake('foreground')))
+        ..add(_backgroundPushes.stream.listen((_) => _wake('background')))
         ..add(
           // registerCurrentDevice rather than updateFcmToken, as on mobile
           // (main.dart): it upserts the row, so a refresh that lands before
@@ -118,6 +120,11 @@ class MacPushService implements IDesktopPushService {
     }
   }
 
+  void _wake(String via) {
+    debugPrint('[MacPush] Push received ($via)');
+    if (!_pushes.isClosed) _pushes.add(null);
+  }
+
   @override
   Future<void> reregister() async {
     final token = _token;
@@ -128,6 +135,7 @@ class MacPushService implements IDesktopPushService {
 
   @override
   void dispose() {
+    _nativeChannel.setMethodCallHandler(null);
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
