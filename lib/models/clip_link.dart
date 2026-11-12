@@ -273,8 +273,9 @@ class ClipLink {
             '/frame',
             '/directions',
             '/look-around',
-          }.contains(uri.path))
+          }.contains(uri.path)) {
             return uri;
+          }
           if (uri.path == '/look-around') {
             // Preserve the panorama intent. Apple-only place IDs and
             // addresses cannot supply a Street View viewpoint.
