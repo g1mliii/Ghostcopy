@@ -2,6 +2,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clip_link.dart';
 
 void main() {
+  test('spaced explicit telephone links retain their parameters', () {
+    for (final (text, expected) in [
+      ('tel:+1 416 555 0199;ext=456', 'tel:+14165550199;ext=456'),
+      (
+        'tel:123 456;phone-context=example.com',
+        'tel:123456;phone-context=example.com',
+      ),
+      (
+        'tel:* 123%23;phone-context=example.com',
+        'tel:*123%23;phone-context=example.com',
+      ),
+    ]) {
+      final link = ClipLink.detect(text)!;
+      expect(link.kind, ClipLinkKind.phone);
+      expect(link.uri.toString(), expected);
+    }
+    expect(ClipLink.detect('tel:+1 416 555 0199;ext=4 56'), isNull);
+  });
+
+  test('fully qualified map hosts keep map actions and original web URI', () {
+    for (final text in [
+      'https://maps.apple.com./?q=London',
+      'https://maps.google.com./?q=London',
+    ]) {
+      final link = ClipLink.detect(text)!;
+      expect(link.kind, ClipLinkKind.map);
+      expect(link.uri.toString(), text);
+      if (text.contains('apple')) {
+        expect(link.openUri('android').toString(), 'geo:0,0?q=London');
+      } else {
+        expect(link.openUri('android').toString(), text);
+      }
+    }
+    expect(
+      ClipLink.detect('https://maps.apple.com.evil./?q=London')?.kind,
+      ClipLinkKind.web,
+    );
+  });
+
   test(
     'email dot-atoms accept standard punctuation and encode mailto paths',
     () {

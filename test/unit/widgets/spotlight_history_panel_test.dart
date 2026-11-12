@@ -142,6 +142,37 @@ void main() {
   );
 
   testWidgets(
+    'clicking the padded edge opens the link without copying the row',
+    (tester) async {
+      final previousLauncher = UrlLauncherPlatform.instance;
+      final launcher = _FakeLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+      clips = [
+        ClipboardItem(
+          id: 'link',
+          userId: 'user',
+          content: 'https://example.com',
+          deviceType: 'android',
+          createdAt: DateTime.now(),
+        ),
+      ];
+      await pumpPanel(tester);
+      final action = find.ancestor(
+        of: find.byIcon(Icons.open_in_new),
+        matching: find.byType(InkResponse),
+      );
+      final bounds = tester.getRect(action);
+      expect(bounds.width, greaterThanOrEqualTo(32));
+      await tester.tapAt(bounds.topLeft + const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(launcher.launched, ['https://example.com']);
+      expect(copied, isEmpty);
+    },
+    variant: desktopPlatforms,
+  );
+
+  testWidgets(
     'link menu opens with the keyboard and keeps Copy as a separate action',
     (tester) async {
       final previousLauncher = UrlLauncherPlatform.instance;

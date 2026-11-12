@@ -90,14 +90,6 @@ class ClipLink {
     // `tel:` href as a page wrote it, spaced for reading
     // (`tel:+1 416 555 0199`): not a valid URI, but plainly a number.
     final lower = text.toLowerCase();
-    if (text.contains(_whitespace)) {
-      if (lower.startsWith('tel:')) {
-        return _phone(text.substring(4), explicit: true);
-      }
-      return _phone(text);
-    }
-
-    if (lower.startsWith('mailto:')) return _mailto(text);
     if (lower.startsWith('tel:')) {
       // Through Uri, which turns a stray `%` into `%25`, rather than
       // decoding the raw text: Uri.decodeComponent throws an ArgumentError on
@@ -110,9 +102,18 @@ class ClipLink {
       final separator = path.indexOf(';');
       if (separator < 0) return _phone(path, explicit: true);
       final number = _phone(path.substring(0, separator), explicit: true);
-      if (number == null || path.contains(_whitespace)) return null;
-      return ClipLink._(ClipLinkKind.phone, uri, number.label);
+      final parameters = path.substring(separator);
+      if (number == null || parameters.contains(_whitespace)) return null;
+      return ClipLink._(
+        ClipLinkKind.phone,
+        path.contains(_whitespace)
+            ? uri.replace(path: '${number.uri.path}$parameters')
+            : uri,
+        number.label,
+      );
     }
+    if (text.contains(_whitespace)) return _phone(text);
+    if (lower.startsWith('mailto:')) return _mailto(text);
     if (lower.startsWith('geo:')) return _geo(text);
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
       return _http(text);
@@ -682,7 +683,10 @@ class _MapPlace {
   }
 
   static _MapPlace? fromWeb(Uri uri) {
-    final host = uri.host.toLowerCase();
+    final rawHost = uri.host.toLowerCase();
+    final host = rawHost.endsWith('.')
+        ? rawHost.substring(0, rawHost.length - 1)
+        : rawHost;
     // Query parameters are read only once the host is a maps one: every web
     // link passes through here.
     if (host == 'maps.apple.com') {

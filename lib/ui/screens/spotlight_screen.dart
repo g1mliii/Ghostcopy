@@ -2929,14 +2929,17 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
                       message: link.actionLabel,
                       child: InkResponse(
                         onTap: () => unawaited(_openLink(link)),
-                        radius: 14,
-                        child: ValueListenableBuilder<bool>(
-                          valueListenable: _isHovered,
-                          builder: (context, hovered, _) => Icon(
-                            Icons.open_in_new,
-                            size: 15,
-                            color: GhostColors.primary.withValues(
-                              alpha: hovered ? 1 : 0.6,
+                        radius: 20,
+                        child: Padding(
+                          padding: const EdgeInsets.all(9),
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: _isHovered,
+                            builder: (context, hovered, _) => Icon(
+                              Icons.open_in_new,
+                              size: 15,
+                              color: GhostColors.primary.withValues(
+                                alpha: hovered ? 1 : 0.6,
+                              ),
                             ),
                           ),
                         ),
