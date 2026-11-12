@@ -348,12 +348,20 @@ void main() {
       for (final (url, service) in [
         ('https://us02web.zoom.us/j/81234567890?pwd=abc', 'Zoom'),
         ('https://zoom.us/j/81234567890', 'Zoom'),
+        ('https://zoom.us/wc/join/81234567890', 'Zoom'),
+        ('https://zoom.us/wc/81234567890/start', 'Zoom'),
         ('https://meet.google.com/abc-defg-hij', 'Google Meet'),
+        ('https://g.co/meet/11thtue-trig', 'Google Meet'),
         (
           'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0',
           'Microsoft Teams',
         ),
         ('https://teams.live.com/meet/9876543210', 'Microsoft Teams'),
+        (
+          'https://teams.cloud.microsoft/l/meetup-join/19%3ameeting_abc/0',
+          'Microsoft Teams',
+        ),
+        ('https://teams.cloud.microsoft/meet/9876543210', 'Microsoft Teams'),
         ('https://acme.webex.com/meet/jdoe', 'Webex'),
         ('https://facetime.apple.com/join#v=1&p=abc', 'FaceTime'),
         ('zoommtg://zoom.us/join?confno=81234567890', 'Zoom'),
@@ -373,6 +381,21 @@ void main() {
         ClipLink.detect('https://meet.google.com/')!.kind,
         ClipLinkKind.web,
       );
+      for (final url in [
+        'https://zoom.us/wc/join/',
+        'https://zoom.us/wc/join/signin',
+        'https://zoom.us/wc/start',
+        'https://zoom.us/wc/not-a-meeting/start',
+        'https://g.co/meet/',
+        'https://g.co/meetsetup/device',
+        'https://g.co.example.com/meet/classroom',
+        'https://teams.cloud.microsoft/l/meetup-join/',
+        'https://teams.cloud.microsoft/meet/',
+        'https://teams.cloud.microsoft/v2/',
+        'https://teams.cloud.microsoft.example.com/meet/1234567890',
+      ]) {
+        expect(ClipLink.detect(url)!.kind, ClipLinkKind.web, reason: url);
+      }
     });
 
     test('music links, with a way to find them elsewhere', () {
@@ -1301,6 +1324,11 @@ void main() {
           'https://music.youtube.com/channel/UCabc',
           'https://www.pandora.com/search/subscriptions/all',
           'https://www.pandora.com/artist/the-beatles/ARabc123',
+          'https://www.pandora.com/track/',
+          'https://www.pandora.com/album/',
+          'https://www.pandora.com/track/ALxpJ9fhV534Xhg',
+          'https://www.pandora.com/album/TR92bl4n9wPPd96',
+          'https://www.pandora.com/track/not-an-id',
         ]) {
           expect(
             ClipLink.detect(text)!.alternateOn('android'),
@@ -1318,6 +1346,8 @@ void main() {
           'https://on.soundcloud.com/AbCd',
           'https://www.pandora.com/artist/the-beatles/abbey-road/come-together/TRabc123',
           'https://www.pandora.com/artist/the-beatles/abbey-road/ALabc123',
+          'https://www.pandora.com/track/TR92bl4n9wPPd96',
+          'https://www.pandora.com/album/ALxpJ9fhV534Xhg',
           'https://pandora.app.link/AbCdEf',
         ]) {
           expect(

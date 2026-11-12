@@ -204,6 +204,8 @@ class ClipLink {
     return ClipLink._(ClipLinkKind.web, uri, site);
   }
 
+  static final _zoomMeetingId = RegExp(r'^\d{9,11}$');
+
   // A meeting code, or Classroom's stable /lookup/<id> link to a class's
   // current meeting.
   static final _meetCode = RegExp(
@@ -282,21 +284,24 @@ class ClipLink {
           (_hostIs(h, 'zoom.us') || _hostIs(h, 'zoomgov.com')) &&
           switch (_lowerSegments(u)) {
             ['j' || 'my' || 'w' || 's', _, ...] => true,
-            // The Zoom Web App: /wc/<meeting>/join.
-            ['wc', _, ..., 'join'] => true,
+            // Both orders used by the Zoom Web App, including host links.
+            ['wc', 'join', final id] || ['wc', final id, 'join' || 'start'] =>
+              _zoomMeetingId.hasMatch(id),
             _ => false,
           },
     ),
     (
       ClipLinkKind.meeting,
       'Google Meet',
-      (h, u) => h == 'meet.google.com' && _meetCode.hasMatch(u.path),
+      (h, u) =>
+          (h == 'meet.google.com' && _meetCode.hasMatch(u.path)) ||
+          (h == 'g.co' && _idAfter(u, const ['meet'])),
     ),
     (
       ClipLinkKind.meeting,
       'Microsoft Teams',
       (h, u) =>
-          (h == 'teams.microsoft.com' &&
+          ((h == 'teams.microsoft.com' || h == 'teams.cloud.microsoft') &&
               // Older invitations, and the shorter /meet/<id>?p=... ones
               // new meetings get.
               (_idAfter(u, const ['l', 'meetup-join']) ||
@@ -1267,6 +1272,10 @@ class ClipLink {
     // Under its artist, ending in its id: /artist/<artist>/<album>/AL...,
     // /artist/<artist>/<album>/<track>/TR....
     'Pandora' => switch (_segments(uri)) {
+      [final route, final id] when route.toLowerCase() == 'track' =>
+        id.startsWith('TR') && _pandoraItem.hasMatch(id),
+      [final route, final id] when route.toLowerCase() == 'album' =>
+        id.startsWith('AL') && _pandoraItem.hasMatch(id),
       [final artist, ..., final id] =>
         artist.toLowerCase() == 'artist' && _pandoraItem.hasMatch(id),
       _ => false,
