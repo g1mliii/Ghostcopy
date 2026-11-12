@@ -2,12 +2,20 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { stripTypeScriptTypes } from 'node:module';
 import { sharedKeysSource } from './shared_keys.mjs';
 
-// Execute the deployed handler with local Supabase/FCM doubles. Its runtime
-// code is JavaScript; only the Deno-specific imports need replacing here.
-const source = sharedKeysSource + (await readFile(new URL('../../supabase/functions/send-clipboard-notification/index.ts', import.meta.url), 'utf8'))
-  .replace(/^import .*;\r?\n/gm, '');
+// Execute the deployed handler with local Supabase/FCM doubles. The handler
+// and its sibling modules (the WNS sender, the device and message helpers)
+// are concatenated in dependency order with their imports and `export`
+// keywords removed, then type-stripped, so one vm script holds them all.
+const functionSource = async (name) =>
+  (await readFile(new URL(`../../supabase/functions/send-clipboard-notification/${name}`, import.meta.url), 'utf8'))
+    .replace(/^import .*;\r?\n/gm, '')
+    .replace(/^export /gm, '');
+const source = sharedKeysSource + stripTypeScriptTypes(
+  (await functionSource('wns.ts')) + (await functionSource('messages.ts')) + (await functionSource('index.ts')),
+);
 
 function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KEY: 'service-secret' }) {
   let handler;
