@@ -536,7 +536,8 @@ class ClipLink {
 
   static bool _youtubeVideo(Uri uri) => switch (_lowerSegments(uri)) {
     ['watch'] => (uri.queryParameters['v'] ?? '').trim().isNotEmpty,
-    ['shorts' || 'embed' || 'live', final target] => target.trim().isNotEmpty,
+    ['shorts' || 'embed' || 'live' || 'clip', final target] =>
+      target.trim().isNotEmpty,
     _ => false,
   };
 
@@ -1382,6 +1383,7 @@ class ClipLink {
       case ClipLinkKind.phone:
         // Decoded, as detection read it: `%3B` is a `;` there too.
         final path = _telPath;
+        if (!_phoneChars.hasMatch(path.split(';').first)) return null;
         // A local number's `phone-context` says which country and area it
         // is in; `sms:` has no way to carry it, and the number alone could
         // reach someone else. Call keeps it; Text is left out.

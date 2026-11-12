@@ -2,6 +2,42 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clip_link.dart';
 
 void main() {
+  test('YouTube clips need an exact route and a clip target', () {
+    final clip = ClipLink.detect('https://www.youtube.com/clip/UgkxExample')!;
+    expect(clip.kind, ClipLinkKind.video);
+    expect(clip.actionLabel, 'Watch on YouTube');
+    for (final text in [
+      'https://www.youtube.com/clip/',
+      'https://www.youtube.com/clip/id/extra',
+      'https://www.youtube.com/clips/id',
+    ]) {
+      expect(ClipLink.detect(text)?.kind, ClipLinkKind.web, reason: text);
+    }
+  });
+
+  test('service and hexadecimal telephone identifiers cannot be texted', () {
+    for (final text in [
+      'tel:*123%23',
+      'tel:ABCD',
+      'tel:AB12',
+      'tel:*123%23;ext=4',
+    ]) {
+      final link = ClipLink.detect(text)!;
+      expect(link.kind, ClipLinkKind.phone);
+      for (final platform in ['android', 'ios', 'windows', 'macos']) {
+        expect(
+          link.alternateOn(platform),
+          isNull,
+          reason: '$text on $platform',
+        );
+      }
+    }
+    expect(
+      ClipLink.detect('tel:1234')!.alternateOn('android')?.uri.toString(),
+      'sms:1234',
+    );
+  });
+
   test('spaced explicit telephone links retain their parameters', () {
     for (final (text, expected) in [
       ('tel:+1 416 555 0199;ext=456', 'tel:+14165550199;ext=456'),
