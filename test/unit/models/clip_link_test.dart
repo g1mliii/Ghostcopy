@@ -2,6 +2,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clip_link.dart';
 
 void main() {
+  test(
+    'email dot-atoms accept standard punctuation and encode mailto paths',
+    () {
+      const punctuation = r'''!#$%&'*+-/=?^_`{|}~''';
+      for (final character in punctuation.split('')) {
+        final address = 'a${character}b@example.com';
+        final bare = ClipLink.detect(address)!;
+        expect(bare.kind, ClipLinkKind.email, reason: address);
+        expect(bare.label, address);
+        expect(bare.uri.hasQuery, isFalse);
+        expect(bare.uri.hasFragment, isFalse);
+        expect(ClipLink.detect(bare.uri.toString())?.label, address);
+      }
+      expect(
+        ClipLink.detect('mailto:o%27connor@example.com')?.label,
+        r'''o'connor@example.com''',
+      );
+      for (final address in [
+        '.person@example.com',
+        'person.@example.com',
+        'first..last@example.com',
+      ]) {
+        expect(ClipLink.detect(address), isNull, reason: address);
+      }
+    },
+  );
+
   group('ClipLink.detect', () {
     test('web links, with the host as the label', () {
       final link = ClipLink.detect('https://www.example.com/a/b?c=d')!;
