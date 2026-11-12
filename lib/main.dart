@@ -696,6 +696,13 @@ Future<void> _appMain(
       ),
     );
 
+    // The window starts hidden, and tray mode is otherwise entered only by
+    // hideSpotlight. Without this a desktop launched at login and never
+    // opened ran neither the tray health check nor the push takeover.
+    // Linux's first-launch Spotlight goes through showSpotlight, which
+    // leaves tray mode again.
+    if (!windowService.isVisible) lifecycleController.enterTrayMode();
+
     runApp(MyApp(launchedAtStartup: launchedAtStartup));
   } else {
     // Mobile app - initialize Firebase and FCM (optional)

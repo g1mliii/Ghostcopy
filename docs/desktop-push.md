@@ -69,6 +69,22 @@ itself once Firebase is up (`com.ghostcopy.app/push` in
 `MainFlutterWindow.swift`): Firebase is configured from Dart after launch, so
 the plugin's own launch-time registration would find no Firebase app and skip.
 
+Incoming silent pushes reach Dart through `AppDelegate.swift`, not the plugin.
+macOS hands a silent push to a running app only in
+`application(_:didReceiveRemoteNotification:)`; firebase_messaging's proxy for
+it delivered nothing on macOS (the push was sent, `apsd` dispatched it, the app
+logged no arrival), so `AppDelegate` forwards it on `com.ghostcopy.app/push`
+as `remoteNotification`. It must not call `super`: `FlutterAppDelegate` adopts
+`NSApplicationDelegate` without implementing that method, so Swift requires
+`override` yet `super` aborts the app. Measured on a release build in the tray:
+push received about 1.6 s after the clip was sent, realtime paused 2 minutes
+after the first push, and a clip sent while paused was on the clipboard 1.9 s
+after sending.
+
+To see `apsd`'s side, run `log show --last 15m --info --debug --predicate
+'process == "apsd"'` from Terminal: a delivered push logs "Received message for
+enabled topic ... with priority 5", then "Sending push to client".
+
 ## Windows setup
 
 The Store (MSIX) build only: WNS needs package identity.
