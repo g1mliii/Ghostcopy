@@ -38,6 +38,52 @@ void main() {
     );
   });
 
+  test('Apple-only avoid options preserve the original route', () {
+    for (final avoid in [
+      'stairs',
+      'busy-roads',
+      'tolls,stairs',
+      'highways,hills',
+    ]) {
+      final text =
+          'https://maps.apple.com/directions?destination=Park&mode=walking&avoid=$avoid';
+      expect(ClipLink.detect(text)!.openUri('android').toString(), text);
+    }
+  });
+
+  test('geo searches retain validated zoom in desktop and Apple framing', () {
+    final link = ClipLink.detect('geo:37.7749,-122.4194?z=10&q=restaurants')!;
+    for (final platform in ['windows', 'linux']) {
+      expect(
+        link.openUri(platform).pathSegments.last,
+        '@37.7749,-122.4194,10z',
+      );
+    }
+    for (final platform in ['ios', 'macos']) {
+      final target = link.openUri(platform);
+      expect(target.path, '/search');
+      expect(target.queryParameters['query'], 'restaurants');
+      expect(target.queryParameters['center'], '37.7749,-122.4194');
+      final span = target.queryParameters['span']!
+          .split(',')
+          .map(double.parse)
+          .toList();
+      expect(span[0], closeTo(0.27788, 0.001));
+      expect(span[1], closeTo(0.3515625, 0.000001));
+    }
+    for (final zoom in ['-1', '22', 'bad', 'NaN']) {
+      final target = ClipLink.detect(
+        'geo:37,-122?z=$zoom&q=restaurants',
+      )!.openUri('ios');
+      expect(target.queryParameters.containsKey('span'), isFalse);
+    }
+    for (final zoom in [0, 21]) {
+      final target = ClipLink.detect('geo:37,-122?z=$zoom')!;
+      expect(target.openUri('ios').queryParameters['z'], '$zoom');
+      expect(target.openUri('windows').pathSegments.last, '@37,-122,${zoom}z');
+    }
+  });
+
   test('spaced explicit telephone links retain their parameters', () {
     for (final (text, expected) in [
       ('tel:+1 416 555 0199;ext=456', 'tel:+14165550199;ext=456'),
@@ -1017,7 +1063,7 @@ void main() {
       final multiple = ClipLink.detect(
         'https://maps.apple.com/directions?destination=End'
         '&waypoint=First%20Stop&waypoint=34.99,-106.61&waypoint='
-        '&avoid=tolls,stairs&avoid=highways&avoid=tolls',
+        '&avoid=tolls&avoid=highways&avoid=tolls',
       )!;
       expect(multiple.openUri('android').queryParameters, {
         'api': '1',
@@ -1031,10 +1077,7 @@ void main() {
         'https://maps.apple.com/directions?destination=End'
         '&waypoint=&avoid=stairs,busy-roads',
       )!;
-      expect(unsupported.openUri('android').queryParameters, {
-        'api': '1',
-        'destination': 'End',
-      });
+      expect(unsupported.openUri('android'), unsupported.uri);
     });
 
     test('Android rewrites an Apple frame with only a center', () {

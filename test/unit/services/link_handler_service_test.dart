@@ -117,8 +117,10 @@ void main() {
         ]);
 
         expect((await service.handlerFor(second))!.name, 'Google Maps');
-        expect(asked, hasLength(1));
+        expect(asked, hasLength(2));
         expect(service.cachedHandlerFor(second)!.name, 'Google Maps');
+        await service.handlerFor(second);
+        expect(asked, hasLength(2));
       },
     );
 
@@ -161,6 +163,28 @@ void main() {
       expect((await service.handlerFor(fragment))!.name, 'Native');
       expect((await service.handlerFor(browser))!.name, 'Browser');
       expect(asked, hasLength(3));
+    });
+
+    test('Android opaque URI routes keep distinct cached handlers', () async {
+      answer = (url) => {'name': url};
+      final service = ChannelLinkHandlerService(
+        platform: 'android',
+        channel: channel,
+      );
+      for (final text in [
+        'mailto:alice@example.com',
+        'mailto:bob@other.com',
+        'tel:+14165550199',
+        'tel:+442079460123',
+        'geo:1,2',
+        'geo:3,4',
+      ]) {
+        final link = ClipLink.detect(text)!;
+        final expected = link.openUri('android').toString();
+        expect((await service.handlerFor(link))!.name, expected);
+        expect((await service.handlerFor(link))!.name, expected);
+      }
+      expect(asked, hasLength(6));
     });
 
     test('Android ports keep their own handlers', () async {
@@ -511,8 +535,8 @@ Name[pt_BR]=Editor de texto
       key(android, 'https://www.google.com/maps/place/x'),
       isNot(key(android, 'https://www.google.com/search?q=x')),
     );
-    // A geo: or tel: path is the place or number itself.
-    expect(key(android, 'geo:1.0,2.0'), key(android, 'geo:3.0,4.0'));
+    // Android filters can match the opaque scheme-specific part too.
+    expect(key(android, 'geo:1.0,2.0'), isNot(key(android, 'geo:3.0,4.0')));
   });
 
   test('native Windows lookup resolves a complete web URL', () async {
