@@ -1,4 +1,4 @@
-// Email signups: TestFlight invites and "tell me when it ships".
+// Email signups: "tell me when it ships".
 //
 // Posts straight to PostgREST rather than through an edge function: the table
 // has an insert-only policy and no select policy, so the anon key can add a row
