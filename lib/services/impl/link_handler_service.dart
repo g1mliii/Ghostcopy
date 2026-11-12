@@ -124,9 +124,11 @@ class ChannelLinkHandlerService extends CachingLinkHandlerService {
 
   /// Web routing can depend on the query and fragment as well as the path:
   /// Android Dynamic App Links and macOS universal links both support them.
-  /// The bounded LRU limits the extra entries. Other schemes use the scheme.
+  /// Android also matches opaque scheme-specific parts (mail, phone, geo).
+  /// The bounded LRU limits the extra entries. macOS protocols use the scheme.
   @override
-  String cacheKeyFor(Uri uri) => uri.isScheme('https') || uri.isScheme('http')
+  String cacheKeyFor(Uri uri) =>
+      platform == 'android' || uri.isScheme('https') || uri.isScheme('http')
       ? uri.toString()
       : uri.scheme;
 
