@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
 import 'package:flutter/painting.dart';
@@ -13,6 +14,62 @@ import 'package:path/path.dart' as path;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'legacy Windows icon masks retain transparent pixels and row padding',
+    () {
+      final pixels = Uint8List(9 * 2 * 4);
+      final mask = Uint8List.fromList([0x80, 0x80, 0, 0, 0x40, 0, 0, 0]);
+      expect(
+        restoreWindowsIconAlpha(pixels, width: 9, height: 2, andMask: mask),
+        isTrue,
+      );
+      final transparent = [
+        for (var i = 0; i < 18; i++)
+          if (pixels[i * 4 + 3] == 0) i,
+      ];
+      expect(transparent, [0, 8, 10]);
+      expect(pixels[4 + 3], 255);
+    },
+  );
+
+  test('Windows alpha icons keep their existing transparency', () {
+    final pixels = Uint8List.fromList([10, 20, 30, 128, 0, 0, 0, 0]);
+    expect(
+      restoreWindowsIconAlpha(
+        pixels,
+        width: 2,
+        height: 1,
+        andMask: Uint8List.fromList([255, 0, 0, 0]),
+      ),
+      isTrue,
+    );
+    expect(pixels, [10, 20, 30, 128, 0, 0, 0, 0]);
+    expect(restoreWindowsIconAlpha(Uint8List(4), width: 1, height: 1), isFalse);
+  });
+
+  test(
+    'Linux uses the native desktop theme icon rather than hicolor artwork',
+    () async {
+      const channel = MethodChannel('com.ghostcopy/link_handler');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'handlerFor');
+        expect(call.arguments, {'url': 'https:'});
+        return {
+          'name': 'Themed browser',
+          'icon': Uint8List.fromList([1, 2, 3]),
+        };
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final handler = await LinuxLinkHandlerService().lookUp(
+        Uri.parse('https://example.com'),
+      );
+      expect(handler!.name, 'Themed browser');
+      expect((handler.icon! as MemoryImage).bytes, [1, 2, 3]);
+    },
+  );
 
   group('ChannelLinkHandlerService', () {
     const channel = MethodChannel('test/link_handler');

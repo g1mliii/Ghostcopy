@@ -21,6 +21,8 @@ add_executable(${BINARY_NAME}
   "main.cc"
   "my_application.cc"
   "clipboard_change_channel.cc"
+  "link_handler_channel.cc"
+  "link_handler_icon.cc"
   "clipboard_monitor.cc"
   "${CMAKE_CURRENT_BINARY_DIR}/wlr-data-control-protocol.c"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
