@@ -1107,7 +1107,10 @@ class ClipLink {
       return null;
     }
     final digits = number.replaceAll(_nonDigit, '');
-    if (digits.length < 7 || digits.length > 15) return null;
+    if (digits.isEmpty ||
+        (!explicit && (digits.length < 7 || digits.length > 15))) {
+      return null;
+    }
     final international = number.startsWith('+');
     if (!explicit && !international) {
       if (digits.length == number.length) return null;
@@ -1892,13 +1895,19 @@ class _MapPlace {
       }
     }
     final hasQuery = query != null && query.isNotEmpty;
-    // geo:0,0 is the "no coordinate, search instead" form.
-    final realLatLng = latLng == '0,0' ? null : latLng;
-    if (realLatLng == null && !hasQuery) return null;
+    // A numeric q identifies its own pin; the geo path only biases a
+    // textual search. Signed and decimal zeroes all mean an unscoped search.
+    if (_latLngOrNull(query) case final pin?) {
+      return _MapPlace(_MapSource.geo, latLng: pin);
+    }
+    final zero = latLng.split(',').every((part) => double.parse(part) == 0);
+    final location = zero ? null : latLng;
+    if (location == null && !hasQuery) return null;
     return _MapPlace(
       _MapSource.geo,
       query: hasQuery ? query : null,
-      latLng: realLatLng,
+      latLng: hasQuery ? null : location,
+      center: hasQuery ? location : null,
     );
   }
 
@@ -1936,8 +1945,15 @@ class _MapPlace {
   }
 
   /// On maps.apple.com when [web], which every Apple device answers; on
-  /// `maps:` otherwise, which only the Maps app does.
+  /// `maps:` otherwise, which only the Maps app does. Nearby searches use
+  /// the unified web route on both platforms to preserve their search center.
   Uri toAppleMaps({required bool web}) {
+    if (query != null && center != null) {
+      return Uri.https('maps.apple.com', '/search', {
+        'query': query!,
+        'center': center!,
+      });
+    }
     final params = Uri(
       queryParameters: {
         if (query != null) 'q': query,

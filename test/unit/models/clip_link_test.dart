@@ -413,7 +413,7 @@ void main() {
       expect(applePlace.openUri('macos'), applePlace.uri);
       expect(
         geo.openUri('macos').toString(),
-        'maps://?q=CN+Tower&ll=43.6426%2C-79.3871',
+        'https://maps.apple.com/search?query=CN+Tower&center=43.6426%2C-79.3871',
       );
       expect(google.openUri('macos'), google.uri);
     });
@@ -422,7 +422,7 @@ void main() {
       expect(appleClassic.openUri('ios'), appleClassic.uri);
       expect(
         geo.openUri('ios').toString(),
-        'https://maps.apple.com/?q=CN+Tower&ll=43.6426%2C-79.3871',
+        'https://maps.apple.com/search?query=CN+Tower&center=43.6426%2C-79.3871',
       );
     });
 
@@ -1026,7 +1026,7 @@ void main() {
         link.alternateOn('android')!.uri.toString(),
         'sms:+1-201-555-0123',
       );
-      expect(ClipLink.detect('tel:12;ext=4'), isNull);
+      expect(ClipLink.detect('tel:12;ext=4')?.kind, ClipLinkKind.phone);
     });
 
     test('Apple Maps directions open as Google Maps directions on Android', () {
@@ -1657,4 +1657,47 @@ void main() {
       );
     });
   });
+  test('all numeric zero geo centers leave searches unscoped', () {
+    for (final zero in ['0,0', '0.0,0.0', '-0,0.00', '-0.0,-0.0']) {
+      final link = ClipLink.detect('geo:$zero?q=CN%20Tower')!;
+      expect(link.openUri('ios').queryParameters, {'q': 'CN Tower'});
+      expect(link.openUri('linux').queryParameters, {
+        'api': '1',
+        'query': 'CN Tower',
+      });
+    }
+  });
+
+  test('nearby geo searches retain a search center on Apple platforms', () {
+    final search = ClipLink.detect('geo:37.7749,-122.4194?q=Coffee')!;
+    for (final platform in ['ios', 'macos']) {
+      final opened = search.openUri(platform);
+      expect(opened.host, 'maps.apple.com');
+      expect(opened.path, '/search');
+      expect(opened.queryParameters, {
+        'query': 'Coffee',
+        'center': '37.7749,-122.4194',
+      });
+    }
+    final pin = ClipLink.detect('geo:0,0?q=37.7749,-122.4194')!;
+    expect(pin.openUri('ios').queryParameters, {'ll': '37.7749,-122.4194'});
+  });
+
+  test(
+    'explicit telephone URIs support private and service number lengths',
+    () {
+      for (final target in [
+        'tel:911',
+        'tel:1',
+        'tel:1234;phone-context=example.com',
+        'tel:1234567890123456;phone-context=example.com',
+      ]) {
+        final link = ClipLink.detect(target)!;
+        expect(link.kind, ClipLinkKind.phone);
+        expect(link.uri.toString(), target);
+      }
+      expect(ClipLink.detect('1234'), isNull);
+      expect(ClipLink.detect('tel:'), isNull);
+    },
+  );
 }
