@@ -68,6 +68,11 @@ class ClipLink {
     r'^(?!\d{3}\.\d{4}$)\d+\.\d+$|^\d{1,2}(\.\d{3}){2,}$',
   );
   static final _latLng = RegExp(r'^-?\d+(\.\d+)?,-?\d+(\.\d+)?$');
+  // Dot-separated labels, none empty: `intranet`, `example.com`, `münchen.de`.
+  static final _hostLabels = RegExp(r'^[^.\s]+(\.[^.\s]+)*$');
+  // A domestic trunk prefix written in brackets after a country code
+  // (`+44 (0)20 7946 0958`), which is never dialled internationally.
+  static final _bracketedTrunkZero = RegExp(r'\(\s*0\s*\)');
 
   /// The link this clip is, or null when it is not one.
   ///
@@ -135,15 +140,18 @@ class ClipLink {
     final uri = Uri.tryParse(text);
     if (uri == null || !uri.hasAuthority) return null;
     final host = uri.host.toLowerCase();
-    // A name with a dot, localhost, or an IPv6 literal (`[2001:db8::1]`,
-    // which Uri.host gives without its brackets).
+    // Only reached with an explicit http(s) scheme (or `www.`), so any
+    // syntactically valid host counts, a single label included:
+    // `https://intranet/wiki` or `http://router/status` resolve through
+    // local DNS or a search domain, and RFC 3986 leaves that to the OS. An
+    // IPv6 literal (`[2001:db8::1]`) arrives without its brackets.
     // A trailing dot (`example.com.`) is a fully qualified name, but the dot
     // has to separate labels: `www.` alone, or `.com`, is not a site.
     final name = host.endsWith('.') ? host.substring(0, host.length - 1) : host;
     final validHost =
-        (name.contains('.') && !name.startsWith('.')) ||
-        host == 'localhost' ||
-        host.contains(':');
+        host.contains(':') ||
+        (_hostLabels.hasMatch(name) &&
+            (!host.endsWith('.') || name.contains('.')));
     if (!validHost) return null;
     final place = _MapPlace.fromWeb(uri);
     if (place != null) {
@@ -205,8 +213,13 @@ class ClipLink {
             _ssn.hasMatch(number))) {
       return null;
     }
-    final digits = number.replaceAll(_nonDigit, '');
-    final identifier = number.replaceAll(_phoneSeparators, '');
+    // ITU-T E.123: the trunk 0 after a country code is shown in brackets
+    // for domestic callers and dropped when dialling internationally.
+    final dialable = number.startsWith('+')
+        ? number.replaceAll(_bracketedTrunkZero, '')
+        : number;
+    final digits = dialable.replaceAll(_nonDigit, '');
+    final identifier = dialable.replaceAll(_phoneSeparators, '');
     if (identifier.replaceFirst('+', '').isEmpty ||
         (!explicit && (digits.length < 7 || digits.length > 15))) {
       return null;
@@ -707,20 +720,36 @@ class _MapPlace {
     // link passes through here.
     if (host == 'maps.apple.com') {
       final params = uri.queryParameters;
+      final latLng = _latLngOrNull(params['ll'] ?? params['coordinate']);
+      // On a /place link `address` is where the place is and `name` only
+      // what its card is called. Without coordinates the name alone would
+      // search for any business of that name, so keep the address with it.
+      final name = params['name']?.trim();
+      final address = params['address']?.trim();
+      final namedAddress =
+          latLng == null &&
+              name != null &&
+              name.isNotEmpty &&
+              address != null &&
+              address.isNotEmpty
+          ? '$name, $address'
+          : null;
       return _MapPlace(
         _MapSource.apple,
         // The classic parameters and the 2024 /place, /search and
         // /directions ones.
-        query: _first(params, const [
-          'name',
-          'q',
-          'query',
-          'address',
-          'destination',
-          'daddr',
-          'saddr',
-        ]),
-        latLng: _latLngOrNull(params['ll'] ?? params['coordinate']),
+        query:
+            namedAddress ??
+            _first(params, const [
+              'name',
+              'q',
+              'query',
+              'address',
+              'destination',
+              'daddr',
+              'saddr',
+            ]),
+        latLng: latLng,
         center: _latLngOrNull(params['center'] ?? params['sll']),
       );
     }
@@ -894,29 +923,46 @@ class _MapPlace {
     return '${latitudeSpan.toStringAsFixed(7)},${longitude.toStringAsFixed(7)}';
   }
 
-  /// A search, or a pin. With both a query and coordinates the search is
-  /// scoped to them, in the form Google Maps writes its own links in: the
-  /// API form has no way to say where to search, and `query=Home` alone
-  /// could find any Home.
+  /// A pin, or a search.
+  ///
+  /// A pin at [latLng] stays a pin at those coordinates even when it has a
+  /// label: Google Maps URLs cannot carry a label, and searching for it - a
+  /// `geo:` `(Treasure)`, Apple's `q` beside `ll` - could find another place
+  /// or nothing. A search for [query] near [center] is scoped to it, in the
+  /// form Google Maps writes its own links in: the API form has no way to
+  /// say where to search, and `query=Home` alone could find any Home.
   Uri toGoogleMaps() {
-    final near = latLng ?? center;
-    if (query != null && near != null) {
+    final pin = latLng;
+    if (pin != null) {
+      if (zoom != null) {
+        return Uri(
+          scheme: 'https',
+          host: 'www.google.com',
+          pathSegments: ['maps', 'place', pin, '@$pin,${zoom}z'],
+        );
+      }
+      return Uri.https('www.google.com', '/maps/search/', {
+        'api': '1',
+        'query': pin,
+      });
+    }
+    if (query != null && center != null) {
       return Uri(
         scheme: 'https',
         host: 'www.google.com',
-        pathSegments: ['maps', 'search', query!, '@$near,${zoom ?? 15}z'],
+        pathSegments: ['maps', 'search', query!, '@$center,${zoom ?? 15}z'],
       );
     }
-    if (near != null && zoom != null) {
+    if (center != null && zoom != null) {
       return Uri(
         scheme: 'https',
         host: 'www.google.com',
-        pathSegments: ['maps', 'place', near, '@$near,${zoom}z'],
+        pathSegments: ['maps', 'place', center!, '@$center,${zoom}z'],
       );
     }
     return Uri.https('www.google.com', '/maps/search/', {
       'api': '1',
-      'query': query ?? latLng!,
+      'query': query ?? center!,
     });
   }
 }
