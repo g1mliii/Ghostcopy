@@ -285,8 +285,8 @@ class ClipLink {
           switch (_lowerSegments(u)) {
             ['j' || 'my' || 'w' || 's', _, ...] => true,
             // Both orders used by the Zoom Web App, including host links.
-            ['wc', 'join', final id] || ['wc', final id, 'join' || 'start'] =>
-              _zoomMeetingId.hasMatch(id),
+            ['wc', 'join', final id] ||
+            ['wc', final id, 'join' || 'start'] => _zoomMeetingId.hasMatch(id),
             _ => false,
           },
     ),
