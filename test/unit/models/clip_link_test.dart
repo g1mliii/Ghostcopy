@@ -486,7 +486,6 @@ void main() {
         'https://example.com\nhttps://example.org',
         'notes.md',
         'ftp://example.com/file',
-        'http://nodot',
         'javascript:alert(1)',
         'https://${'a' * ClipLink.maxLength}.com',
       ]) {
@@ -945,6 +944,53 @@ void main() {
           ClipLink.detect(private)?.kind,
           ClipLinkKind.web,
           reason: private,
+        );
+      }
+    });
+  });
+
+  group('PR 112 review', () {
+    test('an explicit link to a single-label host opens', () {
+      for (final text in ['https://intranet/wiki', 'http://router/status']) {
+        final link = ClipLink.detect(text);
+        expect(link?.kind, ClipLinkKind.web, reason: text);
+        expect(link!.uri.toString(), text);
+      }
+      // Still not a site: an empty label, or a trailing dot with no label
+      // before it.
+      expect(ClipLink.detect('https://.com'), isNull);
+      expect(ClipLink.detect('https://www./'), isNull);
+    });
+
+    test('a bracketed trunk zero is not dialled after a country code', () {
+      final link = ClipLink.detect('+44 (0)20 7946 0958')!;
+      expect(link.kind, ClipLinkKind.phone);
+      expect(link.uri.toString(), 'tel:+442079460958');
+      expect(link.label, '+44 (0)20 7946 0958');
+      expect(
+        ClipLink.detect('tel:+44(0)2079460958')!.uri.path,
+        '+442079460958',
+      );
+    });
+
+    test('a named Apple place keeps its address when it has no pin', () {
+      final link = ClipLink.detect(
+        'https://maps.apple.com/place?name=Main%20Street%20Cafe'
+        '&address=123%20Example%20Road',
+      )!;
+      expect(
+        link.openUri('android').toString(),
+        'geo:0,0?q=Main+Street+Cafe%2C+123+Example+Road',
+      );
+    });
+
+    test('a labelled geo pin opens as that pin on the desktop', () {
+      final link = ClipLink.detect('geo:0,0?q=34.99,-106.61(Treasure)')!;
+      for (final platform in ['windows', 'linux']) {
+        expect(
+          link.openUri(platform).queryParameters['query'],
+          '34.99,-106.61',
+          reason: platform,
         );
       }
     });
