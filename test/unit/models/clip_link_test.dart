@@ -29,6 +29,65 @@ void main() {
     },
   );
 
+  test('map recognition uses Google-owned domains only', () {
+    for (final domain in [
+      'google.com',
+      'google.ca',
+      'google.co.uk',
+      'google.com.au',
+      'google.cat',
+    ]) {
+      expect(
+        ClipLink.detect('https://maps.$domain/maps/search/Bank')?.kind,
+        ClipLinkKind.map,
+        reason: domain,
+      );
+    }
+    for (final domain in [
+      'google.com.de',
+      'google.co.de',
+      'google.zz',
+      'google.com.attacker.com',
+    ]) {
+      expect(
+        ClipLink.detect('https://maps.$domain/maps/search/Bank')?.kind,
+        ClipLinkKind.web,
+        reason: domain,
+      );
+    }
+  });
+
+  test('Apple problem reports retain their workflow on Android', () {
+    const url =
+        'https://maps.apple.com/report-a-problem?coordinate=37.316115,-122.050910';
+    final link = ClipLink.detect(url)!;
+    expect(link.openUri('android').toString(), url);
+  });
+
+  test('bare mail recipients encode mailto reserved characters', () {
+    for (final (address, target) in [
+      ('Mike&family@example.org', 'mailto:Mike%26family@example.org'),
+      ('a/b@example.org', 'mailto:a%2Fb@example.org'),
+      ('a?b@example.org', 'mailto:a%3Fb@example.org'),
+      ('a#b@example.org', 'mailto:a%23b@example.org'),
+    ]) {
+      final link = ClipLink.detect(address)!;
+      expect(link.uri.toString(), target);
+      expect(ClipLink.detect(target)?.label, address);
+    }
+  });
+
+  test('geo coordinates require a recognized reference system', () {
+    for (final crs in ['local', '', 'epsg4326']) {
+      expect(ClipLink.detect('geo:48.2,16.3;crs=$crs'), isNull);
+      expect(ClipLink.detect('geo:0,0;crs=$crs?q=Bank'), isNull);
+    }
+    for (final crs in ['wgs84', 'WGS84']) {
+      final link = ClipLink.detect('geo:48.2,16.3;CRS=$crs')!;
+      expect(link.openUri('ios').host, 'maps.apple.com');
+    }
+  });
+
   group('ClipLink.detect', () {
     test('web links, with the host as the label', () {
       final link = ClipLink.detect('https://www.example.com/a/b?c=d')!;
