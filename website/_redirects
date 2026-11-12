@@ -15,3 +15,6 @@
 # archive to the fixed linux-updates release beside latest.json. The versioned
 # copy under linux-v<version> is what the in-app updater downloads.
 /download/linux https://github.com/g1mliii/Ghostcopy/releases/download/linux-updates/ghostcopy-linux-x64.tar.gz 302
+
+# The iPhone app's App Store listing, as a short link to share.
+/download/ios https://apps.apple.com/app/id6811251899 302
