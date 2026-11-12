@@ -2695,11 +2695,11 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
     }
   }
 
-  Future<void> _openLink(ClipLink link) async {
+  Future<void> _openLink(ClipLink link, {bool alternate = false}) async {
     // Read before the launch: the row can be disposed by a history refresh
     // or the window closing while it is out, and widget is gone then.
     final notifications = widget.notificationService;
-    final failed = await openClipLink(link);
+    final failed = await openClipLink(link, alternate: alternate);
     if (failed != null) {
       notifications?.showToast(message: failed, type: NotificationType.error);
     }
@@ -3077,6 +3077,15 @@ class _HistoryItemContentState extends State<_HistoryItemContent> {
             leadingIcon: const Icon(Icons.open_in_new, size: 16),
             onPressed: () => unawaited(_openLink(link)),
             child: ClipLinkActionText(link: link),
+          ),
+        if ((_link, clipLinkAlternate(_link)) case (
+          final link?,
+          final alternate?,
+        ))
+          MenuItemButton(
+            leadingIcon: Icon(clipLinkAlternateIcon(alternate), size: 16),
+            onPressed: () => unawaited(_openLink(link, alternate: true)),
+            child: Text(alternate.label),
           ),
         MenuItemButton(
           autofocus: _link == null || !canOpenClipLink(_link!),
