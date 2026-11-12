@@ -11,6 +11,7 @@ import '../../locator.dart';
 import '../../models/clip_link.dart';
 import '../../models/clipboard_item.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/app_review_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/crash_reporting_service.dart';
 import '../../services/file_type_service.dart';
@@ -118,6 +119,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
       locator<IClipboardRepository>();
   final FocusNode _pasteFocusNode = FocusNode();
   bool _composerFocused = false;
+  Timer? _reviewTimer;
 
   // Flutter platform widgets (must stay in widget)
   final TextEditingController _pasteController = TextEditingController();
@@ -265,6 +267,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// mutated from four places (typing, auto-paste, and two clears after send),
   /// and hand-syncing all of them is how this kind of flag goes stale.
   void _syncComposerLength() {
+    if (_pasteController.text.isNotEmpty) _reviewTimer?.cancel();
     // Synchronous with the change, so a paste flips this before the frame that
     // lays the text out - and before handwriting's measuring runs after it.
     final length = _pasteController.text.length;
@@ -287,6 +290,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
 
   @override
   void dispose() {
+    _reviewTimer?.cancel();
     _splashTimeout?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pasteFocusNode.dispose();
@@ -321,6 +325,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   /// Handle app lifecycle changes
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _reviewTimer?.cancel();
     if (state == AppLifecycleState.paused) {
       _viewModel.onAppPaused();
       // Decoded images are the largest thing this app holds, and backgrounded
@@ -728,6 +733,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _handleSend() async {
+    _reviewTimer?.cancel();
     final attachment = _viewModel.clipboardContent;
     final text = _pasteController.text;
     if (attachment?.hasImage != true && attachment?.hasFile != true) {
@@ -762,9 +768,34 @@ class _MobileMainScreenState extends State<MobileMainScreen>
             icon: Icons.send,
             type: GhostToastType.success,
           );
+          unawaited(_scheduleReviewAfterSend());
         }
       },
     );
+  }
+
+  Future<void> _scheduleReviewAfterSend() async {
+    final reviews = locator.maybeGet<IAppReviewService>();
+    if (reviews == null) return;
+    await reviews.recordSuccessfulSend();
+    if (!mounted) return;
+    _reviewTimer?.cancel();
+    _reviewTimer = Timer(const Duration(seconds: 5), () {
+      unawaited(
+        reviews.maybeRequestReview(
+          canPresent: () =>
+              mounted &&
+              WidgetsBinding.instance.lifecycleState ==
+                  AppLifecycleState.resumed &&
+              ModalRoute.of(context)?.isCurrent == true &&
+              !_viewModel.isSending &&
+              _pasteController.text.isEmpty &&
+              _viewModel.clipboardContent?.hasImage != true &&
+              _viewModel.clipboardContent?.hasFile != true &&
+              MediaQuery.viewInsetsOf(context).bottom == 0,
+        ),
+      );
+    });
   }
 
   /// Bounds to anchor the iPad share popover to.
@@ -792,6 +823,7 @@ class _MobileMainScreenState extends State<MobileMainScreen>
   }
 
   Future<void> _navigateToSettings({bool openPassphraseRestore = false}) async {
+    _reviewTimer?.cancel();
     final authService = locator<IAuthService>();
     final userBefore = authService.currentUserId;
 

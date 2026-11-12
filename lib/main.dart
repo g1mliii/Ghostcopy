@@ -21,6 +21,7 @@ import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/account_prompt_store.dart';
 import 'services/agent_command_handler.dart';
+import 'services/app_review_service.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
@@ -755,6 +756,9 @@ Future<void> _appMain(
     locator
       ..registerSingleton<ISettingsService>(settingsService)
       ..registerSingleton<AccountPromptStore>(accountPromptStore)
+      ..registerSingleton<IAppReviewService>(
+        AppReviewService(await loadConsentPreferences()),
+      )
       // Core mobile services required by screens/viewmodels even when
       // Firebase/FCM is not configured.
       ..registerSingleton<IClipboardRepository>(ClipboardRepository.instance)

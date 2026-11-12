@@ -75,8 +75,8 @@
                 <p class="text-lg sm:text-xl lg:text-[22px] leading-[1.6] text-ink-3 max-w-[780px]">
                     We hold the minimum needed to move a clip from one of your devices to another. If you set a
                     passphrase, the clip is encrypted before it reaches us and we cannot read it. Nothing is sold, and
-                    there is no advertising or analytics SDK in the app or on this site. The app reports crashes, with
-                    clip content stripped out.
+                    there is no advertising or analytics SDK in the app or on this site. If you opt in to crash
+                    diagnostics during setup, the app reports errors with clip content stripped out.
                 </p>
             </div>
         </section>
@@ -190,11 +190,19 @@
                     <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
                         <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">Sentry</h3>
                         <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Receives crash and error
-                            reports from the app when something goes wrong: what failed, where in the code, and the device
+                            reports if you opt in to crash diagnostics during setup: what failed, where in the code, and the device
                             model, operating system and app version. The app never attaches clips, screenshots, your IP
                             address or anything that identifies you, and before a report leaves the device its error text
                             is cut to one line with quoted values and link parameters removed. Nothing is sent while
                             the app is working normally.</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2 sm:gap-7 py-6 border-b border-line">
+                        <h3 class="sm:w-[210px] shrink-0 font-mono text-sm text-ink-4">App Store and Google Play reviews</h3>
+                        <p class="grow text-[15px] sm:text-base leading-[1.7] text-ink-2">Reviews are optional. If you
+                            choose to submit one, Apple or Google processes your rating and review under its store
+                            policies; your review and store profile may be public. GhostCopy does not attach clipboard
+                            contents to review requests. Eligibility counters and request dates stay on your device.</p>
                     </div>
                 </div>
             </div>

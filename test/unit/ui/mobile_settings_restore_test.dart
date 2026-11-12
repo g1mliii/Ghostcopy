@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/locator.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/app_review_service.dart';
 import 'package:ghostcopy/services/auth_service.dart';
 import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
@@ -21,6 +22,8 @@ class _Encryption extends Mock implements IEncryptionService {}
 class _Settings extends Mock implements ISettingsService {}
 
 class _Repository extends Mock implements IClipboardRepository {}
+
+class _Reviews extends Mock implements IAppReviewService {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -90,7 +93,11 @@ void main() {
     lockedCount.dispose();
   });
 
-  Future<void> restoreFromBanner(WidgetTester tester) async {
+  Future<void> pumpSettings(
+    WidgetTester tester, {
+    bool restore = false,
+    IAppReviewService? reviews,
+  }) async {
     // Existing settings tiles report this unrelated ink-decoration warning.
     // Forward every other framework error, including layout and async failures.
     final onError = FlutterError.onError;
@@ -110,11 +117,16 @@ void main() {
           deviceService: devices,
           settingsService: settings,
           encryptionService: encryption,
-          openPassphraseRestore: true,
+          openPassphraseRestore: restore,
+          reviewService: reviews,
         ),
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  Future<void> restoreFromBanner(WidgetTester tester) async {
+    await pumpSettings(tester, restore: true);
     expect(find.text('Restore Access'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'entered passphrase');
     await tester.tap(find.text('Restore Access'));
@@ -155,4 +167,50 @@ void main() {
     );
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'Settings review action opens the store and reports failure',
+    (tester) async {
+      final reviews = _Reviews();
+      when(() => reviews.canReview).thenReturn(true);
+      when(reviews.openStoreReview).thenAnswer((_) async => false);
+      await pumpSettings(tester, reviews: reviews);
+      await tester.scrollUntilVisible(
+        find.text('Rate GhostCopy'),
+        400,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Rate GhostCopy'));
+      await tester.pumpAndSettle();
+      verify(reviews.openStoreReview).called(1);
+      verifyNever(
+        () => reviews.maybeRequestReview(canPresent: any(named: 'canPresent')),
+      );
+      expect(
+        find.text('Could not open the store. Please try again later.'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+    }),
+  );
+
+  testWidgets(
+    'Settings hides reviews when public review access is ineligible',
+    (tester) async {
+      final reviews = _Reviews();
+      when(() => reviews.canReview).thenReturn(false);
+      await pumpSettings(tester, reviews: reviews);
+      expect(find.text('Rate GhostCopy'), findsNothing);
+      verifyNever(reviews.openStoreReview);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+    }),
+  );
 }

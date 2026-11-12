@@ -12,6 +12,7 @@ abstract class IDistributionConsentService {
   static const blockedKey = 'distribution_age_blocked';
 
   bool get isAccepted;
+  DistributionAgeGroup? get ageGroup;
   bool get isAgeBlocked;
   bool get diagnosticsAllowed;
 

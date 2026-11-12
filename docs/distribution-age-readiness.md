@@ -25,8 +25,10 @@ Before release:
 
 Under-16 cloud access remains blocked in this draft. The selected provider for
 the next integration is Epic Kids Web Services (KWS). Its current documentation
-provides Parent Verification, while User Permissions and Family Management are
-marked coming soon. Adult verification alone is not purpose-specific consent.
+provides Parent Verification. In the signed-in portal, User Permissions,
+Family Management and Age Gate require contacting Epic rather than self-serve
+setup. An approved access request was submitted for those services. Adult
+verification alone is not purpose-specific consent.
 Do not invent API/webhook contracts or enable younger accounts until the real
 service configuration and end-to-end authorization are validated.
 

@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../locator.dart';
 import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/app_review_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
@@ -62,6 +63,7 @@ class MobileSettingsScreen extends StatefulWidget {
     required this.deviceService,
     required this.settingsService,
     this.encryptionService,
+    this.reviewService,
     this.openPassphraseRestore = false,
     super.key,
   });
@@ -72,6 +74,9 @@ class MobileSettingsScreen extends StatefulWidget {
 
   /// Overrides the shared encryption service, primarily for testing.
   final IEncryptionService? encryptionService;
+
+  /// Optional override for the mobile store review action.
+  final IAppReviewService? reviewService;
 
   /// Go straight to restoring the passphrase on open.
   ///
@@ -117,6 +122,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   // App info
   String _appVersion = '';
+  bool _openingReview = false;
+
+  IAppReviewService? get _reviews =>
+      widget.reviewService ?? locator.maybeGet<IAppReviewService>();
 
   /// Whether the account card was built for a guest. A guest upgrade
   /// confirmed in the browser keeps its user id, and nothing else rebuilt
@@ -1516,42 +1525,99 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
         border: Border.all(color: GhostColors.border),
       ),
-      child: ListTile(
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: GhostColors.primaryAlpha20,
-            borderRadius: BorderRadius.circular(8),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: GhostColors.primaryAlpha20,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.content_copy_rounded,
+                size: 18,
+                color: GhostColors.primary,
+              ),
+            ),
+            title: Text(
+              'GhostCopy',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: GhostColors.textPrimary,
+              ),
+            ),
+            subtitle: Text(
+              _appVersion.isEmpty ? 'Loading...' : _appVersion,
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+            ),
+            // Signals that the row does something now. It used to be inert, which
+            // left About looking like a dead end.
+            trailing: Icon(
+              Icons.open_in_new_rounded,
+              size: 18,
+              color: GhostColors.textMuted,
+            ),
+            onTap: _openWebsite,
           ),
-          child: const Icon(
-            Icons.content_copy_rounded,
-            size: 18,
-            color: GhostColors.primary,
-          ),
-        ),
-        title: Text(
-          'GhostCopy',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: GhostColors.textPrimary,
-          ),
-        ),
-        subtitle: Text(
-          _appVersion.isEmpty ? 'Loading...' : _appVersion,
-          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        // Signals that the row does something now. It used to be inert, which
-        // left About looking like a dead end.
-        trailing: Icon(
-          Icons.open_in_new_rounded,
-          size: 18,
-          color: GhostColors.textMuted,
-        ),
-        onTap: _openWebsite,
+          if (_reviews?.canReview == true) ...[
+            Divider(height: 1, color: GhostColors.border),
+            ListTile(
+              leading: SizedBox(
+                width: 36,
+                height: 36,
+                child: Icon(
+                  Icons.star_outline_rounded,
+                  color: GhostColors.actionText,
+                ),
+              ),
+              title: Text(
+                'Rate GhostCopy',
+                style: TextStyle(color: GhostColors.textPrimary),
+              ),
+              subtitle: Text(
+                Theme.of(context).platform == TargetPlatform.iOS
+                    ? 'Leave a review on the App Store'
+                    : 'Leave a review on Google Play',
+                style: TextStyle(color: GhostColors.textSecondary),
+              ),
+              trailing: _openingReview
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.open_in_new_rounded,
+                      size: 18,
+                      color: GhostColors.textMuted,
+                    ),
+              onTap: _openingReview
+                  ? null
+                  : () => unawaited(_openStoreReview()),
+            ),
+          ],
+        ],
       ),
     );
+  }
+
+  Future<void> _openStoreReview() async {
+    final reviews = _reviews;
+    if (reviews == null || _openingReview) return;
+    setState(() => _openingReview = true);
+    final opened = await reviews.openStoreReview();
+    if (!mounted) return;
+    setState(() => _openingReview = false);
+    if (!opened) {
+      showGhostToast(
+        context,
+        'Could not open the store. Please try again later.',
+        type: GhostToastType.error,
+      );
+    }
   }
 }
 

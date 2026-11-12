@@ -50,6 +50,14 @@ class DistributionConsentService implements IDistributionConsentService {
       isAccepted && _receipt?['diagnosticsAllowed'] == true;
 
   @override
+  DistributionAgeGroup? get ageGroup {
+    if (!isAccepted) return null;
+    return _receipt?['ageGroup'] == DistributionAgeGroup.adult.name
+        ? DistributionAgeGroup.adult
+        : DistributionAgeGroup.teen;
+  }
+
+  @override
   Future<void> accept({
     required DistributionAgeGroup ageGroup,
     required bool guardianAcknowledged,
