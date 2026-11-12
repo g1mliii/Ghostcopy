@@ -472,8 +472,9 @@ Uint8List? _iconToPng(int icon, Arena arena) {
       width: width,
       height: height,
       andMask: andMask,
-    ))
+    )) {
       return null;
+    }
     final image = img.Image.fromBytes(
       width: width,
       height: height,
@@ -509,8 +510,9 @@ bool restoreWindowsIconAlpha(
       height <= 0 ||
       width > 1024 ||
       height > 1024 ||
-      bgra.length != width * height * 4)
+      bgra.length != width * height * 4) {
     return false;
+  }
   if (_hasAlpha(bgra)) return true;
   final stride = ((width + 31) ~/ 32) * 4;
   if (andMask == null || andMask.length != stride * height) return false;
