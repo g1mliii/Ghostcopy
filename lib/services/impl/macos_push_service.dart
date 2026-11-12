@@ -83,8 +83,9 @@ class MacPushService implements IDesktopPushService {
       // Silent pushes to a backgrounded app arrive here, from AppDelegate:
       // firebase_messaging's own path did not deliver them on macOS.
       _nativeChannel.setMethodCallHandler((call) async {
-        if (call.method == 'remoteNotification')
+        if (call.method == 'remoteNotification') {
           _wake('native ${call.arguments}');
+        }
       });
       // Now that Firebase exists to receive the APNs token. The plugin's own
       // launch-time registration ran before it did, and skipped.
