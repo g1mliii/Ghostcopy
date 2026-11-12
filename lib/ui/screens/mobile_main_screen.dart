@@ -2354,14 +2354,16 @@ class _HistoryRowState extends State<_HistoryRow> {
                   ),
                 ),
                 if (link != null && canOpenClipLink(link))
-                  IconButton(
-                    onPressed: () => unawaited(_openLink(context, link)),
-                    tooltip: link.actionLabel,
-                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    color: GhostColors.accentText,
-                    constraints: const BoxConstraints(
-                      minWidth: GhostSpacing.minTouchTarget,
-                      minHeight: GhostSpacing.minTouchTarget,
+                  ClipLinkTooltip(
+                    link: link,
+                    child: IconButton(
+                      onPressed: () => unawaited(_openLink(context, link)),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      color: GhostColors.accentText,
+                      constraints: const BoxConstraints(
+                        minWidth: GhostSpacing.minTouchTarget,
+                        minHeight: GhostSpacing.minTouchTarget,
+                      ),
                     ),
                   ),
                 IconButton(
@@ -2390,6 +2392,9 @@ class _HistoryRowState extends State<_HistoryRow> {
     return Container(
       width: GhostSpacing.thumbSize,
       height: GhostSpacing.thumbSize,
+      // Loosens the tile's tight constraints for its child, or an app icon
+      // ignores its appIconSize and is stretched to fill the whole tile.
+      alignment: Alignment.center,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: GhostColors.surfaceLight,
@@ -2403,7 +2408,12 @@ class _HistoryRowState extends State<_HistoryRow> {
               height: GhostSpacing.thumbSize,
             )
           : link != null
-          ? ClipLinkGlyph(link: link, size: 23, color: GhostColors.accentText)
+          ? ClipLinkGlyph(
+              link: link,
+              size: 23,
+              appIconSize: 32,
+              color: GhostColors.accentText,
+            )
           : Icon(_fileIcon(item), color: GhostColors.accentText, size: 23),
     );
   }
@@ -2584,7 +2594,7 @@ class _HistoryRowState extends State<_HistoryRow> {
                         size: 18,
                         color: GhostColors.accentText,
                       ),
-                      label: Text(link.actionLabel),
+                      label: ClipLinkActionText(link: link),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: GhostColors.textPrimary,
                         side: BorderSide(color: GhostColors.glassBorder),

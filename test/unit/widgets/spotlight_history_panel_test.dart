@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/impl/link_handler_service.dart';
+import 'package:ghostcopy/services/link_handler_service.dart';
 import 'package:ghostcopy/ui/screens/spotlight_screen.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:url_launcher_platform_interface/link.dart';
@@ -51,6 +53,8 @@ void main() {
         ),
     ];
     copied = [];
+    LinkHandlerService.instance = const NoLinkHandlerService();
+    addTearDown(() => LinkHandlerService.instance = null);
     final count = ValueNotifier<int>(0);
     addTearDown(count.dispose);
     repository = _MockClipboardRepository();

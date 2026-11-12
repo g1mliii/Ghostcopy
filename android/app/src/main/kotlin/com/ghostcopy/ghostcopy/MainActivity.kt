@@ -182,6 +182,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
 
         ImageTranscoder.attach(flutterEngine.dartExecutor.binaryMessenger)
+        LinkHandler.attach(flutterEngine.dartExecutor.binaryMessenger, this)
 
         ensureNotificationChannel()
 

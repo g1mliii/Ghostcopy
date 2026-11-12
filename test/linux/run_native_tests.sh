@@ -14,3 +14,8 @@ c++ -std=c++14 -Wall -Wextra -Werror -g \
   $(pkg-config --cflags --libs glib-2.0 wayland-client wayland-server) \
   -o "$out/clipboard_monitor_test"
 "$out/clipboard_monitor_test"
+c++ -std=c++14 -Wall -Wextra -Werror -Ilinux/runner \
+  linux/runner/link_handler_icon.cc test/linux/link_handler_icon_test.cc \
+  $(pkg-config --cflags --libs gtk+-3.0 gio-2.0) \
+  -o "$out/link_handler_icon_test"
+xvfb-run -a "$out/link_handler_icon_test"
