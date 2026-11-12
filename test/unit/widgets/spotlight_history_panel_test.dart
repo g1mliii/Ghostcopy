@@ -5,8 +5,23 @@ import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
 import 'package:ghostcopy/ui/screens/spotlight_screen.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:url_launcher_platform_interface/link.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 class _MockClipboardRepository extends Mock implements IClipboardRepository {}
+
+class _FakeLauncher extends UrlLauncherPlatform {
+  final launched = <String>[];
+
+  @override
+  LinkDelegate? get linkDelegate => null;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    launched.add(url);
+    return true;
+  }
+}
 
 void main() {
   const desktopPlatforms = TargetPlatformVariant({
@@ -122,6 +137,78 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Copy to Clipboard'), findsNothing);
       expect(triggerFocus.hasPrimaryFocus, isTrue);
+    },
+    variant: desktopPlatforms,
+  );
+
+  testWidgets(
+    'clicking the padded edge opens the link without copying the row',
+    (tester) async {
+      final previousLauncher = UrlLauncherPlatform.instance;
+      final launcher = _FakeLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+      clips = [
+        ClipboardItem(
+          id: 'link',
+          userId: 'user',
+          content: 'https://example.com',
+          deviceType: 'android',
+          createdAt: DateTime.now(),
+        ),
+      ];
+      await pumpPanel(tester);
+      final action = find.ancestor(
+        of: find.byIcon(Icons.open_in_new),
+        matching: find.byType(InkResponse),
+      );
+      final bounds = tester.getRect(action);
+      expect(bounds.width, greaterThanOrEqualTo(32));
+      await tester.tapAt(bounds.topLeft + const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(launcher.launched, ['https://example.com']);
+      expect(copied, isEmpty);
+    },
+    variant: desktopPlatforms,
+  );
+
+  testWidgets(
+    'link menu opens with the keyboard and keeps Copy as a separate action',
+    (tester) async {
+      final previousLauncher = UrlLauncherPlatform.instance;
+      final launcher = _FakeLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+      clips = [
+        ClipboardItem(
+          id: 'link',
+          userId: 'user',
+          content: 'https://example.com',
+          deviceType: 'android',
+          createdAt: DateTime.now(),
+        ),
+      ];
+
+      await pumpPanel(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(MenuItemButton, 'Open link'), findsOneWidget);
+      expect(find.text('Copy to Clipboard'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(launcher.launched, ['https://example.com']);
+      expect(copied, isEmpty);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy to Clipboard'));
+      await tester.pumpAndSettle();
+      expect(copied, ['link']);
+      expect(launcher.launched, ['https://example.com']);
     },
     variant: desktopPlatforms,
   );
