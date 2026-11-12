@@ -17,7 +17,7 @@ void main() {
       }
       expect(
         ClipLink.detect('mailto:o%27connor@example.com')?.label,
-        r'''o'connor@example.com''',
+        '''o'connor@example.com''',
       );
       for (final address in [
         '.person@example.com',
