@@ -276,6 +276,37 @@ class ClipLink {
           }.contains(uri.path)) {
             return uri;
           }
+          // Rewrite only options whose meaning we preserve. Apple place IDs
+          // cannot be translated into Google IDs, and frame/view options
+          // must not silently become an ordinary pin.
+          final supportedParameters = switch (uri.path) {
+            '/frame' => const {'center', 'coordinate'},
+            '/look-around' => const {'coordinate', 'll'},
+            _ => const {
+              'q',
+              'query',
+              'name',
+              'address',
+              'll',
+              'coordinate',
+              'center',
+              'sll',
+              'saddr',
+              'source',
+              'daddr',
+              'destination',
+              'dirflg',
+              'mode',
+              'waypoint',
+              'avoid',
+            },
+          };
+          if (uri.hasFragment ||
+              uri.queryParameters.keys.any(
+                (key) => !supportedParameters.contains(key),
+              )) {
+            return uri;
+          }
           if (uri.path == '/look-around') {
             // Preserve the panorama intent. Apple-only place IDs and
             // addresses cannot supply a Street View viewpoint.
@@ -721,6 +752,7 @@ class _MapPlace {
       coords = '${parts[0]},${parts[1]}';
     }
     final latLng = _latLngOrNull(coords);
+    if (latLng == null) return null;
     final query = uri.queryParameters['q']?.trim();
     // Android's q=lat,lng(label) selects a pin independently of the geo:
     // path, which may be 0,0 or the map's search center.
@@ -760,6 +792,8 @@ class _MapPlace {
   static String? _latLngOrNull(String? value) {
     final trimmed = value?.replaceAll(' ', '');
     if (trimmed == null || !ClipLink._latLng.hasMatch(trimmed)) return null;
+    final components = trimmed.split(',').map(double.parse).toList();
+    if (components[0].abs() > 90 || components[1].abs() > 180) return null;
     return trimmed;
   }
 
