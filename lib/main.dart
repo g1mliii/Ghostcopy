@@ -30,6 +30,7 @@ import 'services/crash_reporting_service.dart';
 import 'services/desktop_push_service.dart';
 import 'services/device_service.dart';
 import 'services/diagnostic_file_log.dart';
+import 'services/distribution_consent_service.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
 import 'services/game_mode_service.dart';
@@ -73,6 +74,7 @@ import 'services/webhook_service.dart';
 import 'services/window_service.dart';
 import 'services/windows_package_service.dart';
 import 'ui/platform_adaptive.dart';
+import 'ui/screens/distribution_onboarding.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
@@ -133,6 +135,9 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
 
   try {
     WidgetsFlutterBinding.ensureInitialized();
+
+    final prefs = await loadConsentPreferences();
+    if (!DistributionConsentService(prefs).isAccepted) return;
 
     // Before anything that can fail: note that a push really did name this
     // clip. MainActivity is exported, so a notification tap and a third-party
@@ -279,9 +284,33 @@ Future<void> main(List<String> args) async {
     stopped = (e, stack);
   }
 
+  WidgetsFlutterBinding.ensureInitialized();
+  // Preserve fresh-install Keychain detection before onboarding writes preferences.
+  if (Platform.isIOS) await clearKeychainLeftByEarlierInstall();
+  // Only one desktop instance may run. Without this, the ghostcopy:// registry
+  // entry starts a whole second app every time Google OAuth redirects back -
+  // second window, second tray icon, second hotkey - and the callback lands in
+  // that new process, so the running app never signs in and the browser sits
+  // on the callback page forever.
+  //
+  // --send-file is exempt: it is a headless one-shot that uploads and exits
+  // without any UI, so a second process there is harmless and simpler.
+  if (_isDesktop() && !args.contains('--send-file')) {
+    final isPrimary = await SingleInstance.instance.acquire(args);
+    if (!isPrimary) {
+      // Arguments were handed to the running instance; nothing else to do.
+      exit(0);
+    }
+  }
+
+  await ensureDistributionConsent(headless: args.contains('--send-file'));
+
   // One instance, so the startup steps below can report a failure they
   // recovered from through the same Sentry client that wraps the app.
-  final crashReporting = SentryCrashReportingService();
+  final consent = DistributionConsentService(await loadConsentPreferences());
+  final crashReporting = SentryCrashReportingService(
+    enabled: kReleaseMode && consent.diagnosticsAllowed,
+  );
   return crashReporting.run(() {
     if (stopped case (final error, final stack)) {
       Error.throwWithStackTrace(error, stack);
@@ -295,10 +324,6 @@ Future<void> _appMain(
   ICrashReportingService crashReporting,
 ) async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Before anything reads the Keychain, or writes a preference: a fresh
-  // install is recognised by having none yet.
-  if (Platform.isIOS) await clearKeychainLeftByEarlierInstall();
 
   // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
   // an app that scrolls through photos. This one shows small history
@@ -351,22 +376,6 @@ Future<void> _appMain(
         FlutterError.presentError(details);
       }
     };
-  }
-
-  // Only one desktop instance may run. Without this, the ghostcopy:// registry
-  // entry starts a whole second app every time Google OAuth redirects back -
-  // second window, second tray icon, second hotkey - and the callback lands in
-  // that new process, so the running app never signs in and the browser sits
-  // on the callback page forever.
-  //
-  // --send-file is exempt: it is a headless one-shot that uploads and exits
-  // without any UI, so a second process there is harmless and simpler.
-  if (_isDesktop() && !args.contains('--send-file')) {
-    final isPrimary = await SingleInstance.instance.acquire(args);
-    if (!isPrimary) {
-      // Arguments were handed to the running instance; nothing else to do.
-      exit(0);
-    }
   }
 
   // Check if app was launched at startup (for hidden mode)
@@ -754,6 +763,7 @@ Future<void> _appMain(
 
     try {
       await Firebase.initializeApp();
+      await FirebaseMessaging.instance.setAutoInitEnabled(true);
       debugPrint('[App] ✅ Firebase initialized for mobile');
 
       // Register background message handler (must be before other FCM setup)
