@@ -1393,30 +1393,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
   }
 
-  /// The switch itself, native to the platform.
-  ///
-  /// Switch.adaptive, not Switch: on iOS that is a CupertinoSwitch, which is
-  /// what the row used before these three toggles were unified and what an iOS
-  /// user expects to see. A Material switch on iOS reads as a port.
-  ///
-  /// activeTrackColor is set here rather than left to AppTheme.switchTheme
-  /// because CupertinoSwitch does not read Material's SwitchTheme - without it
-  /// iOS would fall back to the system green while Android showed the accent.
-  /// One place, both platforms, unlike the per-call-site overrides this
-  /// replaced.
-  ///
-  /// Only Android is scaled down. Material 3's switch is 52x32 and overweight
-  /// beside 14px type; CupertinoSwitch is already the size iOS users know, and
-  /// shrinking it would make it the odd one out on its own platform.
-
   /// One switch row, so every toggle in Settings is the same size and colour.
   ///
-  /// They had drifted: two set activeTrackColor to the success green while the
-  /// third used the accent, so the Security section showed two different "on"
-  /// colours side by side. Colour now comes from AppTheme.switchTheme alone.
-  ///
-  /// Scaled down because Material 3's switch is 52x32 - next to 14px type in a
-  /// list it reads as the heaviest thing on the screen.
+  /// AdaptiveSwitch uses a native Apple control on iOS/macOS, and the compact
+  /// Material control elsewhere. Both share the app's GhostColors palette.
   Widget _settingSwitch({
     required IconData icon,
     required String title,
