@@ -40,38 +40,48 @@ class DistributionConsentService implements IDistributionConsentService {
         DateTime.tryParse(receipt['acceptedAt']! as String) == null) {
       return false;
     }
-    return receipt['ageGroup'] == DistributionAgeGroup.adult.name ||
-        (receipt['ageGroup'] == DistributionAgeGroup.teen.name &&
-            receipt['guardianAcknowledged'] == true);
+    return RegExp(r'^[A-Z]{2}$').hasMatch(country ?? '') &&
+        (receipt['ageGroup'] == DistributionAgeGroup.adult.name ||
+            (receipt['ageGroup'] == DistributionAgeGroup.parentManaged.name &&
+                receipt['verificationMethod'] == 'kws-server-checked'));
   }
 
   @override
   bool get diagnosticsAllowed =>
-      isAccepted && _receipt?['diagnosticsAllowed'] == true;
+      isAccepted &&
+      ageGroup == DistributionAgeGroup.adult &&
+      _preferences.getBool('parent_managed_diagnostics_disabled') != true &&
+      _receipt?['diagnosticsAllowed'] == true;
+
+  @override
+  String? get country {
+    final value = _receipt?['country'];
+    return value is String ? value : null;
+  }
 
   @override
   DistributionAgeGroup? get ageGroup {
     if (!isAccepted) return null;
     return _receipt?['ageGroup'] == DistributionAgeGroup.adult.name
         ? DistributionAgeGroup.adult
-        : DistributionAgeGroup.teen;
+        : DistributionAgeGroup.parentManaged;
   }
 
   @override
   Future<void> accept({
     required DistributionAgeGroup ageGroup,
-    required bool guardianAcknowledged,
     required bool diagnosticsAllowed,
+    required String country,
   }) async {
     if (isAgeBlocked ||
-        ageGroup == DistributionAgeGroup.under16 ||
-        (ageGroup == DistributionAgeGroup.teen && !guardianAcknowledged)) {
+        ageGroup != DistributionAgeGroup.adult ||
+        !RegExp(r'^[A-Z]{2}$').hasMatch(country)) {
       throw Exception('This account is not eligible for cloud setup.');
     }
     final receipt = jsonEncode({
       'version': IDistributionConsentService.version,
+      'country': country,
       'ageGroup': ageGroup.name,
-      'guardianAcknowledged': guardianAcknowledged,
       'termsAccepted': true,
       'privacyAcknowledged': true,
       'diagnosticsAllowed': diagnosticsAllowed,
@@ -83,6 +93,28 @@ class DistributionConsentService implements IDistributionConsentService {
       receipt,
     )) {
       throw Exception('Could not save setup. Please try again.');
+    }
+  }
+
+  @override
+  Future<void> acceptParentManaged({required String country}) async {
+    if (isAgeBlocked || !RegExp(r'^[A-Z]{2}$').hasMatch(country)) {
+      throw Exception('This account is not eligible for cloud setup.');
+    }
+    if (!await _preferences.setString(
+      IDistributionConsentService.receiptKey,
+      jsonEncode({
+        'version': IDistributionConsentService.version,
+        'country': country,
+        'ageGroup': DistributionAgeGroup.parentManaged.name,
+        'termsAccepted': true,
+        'privacyAcknowledged': true,
+        'diagnosticsAllowed': false,
+        'acceptedAt': _now().toUtc().toIso8601String(),
+        'verificationMethod': 'kws-server-checked',
+      }),
+    )) {
+      throw Exception('Could not save setup.');
     }
   }
 

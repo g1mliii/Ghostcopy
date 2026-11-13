@@ -5,9 +5,9 @@ In-App Review API. The platform owns the prompt and may silently suppress it.
 Finishing the API call does not prove a dialog appeared or a rating was submitted.
 
 Automatic requests are enabled only in release builds on Android/iOS and only
-for adults with a current onboarding acknowledgement. Public review entry
-points remain unavailable to teen or blocked users while the child/parent
-authorization work is incomplete.
+for adults with a current onboarding acknowledgement and current server authorization.
+Public review entry points remain unavailable to parent-managed or blocked users,
+even when the local device has an adult receipt from an earlier account.
 
 A request requires at least seven days since the first successful foreground
 send, ten successful sends across three UTC dates, and no review attempt in

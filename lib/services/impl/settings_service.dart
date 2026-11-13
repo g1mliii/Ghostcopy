@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/spotlight_pin.dart';
 import '../../repositories/impl/clipboard_repository.dart';
+import '../cloud_consent_service.dart';
+import '../distribution_consent_service.dart';
 import '../hotkey_service.dart';
 import '../settings_service.dart';
 
@@ -101,12 +103,23 @@ class SettingsService implements ISettingsService {
   @override
   Future<bool> getAutoSendEnabled() async {
     _ensureInitialized();
+    if (CloudConsentService.authorization.value?.parentManaged == true ||
+        DistributionConsentService(_prefs!).ageGroup ==
+            DistributionAgeGroup.parentManaged) {
+      return false;
+    }
     return _prefs!.getBool(_keyAutoSendEnabled) ?? _defaultAutoSendEnabled;
   }
 
   @override
   Future<void> setAutoSendEnabled({required bool enabled}) async {
     _ensureInitialized();
+    if (enabled &&
+        (CloudConsentService.authorization.value?.parentManaged == true ||
+            DistributionConsentService(_prefs!).ageGroup ==
+                DistributionAgeGroup.parentManaged)) {
+      throw Exception('Parent-managed accounts use manual sending.');
+    }
     await _prefs!.setBool(_keyAutoSendEnabled, enabled);
     debugPrint('Auto-send ${enabled ? "enabled" : "disabled"}');
   }

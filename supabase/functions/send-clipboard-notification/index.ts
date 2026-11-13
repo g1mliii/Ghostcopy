@@ -4,6 +4,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
+import { cloudAccess } from '../_shared/cloud_access.ts';
 import { sendWnsRaw, wnsConfigured } from './wns.ts';
 import { fcmMessageFor, fcmTargets, pushTargets, recipientDevices, wnsTargets } from './messages.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
@@ -146,6 +147,8 @@ Deno.serve(async (req)=>{
       }
       userId = user.id;
     }
+    const consent = await cloudAccess(supabaseAdmin, userId);
+    if (!consent.allowed) return json({ error: 'Cloud authorization required' }, 403);
     // SERVER-SIDE RATE LIMITING
     // Trigger calls describe inserts already accepted and counted by the DB.
     // Applying the current insert counter again drops the tenth clip, and

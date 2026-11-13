@@ -6,6 +6,7 @@ import 'package:in_app_review/in_app_review.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_review_service.dart';
+import '../cloud_consent_service.dart';
 import '../distribution_consent_service.dart';
 
 /// Uses the stores' unmodified review UI. A completed request does not mean
@@ -42,6 +43,8 @@ class AppReviewService implements IAppReviewService {
   @override
   bool get canReview =>
       _supported &&
+      CloudConsentService.authorization.value?.allowed == true &&
+      CloudConsentService.authorization.value?.parentManaged == false &&
       _consent.isAccepted &&
       _consent.ageGroup == DistributionAgeGroup.adult;
 

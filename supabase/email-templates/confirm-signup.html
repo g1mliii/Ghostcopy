@@ -95,7 +95,7 @@
             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td align="center" bgcolor="#6670FF" style="border-radius:8px;">
-                  <a href="https://ghostcopy.app/auth-callback?token_hash={{ .TokenHash }}&type=signup"
+                  <a href="{{ if .Data.parent_portal }}https://ghostcopy.app/parents?token_hash={{ .TokenHash }}&type=signup{{ else }}https://ghostcopy.app/auth-callback?token_hash={{ .TokenHash }}&type=signup{{ end }}"
                      style="display:inline-block;padding:13px 28px;
                             font-family:'Inter',-apple-system,BlinkMacSystemFont,
                             'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;
@@ -119,9 +119,9 @@
             <p style="margin:8px 0 0 0;font-family:'JetBrains Mono',Consolas,
                       'Courier New',monospace;font-size:12px;line-height:1.5;
                       word-break:break-all;color:#AEB4FF;">
-              <a href="https://ghostcopy.app/auth-callback?token_hash={{ .TokenHash }}&type=signup"
+              <a href="{{ if .Data.parent_portal }}https://ghostcopy.app/parents?token_hash={{ .TokenHash }}&type=signup{{ else }}https://ghostcopy.app/auth-callback?token_hash={{ .TokenHash }}&type=signup{{ end }}"
                  style="color:#AEB4FF;text-decoration:underline;
-                        word-break:break-all;">https://ghostcopy.app/auth-callback?token_hash={{ .TokenHash }}&type=signup</a>
+                        word-break:break-all;">{{ if .Data.parent_portal }}https://ghostcopy.app/parents?token_hash={{ .TokenHash }}&type=signup{{ else }}https://ghostcopy.app/auth-callback?token_hash={{ .TokenHash }}&type=signup{{ end }}</a>
             </p>
           </td>
         </tr>

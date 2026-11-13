@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../services/cloud_consent_service.dart';
+import '../../services/consent_countries.dart';
 import '../../services/distribution_consent_service.dart';
 import '../../services/settings_service.dart';
 import '../theme/app_theme.dart';
@@ -14,7 +16,17 @@ import '../theme/colors.dart';
 /// Headless processes cannot bypass the first interactive acknowledgement.
 Future<void> ensureDistributionConsent({required bool headless}) async {
   final prefs = await loadConsentPreferences();
-  if (DistributionConsentService(prefs).isAccepted) return;
+  final consent = DistributionConsentService(prefs);
+  if (consent.isAccepted &&
+      prefs.getBool('distribution_cloud_paused') != true) {
+    if (consent.ageGroup != DistributionAgeGroup.parentManaged) return;
+    try {
+      final status = await CloudConsentService.instance.poll();
+      if (status['status'] == 'authorized') return;
+    } on Exception {
+      // The interactive screen lets the parent retry while cloud stays off.
+    }
+  }
   if (headless) throw Exception('Open GhostCopy to complete setup first.');
   final saved = prefs.getString('theme_mode');
   appAppearance.value = AppThemeMode.values.firstWhere(
@@ -39,10 +51,14 @@ class DistributionOnboarding extends StatefulWidget {
   const DistributionOnboarding({
     required this.prefs,
     required this.onAccepted,
+    this.cloud,
+    this.parentAccount = false,
     super.key,
   });
   final SharedPreferences prefs;
   final VoidCallback onAccepted;
+  final CloudConsentService? cloud;
+  final bool parentAccount;
 
   @override
   State<DistributionOnboarding> createState() => _DistributionOnboardingState();
@@ -51,16 +67,54 @@ class DistributionOnboarding extends StatefulWidget {
 class _DistributionOnboardingState extends State<DistributionOnboarding> {
   int _step = 0;
   String? _age;
+  String? _country;
   bool _agreed = false;
-  bool _parent = false;
   bool _diagnostics = false;
+  bool _saving = false;
+  bool _completed = false;
+  bool _pending = false;
+  String? _error;
+  final _parentEmail = TextEditingController();
+  late final _cloud = widget.cloud ?? CloudConsentService.instance;
   late final IDistributionConsentService _consent = DistributionConsentService(
     widget.prefs,
   );
-  bool _saving = false;
-  bool _completed = false;
-  String? _error;
   late bool _blocked = _consent.isAgeBlocked;
+
+  bool get _adult => _age == '18+';
+
+  @override
+  void initState() {
+    super.initState();
+    _age = widget.prefs.getString('distribution_declared_age');
+    if (widget.parentAccount && _age == '18+') _age = null;
+    _country = widget.prefs.getString('distribution_declared_country');
+    if (_age != null && _country != null && !_adult && !_blocked) {
+      unawaited(_restorePending());
+    }
+  }
+
+  Future<void> _restorePending() async {
+    try {
+      final token = await _cloud.readClaim();
+      if (token != null && mounted) {
+        setState(() {
+          _pending = true;
+          _step = 2;
+        });
+      }
+    } on Exception {
+      if (mounted) setState(() => _error = 'Could not restore parent setup.');
+    }
+  }
+
+  @override
+  void dispose() {
+    _parentEmail
+      ..clear()
+      ..dispose();
+    super.dispose();
+  }
 
   Future<void> _next() async {
     setState(() {
@@ -68,30 +122,102 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
       _error = null;
     });
     try {
-      if (_step == 0 && _age == 'Under 16') {
-        await _consent.blockAge();
-        if (mounted) setState(() => _blocked = true);
-      } else if (_step < 2) {
-        setState(() => _step++);
-      } else {
-        await _consent.accept(
-          ageGroup: _age == '16–17'
-              ? DistributionAgeGroup.teen
-              : DistributionAgeGroup.adult,
-          guardianAcknowledged: _parent,
-          diagnosticsAllowed: _diagnostics,
+      if (_step == 0) {
+        await widget.prefs.setString('distribution_declared_age', _age!);
+        await widget.prefs.setString(
+          'distribution_declared_country',
+          _country!,
         );
-        if (!mounted) return;
-        setState(() => _completed = true);
-        widget.onAccepted();
+        if (_age == 'Under 5') {
+          await _consent.blockAge();
+          if (mounted) setState(() => _blocked = true);
+        } else {
+          if (!_adult) {
+            final config = await _cloud.call('configuration');
+            if (config['childrenEnabled'] != true) {
+              throw Exception(
+                'Parent setup is not available yet. Cloud services will stay off.',
+              );
+            }
+          }
+          if (mounted) setState(() => _step = 1);
+        }
+      } else if (_step == 1) {
+        if (mounted) setState(() => _step = 2);
+      } else if (_adult) {
+        await _consent.accept(
+          ageGroup: DistributionAgeGroup.adult,
+          diagnosticsAllowed: _diagnostics,
+          country: _country!,
+        );
+        await widget.prefs.setBool('distribution_cloud_paused', false);
+        _finish();
+      } else if (!_pending) {
+        final result = await _cloud.call(
+          'start',
+          data: {
+            'age': int.parse(_age!),
+            'country': _country,
+            'parentEmail': _parentEmail.text.trim(),
+            'noticeVersion': IDistributionConsentService.version,
+            'noticeAcknowledged': true,
+          },
+        );
+        final token = result['claimToken'];
+        if (token is! String) {
+          throw Exception('Could not start parent verification.');
+        }
+        await _cloud.saveClaim(token);
+        _parentEmail.clear();
+        if (mounted) setState(() => _pending = true);
+      } else {
+        final result = await _cloud.poll();
+        if (result['independentEligible'] == true) {
+          await widget.prefs.setBool('distribution_graduation_pending', true);
+          if (mounted) {
+            setState(() {
+              _age = '18+';
+              _step = 1;
+              _agreed = false;
+              _pending = false;
+            });
+          }
+          return;
+        }
+        if (result['status'] != 'authorized') {
+          if (result['status'] == 'expired' || result['status'] == 'revoked') {
+            if (mounted) setState(() => _pending = false);
+          }
+          throw Exception(
+            result['status'] == 'expired'
+                ? 'This request expired. Contact support to restart parent setup.'
+                : 'Waiting for your parent to verify and allow cloud sync.',
+          );
+        }
+        await _consent.acceptParentManaged(country: _country!);
+        await widget.prefs.setBool('distribution_cloud_paused', false);
+        _finish();
       }
-    } on Exception {
+    } on Exception catch (error) {
+      if (!_adult &&
+          error is CloudConsentException &&
+          (error.statusCode == 403 || error.statusCode == 404)) {
+        _pending = false;
+      }
       if (mounted) {
-        setState(() => _error = 'Could not save setup. Please try again.');
+        setState(
+          () => _error = error.toString().replaceFirst('Exception: ', ''),
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  void _finish() {
+    if (!mounted) return;
+    setState(() => _completed = true);
+    widget.onAccepted();
   }
 
   Future<void> _openPolicy(String path) async {
@@ -105,20 +231,36 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     } on Exception {
       if (mounted) {
         setState(
-          () => _error = 'Visit ghostcopy.app/$path to read this policy.',
+          () => _error = 'Visit ghostcopy.app/$path to read this notice.',
         );
       }
     }
   }
+
+  Widget _policies() => Wrap(
+    children: [
+      TextButton(
+        onPressed: () => unawaited(_openPolicy('terms')),
+        child: const Text('Terms of service'),
+      ),
+      TextButton(
+        onPressed: () => unawaited(_openPolicy('privacy')),
+        child: const Text('Privacy policy'),
+      ),
+      if (!_adult)
+        TextButton(
+          onPressed: () => unawaited(_openPolicy('parents')),
+          child: const Text('For parents'),
+        ),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
     final enabled =
         !_saving &&
         !_completed &&
-        (_step == 0
-            ? _age != null
-            : _step != 1 || (_agreed && (_age != '16–17' || _parent)));
+        (_step == 0 ? _age != null && _country != null : _step != 1 || _agreed);
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -133,27 +275,28 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Icon(
-                      _blocked
-                          ? Icons.shield_outlined
-                          : Icons.content_copy_rounded,
+                      Icons.shield_outlined,
                       size: 40,
                       color: GhostColors.actionText,
                     ),
                     const SizedBox(height: 24),
                     Text(
                       _blocked
-                          ? 'GhostCopy is for ages 16+'
+                          ? 'Cloud setup is unavailable'
                           : [
                               'Before we begin',
                               'Your choice, clearly',
-                              'Know what you sync',
+                              if (_adult)
+                                'Know what you sync'
+                              else
+                                'Ask your parent',
                             ][_step],
-                      style: Theme.of(context).textTheme.headlineMedium,
+                      style: Theme.of(context).textTheme.headlineSmall,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     if (_blocked)
                       const Text(
-                        'Cloud setup is unavailable for your age group until verified parental consent is supported. This setup will not create an account or upload clipboard content. If you already have an account, contact support@ghostcopy.app for deletion help.',
+                        'GhostCopy does not create cloud accounts for children under 5. Cloud services stay off. For an existing account or an age entered by mistake, contact support@ghostcopy.app.',
                       )
                     else ...[
                       Text(
@@ -163,91 +306,80 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                       const SizedBox(height: 20),
                       if (_step == 0) ...[
                         const Text(
-                          'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete.',
-                        ),
-                        Wrap(
-                          children: [
-                            TextButton(
-                              onPressed: () => unawaited(_openPolicy('terms')),
-                              child: const Text('Terms of service'),
-                            ),
-                            TextButton(
-                              onPressed: () =>
-                                  unawaited(_openPolicy('privacy')),
-                              child: const Text('Privacy policy'),
-                            ),
-                          ],
-                        ),
-                        const Text(
-                          'Which age group are you in? We save your eligibility on this device, without collecting your date of birth.',
+                          'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Tell us your age and country so we can show the right setup. We do not ask for your date of birth.',
                         ),
                         const SizedBox(height: 16),
                         DropdownButtonFormField<String>(
                           initialValue: _age,
+                          decoration: const InputDecoration(labelText: 'Age'),
+                          items: [
+                            for (final age in [
+                              'Under 5',
+                              for (var i = 5; i < 18; i++) '$i',
+                              if (!widget.parentAccount) '18+',
+                            ])
+                              DropdownMenuItem(value: age, child: Text(age)),
+                          ],
+                          onChanged:
+                              _saving ||
+                                  widget.prefs.containsKey(
+                                        'distribution_declared_age',
+                                      ) &&
+                                      widget.prefs.getString(
+                                            'distribution_declared_age',
+                                          ) ==
+                                          _age
+                              ? null
+                              : (value) => setState(() => _age = value),
+                        ),
+                        const SizedBox(height: 16),
+                        DropdownButtonFormField<String>(
+                          initialValue: _country,
+                          isExpanded: true,
                           decoration: const InputDecoration(
-                            labelText: 'Age group',
+                            labelText: 'Country or region',
                           ),
                           items: [
-                            for (final value in ['Under 16', '16–17', '18+'])
+                            for (final country in consentCountries.entries)
                               DropdownMenuItem(
-                                value: value,
-                                child: Text(value),
+                                value: country.key,
+                                child: Text(
+                                  country.value,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                           ],
                           onChanged: _saving
                               ? null
-                              : (value) => setState(() => _age = value),
+                              : (value) => setState(() => _country = value),
                         ),
+                        _policies(),
                       ],
                       if (_step == 1) ...[
-                        const Text(
-                          'GhostCopy stores the clips you send in your account so your devices can receive them. Account details, device identifiers and crash diagnostics are also processed. Read how storage, retention and deletion work before continuing.',
+                        Text(
+                          _adult
+                              ? 'Your cloud account stores sent clips, account details and linked-device identifiers. Encryption is optional for adult accounts. Without a passphrase, the service can read synced content. Delete clips or your account in Settings.'
+                              : 'A parent must verify they are an adult and give permission before your cloud account starts. Your parent can review permissions, request your saved data, stop syncing or delete your account. Your clips require a passphrase and are encrypted before upload. Keep the passphrase safe: we cannot recover it. Sending is manual; diagnostics and rating prompts stay off.',
                         ),
-                        Wrap(
-                          children: [
-                            TextButton(
-                              onPressed: () => unawaited(_openPolicy('terms')),
-                              child: const Text('Terms of service'),
-                            ),
-                            TextButton(
-                              onPressed: () =>
-                                  unawaited(_openPolicy('privacy')),
-                              child: const Text('Privacy policy'),
-                            ),
-                          ],
-                        ),
+                        _policies(),
                         CheckboxListTile(
                           contentPadding: EdgeInsets.zero,
                           value: _agreed,
                           onChanged: _saving
                               ? null
-                              : (v) => setState(() => _agreed = v ?? false),
-                          title: const Text(
-                            'I agree to the terms and acknowledge the privacy policy.',
+                              : (value) =>
+                                    setState(() => _agreed = value ?? false),
+                          title: Text(
+                            _adult
+                                ? 'I agree to the terms and acknowledge the privacy policy.'
+                                : 'I have read how parent setup and cloud sync work. My parent will review the terms and give permission.',
                           ),
                         ),
-                        if (_age == '16–17')
-                          CheckboxListTile(
-                            contentPadding: EdgeInsets.zero,
-                            value: _parent,
-                            onChanged: _saving
-                                ? null
-                                : (v) => setState(() => _parent = v ?? false),
-                            title: const Text(
-                              'My parent or guardian has agreed to my use of GhostCopy.',
-                            ),
-                          ),
                       ],
-                      if (_step == 2) ...[
+                      if (_step == 2 && _adult) ...[
                         const Text(
-                          'Send only what you intend to share with your linked devices. Avoid passwords, payment details and other sensitive clipboard content. Review automatic sending in Settings. A passphrase enables optional end-to-end encryption; without one, synced clips are readable by the service. You can delete clips or your account in Settings.',
+                          'Send only what you intend to share. Avoid passwords, payment details and sensitive information. Review automatic sending in Settings and add a passphrase for end-to-end encryption. Finishing starts cloud services.',
                         ),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Finishing starts cloud services. Crash reporting is optional. Your notice version, age group and acknowledgement time are saved on this device; no date of birth is collected.',
-                        ),
-                      ],
-                      if (_step == 2)
                         CheckboxListTile(
                           contentPadding: EdgeInsets.zero,
                           value: _diagnostics,
@@ -260,9 +392,30 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                             'Share crash diagnostics (optional)',
                           ),
                           subtitle: const Text(
-                            'Helps fix errors. Does not include clipboard contents or screenshots.',
+                            'Does not include clipboard contents or screenshots.',
                           ),
                         ),
+                      ],
+                      if (_step == 2 && !_adult) ...[
+                        if (!_pending) ...[
+                          const Text(
+                            'Ask your parent to enter their email. Epic Kids Web Services sends a notice explaining cloud and optional file sync, verifies the adult, and records their choices. Verification may ask your parent for identity information. GhostCopy does not receive those identity documents.',
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _parentEmail,
+                            keyboardType: TextInputType.emailAddress,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            decoration: const InputDecoration(
+                              labelText: 'Parent or guardian email',
+                            ),
+                          ),
+                        ] else
+                          const Text(
+                            'Check your parent’s email and finish verification there. Then check permission below. This device keeps a secure setup token; no clipboard account has been created yet.',
+                          ),
+                      ],
                       const SizedBox(height: 24),
                       FilledButton(
                         onPressed: enabled ? () => unawaited(_next()) : null,
@@ -270,10 +423,14 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                           _completed
                               ? 'Starting GhostCopy…'
                               : _saving
-                              ? 'Saving…'
-                              : _step == 2
+                              ? 'Please wait…'
+                              : _step < 2
+                              ? 'Continue'
+                              : _adult
                               ? 'Finish setup'
-                              : 'Continue',
+                              : _pending
+                              ? 'Check permission'
+                              : 'Send parent request',
                         ),
                       ),
                     ],

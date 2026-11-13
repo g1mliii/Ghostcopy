@@ -65,7 +65,7 @@
         <section class="shell pt-16 sm:pt-24">
             <div class="max-w-prose-wide">
                 <h2 class="label">Age eligibility</h2>
-                <p>GhostCopy is intended for people aged 16 and older. If you are 16 or 17, your parent or guardian must agree to your use. We do not offer an under-16 service or a verified parental-consent programme. Do not create an account or send clipboard content if you are under 16. If an account belongs to an ineligible child, contact support@ghostcopy.app so we can investigate and arrange deletion.</p>
+                <p>Independent GhostCopy cloud accounts require age 18 or older. The planned parent-managed service covers ages 5–17 only after verified parental permission; it remains disabled until provider activation and release checks are complete. Children under 5 cannot create cloud accounts. A local acknowledgement or an email confirmation alone does not authorize a child account. See <a href="/parents" class="text-accent-text">parent notices and controls</a> and the <a href="/children" class="text-accent-text">short notice for children</a>. Contact support@ghostcopy.app for an ineligible account, a disputed age or deletion help. For parent-managed accounts we process age in years and country (not birth date), a random consent reference, hashed parent contact association, verification method, notice version and permitted purposes. KWS processes the parent contact and verification; GhostCopy does not receive verification documents. These accounts require encryption and manual sending, with no optional diagnostics or public rating prompts. Pending requests expire in 14 days, withdrawn accounts after 30 days and unused parent-managed accounts after 90 days. Parent controls provide encrypted data export, withdrawal and deletion. Infrastructure backup/log retention is an activation review item; provider verification data follows the provider’s disclosed retention terms.</p>
             </div>
         </section>
 
@@ -213,8 +213,8 @@
             <div class="flex flex-col lg:flex-row gap-5 lg:gap-24">
                 <h2 class="label shrink-0 lg:w-[180px] lg:pt-3">How long we keep it</h2>
                 <p class="text-base sm:text-[17px] leading-[1.75] text-ink-2 max-w-prose-wide">
-                    Clips stay until you delete them or delete your account. Deleting a clip removes the row at once and queues any file it
-                    points at for removal from storage, which happens within minutes; there is no archive copy. Deleting your account removes the account and every clip attached to it. Backups taken
+                    Cloud history retains the newest 20 clips per account; older clips are removed by the bounded retention job. You can delete clips or your account sooner. Deleting a clip removes the row at once and queues any file it
+                    points at for removal from storage, with retries if storage is unavailable; there is no separate archive copy. Deleting your account removes the account and every clip attached to it. Backups taken
                     before a deletion roll off on their own schedule and are not queryable by us in the ordinary course.
                 </p>
             </div>

@@ -21,18 +21,14 @@ void main() {
     expect(consent.diagnosticsAllowed, isFalse);
   });
 
-  test('underage and unacknowledged teen cannot create a receipt', () async {
+  test('unverified age groups cannot create an adult receipt', () async {
     final consent = await service();
     for (final age in [
-      DistributionAgeGroup.under16,
-      DistributionAgeGroup.teen,
+      DistributionAgeGroup.under5,
+      DistributionAgeGroup.parentManaged,
     ]) {
       await expectLater(
-        consent.accept(
-          ageGroup: age,
-          guardianAcknowledged: false,
-          diagnosticsAllowed: true,
-        ),
+        consent.accept(ageGroup: age, country: 'CA', diagnosticsAllowed: true),
         throwsException,
       );
     }
@@ -44,7 +40,7 @@ void main() {
     final consent = await service();
     await consent.accept(
       ageGroup: DistributionAgeGroup.adult,
-      guardianAcknowledged: false,
+      country: 'CA',
       diagnosticsAllowed: false,
     );
     final restored = DistributionConsentService(await loadConsentPreferences());
@@ -61,8 +57,8 @@ void main() {
   test('age block overrides even an existing accepted receipt', () async {
     final consent = await service();
     await consent.accept(
-      ageGroup: DistributionAgeGroup.teen,
-      guardianAcknowledged: true,
+      ageGroup: DistributionAgeGroup.adult,
+      country: 'CA',
       diagnosticsAllowed: true,
     );
     expect(consent.diagnosticsAllowed, isTrue);
@@ -74,7 +70,7 @@ void main() {
     await expectLater(
       restored.accept(
         ageGroup: DistributionAgeGroup.adult,
-        guardianAcknowledged: false,
+        country: 'CA',
         diagnosticsAllowed: false,
       ),
       throwsException,
@@ -87,6 +83,7 @@ void main() {
     final valid = <String, Object?>{
       'version': IDistributionConsentService.version,
       'ageGroup': 'adult',
+      'country': 'CA',
       'termsAccepted': true,
       'privacyAcknowledged': true,
       'acceptedAt': '2026-11-12T12:00:00.000Z',

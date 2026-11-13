@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/app_review_service.dart';
+import 'package:ghostcopy/services/cloud_consent_service.dart';
 import 'package:ghostcopy/services/distribution_consent_service.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:mocktail/mocktail.dart';
@@ -18,12 +19,17 @@ void main() {
   late DateTime now;
 
   setUp(() async {
+    CloudConsentService.authorization.value = const CloudAuthorization(
+      allowed: true,
+      parentManaged: false,
+      fileSync: true,
+    );
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
     consent = DistributionConsentService(prefs);
     await consent.accept(
       ageGroup: DistributionAgeGroup.adult,
-      guardianAcknowledged: false,
+      country: 'CA',
       diagnosticsAllowed: false,
     );
     store = _Store();
@@ -138,15 +144,11 @@ void main() {
   });
 
   test(
-    'teen, blocked and unacknowledged users cannot enter review flow',
+    'parent-managed, blocked and unacknowledged users cannot enter review flow',
     () async {
       final reviews = service();
       await reachMilestone(reviews);
-      await consent.accept(
-        ageGroup: DistributionAgeGroup.teen,
-        guardianAcknowledged: true,
-        diagnosticsAllowed: false,
-      );
+      await consent.acceptParentManaged(country: 'CA');
       expect(reviews.canReview, isFalse);
       expect(await reviews.openStoreReview(), isFalse);
       await reviews.maybeRequestReview(canPresent: () => true);

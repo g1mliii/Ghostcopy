@@ -81,7 +81,8 @@ self.addEventListener('fetch', (event) => {
     // containing it, outliving the page scrubbing its own history.
     if (
         url.pathname.startsWith('/reset-password') ||
-        url.pathname.startsWith('/auth-callback')
+        url.pathname.startsWith('/auth-callback') ||
+        url.pathname.startsWith('/parents')
     ) {
         return;
     }

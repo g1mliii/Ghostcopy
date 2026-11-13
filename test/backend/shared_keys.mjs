@@ -9,3 +9,7 @@ export const sharedKeysSource = stripTypeScriptTypes(
   (await readFile(new URL('../../supabase/functions/_shared/keys.ts', import.meta.url), 'utf8'))
     .replace(/^export /gm, ''),
 );
+
+export const cloudAccessSource = stripTypeScriptTypes(
+  (await readFile(new URL('../../supabase/functions/_shared/cloud_access.ts', import.meta.url), 'utf8')).replace(/^export /gm, ''),
+);

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/services/cloud_consent_service.dart';
 import 'package:ghostcopy/services/distribution_consent_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
 import 'package:ghostcopy/ui/screens/distribution_onboarding.dart';
@@ -8,10 +9,41 @@ import 'package:ghostcopy/ui/theme/appearance.dart';
 import 'package:ghostcopy/ui/theme/colors.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+class _Cloud extends CloudConsentService {
+  bool enabled = true;
+  bool approved = false;
+  String? claim;
+  final actions = <String>[];
+
+  @override
+  Future<Map<String, Object?>> call(
+    String action, {
+    Map<String, Object?> data = const {},
+    String? accessToken,
+  }) async {
+    actions.add(action);
+    return switch (action) {
+      'configuration' => {'childrenEnabled': enabled},
+      'start' => {'claimToken': 'a' * 64, 'status': 'pending'},
+      _ => {'status': approved ? 'authorized' : 'pending'},
+    };
+  }
+
+  @override
+  Future<void> saveClaim(String token) async {
+    claim = token;
+  }
+
+  @override
+  Future<String?> readClaim() async => claim;
+}
+
 void main() {
+  late _Cloud cloud;
   const mobile = TargetPlatformVariant({TargetPlatform.android});
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    cloud = _Cloud();
   });
   tearDown(() {
     appAppearance.value = AppThemeMode.system;
@@ -26,7 +58,11 @@ void main() {
       AppearanceBuilder(
         builder: (_) => MaterialApp(
           theme: AppTheme.platformTheme,
-          home: DistributionOnboarding(prefs: prefs, onAccepted: accepted),
+          home: DistributionOnboarding(
+            prefs: prefs,
+            onAccepted: accepted,
+            cloud: cloud,
+          ),
         ),
       ),
     );
@@ -35,67 +71,125 @@ void main() {
   }
 
   Future<void> choose(WidgetTester tester, String age) async {
-    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text(age).last);
+    await tester.scrollUntilVisible(
+      find.text(age).hitTestable(),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text(age).hitTestable().last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byType(DropdownButtonFormField<String>).last,
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Canada').hitTestable(),
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Canada').hitTestable().last);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Continue'));
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
   }
 
-  testWidgets('under-16 choice persists and never starts services', (
+  testWidgets('under-5 choice persists and never starts services', (
     tester,
   ) async {
     var calls = 0;
     final prefs = await pump(tester, () => calls++);
-    await choose(tester, 'Under 16');
+    await choose(tester, 'Under 5');
     expect(prefs.getBool(IDistributionConsentService.blockedKey), isTrue);
     expect(DistributionConsentService(prefs).isAccepted, isFalse);
     expect(calls, 0);
     await tester.pumpWidget(const SizedBox());
     await pump(tester, () => calls++);
-    expect(find.text('GhostCopy is for ages 16+'), findsOneWidget);
+    expect(find.text('Cloud setup is unavailable'), findsOneWidget);
     expect(find.text('Continue'), findsNothing);
   }, variant: mobile);
 
   testWidgets(
-    'teen setup requires terms and guardian acknowledgement before completion',
+    'a checkbox cannot approve a child; verified server permission is required',
     (tester) async {
       var calls = 0;
       final prefs = await pump(tester, () => calls++);
-      await choose(tester, '16–17');
-      expect(
-        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-        isNull,
-      );
-      await tester.ensureVisible(find.byType(CheckboxListTile).first);
-      await tester.tap(find.byType(CheckboxListTile).first);
-      await tester.pump();
-      expect(
-        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-        isNull,
-      );
-      await tester.ensureVisible(find.byType(CheckboxListTile).last);
-      await tester.tap(find.byType(CheckboxListTile).last);
+      await choose(tester, '8');
+      await tester.tap(find.byType(CheckboxListTile));
       await tester.pump();
       await tester.ensureVisible(find.text('Continue'));
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'parent@example.test');
+      await tester.ensureVisible(find.text('Send parent request'));
+      await tester.tap(find.text('Send parent request'));
+      await tester.pumpAndSettle();
       expect(calls, 0);
       expect(DistributionConsentService(prefs).isAccepted, isFalse);
-      await tester.ensureVisible(find.text('Finish setup'));
-      await tester.tap(find.text('Finish setup'));
+      await tester.tap(find.text('Check permission'));
+      await tester.pumpAndSettle();
+      expect(calls, 0);
+      cloud.approved = true;
+      await tester.tap(find.text('Check permission'));
       await tester.pumpAndSettle();
       expect(calls, 1);
-      expect(DistributionConsentService(prefs).isAccepted, isTrue);
+      final consent = DistributionConsentService(prefs);
+      expect(consent.ageGroup, DistributionAgeGroup.parentManaged);
+      expect(consent.diagnosticsAllowed, isFalse);
+      expect(cloud.actions, ['configuration', 'start', 'poll', 'poll']);
+    },
+    variant: mobile,
+  );
+
+  testWidgets(
+    'unavailable provider collects no parent email and survives restart without age upselling',
+    (tester) async {
+      cloud.enabled = false;
+      var calls = 0;
+      final prefs = await pump(tester, () => calls++);
+      await choose(tester, '8');
+      expect(find.byType(TextField), findsNothing);
+      expect(calls, 0);
+      expect(prefs.getString('distribution_declared_age'), '8');
+      expect(cloud.actions, ['configuration']);
+      await tester.pumpWidget(const SizedBox());
+      await pump(tester, () => calls++);
       expect(
-        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        tester
+            .widget<DropdownButtonFormField<String>>(
+              find.byType(DropdownButtonFormField<String>).first,
+            )
+            .onChanged,
         isNull,
       );
     },
     variant: mobile,
   );
+
+  testWidgets('adult setup defaults diagnostics off', (tester) async {
+    var calls = 0;
+    final prefs = await pump(tester, () => calls++);
+    await choose(tester, '18+');
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Continue'));
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isFalse,
+    );
+    await tester.ensureVisible(find.text('Finish setup'));
+    await tester.tap(find.text('Finish setup'));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(DistributionConsentService(prefs).isAccepted, isTrue);
+    expect(DistributionConsentService(prefs).country, 'CA');
+    expect(cloud.actions, isEmpty);
+  }, variant: mobile);
 
   for (final mode in [AppThemeMode.light, AppThemeMode.dark]) {
     testWidgets('onboarding follows saved ${mode.name} theme', (tester) async {

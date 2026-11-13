@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
-import { sharedKeysSource } from './shared_keys.mjs';
+import { sharedKeysSource, cloudAccessSource } from './shared_keys.mjs';
 
 // Execute the deployed handler with local Supabase/FCM doubles. The handler
 // and its sibling modules (the WNS sender, the device and message helpers)
@@ -13,17 +13,18 @@ const functionSource = async (name) =>
   (await readFile(new URL(`../../supabase/functions/send-clipboard-notification/${name}`, import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '')
     .replace(/^export /gm, '');
-const source = sharedKeysSource + stripTypeScriptTypes(
+const source = sharedKeysSource + cloudAccessSource + stripTypeScriptTypes(
   (await functionSource('wns.ts')) + (await functionSource('messages.ts')) + (await functionSource('index.ts')),
 );
 
-function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KEY: 'service-secret' }) {
+function fixture(count = 10, sendResult = null, env = { SUPABASE_SERVICE_ROLE_KEY: 'service-secret' }, consentAllowed = true) {
   let handler;
   const messages = [];
   const updates = [];
   const errors = [];
   let userChecks = 0;
   const client = {
+    async rpc(name) { assert.equal(name, 'consent_service'); return { data: { allowed: consentAllowed }, error: null }; },
     auth: { getUser: async () => { userChecks++; return { data: { user: { id: 'user' } }, error: null }; } },
     from(table) {
       let updating = false;
@@ -81,6 +82,12 @@ test('accepted tenth insert still sends its notification', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.devices_notified, 1);
   assert.equal(f.messages[0].data.clipboard_id, '10');
+});
+
+test('service-role push cannot bypass a revoked authorization', async () => {
+  const f = fixture(10, null, { SUPABASE_SERVICE_ROLE_KEY: 'service-secret' }, false);
+  assert.equal((await f.request('service-secret')).status, 403);
+  assert.equal(f.messages.length, 0);
 });
 
 test('the trigger is accepted on a current secret key alone', async () => {

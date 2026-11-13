@@ -99,6 +99,8 @@ void main() {
   Future<AuthService> signedInAs(
     Map<String, Object?> session, {
     IDeviceService? devices,
+    bool allowGuest = true,
+    Future<void> Function()? pauseCloudSetup,
   }) async {
     client = SupabaseClient(
       'https://example.com',
@@ -142,6 +144,8 @@ void main() {
     return AuthService(
       client: client,
       deviceService: devices,
+      recreateGuestAfterSignOut: () => allowGuest,
+      pauseCloudSetup: pauseCloudSetup,
       encryptionService: encryption,
       clipboardRepository: _Repository(),
       appleReauthorize: () async {
@@ -178,6 +182,40 @@ void main() {
                 .body,
           )
           as Map<String, Object?>;
+
+  test(
+    'parent-managed deletion pauses setup before auth is cleared and creates no replacement guest',
+    () async {
+      var paused = false;
+      final service = await signedInAs(
+        _session('parent-managed'),
+        allowGuest: false,
+        pauseCloudSetup: () async {
+          expect(client.auth.currentSession, isNotNull);
+          paused = true;
+        },
+      );
+      expect(await service.deleteAccount(), AccountDeletionOutcome.deleted);
+      expect(paused, isTrue);
+      expect(client.auth.currentSession, isNull);
+      expect(
+        requests.any((request) => request.url.path == '/auth/v1/signup'),
+        isFalse,
+      );
+      service.dispose();
+    },
+  );
+
+  test('declining setup signs out without silently creating a guest', () async {
+    final service = await signedInAs(_session('parent-managed'));
+    await service.signOut(createGuest: false);
+    expect(client.auth.currentSession, isNull);
+    expect(
+      requests.any((request) => request.url.path == '/auth/v1/signup'),
+      isFalse,
+    );
+    service.dispose();
+  });
 
   test('an email account is deleted and the device moves to a guest', () async {
     final service = await signedInAs(_session('user', provider: 'email'));

@@ -26,6 +26,7 @@ import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
+import 'services/cloud_consent_service.dart';
 import 'services/command_line_tool_service.dart';
 import 'services/crash_reporting_service.dart';
 import 'services/desktop_push_service.dart';
@@ -60,6 +61,7 @@ import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
 import 'services/obsidian_service.dart';
 import 'services/packaged_app_data.dart';
+import 'services/public_backend_config.dart';
 import 'services/push_notification_service.dart';
 import 'services/reinstall_keychain_reset.dart';
 import 'services/security_service.dart';
@@ -84,6 +86,7 @@ import 'ui/theme/appearance.dart';
 import 'ui/theme/colors.dart';
 import 'ui/tray_menu_lifecycle.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
+import 'ui/widgets/cloud_access_guard.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
 import 'utils/file_picker_setup.dart';
@@ -102,9 +105,8 @@ import 'utils/windows_working_set.dart';
 // Moved now because there are no released builds to strand - the key is
 // compiled in, so changing it later would mean every old install keeps sending
 // the legacy key and legacy keys could never be turned off.
-const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-const _supabasePublishableKey =
-    'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
+const _supabaseUrl = PublicBackendConfig.url;
+const _supabasePublishableKey = PublicBackendConfig.publishableKey;
 
 /// Top-level background message handler for Firebase Cloud Messaging.
 /// This handles notifications when the app is terminated or in background.
@@ -166,6 +168,14 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
 
     if (Supabase.instance.client.auth.currentUser == null) {
       debugPrint('[FCM Background] No session in this isolate - skipping');
+      return;
+    }
+
+    final backgroundSession = Supabase.instance.client.auth.currentSession;
+    if (backgroundSession == null ||
+        !(await CloudConsentService.instance.authorize(
+          backgroundSession.accessToken,
+        )).allowed) {
       return;
     }
 
@@ -435,10 +445,35 @@ Future<void> _appMain(
   ]);
 
   // Initialize services that depend on Supabase
+  CloudConsentService.currentAccessToken = () =>
+      Supabase.instance.client.auth.currentSession?.accessToken;
   final deviceService = DeviceService();
   final authService = AuthService(
     deviceService: deviceService,
     pkceStore: pkceStore,
+    recreateGuestAfterSignOut: () =>
+        CloudConsentService.authorization.value?.parentManaged != true,
+    pauseCloudSetup: () async {
+      final prefs = await loadConsentPreferences();
+      await prefs.setBool('distribution_cloud_paused', true);
+    },
+    beforeIndependentAuth: () async {
+      final local = DistributionConsentService(await loadConsentPreferences());
+      if (local.ageGroup == DistributionAgeGroup.parentManaged ||
+          CloudConsentService.authorization.value?.parentManaged == true) {
+        throw Exception(
+          'Use parent-managed setup and device linking for this account.',
+        );
+      }
+    },
+    authorizeCloud: () async {
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session == null) throw Exception('Sign in required.');
+      final consent = await CloudConsentService.instance.authorize(
+        session.accessToken,
+      );
+      if (!consent.allowed) throw Exception('Cloud authorization required.');
+    },
   );
 
   locator
@@ -1139,11 +1174,21 @@ class _MyAppState extends State<MyApp> with WindowListener {
   ///
   /// Safe to run on every launch: registerCurrentDevice() upserts, and
   /// updateFcmToken() is a no-op write when the value has not changed.
-  Future<void> _registerDeviceForPush() async {
+  Future<void> _registerDeviceForPush({bool freshToken = false}) async {
     // Awaited here rather than at startup: by the time this runs the UI is
     // already on screen, so waiting on Google's registration servers costs the
     // user nothing.
-    final token = await widget.fcmTokenFuture;
+    String? token;
+    if (freshToken && locator.isRegistered<IFcmService>()) {
+      try {
+        await FirebaseMessaging.instance.setAutoInitEnabled(true);
+        token = await locator<IFcmService>().getToken();
+      } on Exception {
+        // Device sync can register without push during a Firebase outage.
+      }
+    } else {
+      token = await widget.fcmTokenFuture;
+    }
     try {
       final registered = await locator<IDeviceService>().registerCurrentDevice(
         fcmToken: token,
@@ -1557,7 +1602,22 @@ class _MyAppState extends State<MyApp> with WindowListener {
         debugShowCheckedModeBanner: false,
         // Keep the Navigator full-width for iOS edge-back gestures. Mobile
         // screens apply horizontal safe areas inside their route content.
-        home: _buildHome(),
+        home: CloudAccessGuard(
+          builder: _buildHome,
+          onAuthorized: (authorization) {
+            if (!_isDesktop() && authorization.parentManaged) {
+              // Parent setup bypasses the ordinary welcome callback. Register
+              // after authorization/key setup, and recover a revoked FCM token.
+              unawaited(_registerDeviceForPush(freshToken: true));
+            }
+          },
+          onBlocked: () {
+            // A single redirect covers any settings/auth route above the gate.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+            });
+          },
+        ),
       ),
     );
   }
@@ -1587,7 +1647,9 @@ class _MyAppState extends State<MyApp> with WindowListener {
     }
 
     // Mobile app - show welcome screen or main screen based on auth state
-    if (!_mobileAuthComplete) {
+    if ((Supabase.instance.client.auth.currentSession == null ||
+            !_mobileAuthComplete) &&
+        CloudConsentService.authorization.value?.parentManaged != true) {
       return MobileWelcomeScreen(
         fcmTokenFuture: widget.fcmTokenFuture,
         onAuthComplete: () async {

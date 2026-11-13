@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>Parent controls — GhostCopy</title>
+  <link rel="stylesheet" href="/output.css">
+  <script src="/parents.js" defer></script>
+</head>
+<body>
+  <header class="shell pt-8"><a href="/" class="text-accent-text">GhostCopy</a></header>
+  <main class="shell py-16 max-w-prose-wide">
+    <h1 class="text-3xl sm:text-5xl tracking-heading">Parent controls</h1>
+    <p class="mt-6 text-ink-3 leading-relaxed">Child cloud accounts remain unavailable until our verification service is activated and tested. This page describes the planned parent-managed service and provides controls for accounts that have been authorized.</p>
+    <section class="mt-10 space-y-4 leading-relaxed" aria-labelledby="notice-title">
+      <h2 id="notice-title" class="text-2xl">Before you give permission</h2>
+      <p>GhostCopy syncs selected clipboard text between a child’s linked devices. Optional file sync also sends images and files. Children aged 5–17 need verified parental permission. Children under 5 cannot create cloud accounts. Independent accounts require age 18 or older.</p>
+      <p>For verification we send your email, the child’s age in years, country, a random account reference and requested permissions to Epic Kids Web Services (KWS). KWS verifies the adult and records purpose-specific choices. A checkbox or email confirmation alone does not authorize a child account. Identity documents or payment verification information used by KWS are not sent to GhostCopy.</p>
+      <p>After permission, GhostCopy processes an account identifier, linked device names/types and push delivery tokens, encrypted clips and their metadata, and optional encrypted files. Hosting and delivery services necessarily process connection information such as IP addresses. Supabase hosts authentication/database services; Cloudflare stores files; Firebase/APNs deliver device notifications. The <a href="/privacy" class="text-accent-text">privacy policy</a> explains these processors. The account’s passphrase remains on its devices; encrypted contents require that passphrase to read.</p>
+      <p>Parent-managed accounts use manual sending and mandatory encryption. No targeted advertising, optional diagnostics or store review prompts are enabled. Avoid sending passwords, payment details or other people’s sensitive information. Permission is for linked-device sync, not publication or advertising.</p>
+      <p>You may refuse optional file sync without losing text sync. Refusing cloud sync leaves the account inactive. Use KWS’s family portal to review feature permissions. Use the controls below to review/export saved data, stop future collection or delete the account. Withdrawal stops new cloud access and push delivery; downloaded copies on devices are not remotely erased. A file transfer link already issued to a child device can remain usable for up to one minute; an export link you requested lasts up to five minutes.</p>
+      <p>Active cloud history retains the newest 20 clips. Pending requests expire after 14 days. Withdrawn cloud accounts are removed after 30 days; unused parent-managed accounts after 90 days. You may request deletion sooner. Deletion queues encrypted files and KWS subject data for removal and retries temporary outages. Minimal consent audit records remain while needed for the account and for up to 30 days after the request record is removed. Infrastructure backup/log retention must be confirmed before this service is activated; we do not promise an unverified provider deletion deadline.</p>
+      <p>As the authorizing guardian, review the <a href="/terms" class="text-accent-text">terms</a> and <a href="/privacy" class="text-accent-text">privacy policy</a>, authorize only the purposes you want, and supervise linked devices. Your permission does not waive the child’s privacy rights. Contact <a href="mailto:support@ghostcopy.app" class="text-accent-text">support@ghostcopy.app</a> for access, correction, deletion or a disputed guardian relationship.</p>
+      <p><a href="/children" class="text-accent-text">Read the short notice for children</a></p>
+    </section>
+    <p id="status" role="status" aria-live="polite" class="mt-8 text-accent-text"></p>
+    <section id="confirm" hidden class="mt-8">
+      <h2 class="text-2xl">Confirm your email</h2>
+      <p class="mt-4">Continue only if you requested a GhostCopy parent portal account.</p>
+      <button id="confirm-email" type="button" class="mt-4 rounded-lg bg-accent text-bg font-medium px-5 py-3">Confirm email</button>
+    </section>
+    <section id="login" class="mt-10" aria-labelledby="login-title">
+      <h2 id="login-title" class="text-2xl">Manage an authorized account</h2>
+      <p class="mt-4 text-ink-3">Use the same parent email used for KWS verification. Creating a portal login does not itself verify parental consent. Sessions stay in this tab and are cleared when you sign out or close it.</p>
+      <form id="login-form" class="mt-6 space-y-4">
+        <label class="block">Parent email<input id="email" type="email" required maxlength="254" autocomplete="email" class="block mt-2 w-full rounded-lg border border-line-strong bg-surface px-4 py-3"></label>
+        <label class="block">Password<input id="password" type="password" required minlength="8" autocomplete="current-password" class="block mt-2 w-full rounded-lg border border-line-strong bg-surface px-4 py-3"></label>
+        <label class="flex gap-3 items-start"><input id="adult" type="checkbox" required class="mt-1"><span>I am an adult parent or guardian. I agree to the terms and acknowledge the privacy policy for my portal account.</span></label>
+        <div class="flex flex-wrap gap-3">
+          <button type="submit" class="rounded-lg bg-accent text-bg font-medium px-5 py-3">Sign in</button>
+          <button id="create" type="button" class="rounded-lg border border-line-strong px-5 py-3">Create parent login</button>
+        </div>
+      </form>
+    </section>
+    <section id="accounts" hidden class="mt-10">
+      <div class="flex flex-wrap justify-between gap-4"><h2 class="text-2xl">Your authorized accounts</h2><button id="signout" type="button" class="text-accent-text">Sign out</button></div>
+      <a id="family-portal" hidden class="block mt-4 text-accent-text" target="_blank" rel="noopener noreferrer">Review permissions in KWS</a>
+      <div id="children" class="mt-6 space-y-6"></div>
+    </section>
+    <footer class="mt-14 text-ink-3"><a href="/privacy" class="text-accent-text">Privacy</a> · <a href="/terms" class="text-accent-text">Terms</a> · <a href="/delete-account" class="text-accent-text">Deletion help</a></footer>
+  </main>
+</body>
+</html>
