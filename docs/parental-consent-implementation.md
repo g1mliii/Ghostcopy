@@ -150,7 +150,8 @@ credentials/product IDs, provider definitions and webhooks, real end-to-end
 verification/permission/withdrawal/unlink/expiry/deletion tests, and physical
 Android/iOS checks are complete. Test missed/duplicate/out-of-order webhooks and
 an outage past the 15-minute authorization lease. Review actual processor backup,
-log and identity-vendor retention plus restore suppression; the security and
+log and identity-vendor retention plus restore suppression; confirm the operator’s
+legal identity and required public contact details in the parent notice; the security and
 retention programme records these unresolved operational checks. Review country
 law, child suitability and store audience/data disclosures for the enabled build.
 Epic approval alone does not complete those checks. Release build/upload follows

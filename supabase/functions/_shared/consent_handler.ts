@@ -42,7 +42,7 @@ async function hash(value: string): Promise<string> {
 function hex(value: ArrayBuffer): string {
   return Array.from(new Uint8Array(value), (n) => n.toString(16).padStart(2, '0')).join('');
 }
-async function parentHash(email: string, pepper: string): Promise<string> {
+function parentHash(email: string, pepper: string): Promise<string> {
   return hmac(email.trim().toLowerCase(), pepper);
 }
 async function hmac(value: string, pepper: string): Promise<string> {

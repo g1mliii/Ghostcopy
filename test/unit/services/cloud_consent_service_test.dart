@@ -157,4 +157,43 @@ void main() {
       ).called(1);
     },
   );
+
+  test(
+    'diagnostics stop before a child-receipt storage failure can interrupt account reconciliation',
+    () async {
+      final prefs = await loadConsentPreferences();
+      await prefs.remove('parent_managed_diagnostics_disabled');
+      final steps = <String>[];
+      final storage = _Storage();
+      when(
+        () => storage.write(key: CloudConsentService.claimKey, value: 'proof'),
+      ).thenAnswer((_) async {
+        steps.add('write');
+        throw Exception('Storage unavailable');
+      });
+      final service = CloudConsentService(
+        storage: storage,
+        stopDiagnostics: () async {
+          steps.add('stop');
+        },
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'allowed': true,
+              'accountKind': 'parent_managed',
+              'fileSync': false,
+              'deviceClaim': 'proof',
+              'country': 'CA',
+              'ageAtSetup': 8,
+            }),
+            200,
+          ),
+        ),
+      );
+      await expectLater(service.authorize('child'), throwsException);
+      expect(steps, ['stop', 'write']);
+      expect(prefs.getBool('parent_managed_diagnostics_disabled'), isTrue);
+      expect(CloudConsentService.authorization.value, isNull);
+    },
+  );
 }

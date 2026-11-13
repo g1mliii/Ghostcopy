@@ -32,9 +32,13 @@ class CloudConsentException implements Exception {
 
 /// Transport usable before Supabase, account creation and push initialization.
 class CloudConsentService {
-  CloudConsentService({http.Client? client, FlutterSecureStorage? storage})
-    : _client = client ?? TimeoutHttpClient(),
-      _storage = storage ?? const FlutterSecureStorage();
+  CloudConsentService({
+    http.Client? client,
+    FlutterSecureStorage? storage,
+    Future<void> Function()? stopDiagnostics,
+  }) : _client = client ?? TimeoutHttpClient(),
+       _storage = storage ?? const FlutterSecureStorage(),
+       _stopDiagnostics = stopDiagnostics ?? Sentry.close;
 
   static final instance = CloudConsentService();
   static const claimKey = 'parental_consent_claim_v3';
@@ -44,6 +48,7 @@ class CloudConsentService {
   static String? Function()? currentAccessToken;
   final http.Client _client;
   final FlutterSecureStorage _storage;
+  final Future<void> Function() _stopDiagnostics;
   final _requests = <String, Future<CloudAuthorization>>{};
 
   Future<Map<String, Object?>> call(
@@ -116,6 +121,12 @@ class CloudConsentService {
       parentManaged: result['accountKind'] == 'parent_managed',
       fileSync: result['fileSync'] == true,
     );
+    if (snapshot.parentManaged &&
+        prefs.getBool('parent_managed_diagnostics_disabled') != true) {
+      // Stop collection before a storage failure can interrupt reconciliation.
+      await _stopDiagnostics();
+      await prefs.setBool('parent_managed_diagnostics_disabled', true);
+    }
     if (snapshot.allowed &&
         snapshot.parentManaged &&
         result['deviceClaim'] is String &&
@@ -138,11 +149,6 @@ class CloudConsentService {
       await prefs.remove('distribution_graduation_pending');
       await prefs.setString('distribution_declared_age', '18+');
       await _storage.delete(key: claimKey);
-    }
-    if (snapshot.parentManaged &&
-        prefs.getBool('parent_managed_diagnostics_disabled') != true) {
-      await prefs.setBool('parent_managed_diagnostics_disabled', true);
-      await Sentry.close();
     }
     if (currentAccessToken == null || currentAccessToken!() == accessToken) {
       authorization.value = snapshot;
