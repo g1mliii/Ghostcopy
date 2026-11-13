@@ -150,6 +150,11 @@ void main() {
       await old;
       expect(CloudConsentService.authorization.value?.parentManaged, isTrue);
       expect(CloudConsentService.authorization.value?.fileSync, isFalse);
+      expect(CloudConsentService.authorizationForSession('old'), isNull);
+      expect(
+        CloudConsentService.authorizationForSession('new')?.parentManaged,
+        isTrue,
+      );
     },
   );
 

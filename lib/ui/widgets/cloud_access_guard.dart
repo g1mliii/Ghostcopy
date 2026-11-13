@@ -72,19 +72,34 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     WidgetsBinding.instance.addObserver(this);
     if (_desktop) windowManager.addListener(this);
     _encryption.keyRevision.addListener(_keyChanged);
-    _auth = _client.auth.onAuthStateChange.listen((state) {
-      // Refreshing the same account must preserve the composer and attachments.
-      // A different account or sign-out immediately removes the private subtree.
-      if (mounted && state.session?.user.id != _authorizedUser) {
-        _authorizedUser = null;
-        _notifyBlocked();
-        setState(() {
-          _ready = false;
-          _needsKey = false;
-        });
-      }
-      unawaited(_check());
-    });
+    _auth = _client.auth.onAuthStateChange.listen(
+      (state) {
+        // Refreshing the same account must preserve the composer and attachments.
+        // A different account or sign-out immediately removes the private subtree.
+        if (mounted && state.session?.user.id != _authorizedUser) {
+          _authorizedUser = null;
+          _notifyBlocked();
+          setState(() {
+            _ready = false;
+            _needsKey = false;
+          });
+        }
+        unawaited(_check());
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        // GoTrue replays failed deep-link/refresh errors as well as auth events.
+        // Recheck the actual session without discarding a same-account draft.
+        if (mounted && _client.auth.currentUser?.id != _authorizedUser) {
+          _authorizedUser = null;
+          _notifyBlocked();
+          setState(() {
+            _ready = false;
+            _needsKey = false;
+          });
+        }
+        unawaited(_check());
+      },
+    );
     unawaited(_check());
   }
 

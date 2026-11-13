@@ -53,6 +53,13 @@ Desktop first-run setup shows a normal, focused window before awaiting acceptanc
 cloud and clipboard services still start only after setup completes. Ordinary tray
 startup is restored afterward. Same-account token refreshes keep the current
 composer and attachments mounted; account switches and denied checks remove them.
+GoTrue callback/refresh stream errors trigger a permission recheck, including
+errors replayed when the guard subscribes. The shared repository also requires a
+loaded key for parent-managed text, rich text, image and file sends before any
+payload leaves the device, including headless and Finder paths outside the UI.
+Sends use the current session's cached server classification and wait for a
+fresh check during account changes or token refreshes; an old adult snapshot
+cannot authorize a newly linked child session. This adds no per-send HTTP check.
 The diagnostics SDK stays uninitialized until server classification confirms an
 opted-in adult. It closes before any interactive account change, sign-out or
 deletion and remains off for the rest of that launch; a fresh launch must confirm
@@ -72,6 +79,10 @@ six-digit PIN from **Settings → Link New Device** on another signed-in device
 permission checks apply. Restore the encryption passphrase separately. If every
 device is signed out, contact support with the parent; a retained permission claim
 alone cannot restore an authenticated session or decrypt clipboard data.
+An exchange denied by an expired permission lease restores its still-live link
+token for retry after permission refresh. Successful exchanges remain single-use;
+expired tokens are not restored. Website worker activation evicts the old cache
+that could contain a parent confirmation URL before the new bypass took control.
 
 ## Integration facts verified 2026-11-12
 

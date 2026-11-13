@@ -13,6 +13,7 @@ import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/cloud_consent_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/history_disk_cache.dart';
 import '../../services/impl/encryption_service.dart';
@@ -189,6 +190,30 @@ class ClipboardRepository implements IClipboardRepository {
     _encryptionUserId = userId;
   }
 
+  /// Every send entry point, including headless/Finder sharing, reaches here
+  /// before content can leave the device. UI gating alone cannot protect them.
+  Future<bool> _encryptionForSend() async {
+    await _ensureEncryptionInitialized();
+    final enabled = await _encryptionService.isEnabled();
+    final token = _client.auth.currentSession?.accessToken;
+    // Production wires this session getter at startup. During an account
+    // switch/refresh, wait for that session's check instead of using stale flags.
+    if (CloudConsentService.currentAccessToken != null &&
+        (token == null ||
+            CloudConsentService.authorizationForSession(token) == null)) {
+      throw SecurityException('Check account permission before sending.');
+    }
+    final authorization = CloudConsentService.authorization.value;
+    if (authorization != null &&
+        authorization.parentManaged &&
+        (!authorization.allowed || !enabled)) {
+      throw SecurityException(
+        'Set or restore your passphrase before sending from this parent-managed account.',
+      );
+    }
+    return enabled;
+  }
+
   @override
   Future<ClipboardItem> insert(ClipboardItem item) async {
     // Validate and sanitize input before sending to Supabase
@@ -198,11 +223,10 @@ class ClipboardRepository implements IClipboardRepository {
       final userId = _requireOwner(item.userId, 'clipboard items');
 
       // Initialize encryption if not already done
-      await _ensureEncryptionInitialized();
+      final isEncryptionEnabled = await _encryptionForSend();
 
       // Encrypt content only if encryption is enabled
       final sanitizedContent = _sanitizeContent(item.content);
-      final isEncryptionEnabled = await _encryptionService.isEnabled();
       final contentToStore = isEncryptionEnabled
           ? await _encryptionService.encrypt(sanitizedContent)
           : sanitizedContent;
@@ -314,8 +338,7 @@ class ClipboardRepository implements IClipboardRepository {
       // `--send-file` launch (Explorer's "Send with GhostCopy", which loads no
       // history and shows no UI) uploaded every file unencrypted regardless of
       // the passphrase.
-      await _ensureEncryptionInitialized();
-      final filesEncrypted = await _encryptionService.isEnabled();
+      final filesEncrypted = await _encryptionForSend();
       if (filesEncrypted) {
         uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
         debugPrint(
@@ -460,10 +483,9 @@ class ClipboardRepository implements IClipboardRepository {
       final sanitizedContent = _sanitizeContent(content);
 
       // Initialize encryption
-      await _ensureEncryptionInitialized();
+      final isEncryptionEnabled = await _encryptionForSend();
 
       // Encrypt content if encryption is enabled
-      final isEncryptionEnabled = await _encryptionService.isEnabled();
       final contentToStore = isEncryptionEnabled
           ? await _encryptionService.encrypt(sanitizedContent)
           : sanitizedContent;

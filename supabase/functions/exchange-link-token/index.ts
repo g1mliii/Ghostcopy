@@ -159,7 +159,10 @@ Deno.serve(async (req) => {
 
     consumed = consumedToken
     const consent = await cloudAccess(supabase, consumed.user_id)
-    if (!consent.allowed) return json({ error: 'Cloud authorization required' }, 403)
+    if (!consent.allowed) {
+      await restoreToken('cloud authorization denial')
+      return json({ error: 'Cloud authorization required' }, 403)
+    }
 
     // 2. Look up the account the QR belongs to.
     const { data: userData, error: userError } =

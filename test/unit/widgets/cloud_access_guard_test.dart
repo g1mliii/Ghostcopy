@@ -96,7 +96,7 @@ Map<String, Object?> _session(String id, [String signature = 'signature']) {
 
 void main() {
   testWidgets(
-    'refresh preserves text and attachments; switching accounts blocks immediately',
+    'auth errors and refresh preserve drafts; switching accounts blocks immediately',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
@@ -115,6 +115,12 @@ void main() {
         ),
       ))!;
       await client.auth.recoverSession(jsonEncode(_session('child')));
+      // A new subscriber receives earlier GoTrue errors as well as events.
+      // ignore: invalid_use_of_internal_member
+      client.auth.notifyException(
+        const AuthException('stale PKCE callback'),
+        StackTrace.current,
+      );
       final encryption = _Encryption();
       final revision = ValueNotifier(0);
       when(() => encryption.keyRevision).thenReturn(revision);
@@ -137,6 +143,14 @@ void main() {
       await tester.tap(find.text('Attach file'));
       await tester.pump();
       final draft = tester.state(find.byType(_Draft));
+      // ignore: invalid_use_of_internal_member
+      client.auth.notifyException(
+        const AuthException('failed callback'),
+        StackTrace.current,
+      );
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(_Draft)), same(draft));
+      expect(find.text('draft.pdf'), findsOneWidget);
       consent.pending = Completer<void>();
       await client.auth.refreshSession();
       await tester.pump();

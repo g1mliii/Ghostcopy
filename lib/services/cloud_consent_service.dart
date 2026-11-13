@@ -45,6 +45,11 @@ class CloudConsentService {
   static final instance = CloudConsentService();
   static const claimKey = 'parental_consent_claim_v3';
   static final authorization = ValueNotifier<CloudAuthorization?>(null);
+  static String? _authorizedAccessToken;
+
+  /// A previous account's classification cannot authorize a new session's send.
+  static CloudAuthorization? authorizationForSession(String accessToken) =>
+      _authorizedAccessToken == accessToken ? authorization.value : null;
 
   /// Wired after Supabase initializes; stale account responses cannot update UI.
   static String? Function()? currentAccessToken;
@@ -172,6 +177,7 @@ class CloudConsentService {
       await _storage.delete(key: claimKey);
     }
     if (currentAccessToken == null || currentAccessToken!() == accessToken) {
+      _authorizedAccessToken = accessToken;
       authorization.value = snapshot;
     }
     return snapshot;
