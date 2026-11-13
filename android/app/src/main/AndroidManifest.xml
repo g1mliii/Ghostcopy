@@ -9,6 +9,9 @@
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules">
 
+        <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
+        <meta-data android:name="firebase_analytics_collection_enabled" android:value="false" />
+        <meta-data android:name="firebase_data_collection_default_enabled" android:value="false" />
         <!--
             Without this, FCM logs "Missing Default Notification Channel metadata
             in AndroidManifest. Default value will be used." and pushes land on a

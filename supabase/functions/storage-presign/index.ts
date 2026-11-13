@@ -1,9 +1,10 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import "jsr:@supabase/functions-js@2/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.600.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
+import { cloudAccess } from '../_shared/cloud_access.ts';
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
 const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID') ?? '';
 const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
@@ -168,6 +169,12 @@ Deno.serve(async (req)=>{
     if (action !== 'upload' && action !== 'download' && action !== 'delete') {
       return json({ error: 'Invalid action' }, 400);
     }
+    let parentManaged = false;
+    if (userId !== 'service-role' && action !== 'delete') {
+      const access = await cloudAccess(serviceClient(), userId);
+      if (!access.allowed || !access.fileSync) return json({ error: 'Cloud file permission required' }, 403);
+      parentManaged = access.parentManaged;
+    }
     if (path.startsWith('/') || path.includes('..') || path.includes('\\') || path.includes('\u0000') || path.split('/').some((segment)=>segment.length === 0)) {
       return json({ error: 'Invalid storage path' }, 400);
     }
@@ -215,7 +222,7 @@ Deno.serve(async (req)=>{
         ContentLength: size
       });
       const presignedUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: 3600
+        expiresIn: parentManaged ? 60 : 3600
       });
       console.log(`[storage-presign] Presigned upload URL generated for: ${path}`);
       return json({ presignedUrl, storagePath: path });
@@ -226,10 +233,10 @@ Deno.serve(async (req)=>{
         Key: path
       });
       const downloadUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: DOWNLOAD_URL_TTL_SECONDS
+        expiresIn: parentManaged ? 60 : DOWNLOAD_URL_TTL_SECONDS
       });
       console.log(`[storage-presign] Signed download URL generated for: ${path}`);
-      return json({ downloadUrl, expiresIn: DOWNLOAD_URL_TTL_SECONDS });
+      return json({ downloadUrl, expiresIn: parentManaged ? 60 : DOWNLOAD_URL_TTL_SECONDS });
     }
     if (action === 'delete') {
       if (!await deleteObject(path)) {

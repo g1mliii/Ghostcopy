@@ -3,12 +3,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
-import { sharedKeysSource } from './shared_keys.mjs';
+import { sharedKeysSource, cloudAccessSource } from './shared_keys.mjs';
 
-const source = sharedKeysSource + stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
+const source = sharedKeysSource + cloudAccessSource + stripTypeScriptTypes((await readFile(new URL('../../supabase/functions/storage-presign/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, ''));
 class Command { constructor(input) { this.input = input; } }
-function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], missingKeys = [], failDelete = false,
+function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKeys = [], missingKeys = [], failDelete = false, consentAllowed = true, fileAllowed = true,
   env = { SUPABASE_SERVICE_ROLE_KEY: 'service-key' } } = {}) {
   let userChecks = 0;
   let handler;
@@ -18,6 +18,7 @@ function fixture({ shared = { count: 0 }, rows = [], failRate = false, failedKey
   const client = {
     auth: { getUser: async () => { userChecks++; return { data: { user: { id: 'user' } }, error: null }; } },
     async rpc(name, args) {
+      if (name === 'consent_service') return { data: { allowed: consentAllowed, fileSync: fileAllowed, parentManaged: false }, error: null };
       if (name === 'check_storage_rate_limit') {
         assert.equal(args.p_user_id, 'user');
         return failRate ? { error: new Error('offline') } :
@@ -75,6 +76,16 @@ test('a fresh edge instance uses the same storage rate budget', async () => {
   const second = fixture({ shared });
   assert.equal((await second.request(upload)).status, 429);
   assert.equal(second.signed, 0);
+});
+
+test('revoked cloud or missing file scope cannot obtain a file URL; deletion stays available', async () => {
+  for (const options of [{ consentAllowed: false }, { fileAllowed: false }]) {
+    const f = fixture(options);
+    assert.equal((await f.request({ action: 'upload', path: 'user/file', size: 10 })).status, 403);
+    assert.equal((await f.request({ action: 'download', path: 'user/file' })).status, 403);
+    assert.equal(f.signed, 0);
+    assert.equal((await f.request({ action: 'delete', path: 'user/file' })).status, 200);
+  }
 });
 
 test('an unavailable rate-limit store fails closed', async () => {

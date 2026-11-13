@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../locator.dart';
 import '../../main.dart';
 import '../../repositories/clipboard_repository.dart';
+import '../../services/app_review_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/encryption_service.dart';
@@ -30,6 +31,7 @@ import '../theme/typography.dart';
 import '../widgets/adaptive_switch.dart';
 import '../widgets/appearance_setting.dart';
 import '../widgets/ghost_toast.dart';
+import '../widgets/link_device_dialog.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
 
@@ -62,6 +64,7 @@ class MobileSettingsScreen extends StatefulWidget {
     required this.deviceService,
     required this.settingsService,
     this.encryptionService,
+    this.reviewService,
     this.openPassphraseRestore = false,
     super.key,
   });
@@ -72,6 +75,9 @@ class MobileSettingsScreen extends StatefulWidget {
 
   /// Overrides the shared encryption service, primarily for testing.
   final IEncryptionService? encryptionService;
+
+  /// Optional override for the mobile store review action.
+  final IAppReviewService? reviewService;
 
   /// Go straight to restoring the passphrase on open.
   ///
@@ -117,6 +123,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
 
   // App info
   String _appVersion = '';
+  bool _openingReview = false;
+
+  IAppReviewService? get _reviews =>
+      widget.reviewService ?? locator.maybeGet<IAppReviewService>();
 
   /// Whether the account card was built for a guest. A guest upgrade
   /// confirmed in the browser keeps its user id, and nothing else rebuilt
@@ -868,6 +878,29 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               // Devices section
               _buildSectionHeader('Devices'),
               _buildDevicesSection(),
+              if (widget.authService.currentUser != null &&
+                  _encryptionService != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: GhostSpacing.gutter,
+                  ),
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.qr_code_2),
+                    label: const Text('Link New Device'),
+                    onPressed: () async {
+                      final createAccount = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => LinkDeviceDialog(
+                          authService: widget.authService,
+                          encryptionService: _encryptionService!,
+                        ),
+                      );
+                      if (createAccount == true && mounted) {
+                        await _handleSignIn();
+                      }
+                    },
+                  ),
+                ),
 
               const SizedBox(height: GhostSpacing.sectionLoose),
 
@@ -1360,30 +1393,10 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
     );
   }
 
-  /// The switch itself, native to the platform.
-  ///
-  /// Switch.adaptive, not Switch: on iOS that is a CupertinoSwitch, which is
-  /// what the row used before these three toggles were unified and what an iOS
-  /// user expects to see. A Material switch on iOS reads as a port.
-  ///
-  /// activeTrackColor is set here rather than left to AppTheme.switchTheme
-  /// because CupertinoSwitch does not read Material's SwitchTheme - without it
-  /// iOS would fall back to the system green while Android showed the accent.
-  /// One place, both platforms, unlike the per-call-site overrides this
-  /// replaced.
-  ///
-  /// Only Android is scaled down. Material 3's switch is 52x32 and overweight
-  /// beside 14px type; CupertinoSwitch is already the size iOS users know, and
-  /// shrinking it would make it the odd one out on its own platform.
-
   /// One switch row, so every toggle in Settings is the same size and colour.
   ///
-  /// They had drifted: two set activeTrackColor to the success green while the
-  /// third used the accent, so the Security section showed two different "on"
-  /// colours side by side. Colour now comes from AppTheme.switchTheme alone.
-  ///
-  /// Scaled down because Material 3's switch is 52x32 - next to 14px type in a
-  /// list it reads as the heaviest thing on the screen.
+  /// AdaptiveSwitch uses a native Apple control on iOS/macOS, and the compact
+  /// Material control elsewhere. Both share the app's GhostColors palette.
   Widget _settingSwitch({
     required IconData icon,
     required String title,
@@ -1516,42 +1529,99 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
         borderRadius: BorderRadius.circular(GhostSpacing.surfaceRadius),
         border: Border.all(color: GhostColors.border),
       ),
-      child: ListTile(
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: GhostColors.primaryAlpha20,
-            borderRadius: BorderRadius.circular(8),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: GhostColors.primaryAlpha20,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.content_copy_rounded,
+                size: 18,
+                color: GhostColors.primary,
+              ),
+            ),
+            title: Text(
+              'GhostCopy',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: GhostColors.textPrimary,
+              ),
+            ),
+            subtitle: Text(
+              _appVersion.isEmpty ? 'Loading...' : _appVersion,
+              style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
+            ),
+            // Signals that the row does something now. It used to be inert, which
+            // left About looking like a dead end.
+            trailing: Icon(
+              Icons.open_in_new_rounded,
+              size: 18,
+              color: GhostColors.textMuted,
+            ),
+            onTap: _openWebsite,
           ),
-          child: const Icon(
-            Icons.content_copy_rounded,
-            size: 18,
-            color: GhostColors.primary,
-          ),
-        ),
-        title: Text(
-          'GhostCopy',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: GhostColors.textPrimary,
-          ),
-        ),
-        subtitle: Text(
-          _appVersion.isEmpty ? 'Loading...' : _appVersion,
-          style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
-        ),
-        // Signals that the row does something now. It used to be inert, which
-        // left About looking like a dead end.
-        trailing: Icon(
-          Icons.open_in_new_rounded,
-          size: 18,
-          color: GhostColors.textMuted,
-        ),
-        onTap: _openWebsite,
+          if (_reviews?.canReview == true) ...[
+            Divider(height: 1, color: GhostColors.border),
+            ListTile(
+              leading: SizedBox(
+                width: 36,
+                height: 36,
+                child: Icon(
+                  Icons.star_outline_rounded,
+                  color: GhostColors.actionText,
+                ),
+              ),
+              title: Text(
+                'Rate GhostCopy',
+                style: TextStyle(color: GhostColors.textPrimary),
+              ),
+              subtitle: Text(
+                Theme.of(context).platform == TargetPlatform.iOS
+                    ? 'Leave a review on the App Store'
+                    : 'Leave a review on Google Play',
+                style: TextStyle(color: GhostColors.textSecondary),
+              ),
+              trailing: _openingReview
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.open_in_new_rounded,
+                      size: 18,
+                      color: GhostColors.textMuted,
+                    ),
+              onTap: _openingReview
+                  ? null
+                  : () => unawaited(_openStoreReview()),
+            ),
+          ],
+        ],
       ),
     );
+  }
+
+  Future<void> _openStoreReview() async {
+    final reviews = _reviews;
+    if (reviews == null || _openingReview) return;
+    setState(() => _openingReview = true);
+    final opened = await reviews.openStoreReview();
+    if (!mounted) return;
+    setState(() => _openingReview = false);
+    if (!opened) {
+      showGhostToast(
+        context,
+        'Could not open the store. Please try again later.',
+        type: GhostToastType.error,
+      );
+    }
   }
 }
 

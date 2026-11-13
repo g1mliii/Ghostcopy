@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/models/clipboard_item.dart';
 import 'package:ghostcopy/repositories/clipboard_repository.dart';
+import 'package:ghostcopy/services/cloud_consent_service.dart';
 import 'package:ghostcopy/services/encryption_service.dart';
 import 'package:ghostcopy/services/media_memory_cache.dart';
 import 'package:ghostcopy/services/storage_service.dart';
@@ -41,6 +42,13 @@ void main() {
       test(
         '${entry.key.value} keeps original bytes (encrypted: $encrypted)',
         () async {
+          // Encrypted cases also cover mandatory parent-managed encryption.
+          CloudConsentService.authorization.value = CloudAuthorization(
+            allowed: true,
+            parentManaged: encrypted,
+            fileSync: true,
+          );
+          addTearDown(() => CloudConsentService.authorization.value = null);
           final encryption = _Encryption();
           final storage = _Storage();
           final cache = MediaMemoryCache.instance..clear();

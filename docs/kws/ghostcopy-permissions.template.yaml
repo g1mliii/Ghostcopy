@@ -1,0 +1,74 @@
+# Import into KWS TEST only after replacing the product ID with its actual portal ID.
+# Validate in the KWS portal; some properties are immutable after first import.
+version: 0.1
+orgId: 71a166bf-4a50-4211-8fe6-0c46235c1c54
+productId: REPLACE_WITH_ACTUAL_GHOSTCOPY_PRODUCT_ID
+namespace: ghostcopy
+settings:
+  - settingName: cloudSync
+    valueType: boolean
+    userHidden: false
+    required: true
+    allowDependentPermissions: true
+    allowProductOverrides: blockInheritance
+    inheritFromOrg: false
+    restrictiveOrder: falseRestrictive
+    dataStorage: raw
+    label:
+      en: Encrypted clipboard cloud sync
+    userNotice:
+      en: Send selected encrypted clips to your linked devices with your parent’s permission.
+    parentNotice:
+      en: Allow a pseudonymous GhostCopy account, linked device identifiers and encrypted text syncing. Manual sending and encryption are required. No ads, optional diagnostics or public ratings. Review collection, retention and your access, withdrawal and deletion rights at https://ghostcopy.app/parents and https://ghostcopy.app/privacy; review https://ghostcopy.app/terms before authorizing. Without this permission the cloud account stays inactive.
+    regions:
+      - region: global
+        ages:
+          - from: 0
+            to: 5
+            consentType: none
+            defaultPreference: false
+            enforcedLimit: false
+          - from: 5
+            to: 18
+            consentType: opt-in-verified
+            defaultPreference: true
+            defaultParentLimit: false
+            enforcedLimit: true
+          - from: 18
+            consentType: none
+            defaultPreference: true
+  - settingName: fileSync
+    valueType: boolean
+    userHidden: false
+    required: false
+    allowDependentPermissions: false
+    allowProductOverrides: blockInheritance
+    inheritFromOrg: false
+    restrictiveOrder: falseRestrictive
+    dataStorage: raw
+    consentDependsOn:
+      - namespace: ghostcopy
+        settingName: cloudSync
+    label:
+      en: Optional encrypted image and file sync
+    userNotice:
+      en: Send selected encrypted images and files to your linked devices if your parent allows it.
+    parentNotice:
+      en: Optionally allow selected encrypted images and files to be stored with Cloudflare for delivery to linked devices. This also processes file size, type and name metadata. Refusing this permission leaves encrypted text sync available. Review https://ghostcopy.app/parents and https://ghostcopy.app/privacy. You may withdraw permission or request deletion later.
+    regions:
+      - region: global
+        ages:
+          - from: 0
+            to: 5
+            consentType: none
+            defaultPreference: false
+            enforcedLimit: false
+          - from: 5
+            to: 18
+            consentType: opt-in-verified
+            defaultPreference: true
+            defaultParentLimit: false
+            enforcedLimit: true
+          - from: 18
+            consentType: none
+            defaultPreference: true

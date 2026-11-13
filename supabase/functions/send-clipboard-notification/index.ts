@@ -1,9 +1,10 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import "jsr:@supabase/functions-js@2/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Import Firebase Admin SDK via NPM compatibility
 import admin from 'npm:firebase-admin@12.0.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
+import { cloudAccess } from '../_shared/cloud_access.ts';
 import { sendWnsRaw, wnsConfigured } from './wns.ts';
 import { fcmMessageFor, fcmTargets, pushTargets, recipientDevices, wnsTargets } from './messages.ts';
 // Initialize Firebase Admin outside the handler to reuse the connection across invocations
@@ -32,7 +33,7 @@ const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL') ?? '', secretKey
 // Notifications are 1:1 with clipboard inserts, so the same 10/min window applies.
 const RATE_LIMIT_MAX_CALLS = 10;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-function normalizeTargetDeviceTypes(value) {
+function normalizeTargetDeviceTypes(value: unknown): unknown[] | null {
   if (Array.isArray(value)) {
     return value;
   }
@@ -43,7 +44,7 @@ function normalizeTargetDeviceTypes(value) {
   }
   return null;
 }
-async function checkRateLimit(userId) {
+async function checkRateLimit(userId: string) {
   const { data, error } = await supabaseAdmin.from('user_rate_limit').select('insert_count, window_start').eq('user_id', userId).maybeSingle();
   if (error) {
     // Fail open on DB error to avoid blocking legitimate requests
@@ -84,7 +85,7 @@ Deno.serve(async (req)=>{
     const supabaseClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', publishableKey(), {
       global: {
         headers: {
-          Authorization: req.headers.get('Authorization')
+          Authorization: req.headers.get('Authorization') ?? ''
         }
       }
     });
@@ -146,6 +147,8 @@ Deno.serve(async (req)=>{
       }
       userId = user.id;
     }
+    const consent = await cloudAccess(supabaseAdmin, userId);
+    if (!consent.allowed) return json({ error: 'Cloud authorization required' }, 403);
     // SERVER-SIDE RATE LIMITING
     // Trigger calls describe inserts already accepted and counted by the DB.
     // Applying the current insert counter again drops the tenth clip, and
@@ -288,7 +291,7 @@ Deno.serve(async (req)=>{
     // in net._http_response; console output does not reach it. Without this
     // an iPhone that stopped receiving showed only devices_failed: 1, with
     // nothing to tell an APNs credential problem from a dead token.
-    const failures = [];
+    const failures: { device_type: string; device_name: string | null; code: string; message: string }[] = [];
     const warnings = [];
     // Desktop push can be switched off after desktops have registered; their
     // rows keep their tokens, so the flag is honoured here, at sending.
@@ -318,7 +321,7 @@ Deno.serve(async (req)=>{
           if (failureCount > 0) {
             console.warn(`[Notification] ${failureCount} messages failed to send.`);
             // Collect device IDs whose tokens FCM rejected as invalid/unregistered
-            const staleDeviceIds = [];
+            const staleDeviceIds: string[] = [];
             batchResponse.responses.forEach((resp, idx)=>{
               if (!resp.success && resp.error) {
                 const errorCode = resp.error.code;

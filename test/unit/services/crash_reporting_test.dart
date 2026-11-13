@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/crash_reporting_service.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -151,6 +153,54 @@ void main() {
     expect(options.beforeSend, isNotNull);
     expect(options.beforeBreadcrumb, isNotNull);
   });
+
+  test(
+    'diagnostics wait for server classification and stay off after account changes',
+    () async {
+      final calls = <String>[];
+      final initialized = Completer<void>();
+      final reporting = SentryCrashReportingService(
+        enabled: true,
+        deferUntilAuthorized: true,
+        initializeSdk: () async {
+          calls.add('initialize');
+          await initialized.future;
+        },
+        stopSdk: () async {
+          calls.add('stop');
+        },
+      );
+      await reporting.run(() => calls.add('app'));
+      expect(calls, ['app']);
+      final starting = reporting.startAfterAuthorization();
+      final pausing = reporting.pauseForAccountChange();
+      expect(calls, ['app', 'initialize']);
+      initialized.complete();
+      await Future.wait([starting, pausing]);
+      expect(calls, ['app', 'initialize', 'stop']);
+      // A late authorization of the old adult cannot restart during a child link.
+      await reporting.startAfterAuthorization();
+      expect(calls, ['app', 'initialize', 'stop']);
+    },
+  );
+
+  test(
+    'an account change before classification never initializes diagnostics',
+    () async {
+      var starts = 0;
+      final reporting = SentryCrashReportingService(
+        enabled: true,
+        deferUntilAuthorized: true,
+        initializeSdk: () async {
+          starts++;
+        },
+        stopSdk: () async {},
+      );
+      await reporting.pauseForAccountChange();
+      await reporting.startAfterAuthorization();
+      expect(starts, 0);
+    },
+  );
 
   test('when disabled, the app runs without Sentry', () async {
     var ran = false;

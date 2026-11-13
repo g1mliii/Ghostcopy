@@ -30,6 +30,12 @@ class AuthService implements IAuthService {
     this._pkceStore,
     GotrueAsyncStorage? confirmationStore,
     this._detachedAuth,
+    this.authorizeCloud,
+    this.beforeIndependentAuth,
+    this.beforeGuestCreation,
+    this.beforeAccountChange,
+    this.recreateGuestAfterSignOut,
+    this.pauseCloudSetup,
   }) : _client = client ?? Supabase.instance.client,
        _confirmationStoreOverride = confirmationStore,
        _appleReauthorize = appleReauthorize ?? _nativeAppleAuthorizationCode,
@@ -63,6 +69,14 @@ class AuthService implements IAuthService {
   static const _oauthRedirect = 'https://ghostcopy.app/auth-callback';
 
   final SupabaseClient _client;
+
+  /// Server authorization before account data or device registration starts.
+  final Future<void> Function()? authorizeCloud;
+  final Future<void> Function()? beforeIndependentAuth;
+  final Future<void> Function()? beforeGuestCreation;
+  final Future<void> Function()? beforeAccountChange;
+  final bool Function()? recreateGuestAfterSignOut;
+  final Future<void> Function()? pauseCloudSetup;
   final IDeviceService? _deviceService;
 
   /// The storage Supabase was given for PKCE verifiers - see
@@ -99,6 +113,7 @@ class AuthService implements IAuthService {
   Future<T> _interactive<T>(Future<T> Function() signIn) async {
     _interactiveSignIns++;
     try {
+      await beforeAccountChange?.call();
       final pending = _anonymousSignIn;
       if (pending != null) {
         try {
@@ -139,6 +154,9 @@ class AuthService implements IAuthService {
         );
         return;
       }
+      await beforeGuestCreation?.call();
+      // An interactive link may have completed while setup was checked.
+      if (_interactiveSignIns > 0 || _client.auth.currentUser != null) return;
       debugPrint('[AuthService] No current user, signing in anonymously...');
       try {
         final attempt = _client.auth.signInAnonymously();
@@ -173,6 +191,7 @@ class AuthService implements IAuthService {
     // for - a fresh install - so the `!= null` guard below was false and
     // EncryptionService was never initialized at all for that whole session.
     final currentUser = _client.auth.currentUser;
+    if (currentUser != null) await authorizeCloud?.call();
 
     // Initialize EncryptionService with current user
     if (currentUser != null) {
@@ -212,6 +231,7 @@ class AuthService implements IAuthService {
     String password, {
     String? captchaToken,
   }) async {
+    await beforeIndependentAuth?.call();
     try {
       final previousId = _client.auth.currentUser?.id;
       final response = await _interactive(
@@ -227,7 +247,7 @@ class AuthService implements IAuthService {
         await _rememberPendingConfirmation(email);
       } else if (session.user.id != previousId) {
         // Signed straight in: a new account this computer is not listed on.
-        await _registerThisDesktop();
+        await _registerAuthorizedDesktop();
       }
       return response;
     } on AuthException catch (e) {
@@ -242,6 +262,7 @@ class AuthService implements IAuthService {
     String password, {
     String? captchaToken,
   }) async {
+    await beforeIndependentAuth?.call();
     try {
       final response = await _switchAccount(
         () => _client.auth.signInWithPassword(
@@ -260,6 +281,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<bool> signInWithGoogle() async {
+    await beforeIndependentAuth?.call();
     try {
       // Use native Google Sign-In for iOS and Android
       if (_googleSignIn != null || Platform.isIOS || Platform.isAndroid) {
@@ -534,6 +556,7 @@ class AuthService implements IAuthService {
     await _clearPendingConfirmation();
     // A sign-up that began with no session is a new account on this device;
     // an upgraded guest is the same one, already registered.
+    await authorizeCloud?.call();
     if (session.user.id != previous?.user.id) await _registerThisDesktop();
     return true;
   }
@@ -687,6 +710,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<bool> signInWithApple() async {
+    await beforeIndependentAuth?.call();
     try {
       // iOS and macOS have the native sheet (Face ID / Touch ID and the
       // device's Apple ID, no browser). Windows and Android get the browser
@@ -720,6 +744,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<bool> linkAppleIdentity() async {
+    await beforeIndependentAuth?.call();
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
@@ -824,6 +849,7 @@ class AuthService implements IAuthService {
     String password, {
     String? captchaToken,
   }) async {
+    await beforeIndependentAuth?.call();
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
@@ -862,6 +888,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<bool> linkGoogleIdentity() async {
+    await beforeIndependentAuth?.call();
     if (!isAnonymous) {
       throw Exception('User is already authenticated with a permanent account');
     }
@@ -1063,6 +1090,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<AccountDeletionOutcome> deleteAccount() async {
+    await beforeAccountChange?.call();
     final user = currentUser;
     if (user == null) throw StateError('No signed-in account to delete');
 
@@ -1091,6 +1119,8 @@ class AuthService implements IAuthService {
       body: {'apple_authorization_code': ?appleCode},
     );
     debugPrint('[AuthService] Account deleted on the server');
+    final remainSignedOut = recreateGuestAfterSignOut?.call() == false;
+    if (remainSignedOut) await pauseCloudSetup?.call();
 
     // From here the account no longer exists; the rest removes this device's
     // copy of it. Nothing below can undo the deletion, so each step is best
@@ -1109,6 +1139,10 @@ class AuthService implements IAuthService {
     } on AuthException catch (e) {
       debugPrint('[AuthService] Local sign-out after deletion: ${e.message}');
     }
+    _initialized = false;
+    if (remainSignedOut) {
+      return AccountDeletionOutcome.deleted;
+    }
     // The account is already gone. A failed guest sign-in here (network, rate
     // limit) must not turn that into a reported failure - the settings screen
     // would say nothing was deleted. The app signs in as a guest at its next
@@ -1116,7 +1150,7 @@ class AuthService implements IAuthService {
     try {
       await _client.auth.signInAnonymously();
       debugPrint('[AuthService] On a fresh guest account after deletion');
-      await _registerThisDesktop();
+      await _registerAuthorizedDesktop();
     } on Exception catch (e) {
       debugPrint('[AuthService] Guest sign-in after deletion failed: $e');
     }
@@ -1129,8 +1163,12 @@ class AuthService implements IAuthService {
       (await _requestAppleCredential(scopes: const []))?.authorizationCode;
 
   @override
-  Future<void> signOut() async {
+  Future<void> signOut({bool createGuest = true}) async {
+    await beforeAccountChange?.call();
     try {
+      final remainSignedOut =
+          !createGuest || recreateGuestAfterSignOut?.call() == false;
+      if (remainSignedOut) await pauseCloudSetup?.call();
       final deviceId = _deviceService?.getCurrentDeviceId();
       final userId = currentUserId;
       if (deviceId != null && userId != null) {
@@ -1147,10 +1185,13 @@ class AuthService implements IAuthService {
       await _client.auth.signOut();
       debugPrint('[AuthService] Signed out successfully');
 
-      // Sign back in anonymously
+      _initialized = false;
+      if (remainSignedOut) return;
+
+      // Normal account switching can still create a guest. A consent decline cannot.
       await _client.auth.signInAnonymously();
       debugPrint('[AuthService] Signed in anonymously after sign out');
-      await _registerThisDesktop();
+      await _registerAuthorizedDesktop();
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign out failed: ${e.message}');
       rethrow;
@@ -1230,6 +1271,7 @@ class AuthService implements IAuthService {
   /// clean up the account left behind, then register this computer under the
   /// new one.
   Future<void> _finishAccountSwitch(Session? previous, String? deviceId) async {
+    await authorizeCloud?.call();
     final next = _client.auth.currentSession;
     if (previous != null && next != null) {
       await _cleanupPreviousSession(previous, next.user.id, deviceId);
@@ -1249,6 +1291,11 @@ class AuthService implements IAuthService {
   /// Desktop only: registering without a push token clears the stored one,
   /// and the mobile screens already re-register with their token after each
   /// of these changes. Best effort, like the registration at launch.
+  Future<void> _registerAuthorizedDesktop() async {
+    await authorizeCloud?.call();
+    await _registerThisDesktop();
+  }
+
   Future<void> _registerThisDesktop() async {
     final devices = _deviceService;
     if (devices == null ||

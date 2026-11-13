@@ -19,17 +19,64 @@ const _sentryDsn =
 /// Debug and profile builds run the app directly: their errors are for the
 /// developer's console, not the project's issue list.
 class SentryCrashReportingService implements ICrashReportingService {
-  SentryCrashReportingService({bool? enabled})
-    : _enabled = enabled ?? kReleaseMode;
+  SentryCrashReportingService({
+    bool? enabled,
+    this.deferUntilAuthorized = false,
+    Future<void> Function()? initializeSdk,
+    Future<void> Function()? stopSdk,
+  }) : _enabled = enabled ?? kReleaseMode,
+       _initializeSdk = initializeSdk ?? _initializeSentry,
+       _stopSdk = stopSdk ?? Sentry.close;
 
   final bool _enabled;
+  final bool deferUntilAuthorized;
+  final Future<void> Function() _initializeSdk;
+  final Future<void> Function() _stopSdk;
+  Future<void>? _initializing;
+  bool _pausedForAccountChange = false;
+  bool _active = false;
+
+  static Future<void> _initializeSentry() =>
+      SentryFlutter.init(configureCrashReporting);
+
+  /// Called only after server authorization confirms an opted-in adult.
+  Future<void> startAfterAuthorization() async {
+    if (!_enabled || _pausedForAccountChange) return;
+    try {
+      await (_initializing ??= _start());
+    } on Exception catch (e) {
+      _pausedForAccountChange = true;
+      await _stopSdk();
+      debugPrint('[CrashReporting] Could not start diagnostics: $e');
+    }
+  }
+
+  Future<void> _start() async {
+    await _initializeSdk();
+    _active = true;
+  }
+
+  /// Stop before installing any new session. Re-enable only on the next launch,
+  /// after fresh classification, so stale authorizations cannot restart it.
+  Future<void> pauseForAccountChange() async {
+    _pausedForAccountChange = true;
+    try {
+      await _initializing;
+    } finally {
+      if (_active) {
+        await _stopSdk();
+        _active = false;
+      }
+    }
+  }
 
   @override
   Future<void> run(FutureOr<void> Function() app) async {
-    if (!_enabled) {
+    if (!_enabled || deferUntilAuthorized) {
       await app();
       return;
     }
+    _active = true;
     await SentryFlutter.init(configureCrashReporting, appRunner: app);
   }
 
@@ -40,7 +87,7 @@ class SentryCrashReportingService implements ICrashReportingService {
     required String context,
   }) async {
     debugPrint('[CrashReporting] $context: $error');
-    if (!_enabled) return;
+    if (!_enabled || !_active) return;
     // The same beforeSend scrubbing applies to these as to crashes; the
     // context is a fixed string from the call site, never user content.
     await Sentry.captureException(

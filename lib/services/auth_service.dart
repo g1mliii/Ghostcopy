@@ -163,7 +163,8 @@ abstract class IAuthService {
 
   /// Sign out the current user
   /// Clears session and returns to anonymous state
-  Future<void> signOut();
+  /// Set [createGuest] false when setup/consent was declined: remain signed out.
+  Future<void> signOut({bool createGuest = true});
 
   /// Get the current user's ID
   /// Returns null if no user is authenticated

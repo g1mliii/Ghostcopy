@@ -1,12 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/services/device_service.dart';
 import 'package:ghostcopy/services/impl/auth_service.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+class _Devices extends Mock implements IDeviceService {}
 
 class _GoogleSignIn extends Mock implements GoogleSignIn {}
 
@@ -68,9 +72,11 @@ void main() {
   late SupabaseClient client;
   late List<http.Request> requests;
   late _MemoryStorage confirmations;
+  late bool immediateSession;
 
   setUp(() {
     requests = [];
+    immediateSession = false;
     confirmations = _MemoryStorage();
     client = SupabaseClient(
       'https://example.com',
@@ -83,7 +89,10 @@ void main() {
         requests.add(request);
         return switch (request.url.path) {
           // Confirmation required: a user, and no session.
-          '/auth/v1/signup' => http.Response(jsonEncode(_user('new')), 200),
+          '/auth/v1/signup' => http.Response(
+            jsonEncode(immediateSession ? _session('new') : _user('new')),
+            200,
+          ),
           '/auth/v1/token' => http.Response(
             jsonEncode(_session('google')),
             200,
@@ -95,6 +104,56 @@ void main() {
   });
 
   tearDown(() => client.dispose());
+
+  test(
+    'email signup pauses diagnostics and waits for authorization before registering',
+    () async {
+      immediateSession = true;
+      final devices = _Devices();
+      final order = <String>[];
+      when(devices.registerCurrentDevice).thenAnswer((_) async {
+        order.add('register');
+        return true;
+      });
+      final authorizing = Completer<void>();
+      final authorized = Completer<void>();
+      final service = AuthService(
+        client: client,
+        deviceService: devices,
+        beforeAccountChange: () async {
+          expect(requests, isEmpty);
+          order.add('stop diagnostics');
+        },
+        authorizeCloud: () async {
+          order.add('authorize');
+          authorizing.complete();
+          await authorized.future;
+        },
+      );
+      final signingUp = service.signUpWithEmail('new@example.com', 'password1');
+      await authorizing.future;
+      verifyNever(devices.registerCurrentDevice);
+      authorized.complete();
+      await signingUp;
+      expect(order, ['stop diagnostics', 'authorize', 'register']);
+    },
+  );
+
+  test('bound child recovery blocks every automatic guest retry', () async {
+    var checks = 0;
+    final service = AuthService(
+      client: client,
+      beforeGuestCreation: () async {
+        checks++;
+        throw Exception('Link the existing account.');
+      },
+    );
+    await expectLater(service.initialize(), throwsException);
+    await expectLater(service.initialize(), throwsException);
+    expect(checks, 2);
+    expect(requests, isEmpty);
+    expect(client.auth.currentSession, isNull);
+  });
 
   test('an email account is signed up when there is no guest', () async {
     final service = AuthService(
