@@ -65,7 +65,9 @@ beforeEach(async () => {
 async function approved() {
   const response = await start(); assert.equal(response.status, 200);
   granted = true; files = true;
-  assert.equal((await request({ action: 'poll', claimToken: response.body.claimToken })).body.status, 'authorized');
+  const poll = await request({ action: 'poll', claimToken: response.body.claimToken });
+  assert.equal(poll.body.status, 'authorized');
+  assert.equal(poll.body.hasAccount, false);
   return response.body;
 }
 
@@ -85,6 +87,10 @@ test('current approval binds only the authenticated subject and is not reusable 
   const approval = await approved();
   const result = await request({ action: 'authorize', claimToken: approval.claimToken, userId: other }, 'child');
   assert.equal(result.body.allowed, true); assert.equal(result.body.accountKind, 'parent_managed');
+  const recovery = await request({ action: 'poll', claimToken: approval.claimToken });
+  assert.equal(recovery.body.hasAccount, true);
+  assert.ok(!('bound_user_id' in recovery.body));
+  assert.ok(!('refresh_token' in recovery.body));
   assert.equal((await request({ action: 'authorize', claimToken: approval.claimToken }, 'other')).status, 503);
   assert.equal((await operation('profile', { userId: other })), null);
   const pretendAdult = await request({ action: 'authorize', age: 18, country: 'CA', noticeVersion: '2026-11-12-v3', termsAccepted: true, privacyAcknowledged: true }, 'child');
@@ -143,6 +149,24 @@ test('signed denial revokes despite stale provider reads; wrong event secret and
 test('oversized bodies and unsigned webhooks stop before account operations', async () => {
   assert.equal((await handler()(new Request('https://api.example/cloud-consent', { method: 'POST', body: 'x'.repeat(65537) }))).status, 413);
   assert.equal((await request({}, undefined, '/webhook')).status, 401);
+});
+
+test('a refreshed device proof restores its existing profile without rebinding', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  const linked = await request({ action: 'authorize' }, 'child');
+  assert.match(linked.body.deviceClaim, /^device\.v1\./);
+  await db.exec(`UPDATE private.parental_consent_requests SET status='pending',cloud_sync=false,
+    valid_until=now()-interval '1 minute',last_checked_at=now()-interval '1 minute'
+    WHERE bound_user_id='${user}';
+    UPDATE public.cloud_authorizations SET status='revoked',cloud_sync=false,
+    valid_until=now()-interval '1 minute' WHERE user_id='${user}';`);
+  const recovered = await request({ action: 'authorize', claimToken: linked.body.deviceClaim }, 'child');
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.body.allowed, true);
+  assert.equal(recovered.body.accountKind, 'parent_managed');
+  assert.equal((await operation('lookup', { userId: user })).bound_user_id, user);
+  assert.equal((await request({ action: 'authorize', claimToken: linked.body.deviceClaim }, 'other')).status, 503);
 });
 
 test('a QR-linked child gets a scoped pre-auth device proof, never a new-account binding capability', async () => {

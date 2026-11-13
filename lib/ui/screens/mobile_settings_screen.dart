@@ -31,6 +31,7 @@ import '../theme/typography.dart';
 import '../widgets/adaptive_switch.dart';
 import '../widgets/appearance_setting.dart';
 import '../widgets/ghost_toast.dart';
+import '../widgets/link_device_dialog.dart';
 import '../widgets/passphrase_dialog.dart';
 import 'mobile_welcome_screen.dart';
 
@@ -877,6 +878,29 @@ class _MobileSettingsScreenState extends State<MobileSettingsScreen> {
               // Devices section
               _buildSectionHeader('Devices'),
               _buildDevicesSection(),
+              if (widget.authService.currentUser != null &&
+                  _encryptionService != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: GhostSpacing.gutter,
+                  ),
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.qr_code_2),
+                    label: const Text('Link New Device'),
+                    onPressed: () async {
+                      final createAccount = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => LinkDeviceDialog(
+                          authService: widget.authService,
+                          encryptionService: _encryptionService!,
+                        ),
+                      );
+                      if (createAccount == true && mounted) {
+                        await _handleSignIn();
+                      }
+                    },
+                  ),
+                ),
 
               const SizedBox(height: GhostSpacing.sectionLoose),
 

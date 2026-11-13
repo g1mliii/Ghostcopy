@@ -65,7 +65,7 @@ function publicRequest(request: Row, now: number): Row {
   return { independentEligible: Number.isFinite(adulthood.getTime()) && adulthood.getTime() <= now,
     status: expired ? 'expired' : authorized ? 'authorized' :
     request.requires_new_consent ? 'revoked' : request.status === 'initiating' ? 'pending' : request.status,
-  cloudSync: authorized, fileSync: authorized && request.file_sync === true,
+  hasAccount: !!request.bound_user_id, cloudSync: authorized, fileSync: authorized && request.file_sync === true,
   expiresAt: request.expires_at, validUntil: request.valid_until,
   accountLabel: `GhostCopy account ${text(request.id).slice(-6)}` };
 }
@@ -245,7 +245,15 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
             (!profile.user_id || profile.status === 'revoked')) {
           const child = await refresh(await claim(data.claimToken));
           if (publicRequest(child, now()).status !== 'authorized') throw new Rejected(403, 'Parent authorization required.');
-          profile = row(await deps.operation('bind', { userId: user.id, claimHash: await hash(text(data.claimToken)) }));
+          if (child.bound_user_id) {
+            if (child.bound_user_id !== user.id) throw new Rejected(503, 'Account authorization unavailable.');
+            // A refreshed device proof belongs to the existing profile, not
+            // the original raw claim_hash used for first-account binding.
+            profile = row(await deps.operation('profile', { userId: user.id }));
+            if (!profile.user_id || profile.account_kind !== 'parent_managed') throw new Rejected(503, 'Account authorization unavailable.');
+          } else {
+            profile = row(await deps.operation('bind', { userId: user.id, claimHash: await hash(text(data.claimToken)) }));
+          }
         } else if (profile.account_kind === 'parent_managed') {
           await refresh(row(await deps.operation('lookup', { userId: user.id })));
           profile = row(await deps.operation('profile', { userId: user.id }));

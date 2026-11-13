@@ -31,6 +31,59 @@ void main() {
   });
 
   test(
+    'only explicit adult classification permits adult diagnostics',
+    () async {
+      for (final kind in ['adult', 'unclassified', 'parent_managed', null]) {
+        final service = CloudConsentService(
+          client: MockClient(
+            (_) async => http.Response(
+              jsonEncode({
+                'allowed': true,
+                'accountKind': kind,
+                'fileSync': false,
+              }),
+              200,
+            ),
+          ),
+        );
+        final result = await service.authorize('session');
+        expect(result.independentAdult, kind == 'adult');
+      }
+    },
+  );
+
+  test('only approved unbound parent setup may create a first guest', () async {
+    final prefs = await SharedPreferences.getInstance();
+    await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
+    final storage = _Storage();
+    when(
+      () => storage.read(key: CloudConsentService.claimKey),
+    ).thenAnswer((_) async => 'claim');
+    Object? hasAccount = false;
+    var status = 'authorized';
+    final service = CloudConsentService(
+      storage: storage,
+      client: MockClient(
+        (request) async => http.Response(
+          jsonEncode({'status': status, 'hasAccount': hasAccount}),
+          200,
+        ),
+      ),
+    );
+    await service.beforeGuestCreation();
+    hasAccount = true;
+    await expectLater(service.beforeGuestCreation(), throwsException);
+    hasAccount = null; // Older or incomplete responses must fail closed.
+    await expectLater(service.beforeGuestCreation(), throwsException);
+    hasAccount = false;
+    status = 'pending';
+    await expectLater(service.beforeGuestCreation(), throwsException);
+    status = 'authorized';
+    await prefs.setBool('distribution_cloud_paused', true);
+    await expectLater(service.beforeGuestCreation(), throwsException);
+  });
+
+  test(
     'central account check sends the current notice and uses server classification',
     () async {
       final service = CloudConsentService(

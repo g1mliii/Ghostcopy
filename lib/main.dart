@@ -316,11 +316,12 @@ Future<void> main(List<String> args) async {
 
   await ensureDistributionConsent(headless: args.contains('--send-file'));
 
-  // One instance, so the startup steps below can report a failure they
-  // recovered from through the same Sentry client that wraps the app.
+  // No diagnostics SDK starts from a local receipt alone. The root account
+  // gate enables it only after the server confirms an opted-in adult.
   final consent = DistributionConsentService(await loadConsentPreferences());
   final crashReporting = SentryCrashReportingService(
     enabled: kReleaseMode && consent.diagnosticsAllowed,
+    deferUntilAuthorized: true,
   );
   return crashReporting.run(() {
     if (stopped case (final error, final stack)) {
@@ -332,9 +333,10 @@ Future<void> main(List<String> args) async {
 
 Future<void> _appMain(
   List<String> args,
-  ICrashReportingService crashReporting,
+  SentryCrashReportingService crashReporting,
 ) async {
   WidgetsFlutterBinding.ensureInitialized();
+  locator.registerSingleton<SentryCrashReportingService>(crashReporting);
 
   // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
   // an app that scrolls through photos. This one shows small history
@@ -451,6 +453,8 @@ Future<void> _appMain(
   final authService = AuthService(
     deviceService: deviceService,
     pkceStore: pkceStore,
+    beforeGuestCreation: CloudConsentService.instance.beforeGuestCreation,
+    beforeAccountChange: crashReporting.pauseForAccountChange,
     recreateGuestAfterSignOut: () =>
         CloudConsentService.authorization.value?.parentManaged != true,
     pauseCloudSetup: () async {
@@ -1605,9 +1609,16 @@ class _MyAppState extends State<MyApp> with WindowListener {
         home: CloudAccessGuard(
           builder: _buildHome,
           onAuthorized: (authorization) {
-            if (!_isDesktop() && authorization.parentManaged) {
-              // Parent setup bypasses the ordinary welcome callback. Register
-              // after authorization/key setup, and recover a revoked FCM token.
+            if (authorization.allowed && authorization.independentAdult) {
+              final diagnostics = locator
+                  .maybeGet<SentryCrashReportingService>();
+              if (diagnostics != null) {
+                unawaited(diagnostics.startAfterAuthorization());
+              }
+            }
+            if (!_isDesktop()) {
+              // Restore push after a successful check for every account,
+              // including an adult retry after a previous permission denial.
               unawaited(_registerDeviceForPush(freshToken: true));
             }
           },

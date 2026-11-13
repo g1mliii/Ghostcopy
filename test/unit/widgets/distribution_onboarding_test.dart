@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/cloud_consent_service.dart';
 import 'package:ghostcopy/services/distribution_consent_service.dart';
@@ -210,6 +211,80 @@ void main() {
       expect(tester.takeException(), isNull);
     }, variant: mobile);
   }
+
+  testWidgets(
+    'first desktop setup is visible before waiting for acceptance',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const window = MethodChannel('window_manager');
+      const screens = MethodChannel('dev.leanflutter.plugins/screen_retriever');
+      const presence = MethodChannel('com.ghostcopy/app_presence');
+      const display = <String, Object?>{
+        'id': '1',
+        'size': {'width': 1440.0, 'height': 900.0},
+        'visiblePosition': {'dx': 0.0, 'dy': 0.0},
+        'visibleSize': {'width': 1440.0, 'height': 860.0},
+        'scaleFactor': 1.0,
+      };
+      final calls = <String>[];
+      messenger
+        ..setMockMethodCallHandler(window, (call) async {
+          calls.add(call.method);
+          if (call.method == 'getBounds') {
+            return {'x': 0.0, 'y': 0.0, 'width': 540.0, 'height': 720.0};
+          }
+          return call.method.startsWith('is') ? false : null;
+        })
+        ..setMockMethodCallHandler(
+          screens,
+          (call) async => switch (call.method) {
+            'getPrimaryDisplay' => display,
+            'getAllDisplays' => {
+              'displays': [display],
+            },
+            'getCursorScreenPoint' => {'dx': 700.0, 'dy': 400.0},
+            _ => null,
+          },
+        )
+        ..setMockMethodCallHandler(presence, (call) async => null);
+      addTearDown(() {
+        messenger
+          ..setMockMethodCallHandler(window, null)
+          ..setMockMethodCallHandler(screens, null)
+          ..setMockMethodCallHandler(presence, null);
+      });
+      var finished = false;
+      final setup = ensureDistributionConsent(
+        headless: false,
+      ).then((_) => finished = true);
+      await tester.pumpAndSettle();
+      expect(find.byType(DistributionOnboarding), findsOneWidget);
+      expect(
+        calls,
+        containsAllInOrder([
+          'ensureInitialized',
+          'waitUntilReadyToShow',
+          'show',
+          'focus',
+        ]),
+      );
+      expect(calls, isNot(contains('hide')));
+      expect(finished, isFalse);
+      tester
+          .widget<DistributionOnboarding>(find.byType(DistributionOnboarding))
+          .onAccepted();
+      await tester.pumpAndSettle();
+      await setup;
+      expect(calls.last, 'hide');
+      expect(finished, isTrue);
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    }),
+  );
 
   test('headless startup cannot accept notices', () async {
     await expectLater(

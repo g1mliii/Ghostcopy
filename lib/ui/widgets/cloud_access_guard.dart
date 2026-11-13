@@ -16,6 +16,7 @@ import '../../services/impl/encryption_service.dart';
 import '../../services/window_service.dart';
 import '../screens/distribution_onboarding.dart';
 import '../theme/colors.dart';
+import 'account_link_recovery_dialog.dart';
 import 'passphrase_dialog.dart';
 
 /// Rechecks the authenticated account, including after switching accounts,
@@ -29,6 +30,7 @@ class CloudAccessGuard extends StatefulWidget {
     this.consent,
     this.encryption,
     this.isDesktop,
+    this.revokePush,
     super.key,
   });
   final Widget Function() builder;
@@ -38,6 +40,7 @@ class CloudAccessGuard extends StatefulWidget {
   final CloudConsentService? consent;
   final IEncryptionService? encryption;
   final bool? isDesktop;
+  final Future<void> Function()? revokePush;
 
   @override
   State<CloudAccessGuard> createState() => _CloudAccessGuardState();
@@ -59,6 +62,7 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
   bool _notifiedBlocked = false;
   bool _needsKey = false;
   bool _parent = false;
+  bool _needsAccountLink = false;
   String? _authorizedUser;
   String? _error;
 
@@ -68,8 +72,17 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     WidgetsBinding.instance.addObserver(this);
     if (_desktop) windowManager.addListener(this);
     _encryption.keyRevision.addListener(_keyChanged);
-    _auth = _client.auth.onAuthStateChange.listen((_) {
-      if (mounted) setState(() => _ready = false);
+    _auth = _client.auth.onAuthStateChange.listen((state) {
+      // Refreshing the same account must preserve the composer and attachments.
+      // A different account or sign-out immediately removes the private subtree.
+      if (mounted && state.session?.user.id != _authorizedUser) {
+        _authorizedUser = null;
+        _notifyBlocked();
+        setState(() {
+          _ready = false;
+          _needsKey = false;
+        });
+      }
       unawaited(_check());
     });
     unawaited(_check());
@@ -135,21 +148,45 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
       return;
     }
     _busy = true;
+    var session = _client.auth.currentSession;
+    var checkedUser = session?.user.id;
     try {
-      var session = _client.auth.currentSession;
       final local = DistributionConsentService(await loadConsentPreferences());
       final prefs = await loadConsentPreferences();
       final paused = prefs.getBool('distribution_cloud_paused') == true;
       if (session == null &&
           local.ageGroup == DistributionAgeGroup.parentManaged &&
           !paused) {
+        _parent = true;
+        final status = await _cloud.poll();
+        if (_client.auth.currentSession != null) {
+          _checkAgain = true;
+          return;
+        }
+        if (status['hasAccount'] != false) {
+          if (mounted) {
+            _notifyBlocked();
+            setState(() {
+              _ready = false;
+              _needsAccountLink = true;
+              _error =
+                  'Link another signed-in GhostCopy device to restore your existing account. If no device is available, contact support@ghostcopy.app with your parent. Parent permission alone cannot sign you back in.';
+            });
+          }
+          return;
+        }
+        if (status['status'] != 'authorized') {
+          throw const CloudConsentException(403);
+        }
         await locator<IAuthService>().initialize();
         session = _client.auth.currentSession;
+        checkedUser = session?.user.id;
       }
+      _needsAccountLink = false;
       if (session == null) {
         if (paused) {
           _parent = local.ageGroup == DistributionAgeGroup.parentManaged;
-          throw Exception('Signed out until setup is complete.');
+          throw const CloudConsentException(401);
         }
         if (mounted) {
           setState(() {
@@ -166,12 +203,11 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
       }
       _parent = snapshot.parentManaged;
       if (!snapshot.allowed) {
-        throw Exception(
-          'Cloud permission is unavailable or has been withdrawn.',
-        );
+        throw const CloudConsentException(403);
       }
       await _encryption.initialize(session.user.id);
       final needsKey = _parent && !await _encryption.isEnabled();
+      if (_client.auth.currentUser?.id != checkedUser || !mounted) return;
       if (needsKey) _notifyBlocked();
       if (!needsKey) _notifiedBlocked = false;
       if (!needsKey && _authorizedUser != session.user.id) {
@@ -185,13 +221,16 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
           _error = null;
         });
       }
-    } on Exception {
+    } on Exception catch (error) {
+      // A failed check belonging to an account we left cannot block its successor.
+      if (_client.auth.currentUser?.id != checkedUser) return;
       _authorizedUser = null;
       _notifyBlocked();
-      if (Platform.isAndroid || Platform.isIOS) {
+      // A timeout or key-storage failure is not withdrawn permission.
+      if (error is CloudConsentException &&
+          (error.statusCode == 401 || error.statusCode == 403)) {
         try {
-          await FirebaseMessaging.instance.setAutoInitEnabled(false);
-          await FirebaseMessaging.instance.deleteToken();
+          await (widget.revokePush?.call() ?? _revokePush());
         } on Exception {
           /* Firebase may not have started. */
         }
@@ -211,6 +250,13 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         _checkAgain = false;
         unawaited(_check());
       }
+    }
+  }
+
+  Future<void> _revokePush() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      await FirebaseMessaging.instance.setAutoInitEnabled(false);
+      await FirebaseMessaging.instance.deleteToken();
     }
   }
 
@@ -255,6 +301,8 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
                   Text(
                     _needsKey
                         ? 'Protect your clips'
+                        : _needsAccountLink
+                        ? 'Restore your account'
                         : 'Checking cloud permission',
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
@@ -271,6 +319,11 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
                       child: const Text('Set or restore passphrase'),
                     ),
                   if (_error != null) ...[
+                    if (_needsAccountLink)
+                      FilledButton(
+                        onPressed: () => unawaited(_linkAccount()),
+                        child: const Text('Link existing device'),
+                      ),
                     TextButton(
                       onPressed: () => unawaited(_requestPermission()),
                       child: Text(
@@ -297,10 +350,11 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
                       ),
                       child: const Text('Parent controls and data requests'),
                     ),
-                    TextButton(
-                      onPressed: () => unawaited(_delete()),
-                      child: const Text('Delete this account'),
-                    ),
+                    if (_client.auth.currentSession != null)
+                      TextButton(
+                        onPressed: () => unawaited(_delete()),
+                        child: const Text('Delete this account'),
+                      ),
                   ],
                 ],
               ),
@@ -309,6 +363,17 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         ),
       ),
     );
+  }
+
+  Future<void> _linkAccount() async {
+    await showDialog<bool>(
+      context: context,
+      builder: (_) => AccountLinkRecoveryDialog(
+        client: _client,
+        auth: locator<IAuthService>(),
+      ),
+    );
+    await _check();
   }
 
   Future<void> _requestPermission() async {
@@ -341,6 +406,8 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
   }
 
   Future<void> _delete() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -360,7 +427,7 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || _client.auth.currentUser?.id != userId) return;
     try {
       await locator<IAuthService>().deleteAccount();
     } on Exception {

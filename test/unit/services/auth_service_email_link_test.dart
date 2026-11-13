@@ -75,6 +75,7 @@ void main() {
   late String verifiedAs;
   late bool guestConfirmed;
   late _Devices devices;
+  late List<String> authorizationOrder;
   Completer<void>? verifyGate;
 
   setUp(() async {
@@ -84,8 +85,12 @@ void main() {
     verifyGate = null;
     storage = _MemoryStorage();
     devices = _Devices();
+    authorizationOrder = [];
     when(devices.getCurrentDeviceId).thenReturn('this-pc');
-    when(devices.registerCurrentDevice).thenAnswer((_) async => true);
+    when(devices.registerCurrentDevice).thenAnswer((_) async {
+      authorizationOrder.add('register');
+      return true;
+    });
     final mock = MockClient((request) async {
       final path = request.url.path;
       calls.add(path);
@@ -124,6 +129,9 @@ void main() {
       client: client,
       deviceService: devices,
       confirmationStore: storage,
+      authorizeCloud: () async {
+        authorizationOrder.add('authorize');
+      },
       detachedAuth: () => GoTrueClient(
         url: 'https://example.com/auth/v1',
         autoRefreshToken: false,
@@ -192,6 +200,7 @@ void main() {
     expect(await service.redeemEmailLink('hash', OtpType.signup), isTrue);
 
     expect(client.auth.currentUser!.id, 'me');
+    expect(authorizationOrder, ['authorize', 'register']);
     verify(devices.registerCurrentDevice).called(1);
   });
 

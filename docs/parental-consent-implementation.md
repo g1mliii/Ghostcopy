@@ -47,6 +47,32 @@ match the eventual enabled build; this is not legal clearance.
   Audit records exclude contact addresses, clipboard data and verification IDs
   supplied to KWS's verification vendors.
 
+## Setup and signed-out recovery
+
+Desktop first-run setup shows a normal, focused window before awaiting acceptance;
+cloud and clipboard services still start only after setup completes. Ordinary tray
+startup is restored afterward. Same-account token refreshes keep the current
+composer and attachments mounted; account switches and denied checks remove them.
+The diagnostics SDK stays uninitialized until server classification confirms an
+opted-in adult. It closes before any interactive account change, sign-out or
+deletion and remains off for the rest of that launch; a fresh launch must confirm
+adult eligibility again. Early, unclassified startup failures are not collected.
+Email signup and confirmation authorize the installed session before registering
+its desktop device. Account deletion is unavailable while signed out. Transient
+permission-check failures keep push tokens; explicit denials revoke them and a
+successful mobile retry re-enables and registers push. Renewed device proofs reuse
+the existing bound profile after permission refresh rather than attempting a new
+claim-hash binding.
+
+Signing out discards the session and pauses setup. Completing permission setup
+again does not create a new guest when the request already belongs to an account.
+Instead choose **Link existing device** and obtain a fresh link code and separate
+six-digit PIN from **Settings → Link New Device** on another signed-in device
+(desktop or mobile). The existing five-minute, single-use exchange and server
+permission checks apply. Restore the encryption passphrase separately. If every
+device is signed out, contact support with the parent; a retained permission claim
+alone cannot restore an authenticated session or decrypt clipboard data.
+
 ## Integration facts verified 2026-11-12
 
 - OAuth token: `https://auth.kidswebservices.com/auth/realms/kws/protocol/openid-connect/token`;

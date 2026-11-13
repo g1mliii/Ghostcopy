@@ -15,10 +15,12 @@ class CloudAuthorization {
     required this.allowed,
     required this.parentManaged,
     required this.fileSync,
+    this.independentAdult = false,
   });
   final bool allowed;
   final bool parentManaged;
   final bool fileSync;
+  final bool independentAdult;
 }
 
 /// Sanitized server failure, with a status for expired setup recovery.
@@ -83,6 +85,24 @@ class CloudConsentService {
     return call('poll', data: {'claimToken': token});
   }
 
+  /// Do not create a replacement guest for a signed-out, already-bound child.
+  /// Account recovery requires a fresh link and PIN from an authorized device.
+  Future<void> beforeGuestCreation() async {
+    final prefs = await loadConsentPreferences();
+    if (prefs.getBool('distribution_cloud_paused') == true) {
+      throw Exception('Review account setup before signing in.');
+    }
+    if (DistributionConsentService(prefs).ageGroup ==
+        DistributionAgeGroup.parentManaged) {
+      final status = await poll();
+      if (status['status'] != 'authorized' || status['hasAccount'] != false) {
+        throw Exception(
+          'Link an existing authorized device to recover this account.',
+        );
+      }
+    }
+  }
+
   Future<CloudAuthorization> authorize(String accessToken) async {
     final existing = _requests[accessToken];
     if (existing != null) return existing;
@@ -120,6 +140,7 @@ class CloudConsentService {
       allowed: result['allowed'] == true,
       parentManaged: result['accountKind'] == 'parent_managed',
       fileSync: result['fileSync'] == true,
+      independentAdult: result['accountKind'] == 'adult',
     );
     if (snapshot.parentManaged &&
         prefs.getBool('parent_managed_diagnostics_disabled') != true) {

@@ -32,6 +32,8 @@ class AuthService implements IAuthService {
     this._detachedAuth,
     this.authorizeCloud,
     this.beforeIndependentAuth,
+    this.beforeGuestCreation,
+    this.beforeAccountChange,
     this.recreateGuestAfterSignOut,
     this.pauseCloudSetup,
   }) : _client = client ?? Supabase.instance.client,
@@ -71,6 +73,8 @@ class AuthService implements IAuthService {
   /// Server authorization before account data or device registration starts.
   final Future<void> Function()? authorizeCloud;
   final Future<void> Function()? beforeIndependentAuth;
+  final Future<void> Function()? beforeGuestCreation;
+  final Future<void> Function()? beforeAccountChange;
   final bool Function()? recreateGuestAfterSignOut;
   final Future<void> Function()? pauseCloudSetup;
   final IDeviceService? _deviceService;
@@ -109,6 +113,7 @@ class AuthService implements IAuthService {
   Future<T> _interactive<T>(Future<T> Function() signIn) async {
     _interactiveSignIns++;
     try {
+      await beforeAccountChange?.call();
       final pending = _anonymousSignIn;
       if (pending != null) {
         try {
@@ -149,6 +154,9 @@ class AuthService implements IAuthService {
         );
         return;
       }
+      await beforeGuestCreation?.call();
+      // An interactive link may have completed while setup was checked.
+      if (_interactiveSignIns > 0 || _client.auth.currentUser != null) return;
       debugPrint('[AuthService] No current user, signing in anonymously...');
       try {
         final attempt = _client.auth.signInAnonymously();
@@ -239,7 +247,7 @@ class AuthService implements IAuthService {
         await _rememberPendingConfirmation(email);
       } else if (session.user.id != previousId) {
         // Signed straight in: a new account this computer is not listed on.
-        await _registerThisDesktop();
+        await _registerAuthorizedDesktop();
       }
       return response;
     } on AuthException catch (e) {
@@ -548,6 +556,7 @@ class AuthService implements IAuthService {
     await _clearPendingConfirmation();
     // A sign-up that began with no session is a new account on this device;
     // an upgraded guest is the same one, already registered.
+    await authorizeCloud?.call();
     if (session.user.id != previous?.user.id) await _registerThisDesktop();
     return true;
   }
@@ -1081,6 +1090,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<AccountDeletionOutcome> deleteAccount() async {
+    await beforeAccountChange?.call();
     final user = currentUser;
     if (user == null) throw StateError('No signed-in account to delete');
 
@@ -1140,7 +1150,7 @@ class AuthService implements IAuthService {
     try {
       await _client.auth.signInAnonymously();
       debugPrint('[AuthService] On a fresh guest account after deletion');
-      await _registerThisDesktop();
+      await _registerAuthorizedDesktop();
     } on Exception catch (e) {
       debugPrint('[AuthService] Guest sign-in after deletion failed: $e');
     }
@@ -1154,6 +1164,7 @@ class AuthService implements IAuthService {
 
   @override
   Future<void> signOut({bool createGuest = true}) async {
+    await beforeAccountChange?.call();
     try {
       final remainSignedOut =
           !createGuest || recreateGuestAfterSignOut?.call() == false;
@@ -1180,7 +1191,7 @@ class AuthService implements IAuthService {
       // Normal account switching can still create a guest. A consent decline cannot.
       await _client.auth.signInAnonymously();
       debugPrint('[AuthService] Signed in anonymously after sign out');
-      await _registerThisDesktop();
+      await _registerAuthorizedDesktop();
     } on AuthException catch (e) {
       debugPrint('[AuthService] Sign out failed: ${e.message}');
       rethrow;
@@ -1280,6 +1291,11 @@ class AuthService implements IAuthService {
   /// Desktop only: registering without a push token clears the stored one,
   /// and the mobile screens already re-register with their token after each
   /// of these changes. Best effort, like the registration at launch.
+  Future<void> _registerAuthorizedDesktop() async {
+    await authorizeCloud?.call();
+    await _registerThisDesktop();
+  }
+
   Future<void> _registerThisDesktop() async {
     final devices = _deviceService;
     if (devices == null ||

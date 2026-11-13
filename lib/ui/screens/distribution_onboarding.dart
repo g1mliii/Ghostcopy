@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../services/cloud_consent_service.dart';
 import '../../services/consent_countries.dart';
@@ -43,8 +46,36 @@ Future<void> ensureDistributionConsent({required bool headless}) async {
       ),
     ),
   );
+  final desktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+  if (desktop) {
+    await windowManager.ensureInitialized();
+    await windowManager.waitUntilReadyToShow(
+      WindowOptions(
+        size: const Size(540, 720),
+        center: true,
+        skipTaskbar: false,
+        title: 'GhostCopy setup',
+        titleBarStyle: TitleBarStyle.normal,
+        backgroundColor: GhostColors.background,
+      ),
+    );
+    if (Platform.isMacOS) {
+      await _setupPresence.invokeMethod<void>('setInAppSwitcher', true);
+    }
+    await windowManager.show();
+    await windowManager.focus();
+  }
   await ready.future;
+  if (desktop) {
+    // Return the window to the normal hidden tray startup after setup.
+    await windowManager.hide();
+    if (Platform.isMacOS) {
+      await _setupPresence.invokeMethod<void>('setInAppSwitcher', false);
+    }
+  }
 }
+
+const _setupPresence = MethodChannel('com.ghostcopy/app_presence');
 
 /// Three short setup steps, using the same appearance and tokens as the app.
 class DistributionOnboarding extends StatefulWidget {

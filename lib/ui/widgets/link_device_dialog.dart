@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../locator.dart';
 import '../../services/auth_service.dart';
+import '../../services/cloud_consent_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/window_service.dart';
 import '../theme/colors.dart';
@@ -28,7 +30,7 @@ const double _dialogWindowHeight = 700;
 /// Security:
 /// - Token expires in 5 minutes
 /// - Single-use token
-/// - Passphrase encrypted before QR encoding (if encryption enabled)
+/// - Passphrase is never included in the link
 /// - All sensitive data cleared from memory on dispose
 class LinkDeviceDialog extends StatefulWidget {
   const LinkDeviceDialog({
@@ -260,7 +262,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
               if (_pin != null) ...[
                 const SizedBox(height: 20),
                 Text(
-                  'Enter this PIN on your phone',
+                  'Enter this PIN on your other device',
                   style: TextStyle(fontSize: 12, color: GhostColors.textMuted),
                 ),
                 const SizedBox(height: 8),
@@ -289,6 +291,15 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
               ],
 
               const SizedBox(height: 16),
+
+              if (_qrData != null)
+                TextButton.icon(
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copy link code for account recovery'),
+                  onPressed: () => unawaited(
+                    Clipboard.setData(ClipboardData(text: _qrData!)),
+                  ),
+                ),
 
               // Countdown timer
               if (_qrData != null && _secondsRemaining > 0)
@@ -346,7 +357,9 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
               // A guest's pairing lasts only as long as this computer's guest
               // session: reinstall or sign out and the phone is linked to an
               // account nothing can reach again. An account survives both.
-              if (widget.authService.isAnonymous) ...[
+              if (widget.authService.isAnonymous &&
+                  CloudConsentService.authorization.value?.parentManaged !=
+                      true) ...[
                 const SizedBox(height: 12),
                 Text(
                   'Or create an account and sign in on both devices. It stays '
