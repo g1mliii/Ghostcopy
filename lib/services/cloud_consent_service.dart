@@ -16,11 +16,13 @@ class CloudAuthorization {
     required this.parentManaged,
     required this.fileSync,
     this.independentAdult = false,
+    this.validUntil,
   });
   final bool allowed;
   final bool parentManaged;
   final bool fileSync;
   final bool independentAdult;
+  final DateTime? validUntil;
 }
 
 /// Sanitized server failure, with a status for expired setup recovery.
@@ -38,9 +40,11 @@ class CloudConsentService {
     http.Client? client,
     FlutterSecureStorage? storage,
     Future<void> Function()? stopDiagnostics,
+    DateTime Function()? now,
   }) : _client = client ?? TimeoutHttpClient(),
        _storage = storage ?? const FlutterSecureStorage(),
-       _stopDiagnostics = stopDiagnostics ?? Sentry.close;
+       _stopDiagnostics = stopDiagnostics ?? Sentry.close,
+       _now = now ?? DateTime.now;
 
   static final instance = CloudConsentService();
   static const claimKey = 'parental_consent_claim_v3';
@@ -56,6 +60,7 @@ class CloudConsentService {
   final http.Client _client;
   final FlutterSecureStorage _storage;
   final Future<void> Function() _stopDiagnostics;
+  final DateTime Function() _now;
   final _requests = <String, Future<CloudAuthorization>>{};
 
   Future<Map<String, Object?>> call(
@@ -122,6 +127,35 @@ class CloudConsentService {
     }
   }
 
+  /// Renew a known parent lease only when a send needs it, including in tray
+  /// mode. [accessToken] must still identify the current classified session.
+  Future<CloudAuthorization> authorizeSend(String accessToken) async {
+    if (currentAccessToken != null && currentAccessToken!() != accessToken) {
+      throw const CloudConsentException(401);
+    }
+    final cached = authorizationForSession(accessToken);
+    if (cached == null) throw const CloudConsentException(403);
+    if (cached.allowed &&
+        (!cached.parentManaged ||
+            cached.validUntil?.isAfter(
+                  _now().add(const Duration(minutes: 1)),
+                ) ==
+                true)) {
+      return cached;
+    }
+    // authorize() coalesces simultaneous shortcut/file sends for this token.
+    final renewed = await authorize(accessToken);
+    if (currentAccessToken != null && currentAccessToken!() != accessToken) {
+      throw const CloudConsentException(401);
+    }
+    if (!renewed.allowed ||
+        (renewed.parentManaged &&
+            renewed.validUntil?.isAfter(_now()) != true)) {
+      throw const CloudConsentException(403);
+    }
+    return renewed;
+  }
+
   Future<CloudAuthorization> _authorize(String accessToken) async {
     final prefs = await loadConsentPreferences();
     final consent = DistributionConsentService(prefs);
@@ -146,6 +180,9 @@ class CloudConsentService {
       parentManaged: result['accountKind'] == 'parent_managed',
       fileSync: result['fileSync'] == true,
       independentAdult: result['accountKind'] == 'adult',
+      validUntil: result['validUntil'] is String
+          ? DateTime.tryParse(result['validUntil']! as String)
+          : null,
     );
     if (snapshot.parentManaged &&
         prefs.getBool('parent_managed_diagnostics_disabled') != true) {

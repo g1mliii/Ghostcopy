@@ -59,7 +59,11 @@ loaded key for parent-managed text, rich text, image and file sends before any
 payload leaves the device, including headless and Finder paths outside the UI.
 Sends use the current session's cached server classification and wait for a
 fresh check during account changes or token refreshes; an old adult snapshot
-cannot authorize a newly linked child session. This adds no per-send HTTP check.
+cannot authorize a newly linked child session. Fresh authorizations are reused.
+Before a send, parent-managed leases within one minute of expiry are renewed on
+demand, including tray shortcuts and headless/Finder sends. No idle tray polling
+is added. A denied, failed or invalid renewal stops the send before any payload
+is uploaded or inserted; concurrent sends share the same renewal request.
 The diagnostics SDK stays uninitialized until server classification confirms an
 opted-in adult. It closes before any interactive account change, sign-out or
 deletion and remains off for the rest of that launch; a fresh launch must confirm

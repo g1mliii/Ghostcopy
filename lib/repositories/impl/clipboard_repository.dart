@@ -45,13 +45,18 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
+    CloudConsentService? cloudConsent,
   }) {
     // For testing with custom dependencies, create a new instance
-    if (client != null || encryptionService != null || storageService != null) {
+    if (client != null ||
+        encryptionService != null ||
+        storageService != null ||
+        cloudConsent != null) {
       return ClipboardRepository._internal(
         client: client,
         encryptionService: encryptionService,
         storageService: storageService,
+        cloudConsent: cloudConsent,
       );
     }
     // Otherwise, return singleton
@@ -62,9 +67,11 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
+    CloudConsentService? cloudConsent,
   }) : _client = client ?? Supabase.instance.client,
        _encryptionService = encryptionService ?? EncryptionService.instance,
-       _storageService = storageService ?? StorageService.instance {
+       _storageService = storageService ?? StorageService.instance,
+       _cloudConsent = cloudConsent ?? CloudConsentService.instance {
     _watchAccount();
   }
 
@@ -74,6 +81,7 @@ class ClipboardRepository implements IClipboardRepository {
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
   final IStorageService _storageService;
+  final CloudConsentService _cloudConsent;
   bool _encryptionInitialized = false;
 
   /// Resets whenever the signed-in account changes, however it changed.
@@ -202,6 +210,12 @@ class ClipboardRepository implements IClipboardRepository {
         (token == null ||
             CloudConsentService.authorizationForSession(token) == null)) {
       throw SecurityException('Check account permission before sending.');
+    }
+    if (CloudConsentService.currentAccessToken != null && token != null) {
+      await _cloudConsent.authorizeSend(token);
+      if (_client.auth.currentSession?.accessToken != token) {
+        throw SecurityException('Account changed before sending.');
+      }
     }
     final authorization = CloudConsentService.authorization.value;
     if (authorization != null &&
