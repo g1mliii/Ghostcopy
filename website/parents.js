@@ -17,9 +17,11 @@
         ...(authenticated && token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
     });
-    const result = await response.json();
     if (!response.ok) throw new Error('Request failed. Check your details or try again.');
-    return result;
+    // Auth logout succeeds with 204 No Content. Other successful endpoints can
+    // also return an empty body; callers still validate any required fields.
+    const text = await response.text();
+    return text.trim() ? JSON.parse(text) : {};
   }
   const consent = (action, data = {}) => request('/functions/v1/cloud-consent', { action, ...data }, true);
   async function run(task) {

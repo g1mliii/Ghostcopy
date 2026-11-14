@@ -87,6 +87,14 @@ An exchange denied by an expired permission lease restores its still-live link
 token for retry after permission refresh. Successful exchanges remain single-use;
 expired tokens are not restored. Website worker activation evicts the old cache
 that could contain a parent confirmation URL before the new bypass took control.
+The deployed exchange function must use `verify_jwt = false` from
+`supabase/config.toml`: signed-out callers authenticate through the handler's
+single-use token, bounded PIN attempts and current server permission check.
+
+Attachment storage and database limits remain 10 MiB. Encrypted sends reserve
+the 32-byte AES-GCM envelope, accepting at most 10,485,728 plaintext bytes and
+rejecting larger inputs before encryption or upload. Unencrypted sends retain
+the full 10 MiB input limit.
 
 ## Integration facts verified 2026-11-12
 

@@ -340,7 +340,7 @@ class ClipboardRepository implements IClipboardRepository {
       // Files and images used to be stored in the clear even with a passphrase
       // set - the comment said "too large, would exceed 10MB limit after
       // base64". That is true of the base64 string path, but encrypting raw
-      // bytes costs a flat 32 bytes (IV + GCM tag), so the limit is unaffected.
+      // bytes costs a flat 32 bytes (IV + GCM tag), reserved under the wire cap.
       // Without this, turning on end-to-end encryption protected your text and
       // left your screenshots and documents readable to anyone with R2 access.
       //
@@ -353,6 +353,12 @@ class ClipboardRepository implements IClipboardRepository {
       // history and shows no UI) uploaded every file unencrypted regardless of
       // the passphrase.
       final filesEncrypted = await _encryptionForSend();
+      if (fileBytes.length >
+          ClipboardLimits.maxPlaintextFileBytes(encrypted: filesEncrypted)) {
+        throw ValidationException(
+          'Encrypted file exceeds the ${ClipboardLimits.maxFileLabel} upload limit. Choose a slightly smaller file.',
+        );
+      }
       if (filesEncrypted) {
         uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
         debugPrint(

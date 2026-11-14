@@ -4,6 +4,12 @@ project_id = "xhbggxftvnlkotvehwmj"
 [functions.cloud-consent]
 verify_jwt = false
 
+# Signed-out recovery authenticates with a single-use link token and bounded
+# six-digit PIN attempts inside the handler, not a session JWT. The opaque
+# publishable key cannot pass the platform JWT gate.
+[functions.exchange-link-token]
+verify_jwt = false
+
 # send-clipboard-notification is called by the
 # notify_mobile_devices_on_clipboard_insert trigger over pg_net, carrying the
 # `sb_secret_...` key held in the fcm_service_role_key vault secret.

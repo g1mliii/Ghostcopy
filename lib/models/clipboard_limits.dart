@@ -16,6 +16,13 @@ class ClipboardLimits {
   /// Largest attachment accepted, in bytes (10 MB).
   static const int maxFileBytes = 10 * 1024 * 1024;
 
+  /// AES-GCM file envelope: 16-byte nonce plus 16-byte authentication tag.
+  static const int fileEncryptionOverheadBytes = 32;
+
+  /// Largest input whose stored payload still fits [maxFileBytes].
+  static int maxPlaintextFileBytes({required bool encrypted}) =>
+      maxFileBytes - (encrypted ? fileEncryptionOverheadBytes : 0);
+
   /// Above this, sending is confirmed with the user first (5 MB).
   static const int largeFileWarningBytes = 5 * 1024 * 1024;
 

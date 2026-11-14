@@ -10,6 +10,13 @@ const source = sharedKeysSource + cloudAccessSource + stripTypeScriptTypes(
     .replace(/^import .*\r?\n/gm, ''),
 );
 
+test('deployment lets signed-out callers reach the token-and-PIN handler', async () => {
+  const config = await readFile(new URL('../../supabase/config.toml', import.meta.url), 'utf8');
+  const section = config.match(/^\[functions\.exchange-link-token\]\s*\r?\n([^[]*)/m)?.[1];
+  assert.ok(section, 'exchange-link-token must declare its gateway authentication mode');
+  assert.match(section, /^verify_jwt\s*=\s*false\s*$/m);
+});
+
 async function fixture({ expireDuringCheck = false } = {}) {
   let now = Date.now();
   class ClockDate extends Date {
