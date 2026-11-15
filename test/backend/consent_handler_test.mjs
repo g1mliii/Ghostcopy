@@ -83,6 +83,76 @@ test('pre-auth request minimizes data, persists only hashes, and cannot bind pen
   assert.equal((await request({ action: 'authorize', claimToken: response.body.claimToken, userId: other }, 'child')).status, 403);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM public.cloud_authorizations')).rows[0].n, 0);
 });
+
+test('both published parent portal origins receive CORS on preflight, success and errors', async () => {
+  for (const origin of ['https://ghostcopy.app', 'https://www.ghostcopy.app', 'https://untrusted.example']) {
+    for (const [method, body, status] of [
+      ['OPTIONS', undefined, 200],
+      ['POST', JSON.stringify({ action: 'parent-list' }), 200],
+      ['POST', '{', 400],
+    ]) {
+      const response = await handler()(new Request('https://api.example/cloud-consent', {
+        method, body, headers: { Origin: origin, Authorization: 'Bearer parent',
+          'Content-Type': 'application/json', 'Access-Control-Request-Headers': 'authorization,content-type' },
+      }));
+      assert.equal(response.status, status);
+      assert.equal(response.headers.get('Access-Control-Allow-Origin'), origin.endsWith('ghostcopy.app') ? origin : null);
+      assert.equal(response.headers.get('Vary'), 'Origin');
+      assert.match(response.headers.get('Access-Control-Allow-Headers'), /authorization/);
+    }
+  }
+});
+
+test('cancelling an unbound request invalidates the claim, queues provider erasure and permits a corrected email', async () => {
+  const original = await start();
+  const id = (await db.query('SELECT id FROM private.parental_consent_requests')).rows[0].id;
+  assert.equal((await request({ action: 'cancel', claimToken: 'f'.repeat(64) })).status, 403);
+  assert.equal((await request({ action: 'cancel', claimToken: original.body.claimToken })).status, 200);
+  assert.equal((await operation('lookup', { id })), null);
+  assert.equal((await request({ action: 'poll', claimToken: original.body.claimToken })).status, 403);
+  assert.equal((await db.query('SELECT subject_id FROM private.kws_deletion_queue')).rows[0].subject_id, id);
+  const replacement = await request({ action: 'start', parentEmail: 'corrected@example.test', age: 8,
+    country: 'CA', noticeVersion: '2026-11-12-v3', noticeAcknowledged: true });
+  assert.equal(replacement.status, 200);
+  assert.notEqual(replacement.body.claimToken, original.body.claimToken);
+  assert.equal(calls.at(-1).parentEmail, 'corrected@example.test');
+});
+
+test('cancellation cannot delete a bound account or bypass existing request rate limits', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  const proof = (await request({ action: 'authorize' }, 'child')).body.deviceClaim;
+  for (const claimToken of [approval.claimToken, proof]) {
+    assert.equal((await request({ action: 'cancel', claimToken })).status, 409);
+  }
+  assert.equal((await operation('lookup', { userId: user })).bound_user_id, user);
+  assert.equal((await operation('profile', { userId: user })).status, 'authorized');
+  for (let i = 0; i < 3; i++) {
+    const pending = await start();
+    assert.equal(pending.status, 200);
+    assert.equal((await request({ action: 'cancel', claimToken: pending.body.claimToken })).status, 200);
+  }
+  assert.equal((await start()).status, 503);
+  assert.equal(calls.length, 4);
+});
+
+test('an authorized account reaching adulthood graduates only after adult acknowledgement', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  await db.exec(`UPDATE private.parental_consent_requests SET age=17,created_at=now()-interval '1 year 1 day'
+    WHERE bound_user_id='${user}';`);
+  const poll = await request({ action: 'poll', claimToken: approval.claimToken });
+  assert.equal(poll.body.status, 'authorized');
+  assert.equal(poll.body.independentEligible, true);
+  assert.equal((await operation('profile', { userId: user })).account_kind, 'parent_managed');
+  const data = { action: 'authorize', graduate: true, age: 18, country: 'CA',
+    noticeVersion: '2026-11-12-v3', termsAccepted: true, privacyAcknowledged: true };
+  assert.equal((await request({ ...data, termsAccepted: false }, 'child')).status, 503);
+  const adult = await request(data, 'child');
+  assert.equal(adult.body.allowed, true);
+  assert.equal(adult.body.accountKind, 'adult');
+  assert.deepEqual((await request({ action: 'parent-list' }, 'parent')).body.children, []);
+});
 test('current approval binds only the authenticated subject and is not reusable by a second user', async () => {
   const approval = await approved();
   const result = await request({ action: 'authorize', claimToken: approval.claimToken, userId: other }, 'child');

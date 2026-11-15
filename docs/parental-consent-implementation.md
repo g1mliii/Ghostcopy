@@ -25,6 +25,9 @@ match the eventual enabled build; this is not legal clearance.
 - Before account creation: a narrowly scoped consent endpoint accepts a parent
   contact address, age and country, rate-limits requests and returns an opaque
   device capability. Store only its hash. Pending requests expire in 14 days.
+  The device can cancel an unbound request and enter a corrected parent email;
+  cancellation invalidates its claim and queues provider erasure. Cancellation
+  cannot delete a bound account or reset the parent/global request rate limits.
 - KWS initiates direct notice and purpose-specific VPC. A PV adult-verification
   event alone never authorizes an account. Grants also require authoritative
   permission reads showing boolean parent limits/effective values and VPC.
@@ -42,12 +45,21 @@ match the eventual enabled build; this is not legal clearance.
   authenticated parent portal provides access/export, withdrawal and deletion;
   its relationship checks use the verified original contact address, never a
   child-supplied parent ID or an editable JWT user-metadata claim.
+  Consent responses allow the published apex and www portal origins, including
+  preflight and failure responses, and vary by Origin.
 - Account deletion and pending expiry enqueue idempotent provider cleanup;
   Supabase/R2 data removal continues through the existing durable deletion queue.
   Audit records exclude contact addresses, clipboard data and verification IDs
   supplied to KWS's verification vendors.
 
 ## Setup and signed-out recovery
+
+Startup checks server-computed adulthood eligibility before accepting an active
+parent permission. Eligible accounts enter the adult terms/privacy acknowledgement
+flow; headless startup waits for interactive completion. A persisted graduation
+flag survives interrupted setup and requests the server's age-checked adult
+transition after acknowledgement. The server must confirm the adult classification
+before the old claim and graduation flag are cleared.
 
 Desktop first-run setup shows a normal, focused window before awaiting acceptance;
 cloud and clipboard services still start only after setup completes. Ordinary tray

@@ -246,6 +246,12 @@ BEGIN
     INSERT INTO private.consent_audit(request_id,action,notice_version)
       VALUES(request.id,'parent_withdrew_consent',request.notice_version);
     RETURN to_jsonb(request);
+  ELSIF p_action = 'cancel_request' THEN
+    -- Serialize with binding so a racing approval cannot orphan an account.
+    DELETE FROM private.parental_consent_requests
+      WHERE id=(p_data->>'id')::uuid AND bound_user_id IS NULL
+      RETURNING * INTO request;
+    RETURN jsonb_build_object('cancelled',FOUND);
   ELSIF p_action = 'remove_request' THEN
     DELETE FROM private.parental_consent_requests WHERE id=(p_data->>'id')::uuid;
     RETURN '{}'::jsonb;

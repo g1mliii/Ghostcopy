@@ -31,6 +31,43 @@ void main() {
   });
 
   test(
+    'cancellation discards the local claim only after server confirmation',
+    () async {
+      for (final status in [200, 409, 503]) {
+        final storage = _Storage();
+        when(
+          () => storage.read(key: CloudConsentService.claimKey),
+        ).thenAnswer((_) async => 'claim');
+        when(
+          () => storage.delete(key: CloudConsentService.claimKey),
+        ).thenAnswer((_) async {});
+        final service = CloudConsentService(
+          storage: storage,
+          client: MockClient((request) async {
+            expect(jsonDecode(request.body), {
+              'action': 'cancel',
+              'claimToken': 'claim',
+            });
+            return http.Response('{"cancelled":true}', status);
+          }),
+        );
+        if (status == 200) {
+          await service.cancelPending();
+          verify(
+            () => storage.delete(key: CloudConsentService.claimKey),
+          ).called(1);
+        } else {
+          await expectLater(
+            service.cancelPending(),
+            throwsA(isA<CloudConsentException>()),
+          );
+          verifyNever(() => storage.delete(key: CloudConsentService.claimKey));
+        }
+      }
+    },
+  );
+
+  test(
     'only explicit adult classification permits adult diagnostics',
     () async {
       for (final kind in ['adult', 'unclassified', 'parent_managed', null]) {
@@ -49,6 +86,35 @@ void main() {
         final result = await service.authorize('session');
         expect(result.independentAdult, kind == 'adult');
       }
+    },
+  );
+
+  test(
+    'adult acknowledgement submits graduation and clears the old device claim after authorization',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('distribution_graduation_pending', true);
+      final storage = _Storage();
+      when(
+        () => storage.delete(key: CloudConsentService.claimKey),
+      ).thenAnswer((_) async {});
+      final service = CloudConsentService(
+        storage: storage,
+        client: MockClient((request) async {
+          final data = jsonDecode(request.body) as Map<String, Object?>;
+          expect(data['graduate'], isTrue);
+          expect(data['termsAccepted'], isTrue);
+          expect(data['privacyAcknowledged'], isTrue);
+          return http.Response(
+            '{"allowed":true,"accountKind":"adult","fileSync":true}',
+            200,
+          );
+        }),
+      );
+      expect((await service.authorize('session')).independentAdult, isTrue);
+      expect(prefs.getBool('distribution_graduation_pending'), isNull);
+      expect(prefs.getString('distribution_declared_age'), '18+');
+      verify(() => storage.delete(key: CloudConsentService.claimKey)).called(1);
     },
   );
 

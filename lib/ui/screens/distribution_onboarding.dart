@@ -17,15 +17,22 @@ import '../theme/colors.dart';
 
 /// Runs before cloud, crash-reporting, authentication and clipboard services.
 /// Headless processes cannot bypass the first interactive acknowledgement.
-Future<void> ensureDistributionConsent({required bool headless}) async {
+Future<void> ensureDistributionConsent({
+  required bool headless,
+  CloudConsentService? cloud,
+}) async {
   final prefs = await loadConsentPreferences();
   final consent = DistributionConsentService(prefs);
   if (consent.isAccepted &&
       prefs.getBool('distribution_cloud_paused') != true) {
     if (consent.ageGroup != DistributionAgeGroup.parentManaged) return;
     try {
-      final status = await CloudConsentService.instance.poll();
-      if (status['status'] == 'authorized') return;
+      final status = await (cloud ?? CloudConsentService.instance).poll();
+      if (status['independentEligible'] == true) {
+        await prefs.setBool('distribution_graduation_pending', true);
+      } else if (status['status'] == 'authorized') {
+        return;
+      }
     } on Exception {
       // The interactive screen lets the parent retry while cloud stays off.
     }
@@ -42,7 +49,11 @@ Future<void> ensureDistributionConsent({required bool headless}) async {
       builder: (_) => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.platformTheme,
-        home: DistributionOnboarding(prefs: prefs, onAccepted: ready.complete),
+        home: DistributionOnboarding(
+          prefs: prefs,
+          onAccepted: ready.complete,
+          cloud: cloud,
+        ),
       ),
     ),
   );
@@ -104,6 +115,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
   bool _saving = false;
   bool _completed = false;
   bool _pending = false;
+  bool _hasAccount = false;
   String? _error;
   final _parentEmail = TextEditingController();
   late final _cloud = widget.cloud ?? CloudConsentService.instance;
@@ -120,6 +132,11 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     _age = widget.prefs.getString('distribution_declared_age');
     if (widget.parentAccount && _age == '18+') _age = null;
     _country = widget.prefs.getString('distribution_declared_country');
+    if (widget.prefs.getBool('distribution_graduation_pending') == true) {
+      _age = '18+';
+      _step = 1;
+      return;
+    }
     if (_age != null && _country != null && !_adult && !_blocked) {
       unawaited(_restorePending());
     }
@@ -203,6 +220,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         if (mounted) setState(() => _pending = true);
       } else {
         final result = await _cloud.poll();
+        _hasAccount = result['hasAccount'] == true;
         if (result['independentEligible'] == true) {
           await widget.prefs.setBool('distribution_graduation_pending', true);
           if (mounted) {
@@ -221,7 +239,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
           }
           throw Exception(
             result['status'] == 'expired'
-                ? 'This request expired. Contact support to restart parent setup.'
+                ? 'This request expired. Send a new parent request.'
                 : 'Waiting for your parent to verify and allow cloud sync.',
           );
         }
@@ -239,6 +257,31 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         setState(
           () => _error = error.toString().replaceFirst('Exception: ', ''),
         );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _restartParentRequest() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await _cloud.cancelPending();
+      if (mounted) setState(() => _pending = false);
+    } on Exception catch (error) {
+      if (mounted) {
+        setState(() {
+          if (error is CloudConsentException && error.statusCode == 409) {
+            _hasAccount = true;
+            _error =
+                'This request already has an account. Check permission or link an existing device to recover it.';
+          } else {
+            _error = 'Could not cancel this request. Please try again.';
+          }
+        });
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -464,6 +507,15 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                               : 'Send parent request',
                         ),
                       ),
+                      if (_step == 2 && !_adult && _pending && !_hasAccount)
+                        TextButton(
+                          onPressed: _saving || _completed
+                              ? null
+                              : () => unawaited(_restartParentRequest()),
+                          child: const Text(
+                            'Cancel request and change parent email',
+                          ),
+                        ),
                     ],
                     if (_error != null)
                       Padding(

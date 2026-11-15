@@ -95,6 +95,15 @@ class CloudConsentService {
     return call('poll', data: {'claimToken': token});
   }
 
+  /// Cancel an unbound request before allowing a different parent email.
+  /// Keep the device claim when the server cannot confirm cancellation.
+  Future<void> cancelPending() async {
+    final token = await readClaim();
+    if (token == null) throw Exception('Parent setup must be completed.');
+    await call('cancel', data: {'claimToken': token});
+    await _storage.delete(key: claimKey);
+  }
+
   /// Do not create a replacement guest for a signed-out, already-bound child.
   /// Account recovery requires a fresh link and PIN from an authorized device.
   Future<void> beforeGuestCreation() async {

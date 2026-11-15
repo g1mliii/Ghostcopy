@@ -13,6 +13,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _Cloud extends CloudConsentService {
   bool enabled = true;
   bool approved = false;
+  bool independentEligible = false;
+  bool hasAccount = false;
+  bool cancelFails = false;
   String? claim;
   final actions = <String>[];
 
@@ -26,7 +29,11 @@ class _Cloud extends CloudConsentService {
     return switch (action) {
       'configuration' => {'childrenEnabled': enabled},
       'start' => {'claimToken': 'a' * 64, 'status': 'pending'},
-      _ => {'status': approved ? 'authorized' : 'pending'},
+      _ => {
+        'status': approved ? 'authorized' : 'pending',
+        'independentEligible': independentEligible,
+        'hasAccount': hasAccount,
+      },
     };
   }
 
@@ -37,6 +44,13 @@ class _Cloud extends CloudConsentService {
 
   @override
   Future<String?> readClaim() async => claim;
+
+  @override
+  Future<void> cancelPending() async {
+    actions.add('cancel');
+    if (cancelFails) throw const CloudConsentException(503);
+    claim = null;
+  }
 }
 
 void main() {
@@ -191,6 +205,89 @@ void main() {
     expect(DistributionConsentService(prefs).country, 'CA');
     expect(cloud.actions, isEmpty);
   }, variant: mobile);
+
+  testWidgets('authorized eligible accounts must acknowledge adult setup', (
+    tester,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
+    await prefs.setString('distribution_declared_age', '17');
+    await prefs.setString('distribution_declared_country', 'CA');
+    cloud
+      ..claim = 'claim'
+      ..approved = true
+      ..hasAccount = true
+      ..independentEligible = true;
+    await expectLater(
+      ensureDistributionConsent(headless: true, cloud: cloud),
+      throwsException,
+    );
+    expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+    var accepted = false;
+    await pump(tester, () => accepted = true);
+    expect(find.text('Your choice, clearly'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(accepted, isFalse);
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Continue'));
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Finish setup'));
+    await tester.tap(find.text('Finish setup'));
+    await tester.pumpAndSettle();
+    expect(accepted, isTrue);
+    expect(
+      DistributionConsentService(prefs).ageGroup,
+      DistributionAgeGroup.adult,
+    );
+    expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+  }, variant: mobile);
+
+  test('authorized children below adulthood retain headless access', () async {
+    final prefs = await SharedPreferences.getInstance();
+    await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
+    cloud
+      ..claim = 'claim'
+      ..approved = true;
+    await ensureDistributionConsent(headless: true, cloud: cloud);
+    expect(prefs.getBool('distribution_graduation_pending'), isNull);
+  });
+
+  testWidgets(
+    'pending setup can cancel and send to a corrected parent email',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'distribution_declared_age': '8',
+        'distribution_declared_country': 'CA',
+      });
+      cloud.claim = 'old-claim';
+      var accepted = false;
+      final prefs = await pump(tester, () => accepted = true);
+      const label = 'Cancel request and change parent email';
+      cloud.cancelFails = true;
+      await tester.ensureVisible(find.text(label));
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      expect(find.text('Check permission'), findsOneWidget);
+      expect(cloud.claim, 'old-claim');
+      cloud.cancelFails = false;
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      expect(cloud.claim, isNull);
+      await tester.enterText(find.byType(TextField), 'corrected@example.test');
+      await tester.ensureVisible(find.text('Send parent request'));
+      await tester.tap(find.text('Send parent request'));
+      await tester.pumpAndSettle();
+      expect(cloud.actions, ['cancel', 'cancel', 'start']);
+      expect(prefs.getString('distribution_declared_age'), '8');
+      expect(accepted, isFalse);
+    },
+    variant: mobile,
+  );
 
   for (final mode in [AppThemeMode.light, AppThemeMode.dark]) {
     testWidgets('onboarding follows saved ${mode.name} theme', (tester) async {

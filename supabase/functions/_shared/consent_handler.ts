@@ -27,7 +27,6 @@ function row(value: unknown): Row {
 function text(value: unknown): string { return typeof value === 'string' ? value : ''; }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const headers = {
-  'Access-Control-Allow-Origin': 'https://ghostcopy.app',
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json', 'Cache-Control': 'no-store',
@@ -161,7 +160,7 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
     }
     return json({ received: true });
   }
-  return async (request: Request): Promise<Response> => {
+  const handle = async (request: Request): Promise<Response> => {
     if (request.method === 'OPTIONS') return new Response(null, { headers });
     if (request.method !== 'POST') return json({ error: 'POST required.' }, 405);
     try {
@@ -233,6 +232,12 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
         }
       }
       if (action === 'poll') return json(publicRequest(await refresh(await claim(data.claimToken)), now()));
+      if (action === 'cancel') {
+        const pending = await claim(data.claimToken);
+        const result = row(await deps.operation('cancel_request', { id: pending.id }));
+        if (result.cancelled !== true) throw new Rejected(409, 'Existing accounts cannot restart parent setup.');
+        return json({ cancelled: true });
+      }
       const user = await deps.authenticate(request);
       if (!user) throw new Rejected(401, 'Sign in required.');
       if (action === 'authorize' || action === 'status') {
@@ -320,5 +325,14 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
       // No request body, email, credentials, signature or provider response in logs.
       return json({ error: 'Consent service unavailable. Please try again.' }, 503);
     }
+  };
+  return async (request: Request): Promise<Response> => {
+    const response = await handle(request);
+    const origin = request.headers.get('Origin');
+    if (origin === 'https://ghostcopy.app' || origin === 'https://www.ghostcopy.app') {
+      response.headers.set('Access-Control-Allow-Origin', origin);
+    }
+    response.headers.set('Vary', 'Origin');
+    return response;
   };
 }
