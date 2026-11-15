@@ -169,9 +169,26 @@ test('parent-managed auth identities cannot add independent contact or OAuth cre
   await assert.rejects(db.query('UPDATE auth.users SET email=$1 WHERE id=$2',['child@example.test',user]), /independent credentials/);
   await assert.rejects(db.query('UPDATE auth.users SET phone=$1 WHERE id=$2',['12345',user]), /independent credentials/);
   await db.query('UPDATE auth.users SET email=$1 WHERE id=$2',[`${user}@anon.ghostcopy.app`,user]);
+  await assert.rejects(db.query('UPDATE auth.users SET encrypted_password=$1 WHERE id=$2',['hash',user]), /independent credentials/);
+  await db.query('UPDATE auth.users SET encrypted_password=encrypted_password WHERE id=$1',[user]);
   await assert.rejects(db.query("INSERT INTO auth.identities(user_id,provider,identity_data) VALUES($1,'google','{}')",[user]), /provider identities/);
   await db.query("INSERT INTO auth.identities(user_id,provider,identity_data) VALUES($1,'email',$2)",[user,JSON.stringify({email:`${user}@anon.ghostcopy.app`})]);
   await db.query('UPDATE auth.users SET email=$1 WHERE id=$2',['adult@example.test',other]);
+  await db.query('UPDATE auth.users SET encrypted_password=$1 WHERE id=$2',['adult-hash',other]);
+});
+
+test('password updates remain blocked until the server graduates the account', async () => {
+  const request = await pending();
+  await operation('apply_permissions', { id: request.id, revision: request.revision,
+    kwsRequestId: request.kws_request_id, cloudSync: true, fileSync: false });
+  await operation('bind', { claimHash: request.claim_hash, userId: user });
+  await db.query('UPDATE auth.users SET email=$1 WHERE id=$2',[`${user}@anon.ghostcopy.app`,user]);
+  await assert.rejects(db.query("UPDATE auth.users SET encrypted_password='child-hash' WHERE id=$1",[user]), /independent credentials/);
+  await db.query("UPDATE private.parental_consent_requests SET age=17,created_at=now()-interval '1 year 1 day' WHERE id=$1",[request.id]);
+  await operation('adult', { userId: user, age: 18, country: 'CA', noticeVersion: '2026-11-12-v3',
+    termsAccepted: true, privacyAcknowledged: true });
+  await db.query("UPDATE auth.users SET encrypted_password='adult-hash' WHERE id=$1",[user]);
+  assert.equal((await db.query('SELECT encrypted_password FROM auth.users WHERE id=$1',[user])).rows[0].encrypted_password,'adult-hash');
 });
 
 test('withdrawn and unused child accounts have bounded retention including synthetic-email accounts', async () => {

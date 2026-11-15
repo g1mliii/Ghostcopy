@@ -11,6 +11,9 @@ DECLARE
   changed bigint;
   result jsonb;
   bucket_count integer;
+  cloud_denied boolean;
+  file_denied boolean;
+  permanent_denial boolean;
 BEGIN
   IF p_action = 'configuration' THEN
     RETURN (SELECT jsonb_build_object('enforced',enforce_all_accounts,
@@ -79,6 +82,12 @@ BEGIN
       status=CASE WHEN (p_data->>'cloudSync')::boolean THEN 'authorized'
         WHEN approved_at IS NULL THEN 'pending' ELSE 'revoked' END,
       approved_at=CASE WHEN (p_data->>'cloudSync')::boolean THEN coalesce(approved_at,now()) ELSE approved_at END,
+      cloud_granted_at=CASE WHEN p_data->'cloudSync'='true'::jsonb
+        THEN greatest(cloud_granted_at,to_timestamp((p_data->>'cloudGrantedAt')::double precision/1000.0))
+        ELSE cloud_granted_at END,
+      file_granted_at=CASE WHEN p_data->'fileSync'='true'::jsonb AND p_data->'cloudSync'='true'::jsonb
+        THEN greatest(file_granted_at,to_timestamp((p_data->>'fileGrantedAt')::double precision/1000.0))
+        ELSE file_granted_at END,
       valid_until=now()+interval '15 minutes',last_checked_at=now(),refresh_lease_until=NULL, revision=revision+1
       WHERE id=request.id RETURNING * INTO request;
     IF request.bound_user_id IS NOT NULL THEN
@@ -86,6 +95,10 @@ BEGIN
         status=CASE WHEN request.cloud_sync THEN 'authorized' ELSE 'revoked' END,
         revoked_at=CASE WHEN request.cloud_sync THEN NULL ELSE coalesce(revoked_at,now()) END,
         valid_until=request.valid_until,updated_at=now() WHERE user_id=request.bound_user_id;
+      IF NOT request.cloud_sync THEN
+        UPDATE public.devices SET fcm_token=NULL,wns_channel_uri=NULL
+          WHERE user_id=request.bound_user_id;
+      END IF;
     END IF;
     IF (previous_request.approved_at IS NULL AND request.approved_at IS NOT NULL)
       OR previous_request.status IS DISTINCT FROM request.status
@@ -185,6 +198,18 @@ BEGIN
     IF (p_data->>'eventAt')::timestamptz < request.last_event_at THEN
       RETURN jsonb_build_object('ignored',true);
     END IF;
+    cloud_denied := coalesce(p_data->'cloudDenied',p_data->'permanent','false'::jsonb)='true'::jsonb;
+    file_denied := coalesce(p_data->'fileDenied','false'::jsonb)='true'::jsonb;
+    -- Provider grant times, never the wall clock of a potentially stale read.
+    -- Each purpose has its own watermark; family unlink is independent of grants.
+    IF (p_data->>'eventAt')::timestamptz < request.cloud_granted_at THEN cloud_denied := false; END IF;
+    IF (p_data->>'eventAt')::timestamptz < request.file_granted_at THEN file_denied := false; END IF;
+    IF (p_data->'permanent'='true'::jsonb OR p_data->'fileDenied'='true'::jsonb)
+      AND NOT cloud_denied AND NOT file_denied
+      AND coalesce(p_data->'unlinkParent','false'::jsonb)<>'true'::jsonb THEN
+      RETURN jsonb_build_object('ignored',true);
+    END IF;
+    permanent_denial := cloud_denied OR coalesce(p_data->'unlinkParent','false'::jsonb)='true'::jsonb;
     IF p_data ? 'kwsRequestId' AND request.kws_request_id IS DISTINCT FROM p_data->>'kwsRequestId' THEN
       IF request.status='initiating' THEN RAISE EXCEPTION 'Consent request is initializing'; END IF;
       RETURN jsonb_build_object('ignored',true);
@@ -198,24 +223,26 @@ BEGIN
     END IF;
     IF changed>0 THEN
       UPDATE private.parental_consent_requests SET cloud_sync=false,file_sync=false,
-        status=CASE WHEN p_data->'permanent'='true'::jsonb THEN 'revoked' ELSE 'pending' END,
+        status=CASE WHEN permanent_denial THEN 'revoked' ELSE 'pending' END,
         valid_until=now(),last_event_at=(p_data->>'eventAt')::timestamptz,
-        requires_new_consent=CASE WHEN p_data->'permanent'='true'::jsonb THEN true
+        requires_new_consent=CASE WHEN permanent_denial THEN true
           WHEN p_data->'grantChange'='true'::jsonb THEN false ELSE requires_new_consent END,
         parent_can_manage=CASE WHEN p_data->'unlinkParent'='true'::jsonb THEN false ELSE parent_can_manage END,
-        file_revoked_at=CASE WHEN p_data->'fileDenied'='true'::jsonb
+        file_revoked_at=CASE WHEN file_denied
           THEN greatest(file_revoked_at,(p_data->>'eventAt')::timestamptz) ELSE file_revoked_at END,
         revision=revision+1
         WHERE id=subject RETURNING * INTO request;
       UPDATE public.cloud_authorizations SET cloud_sync=false,file_sync=false,status='revoked',
         valid_until=now(),revoked_at=coalesce(revoked_at,now()),updated_at=now() WHERE user_id=request.bound_user_id;
-      -- Stop waking a revoked account, including service-role push paths.
-      UPDATE public.devices SET fcm_token=NULL,wns_channel_uri=NULL
-        WHERE user_id=request.bound_user_id;
+      -- Keep registrations during refresh; discard only for an actual denial.
+      IF permanent_denial THEN
+        UPDATE public.devices SET fcm_token=NULL,wns_channel_uri=NULL
+          WHERE user_id=request.bound_user_id;
+      END IF;
       INSERT INTO private.consent_audit(request_id,action,notice_version,cloud_sync,file_sync)
         VALUES(subject,p_data->>'name',request.notice_version,false,false);
     END IF;
-    IF p_data->'permanent'='true'::jsonb THEN
+    IF permanent_denial THEN
       UPDATE private.consent_events SET processed=true WHERE event_hash=p_data->>'hash';
     END IF;
     RETURN to_jsonb(request);

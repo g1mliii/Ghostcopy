@@ -149,12 +149,14 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
       const permanent = unlink || denied('cloudSync') || name === 'consent:deleted' || name === 'families:guardian-request-expired';
       const updated = row(await deps.operation('event', {
         id, hash: await hash(`${eventHash}:${id}`), name, eventAt: new Date(eventTime).toISOString(),
-        permanent, unlinkParent: unlink, fileDenied: denied('fileSync'),
+        permanent, unlinkParent: unlink,
+        cloudDenied: denied('cloudSync') || name === 'consent:deleted' || name === 'families:guardian-request-expired',
+        fileDenied: denied('fileSync'),
         // Never restore a locally withdrawn request using an unrelated settings event.
         grantChange: false,
         ...(payload.consentRequestId ? { kwsRequestId: payload.consentRequestId } : {}),
       }));
-      if (updated.ignored || !updated.id || permanent) continue;
+      if (updated.ignored || !updated.id || updated.requires_new_consent) continue;
       await refresh(updated, true);
       await deps.operation('event_done', { hash: await hash(`${eventHash}:${id}`) });
     }

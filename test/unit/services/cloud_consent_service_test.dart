@@ -92,29 +92,75 @@ void main() {
   test(
     'adult acknowledgement submits graduation and clears the old device claim after authorization',
     () async {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('distribution_graduation_pending', true);
-      final storage = _Storage();
-      when(
-        () => storage.delete(key: CloudConsentService.claimKey),
-      ).thenAnswer((_) async {});
-      final service = CloudConsentService(
-        storage: storage,
-        client: MockClient((request) async {
-          final data = jsonDecode(request.body) as Map<String, Object?>;
-          expect(data['graduate'], isTrue);
-          expect(data['termsAccepted'], isTrue);
-          expect(data['privacyAcknowledged'], isTrue);
-          return http.Response(
-            '{"allowed":true,"accountKind":"adult","fileSync":true}',
-            200,
-          );
-        }),
-      );
-      expect((await service.authorize('session')).independentAdult, isTrue);
-      expect(prefs.getBool('distribution_graduation_pending'), isNull);
-      expect(prefs.getString('distribution_declared_age'), '18+');
-      verify(() => storage.delete(key: CloudConsentService.claimKey)).called(1);
+      for (final optedIn in [false, true]) {
+        final prefs = await SharedPreferences.getInstance();
+        await DistributionConsentService(prefs).accept(
+          ageGroup: DistributionAgeGroup.adult,
+          diagnosticsAllowed: optedIn,
+          country: 'CA',
+        );
+        await prefs.setBool('parent_managed_diagnostics_disabled', true);
+        await prefs.setBool('distribution_graduation_pending', true);
+        expect(DistributionConsentService(prefs).diagnosticsAllowed, isFalse);
+        final storage = _Storage();
+        when(
+          () => storage.delete(key: CloudConsentService.claimKey),
+        ).thenAnswer((_) async {});
+        final service = CloudConsentService(
+          storage: storage,
+          client: MockClient((request) async {
+            final data = jsonDecode(request.body) as Map<String, Object?>;
+            expect(data['graduate'], isTrue);
+            expect(data['termsAccepted'], isTrue);
+            expect(data['privacyAcknowledged'], isTrue);
+            return http.Response(
+              '{"allowed":true,"accountKind":"adult","fileSync":true}',
+              200,
+            );
+          }),
+        );
+        expect((await service.authorize('session')).independentAdult, isTrue);
+        expect(prefs.getBool('distribution_graduation_pending'), isNull);
+        expect(prefs.getString('distribution_declared_age'), '18+');
+        expect(prefs.getBool('parent_managed_diagnostics_disabled'), isNull);
+        expect(DistributionConsentService(prefs).diagnosticsAllowed, optedIn);
+        verify(
+          () => storage.delete(key: CloudConsentService.claimKey),
+        ).called(1);
+      }
+    },
+  );
+
+  test(
+    'unconfirmed or stale graduation cannot clear the child diagnostics lock',
+    () async {
+      for (final scenario in ['denied', 'parent', 'unclassified', 'stale']) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('parent_managed_diagnostics_disabled', true);
+        await prefs.setBool('distribution_graduation_pending', true);
+        final service = CloudConsentService(
+          client: MockClient((request) async {
+            if (scenario == 'stale') {
+              CloudConsentService.currentAccessToken = () => 'new-session';
+            }
+            return http.Response(
+              jsonEncode({
+                'allowed': scenario != 'denied',
+                'accountKind': scenario == 'parent'
+                    ? 'parent_managed'
+                    : scenario == 'unclassified'
+                    ? 'unclassified'
+                    : 'adult',
+              }),
+              200,
+            );
+          }),
+        );
+        CloudConsentService.currentAccessToken = () => 'session';
+        await service.authorize('session');
+        expect(prefs.getBool('parent_managed_diagnostics_disabled'), isTrue);
+        expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+      }
     },
   );
 

@@ -41,6 +41,10 @@ match the eventual enabled build; this is not legal clearance.
   wrong organizations/products and invalid signatures must not enable access.
   Authorization leases bound damage from missed revocation events and fail
   closed when a refresh cannot confirm the required permissions.
+  Successful permission reads retain each purpose's validated provider grant
+  timestamp. Older denials cannot override that purpose's newer grant; family
+  unlink and current denials still revoke access. Temporary event refreshes keep
+  FCM/WNS registrations; permanent denial or a read denying cloud sync clears them.
 - Parents use the KWS family portal to change permissions. An app-specific
   authenticated parent portal provides access/export, withdrawal and deletion;
   its relationship checks use the verified original contact address, never a
@@ -60,6 +64,10 @@ flow; headless startup waits for interactive completion. A persisted graduation
 flag survives interrupted setup and requests the server's age-checked adult
 transition after acknowledgement. The server must confirm the adult classification
 before the old claim and graduation flag are cleared.
+Confirmed graduation also clears the child diagnostics lock, preserving the
+adult receipt's explicit opt-in or opt-out for later launches. Parent-managed
+accounts cannot set a password, including on a synthetic linking address;
+independent credentials remain blocked until server-confirmed graduation.
 
 Desktop first-run setup shows a normal, focused window before awaiting acceptance;
 cloud and clipboard services still start only after setup completes. Ordinary tray

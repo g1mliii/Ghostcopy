@@ -15,6 +15,8 @@ export interface KwsConfig {
 export interface KwsPermissions {
   cloudSync: boolean;
   fileSync: boolean;
+  cloudGrantedAt?: number;
+  fileGrantedAt?: number;
 }
 
 export class KwsUnavailableError extends Error {
@@ -210,7 +212,7 @@ export class KwsClient {
       const setting = object(item);
       if (setting?.namespace !== kwsNamespace ||
           !kwsSettings.includes(setting.settingName as typeof kwsSettings[number])) continue;
-      const name = setting.settingName as keyof KwsPermissions;
+      const name = setting.settingName as typeof kwsSettings[number];
       if (seen.has(name)) throw new KwsUnavailableError();
       seen.add(name);
       const bracket = object(object(setting.definition)?.ageBracket);
@@ -223,6 +225,10 @@ export class KwsClient {
         setting.parentLimitUpdatedAt > 0 &&
         setting.parentLimitUpdatedAt >= Math.max(consentRequestedAfter, name === 'fileSync' ? fileRequestedAfter : 0) &&
         setting.parentLimitUpdatedAt <= this.now() + 300000;
+      if (values[name]) {
+        if (name === 'cloudSync') values.cloudGrantedAt = setting.parentLimitUpdatedAt as number;
+        else values.fileGrantedAt = setting.parentLimitUpdatedAt as number;
+      }
     }
     if (!seen.has('cloudSync')) throw new KwsUnavailableError();
     return values;

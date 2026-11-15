@@ -3,7 +3,7 @@ export async function setupConsentDatabase(db) {
   await db.exec(`
     CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
     CREATE SCHEMA auth;
-    CREATE TABLE auth.users(id uuid PRIMARY KEY,is_anonymous boolean DEFAULT true,email text,phone text);
+    CREATE TABLE auth.users(id uuid PRIMARY KEY,is_anonymous boolean DEFAULT true,email text,phone text,encrypted_password text);
     CREATE TABLE auth.identities(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid REFERENCES auth.users ON DELETE CASCADE,provider text,identity_data jsonb);
     CREATE SCHEMA vault; CREATE TABLE vault.decrypted_secrets(name text,decrypted_secret text);
     CREATE SCHEMA net; CREATE FUNCTION net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) RETURNS bigint LANGUAGE sql AS $$ SELECT 1::bigint; $$;

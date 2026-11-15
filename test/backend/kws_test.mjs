@@ -46,6 +46,9 @@ const permission = (name, overrides = {}) => ({ namespace: 'ghostcopy', settingN
   parentLimitUpdatedAt: now,
   effectiveValue: true, parentLimit: true, definition: { ageBracket: { consentType: 'opt-in-vpc' } },
   ...overrides });
+const grants = (cloudSync, fileSync) => ({ cloudSync, fileSync,
+  ...(cloudSync ? { cloudGrantedAt: now } : {}),
+  ...(fileSync ? { fileGrantedAt: now } : {}) });
 function fixture({ settings = [permission('cloudSync'), permission('fileSync')], unauthorizedOnce = false,
   error = false } = {}) {
   const calls = [];
@@ -95,14 +98,14 @@ test('permission grants require VPC, actual parent limits and effective values',
     { parentLimitUpdatedAt: null }, { parentLimitUpdatedAt: now + 300001 },
   ]) {
     const { client } = fixture({ settings: [permission('cloudSync', denied), permission('fileSync')] });
-    assert.deepEqual(await client.permissions('child'), { cloudSync: false, fileSync: true });
+    assert.deepEqual(await client.permissions('child'), grants(false, true));
   }
   const { client, calls } = fixture();
-  assert.deepEqual(await client.permissions('child'), { cloudSync: true, fileSync: true });
+  assert.deepEqual(await client.permissions('child'), grants(true, true));
   assert.equal(calls[1].url, 'https://api.kidswebservices.com/v1/settings/users/child/products/product/values?namespace=ghostcopy&format=full');
   await client.permissions('child');
   assert.equal(calls.filter((call) => call.url.includes('/openid-connect/token')).length, 1);
-  assert.deepEqual(await client.permissions('child', now + 1), { cloudSync: false, fileSync: false });
+  assert.deepEqual(await client.permissions('child', now + 1), grants(false, false));
   assert.equal((await fixture({ settings: [permission('cloudSync', {
     definition: { ageBracket: { consentType: 'opt-in-verified' } },
   })] }).client.permissions('child')).cloudSync, true);
@@ -116,7 +119,15 @@ test('missing or duplicate settings fail closed rather than taking the last valu
 
 test('a file denial timestamp prevents a stale grant while text remains available', async () => {
   const { client } = fixture();
-  assert.deepEqual(await client.permissions('child', 0, now + 1), { cloudSync: true, fileSync: false });
+  assert.deepEqual(await client.permissions('child', 0, now + 1), grants(true, false));
+});
+
+test('permission ordering carries each granted purpose timestamp independently', async () => {
+  const { client } = fixture({ settings: [permission('cloudSync'),
+    permission('fileSync', { parentLimitUpdatedAt: now - 1000 })] });
+  assert.deepEqual(await client.permissions('child'), {
+    cloudSync: true, fileSync: true, cloudGrantedAt: now, fileGrantedAt: now - 1000,
+  });
 });
 
 test('withdrawal uses the documented settings object for each purpose', async () => {

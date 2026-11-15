@@ -62,6 +62,8 @@ CREATE TABLE private.parental_consent_requests (
   refresh_lease_until timestamptz,
   revision bigint NOT NULL DEFAULT 0,
   last_event_at timestamptz NOT NULL DEFAULT '-infinity',
+  cloud_granted_at timestamptz,
+  file_granted_at timestamptz,
   file_revoked_at timestamptz,
   expires_at timestamptz NOT NULL DEFAULT now() + interval '14 days',
   created_at timestamptz NOT NULL DEFAULT now()

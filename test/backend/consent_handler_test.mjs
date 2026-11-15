@@ -16,7 +16,7 @@ const organizationId = 'test-org'; const productId = 'test-product';
 const webhookNames = ['consent:changed', 'consent:deleted', 'settings:effective-values-changed',
   'settings:parent-limits-changed', 'families:user-removed-from-family', 'families:family-group-deleted'];
 const webhookSecrets = Object.fromEntries(webhookNames.map((name) => [name, [`secret:${name}`]]));
-let granted; let files; let available; let configurationComplete;
+let granted; let files; let available; let configurationComplete; let permissionTimes;
 const calls = []; const erased = []; const exports = [];
 async function operation(action, data = {}) {
   return (await db.query('SELECT public.consent_service($1,$2::jsonb) AS value', [action, JSON.stringify(data)])).rows[0].value;
@@ -29,7 +29,7 @@ function handler() {
     webhookSecrets,
     kws: {
       async requestConsent(input) { calls.push(input); if (!available) throw new Error('Provider unavailable'); return crypto.randomUUID(); },
-      async permissions() { if (!available) throw new Error('Provider unavailable'); return { cloudSync: granted, fileSync: files }; },
+      async permissions() { if (!available) throw new Error('Provider unavailable'); return { cloudSync: granted, fileSync: files, ...permissionTimes }; },
       async withdraw(id) { calls.push({ withdrew: id }); },
       async deleteSubject(id) { erased.push(id); },
     },
@@ -57,6 +57,7 @@ before(async () => setupConsentDatabase(db));
 after(() => db.close());
 beforeEach(async () => {
   granted = false; files = false; available = true; configurationComplete = true;
+  permissionTimes = {};
   calls.length = 0; erased.length = 0; exports.length = 0;
   await db.exec(`TRUNCATE auth.users CASCADE; TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_audit,private.consent_rate_limits,private.kws_deletion_queue;
     UPDATE private.cloud_consent_settings SET enforce_all_accounts=true,child_consent_enabled=true;
@@ -203,6 +204,88 @@ async function webhook(event, secret) {
   const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${time}.${raw}`))).toString('hex');
   return handler()(new Request('https://api.example/cloud-consent/webhook', { method: 'POST', body: raw, headers: { 'x-kws-signature': `t=${time},v1=${signature}` } }));
 }
+
+async function refreshBound() {
+  await db.query("UPDATE private.parental_consent_requests SET valid_until=now()-interval '1 minute',last_checked_at=now()-interval '1 minute' WHERE bound_user_id=$1", [user]);
+  return request({ action: 'status' }, 'child');
+}
+const denial = (id, time, settings) => ({ name: 'settings:parent-limits-changed',
+  orgId: organizationId, productId, time: new Date(time).toISOString(),
+  payload: { userId: id, settings: settings.map((settingName) => ({ namespace: 'ghostcopy', settingName, parentLimit: false })) } });
+async function pushDevice() {
+  await db.query("INSERT INTO public.devices(user_id,fcm_token,wns_channel_uri) VALUES($1,'push','wns')", [user]);
+}
+async function assertPush(expected) {
+  assert.deepEqual((await db.query('SELECT fcm_token,wns_channel_uri FROM public.devices WHERE user_id=$1', [user])).rows[0],
+    { fcm_token: expected ? 'push' : null, wns_channel_uri: expected ? 'wns' : null });
+}
+
+test('a delayed cloud denial cannot override a later observed provider grant; a newer denial still wins', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  await pushDevice();
+  const id = (await operation('lookup', { userId: user })).id;
+  const grantTime = Date.now();
+  permissionTimes = { cloudGrantedAt: grantTime, fileGrantedAt: grantTime - 30000 };
+  assert.equal((await refreshBound()).body.allowed, true);
+  assert.equal((await webhook(denial(id, grantTime - 10000, ['cloudSync']), 'secret:settings:parent-limits-changed')).status, 200);
+  assert.equal((await operation('profile', { userId: user })).status, 'authorized');
+  assert.equal((await operation('lookup', { userId: user })).requires_new_consent, false);
+  await assertPush(true);
+  assert.equal((await webhook(denial(id, grantTime + 1000, ['cloudSync']), 'secret:settings:parent-limits-changed')).status, 200);
+  assert.equal((await operation('profile', { userId: user })).status, 'revoked');
+  await assertPush(false);
+  assert.equal((await refreshBound()).body.allowed, false); // Stale provider grant cannot resurrect it.
+});
+
+test('a newer file grant cannot hide a current cloud denial or a family unlink', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  const id = (await operation('lookup', { userId: user })).id;
+  const grantTime = Date.now();
+  permissionTimes = { cloudGrantedAt: grantTime - 20000, fileGrantedAt: grantTime };
+  await refreshBound();
+  await webhook(denial(id, grantTime - 10000, ['cloudSync']), 'secret:settings:parent-limits-changed');
+  assert.equal((await operation('lookup', { userId: user })).requires_new_consent, true);
+  await webhook({ name: 'families:user-removed-from-family', orgId: organizationId, productId,
+    time: new Date(grantTime - 5000).toISOString(), payload: { userId: id } }, 'secret:families:user-removed-from-family');
+  assert.equal((await operation('lookup', { userId: user })).parent_can_manage, false);
+});
+
+test('mixed old cloud and current file denials preserve cloud permission and push registrations', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  await pushDevice();
+  const id = (await operation('lookup', { userId: user })).id;
+  const grantTime = Date.now();
+  permissionTimes = { cloudGrantedAt: grantTime, fileGrantedAt: grantTime - 30000 };
+  await refreshBound();
+  files = false;
+  await webhook(denial(id, grantTime - 10000, ['cloudSync', 'fileSync']), 'secret:settings:parent-limits-changed');
+  const profile = await operation('profile', { userId: user });
+  assert.equal(profile.status, 'authorized');
+  assert.equal(profile.cloud_sync, true);
+  assert.equal(profile.file_sync, false);
+  assert.equal((await operation('lookup', { userId: user })).requires_new_consent, false);
+  await assertPush(true);
+});
+
+test('effective-value refresh preserves push until the provider actually denies cloud access', async () => {
+  const approval = await approved();
+  await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
+  await pushDevice();
+  const id = (await operation('lookup', { userId: user })).id;
+  const event = { name: 'settings:effective-values-changed', orgId: organizationId, productId,
+    time: new Date().toISOString(), payload: { userId: id, settings: [] } };
+  await webhook(event, 'secret:settings:effective-values-changed');
+  assert.equal((await operation('profile', { userId: user })).status, 'authorized');
+  await assertPush(true);
+  granted = false;
+  event.time = new Date(Date.now() + 1000).toISOString();
+  await webhook(event, 'secret:settings:effective-values-changed');
+  assert.equal((await operation('profile', { userId: user })).status, 'revoked');
+  await assertPush(false);
+});
 test('signed denial revokes despite stale provider reads; wrong event secret and product cannot act', async () => {
   const approval = await approved(); await request({ action: 'authorize', claimToken: approval.claimToken }, 'child');
   const child = (await request({ action: 'parent-list' }, 'parent')).body.children[0];

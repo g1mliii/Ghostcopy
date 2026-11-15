@@ -9,7 +9,8 @@ BEGIN
     WHERE user_id=subject AND account_kind='parent_managed') INTO managed;
   IF NOT managed THEN RETURN NEW; END IF;
   IF TG_TABLE_NAME='users' THEN
-    IF nullif(NEW.email,'') IS NOT NULL AND NEW.email<>subject::text || '@anon.ghostcopy.app'
+    IF NEW.encrypted_password IS DISTINCT FROM OLD.encrypted_password
+      OR nullif(NEW.email,'') IS NOT NULL AND NEW.email<>subject::text || '@anon.ghostcopy.app'
       OR nullif(NEW.phone,'') IS NOT NULL THEN
       RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='Parent-managed accounts cannot add independent credentials';
     END IF;
@@ -20,7 +21,7 @@ BEGIN
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION private.guard_parent_managed_identity() FROM PUBLIC, anon, authenticated;
-CREATE TRIGGER guard_parent_managed_credentials BEFORE UPDATE OF email,phone ON auth.users
+CREATE TRIGGER guard_parent_managed_credentials BEFORE UPDATE OF email,phone,encrypted_password ON auth.users
   FOR EACH ROW EXECUTE FUNCTION private.guard_parent_managed_identity();
 CREATE TRIGGER guard_parent_managed_provider BEFORE INSERT OR UPDATE ON auth.identities
   FOR EACH ROW EXECUTE FUNCTION private.guard_parent_managed_identity();

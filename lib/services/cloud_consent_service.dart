@@ -169,6 +169,7 @@ class CloudConsentService {
     final prefs = await loadConsentPreferences();
     final consent = DistributionConsentService(prefs);
     if (!consent.isAccepted) throw Exception('Complete setup first.');
+    final graduating = prefs.getBool('distribution_graduation_pending') == true;
     final result = await call(
       'authorize',
       accessToken: accessToken,
@@ -180,8 +181,7 @@ class CloudConsentService {
               'noticeVersion': IDistributionConsentService.version,
               'termsAccepted': true,
               'privacyAcknowledged': true,
-              'graduate':
-                  prefs.getBool('distribution_graduation_pending') == true,
+              'graduate': graduating,
             },
     );
     final snapshot = CloudAuthorization(
@@ -217,10 +217,13 @@ class CloudConsentService {
     }
     if (snapshot.allowed &&
         result['accountKind'] == 'adult' &&
+        graduating &&
+        (currentAccessToken == null || currentAccessToken!() == accessToken) &&
         prefs.getBool('distribution_graduation_pending') == true) {
-      await prefs.remove('distribution_graduation_pending');
-      await prefs.setString('distribution_declared_age', '18+');
       await _storage.delete(key: claimKey);
+      await prefs.remove('parent_managed_diagnostics_disabled');
+      await prefs.setString('distribution_declared_age', '18+');
+      await prefs.remove('distribution_graduation_pending');
     }
     if (currentAccessToken == null || currentAccessToken!() == accessToken) {
       _authorizedAccessToken = accessToken;
