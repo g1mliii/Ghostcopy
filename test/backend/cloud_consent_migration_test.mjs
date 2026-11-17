@@ -14,7 +14,7 @@ after(() => db.close());
 beforeEach(async () => {
   await db.exec(`RESET ROLE; SELECT set_config('request.jwt.claim.sub','',false);
     TRUNCATE auth.users CASCADE;
-    TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_rate_limits,private.consent_audit,private.kws_deletion_queue;
+    TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_rate_limits,private.consent_audit,private.kws_deletion_queue CASCADE;
     UPDATE private.cloud_consent_settings SET enforce_all_accounts=true,child_consent_enabled=false;
     INSERT INTO auth.users(id) VALUES('${user}'),('${other}');`);
 });

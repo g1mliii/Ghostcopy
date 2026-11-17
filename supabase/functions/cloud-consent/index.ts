@@ -33,6 +33,11 @@ Deno.serve(createConsentHandler({
     if (result.error) throw new Error('Consent operation failed');
     return result.data;
   },
+  async storeOperation(action, data) {
+    const result = await admin.rpc('store_consent_service', { p_action: action, p_data: data });
+    if (result.error) throw new Error('Store consent operation failed');
+    return result.data;
+  },
   async authenticate(request) {
     const token = request.headers.get('authorization')?.match(/^Bearer ([\w-]+\.[\w-]+\.[\w-]+)$/)?.[1];
     if (!token) return null;

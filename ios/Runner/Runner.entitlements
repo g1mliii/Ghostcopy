@@ -24,5 +24,11 @@
 	     name (sendDefaultPii is off). -->
 	<key>com.apple.developer.device-information.user-assigned-device-name</key>
 	<true/>
+	<!-- Declared Age Range: the store's age category during setup
+	     (StoreAgeSignals.swift, docs/store-age-signals.md). The App ID needs
+	     the Declared Age Range capability before the next archive, or
+	     signing fails. -->
+	<key>com.apple.developer.declared-age-range</key>
+	<true/>
 </dict>
 </plist>

@@ -313,6 +313,12 @@ void main() {
       expect(receipt.ageGroup, DistributionAgeGroup.parentManaged);
       expect(receipt.diagnosticsAllowed, isFalse);
       expect(prefs.getString('distribution_declared_age'), '8');
+      // The QR-linked device records the notice version its parent's consent
+      // covers, so the next notice version is a significant change here too.
+      expect(
+        prefs.getString(IDistributionConsentService.storeConsentNoticeKey),
+        IDistributionConsentService.version,
+      );
       verify(
         () => storage.write(
           key: CloudConsentService.claimKey,

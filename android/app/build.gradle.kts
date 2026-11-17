@@ -108,4 +108,9 @@ dependencies {
 
     // Gson for JSON serialization (widget data persistence)
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Play Age Signals: the user's age range and parent approval for setup
+    // (StoreAgeSignals.kt, docs/store-age-signals.md). 0.0.4 is the first
+    // version with requestAgeSignalsAccess(); older versions are deprecated.
+    implementation("com.google.android.play:age-signals:0.0.4")
 }

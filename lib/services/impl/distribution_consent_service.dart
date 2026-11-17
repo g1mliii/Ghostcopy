@@ -86,12 +86,24 @@ class DistributionConsentService implements IDistributionConsentService {
   }
 
   @override
-  Future<void> acceptParentManaged({required String country}) => _writeReceipt(
-    ageGroup: DistributionAgeGroup.parentManaged,
-    diagnosticsAllowed: false,
-    country: country,
-    verificationMethod: 'kws-server-checked',
-  );
+  Future<void> acceptParentManaged({required String country}) async {
+    await _writeReceipt(
+      ageGroup: DistributionAgeGroup.parentManaged,
+      diagnosticsAllowed: false,
+      country: country,
+      verificationMethod: 'kws-server-checked',
+    );
+    // Every parent-managed receipt - setup on this device or a QR-linked
+    // device classified by the server - records the notice version the
+    // parent's consent covers, so a later version is a significant change
+    // on that device too.
+    if (!await _preferences.setString(
+      IDistributionConsentService.storeConsentNoticeKey,
+      IDistributionConsentService.version,
+    )) {
+      throw Exception('Could not save setup. Please try again.');
+    }
+  }
 
   Future<void> _writeReceipt({
     required DistributionAgeGroup ageGroup,
