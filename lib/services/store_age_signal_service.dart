@@ -43,39 +43,6 @@ class StoreAgeSignal {
     this.significantChangeConsentRequired = false,
   });
 
-  static const unavailable = StoreAgeSignal._(StoreAgeStatus.unavailable);
-
-  final StoreAgeStatus status;
-
-  /// Inclusive bounds; null lower means "from 0", null upper means "and over".
-  final int? ageLower;
-  final int? ageUpper;
-  final AppStore? store;
-
-  /// Apple appTransactionId or Google Play installId. Sent once with the
-  /// parent request so a store withdrawal can revoke it; never stored here.
-  final String? storeRef;
-
-  /// For [StoreAgeStatus.notApproved]: approval is still pending, not declined.
-  final bool pending;
-
-  /// The store requires parental consent for significant changes for this
-  /// user (Apple RegulatoryFeature.significantAppChangeRequiresParentalConsent).
-  final bool significantChangeConsentRequired;
-
-  /// The ages a minor may choose from in setup, in the existing dropdown's
-  /// values. Empty unless [status] is [StoreAgeStatus.minor].
-  List<String> get ageChoices {
-    if (status != StoreAgeStatus.minor) return const [];
-    final lower = ageLower ?? 0;
-    final upper = ageUpper ?? 17;
-    return [
-      if (lower < 5) 'Under 5',
-      for (var age = lower < 5 ? 5 : lower; age <= upper && age < 18; age++)
-        '$age',
-    ];
-  }
-
   /// Map the native channel's normalized answer. Anything unexpected is
   /// [unavailable], which keeps today's self-declared flow.
   factory StoreAgeSignal.fromPlatform(Map<Object?, Object?>? value) {
@@ -124,6 +91,39 @@ class StoreAgeSignal {
       );
     }
     return unavailable;
+  }
+
+  static const unavailable = StoreAgeSignal._(StoreAgeStatus.unavailable);
+
+  final StoreAgeStatus status;
+
+  /// Inclusive bounds; null lower means "from 0", null upper means "and over".
+  final int? ageLower;
+  final int? ageUpper;
+  final AppStore? store;
+
+  /// Apple appTransactionId or Google Play installId. Sent once with the
+  /// parent request so a store withdrawal can revoke it; never stored here.
+  final String? storeRef;
+
+  /// For [StoreAgeStatus.notApproved]: approval is still pending, not declined.
+  final bool pending;
+
+  /// The store requires parental consent for significant changes for this
+  /// user (Apple RegulatoryFeature.significantAppChangeRequiresParentalConsent).
+  final bool significantChangeConsentRequired;
+
+  /// The ages a minor may choose from in setup, in the existing dropdown's
+  /// values. Empty unless [status] is [StoreAgeStatus.minor].
+  List<String> get ageChoices {
+    if (status != StoreAgeStatus.minor) return const [];
+    final lower = ageLower ?? 0;
+    final upper = ageUpper ?? 17;
+    return [
+      if (lower < 5) 'Under 5',
+      for (var age = lower < 5 ? 5 : lower; age <= upper && age < 18; age++)
+        '$age',
+    ];
   }
 }
 

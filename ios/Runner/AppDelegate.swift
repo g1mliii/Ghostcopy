@@ -42,6 +42,7 @@ import UserNotifications
   func didInitializeImplicitFlutterEngine(_ engineBridge: any FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     FlutterChannelHub.shared.attach(messenger: engineBridge.applicationRegistrar.messenger())
+    StoreAgeSignals.shared.attach(messenger: engineBridge.applicationRegistrar.messenger())
   }
 
   // MARK: - Notifications

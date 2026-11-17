@@ -176,15 +176,20 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     // The store's age category replaces the age question when it has one.
     // A saved age is the user's earlier answer and is not asked again.
     if (_age == null && !widget.parentAccount && !_blocked) {
-      unawaited(_askStore());
+      _checkingStore = true;
+      unawaited(_loadStore());
     }
   }
 
-  Future<void> _askStore() async {
+  void _askStore() {
     setState(() {
       _checkingStore = true;
       _error = null;
     });
+    unawaited(_loadStore());
+  }
+
+  Future<void> _loadStore() async {
     final signal = await _store.request();
     if (!mounted) return;
     setState(() {
@@ -509,9 +514,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                       ),
                       const SizedBox(height: 24),
                       FilledButton(
-                        onPressed: _checkingStore
-                            ? null
-                            : () => unawaited(_askStore()),
+                        onPressed: _checkingStore ? null : _askStore,
                         child: Text(
                           _checkingStore ? 'Please wait…' : 'Check again',
                         ),
