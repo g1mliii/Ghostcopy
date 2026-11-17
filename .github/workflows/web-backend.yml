@@ -64,7 +64,7 @@ jobs:
           retention-days: 14
 
   edge-functions:
-    name: Check edge functions (advisory)
+    name: Check edge functions
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -84,13 +84,9 @@ jobs:
         with:
           deno-version: v2.x
 
-      # Advisory only. The three deployed functions currently have ~13 strict
-      # type errors between them (mostly implicit `any` on Supabase/Firebase
-      # callback params). `supabase functions deploy` does not type-check, so
-      # these are not deploy blockers and the functions work in production.
-      # Fix them and then delete continue-on-error to make this a real gate.
+      # Every function must type-check in CI, including service-role
+      # paths that ordinary Flutter tests cannot compile.
       - name: Type-check
-        continue-on-error: true
         run: |
           status=0
           for f in supabase/functions/*/index.ts; do
@@ -98,10 +94,12 @@ jobs:
             deno check "$f" || status=1
             echo "::endgroup::"
           done
-          if [ "$status" -ne 0 ]; then
-            echo "::warning::Edge functions have type errors - advisory only, see the groups above."
-          fi
+          exit "$status"
+
+      - name: Test native push payloads and WNS channels
+        run: deno test supabase/functions/send-clipboard-notification/messages_test.ts supabase/functions/send-clipboard-notification/wns_test.ts
 
       - name: Lint
-        continue-on-error: true
-        run: deno lint supabase/functions/
+        # Versioned jsr/npm prefixes are intentional for independently deployed
+        # Supabase functions. Keep the other lint rules enabled.
+        run: deno lint --rules-exclude=no-import-prefix supabase/functions/

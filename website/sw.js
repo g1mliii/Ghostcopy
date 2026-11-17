@@ -28,7 +28,9 @@
 //
 // v5 (2026-10-27): the icons moved from a white ghost on indigo to an indigo
 // ghost on white/black. Icon URLs are ?v=3, and the rename drops v4's copies.
-const CACHE = 'ghostcopy-v5';
+// v6: evict parent confirmation URLs cached by a previously controlling v5
+// worker before the /parents bypass could take effect.
+const CACHE = 'ghostcopy-v6';
 
 // Extensionless, matching what the pages actually link to. Precaching
 // '/download.html' would have cached a 308 to '/download'.
@@ -81,7 +83,8 @@ self.addEventListener('fetch', (event) => {
     // containing it, outliving the page scrubbing its own history.
     if (
         url.pathname.startsWith('/reset-password') ||
-        url.pathname.startsWith('/auth-callback')
+        url.pathname.startsWith('/auth-callback') ||
+        url.pathname.startsWith('/parents')
     ) {
         return;
     }

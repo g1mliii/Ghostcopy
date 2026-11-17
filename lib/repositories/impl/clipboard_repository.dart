@@ -13,6 +13,7 @@ import '../../models/clipboard_item.dart';
 import '../../models/clipboard_limits.dart';
 import '../../models/exceptions.dart';
 import '../../services/clipboard_cache_manager.dart';
+import '../../services/cloud_consent_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/history_disk_cache.dart';
 import '../../services/impl/encryption_service.dart';
@@ -44,13 +45,18 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
+    CloudConsentService? cloudConsent,
   }) {
     // For testing with custom dependencies, create a new instance
-    if (client != null || encryptionService != null || storageService != null) {
+    if (client != null ||
+        encryptionService != null ||
+        storageService != null ||
+        cloudConsent != null) {
       return ClipboardRepository._internal(
         client: client,
         encryptionService: encryptionService,
         storageService: storageService,
+        cloudConsent: cloudConsent,
       );
     }
     // Otherwise, return singleton
@@ -61,9 +67,11 @@ class ClipboardRepository implements IClipboardRepository {
     SupabaseClient? client,
     IEncryptionService? encryptionService,
     IStorageService? storageService,
+    CloudConsentService? cloudConsent,
   }) : _client = client ?? Supabase.instance.client,
        _encryptionService = encryptionService ?? EncryptionService.instance,
-       _storageService = storageService ?? StorageService.instance {
+       _storageService = storageService ?? StorageService.instance,
+       _cloudConsent = cloudConsent ?? CloudConsentService.instance {
     _watchAccount();
   }
 
@@ -73,6 +81,7 @@ class ClipboardRepository implements IClipboardRepository {
   final SupabaseClient _client;
   final IEncryptionService _encryptionService;
   final IStorageService _storageService;
+  final CloudConsentService _cloudConsent;
   bool _encryptionInitialized = false;
 
   /// Resets whenever the signed-in account changes, however it changed.
@@ -189,6 +198,39 @@ class ClipboardRepository implements IClipboardRepository {
     _encryptionUserId = userId;
   }
 
+  /// Every send entry point, including headless/Finder sharing, reaches here
+  /// before content can leave the device. UI gating alone cannot protect them.
+  Future<bool> _encryptionForSend() async {
+    await _ensureEncryptionInitialized();
+    final enabled = await _encryptionService.isEnabled();
+    var authorization = CloudConsentService.authorization.value;
+    // Production wires this session getter at startup. Check this session
+    // (renewing after a token refresh) instead of using another one's flags.
+    if (CloudConsentService.currentAccessToken != null) {
+      final token = _client.auth.currentSession?.accessToken;
+      if (token == null) {
+        throw SecurityException('Check account permission before sending.');
+      }
+      try {
+        authorization = await _cloudConsent.authorizeSend(token);
+      } on Exception catch (e) {
+        if (isNetworkError(e)) rethrow;
+        throw SecurityException('Check account permission before sending.');
+      }
+      if (_client.auth.currentSession?.accessToken != token) {
+        throw SecurityException('Account changed before sending.');
+      }
+    }
+    if (authorization != null &&
+        authorization.parentManaged &&
+        (!authorization.allowed || !enabled)) {
+      throw SecurityException(
+        'Set or restore your passphrase before sending from this parent-managed account.',
+      );
+    }
+    return enabled;
+  }
+
   @override
   Future<ClipboardItem> insert(ClipboardItem item) async {
     // Validate and sanitize input before sending to Supabase
@@ -198,11 +240,10 @@ class ClipboardRepository implements IClipboardRepository {
       final userId = _requireOwner(item.userId, 'clipboard items');
 
       // Initialize encryption if not already done
-      await _ensureEncryptionInitialized();
+      final isEncryptionEnabled = await _encryptionForSend();
 
       // Encrypt content only if encryption is enabled
       final sanitizedContent = _sanitizeContent(item.content);
-      final isEncryptionEnabled = await _encryptionService.isEnabled();
       final contentToStore = isEncryptionEnabled
           ? await _encryptionService.encrypt(sanitizedContent)
           : sanitizedContent;
@@ -302,7 +343,7 @@ class ClipboardRepository implements IClipboardRepository {
       // Files and images used to be stored in the clear even with a passphrase
       // set - the comment said "too large, would exceed 10MB limit after
       // base64". That is true of the base64 string path, but encrypting raw
-      // bytes costs a flat 32 bytes (IV + GCM tag), so the limit is unaffected.
+      // bytes costs a flat 32 bytes (IV + GCM tag), reserved under the wire cap.
       // Without this, turning on end-to-end encryption protected your text and
       // left your screenshots and documents readable to anyone with R2 access.
       //
@@ -314,8 +355,13 @@ class ClipboardRepository implements IClipboardRepository {
       // `--send-file` launch (Explorer's "Send with GhostCopy", which loads no
       // history and shows no UI) uploaded every file unencrypted regardless of
       // the passphrase.
-      await _ensureEncryptionInitialized();
-      final filesEncrypted = await _encryptionService.isEnabled();
+      final filesEncrypted = await _encryptionForSend();
+      if (fileBytes.length >
+          ClipboardLimits.maxPlaintextFileBytes(encrypted: filesEncrypted)) {
+        throw ValidationException(
+          'Encrypted file exceeds the ${ClipboardLimits.maxFileLabel} upload limit. Choose a slightly smaller file.',
+        );
+      }
       if (filesEncrypted) {
         uploadBytes = await _encryptionService.encryptBytes(uploadBytes);
         debugPrint(
@@ -460,10 +506,9 @@ class ClipboardRepository implements IClipboardRepository {
       final sanitizedContent = _sanitizeContent(content);
 
       // Initialize encryption
-      await _ensureEncryptionInitialized();
+      final isEncryptionEnabled = await _encryptionForSend();
 
       // Encrypt content if encryption is enabled
-      final isEncryptionEnabled = await _encryptionService.isEnabled();
       final contentToStore = isEncryptionEnabled
           ? await _encryptionService.encrypt(sanitizedContent)
           : sanitizedContent;

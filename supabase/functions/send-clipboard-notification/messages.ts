@@ -2,7 +2,14 @@
 // routing can be tested without Firebase, WNS or a database
 // (messages_test.ts).
 
+import type { ApnsConfig, TokenMessage } from 'npm:firebase-admin@12.0.0/messaging';
+
 import { isWnsChannelUri } from './wns.ts';
+
+type FcmMessage = TokenMessage & {
+  data: Record<string, string>;
+  apns: Required<Pick<ApnsConfig, 'headers' | 'payload'>>;
+};
 
 export type DeviceRow = {
   id: string;
@@ -48,7 +55,7 @@ export function wnsTargets(devices: DeviceRow[]): DeviceRow[] {
 
 /// The FCM message for one device: a silent wake-up for a Mac, a visible
 /// notification for a phone.
-export function fcmMessageFor(device: DeviceRow, clip: ClipContext) {
+export function fcmMessageFor(device: DeviceRow, clip: ClipContext): FcmMessage {
   const token = device.fcm_token as string;
   if (device.device_type === 'macos') {
     // A desktop's push is a wake-up, not a notification: the app is running

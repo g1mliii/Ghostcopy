@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostcopy/services/cloud_consent_service.dart';
 import 'package:ghostcopy/services/crash_reporting_service.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
@@ -152,9 +156,150 @@ void main() {
     expect(options.beforeBreadcrumb, isNotNull);
   });
 
+  test(
+    'diagnostics wait for server classification and stay off after account changes',
+    () async {
+      final calls = <String>[];
+      final initialized = Completer<void>();
+      final reporting = SentryCrashReportingService(
+        enabled: true,
+        deferUntilAuthorized: true,
+        initializeSdk: () async {
+          calls.add('initialize');
+          await initialized.future;
+        },
+        stopSdk: () async {
+          calls.add('stop');
+        },
+      );
+      await reporting.run(() => calls.add('app'));
+      expect(calls, ['app']);
+      final starting = reporting.startAfterAuthorization();
+      final pausing = reporting.pauseForAccountChange();
+      expect(calls, ['app', 'initialize']);
+      initialized.complete();
+      await Future.wait([starting, pausing]);
+      expect(calls, ['app', 'initialize', 'stop']);
+      // A late authorization of the old adult cannot restart during a child link.
+      await reporting.startAfterAuthorization();
+      expect(calls, ['app', 'initialize', 'stop']);
+    },
+  );
+
+  test(
+    'an account change before classification never initializes diagnostics',
+    () async {
+      var starts = 0;
+      final reporting = SentryCrashReportingService(
+        enabled: true,
+        deferUntilAuthorized: true,
+        initializeSdk: () async {
+          starts++;
+        },
+        stopSdk: () async {},
+      );
+      await reporting.pauseForAccountChange();
+      await reporting.startAfterAuthorization();
+      expect(starts, 0);
+    },
+  );
+
   test('when disabled, the app runs without Sentry', () async {
     var ran = false;
     await SentryCrashReportingService(enabled: false).run(() => ran = true);
     expect(ran, isTrue);
+  });
+
+  group('follows server authorization', () {
+    const adult = CloudAuthorization(
+      allowed: true,
+      parentManaged: false,
+      fileSync: true,
+      independentAdult: true,
+    );
+    const child = CloudAuthorization(
+      allowed: true,
+      parentManaged: true,
+      fileSync: false,
+    );
+
+    Future<void> settle() => Future<void>.delayed(Duration.zero);
+
+    test('runs only for an allowed, opted-in independent adult', () async {
+      final authorization = ValueNotifier<CloudAuthorization?>(null);
+      var optedIn = true;
+      var reads = 0;
+      final calls = <String>[];
+      SentryCrashReportingService(
+        enabled: true,
+        deferUntilAuthorized: true,
+        authorization: authorization,
+        optedIn: () async {
+          reads++;
+          return optedIn;
+        },
+        initializeSdk: () async => calls.add('start'),
+        stopSdk: () async => calls.add('stop'),
+      );
+      authorization.value = child;
+      await settle();
+      expect(calls, isEmpty);
+      authorization.value = adult;
+      await settle();
+      expect(calls, ['start']);
+      expect(reads, 1);
+      // Re-authorizing the same adult keeps the one running SDK, and does
+      // not read the opt-in again.
+      authorization.value = CloudAuthorization(
+        allowed: adult.allowed,
+        parentManaged: adult.parentManaged,
+        fileSync: adult.fileSync,
+        independentAdult: adult.independentAdult,
+      );
+      await settle();
+      expect(calls, ['start']);
+      expect(reads, 1);
+      authorization.value = const CloudAuthorization(
+        allowed: false,
+        parentManaged: false,
+        fileSync: false,
+        independentAdult: true,
+      );
+      await settle();
+      expect(calls, ['start', 'stop']);
+      authorization.value = adult;
+      await settle();
+      expect(calls, ['start', 'stop', 'start']);
+      authorization.value = null;
+      await settle();
+      expect(calls, ['start', 'stop', 'start', 'stop']);
+      optedIn = false;
+      authorization.value = adult;
+      await settle();
+      expect(calls, ['start', 'stop', 'start', 'stop']);
+      authorization.dispose();
+    });
+
+    test('an account change stops it for the rest of the run', () async {
+      final authorization = ValueNotifier<CloudAuthorization?>(null);
+      final calls = <String>[];
+      final reporting = SentryCrashReportingService(
+        enabled: true,
+        deferUntilAuthorized: true,
+        authorization: authorization,
+        optedIn: () async => true,
+        initializeSdk: () async => calls.add('start'),
+        stopSdk: () async => calls.add('stop'),
+      );
+      authorization.value = adult;
+      await settle();
+      await reporting.pauseForAccountChange();
+      authorization.value = null;
+      await settle();
+      authorization.value = adult;
+      await settle();
+      expect(calls, ['start', 'stop']);
+      authorization.dispose();
+    });
   });
 }

@@ -6,7 +6,7 @@ unproven is opt-in, so a red check always means a real regression.
 | Workflow | File | Trigger | Blocking? |
 |---|---|---|---|
 | CI | `ci.yml` | push/PR to `main` | **Yes** |
-| Web & backend | `web-backend.yml` | push/PR touching `website/`, `supabase/functions/` | Website yes, Deno advisory |
+| Web & backend | `web-backend.yml` | push/PR touching `website/`, `supabase/functions/` | Website, backend tests and Deno checks |
 | Deploy | `deploy.yml` | push to `main`, or manual | n/a |
 | Build check | `build-check.yml` | manual, or weekly | No |
 
@@ -54,12 +54,12 @@ Android needs a Firebase stub to compile at all — see below.
 ## `web-backend.yml`
 
 - **Website** — `npm install && npm run build`. Verified working locally.
-- **Edge functions** — `deno check` + `deno lint`, both **advisory**. The three
-  deployed functions currently have ~13 strict type errors between them, mostly
-  implicit `any` on Supabase/Firebase callback parameters.
-  `supabase functions deploy` does not type-check, so these are not deploy
-  blockers and the functions work in production. Fix them, then delete the
-  `continue-on-error` lines to turn this into a real gate.
+- **Backend handlers and migrations** — Node tests, including PostgreSQL/RLS
+  consent authorization and signed-provider callback contracts.
+- **Edge functions** — every entry point must pass `deno check`; errors fail
+  the workflow. Notification payload and WNS channel tests run under Deno too.
+  `deno lint` is enforced with only `no-import-prefix` excluded: versioned
+  `jsr:`/`npm:` specifiers are intentional for Supabase's independent deployments.
 
 ## `deploy.yml` — the actual CD
 

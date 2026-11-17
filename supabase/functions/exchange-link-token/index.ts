@@ -24,6 +24,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/http.ts'
 import { publishableKey, secretKey } from '../_shared/keys.ts'
+import { cloudAccess } from '../_shared/cloud_access.ts'
 
 /** Domain used to synthesise an email for anonymous accounts. */
 const ANON_EMAIL_DOMAIN = 'anon.ghostcopy.app'
@@ -136,7 +137,8 @@ Deno.serve(async (req) => {
         return json({ error: 'Failed to exchange token' }, 500)
       }
 
-      if (failure?.attempts_exhausted) {
+      const pinFailure = failure as { attempts_exhausted?: boolean; token_live?: boolean } | null
+      if (pinFailure?.attempts_exhausted) {
         return json(
           {
             error: 'Too many incorrect PIN attempts. Generate a new QR code.',
@@ -146,7 +148,7 @@ Deno.serve(async (req) => {
         )
       }
 
-      if (failure?.token_live) {
+      if (pinFailure?.token_live) {
         return json({ error: 'Incorrect PIN', code: 'invalid_pin' }, 401)
       }
       return json(
@@ -156,6 +158,11 @@ Deno.serve(async (req) => {
     }
 
     consumed = consumedToken
+    const consent = await cloudAccess(supabase, consumed.user_id)
+    if (!consent.allowed) {
+      await restoreToken('cloud authorization denial')
+      return json({ error: 'Cloud authorization required' }, 403)
+    }
 
     // 2. Look up the account the QR belongs to.
     const { data: userData, error: userError } =

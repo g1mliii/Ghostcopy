@@ -788,7 +788,7 @@ Uint8List _gcmOpen(crypto.SecretBox box, Uint8List keyBytes) {
 ///
 /// Deliberately NOT the base64 text format: that inflates by ~33%, which is
 /// why files were once left unencrypted ("too large, would exceed 10MB limit
-/// after base64"). This costs a flat 32 bytes, so a 10MB file stays 10MB.
+/// after base64"). The flat 32-byte overhead must fit under the upload cap.
 ///
 /// [nonce] is for tests that compare against fixed vectors; leave it null.
 @visibleForTesting

@@ -1,6 +1,6 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-import '../platform_adaptive.dart';
 import '../theme/colors.dart';
 
 /// The one switch used everywhere, so Settings looks the same on every surface.
@@ -10,8 +10,8 @@ import '../theme/colors.dart';
 /// users know, and shrinking it would make it the odd one out on its own
 /// platform.
 ///
-/// Colour comes from AppTheme.switchTheme - call sites should not override the
-/// thumb, or the "on" state ends up a purple thumb on a purple track.
+/// Material colours come from AppTheme.switchTheme; the native Apple control
+/// uses the same GhostColors tokens. Call sites should not override the thumb.
 class AdaptiveSwitch extends StatelessWidget {
   const AdaptiveSwitch({
     required this.value,
@@ -24,14 +24,28 @@ class AdaptiveSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final control = Switch.adaptive(
-      value: value,
-      onChanged: onChanged,
-      activeTrackColor: GhostColors.primary,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    );
+    final platform = Theme.of(context).platform;
+    final apple =
+        platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+    // Switch.adaptive in the pinned SDK paints an Apple-looking Material switch
+    // that can null-assert on its first mid-animation paint (Flutter #179532).
+    final control = apple
+        ? CupertinoSwitch(
+            value: value,
+            onChanged: onChanged,
+            activeTrackColor: GhostColors.primary,
+            inactiveTrackColor: GhostColors.surfaceLight,
+            thumbColor: Colors.white,
+            inactiveThumbColor: GhostColors.textMuted,
+          )
+        : Switch(
+            value: value,
+            onChanged: onChanged,
+            activeTrackColor: GhostColors.primary,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          );
 
-    return Adaptive.isIOS
+    return platform == TargetPlatform.iOS
         ? control
         : Transform.scale(scale: 0.8, child: control);
   }

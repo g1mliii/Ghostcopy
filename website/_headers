@@ -63,3 +63,12 @@
 /auth-callback.html
   Cache-Control: no-store
   Referrer-Policy: no-referrer
+
+# Parent sessions and exports must not be retained by browser or shared caches.
+/parents
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/parents.html
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer

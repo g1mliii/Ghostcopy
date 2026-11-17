@@ -1,15 +1,18 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import "jsr:@supabase/functions-js@2/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3@3.600.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.600.0';
 import { corsPreflight, json } from '../_shared/http.ts';
 import { isSecretKeyCaller, publishableKey, secretKey } from '../_shared/keys.ts';
+import { cloudAccess } from '../_shared/cloud_access.ts';
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
 const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID') ?? '';
 const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
 // .trim() guards against accidental whitespace when secrets are set via dashboard copy-paste
 const R2_BUCKET_NAME = (Deno.env.get('R2_BUCKET_NAME') ?? 'ghostcopy-files').trim();
 const DOWNLOAD_URL_TTL_SECONDS = 300;
+// Parent-managed accounts get URLs that cannot outlive a withdrawn permission.
+const PARENT_URL_TTL_SECONDS = 60;
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -179,6 +182,13 @@ Deno.serve(async (req)=>{
       return json({ error: 'Forbidden' }, 403);
     }
     const isUserAction = userId !== 'service-role';
+    // After the free checks above, so a malformed request costs no RPC.
+    let parentManaged = false;
+    if (isUserAction && action !== 'delete') {
+      const access = await cloudAccess(serviceClient(), userId);
+      if (!access.allowed || !access.fileSync) return json({ error: 'Cloud file permission required' }, 403);
+      parentManaged = access.parentManaged;
+    }
     // `action` was already narrowed to exactly the three rate-limited actions
     // above, so there is nothing further to test here.
     if (isUserAction) {
@@ -215,7 +225,7 @@ Deno.serve(async (req)=>{
         ContentLength: size
       });
       const presignedUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: 3600
+        expiresIn: parentManaged ? PARENT_URL_TTL_SECONDS : 3600
       });
       console.log(`[storage-presign] Presigned upload URL generated for: ${path}`);
       return json({ presignedUrl, storagePath: path });
@@ -225,11 +235,10 @@ Deno.serve(async (req)=>{
         Bucket: R2_BUCKET_NAME,
         Key: path
       });
-      const downloadUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: DOWNLOAD_URL_TTL_SECONDS
-      });
+      const expiresIn = parentManaged ? PARENT_URL_TTL_SECONDS : DOWNLOAD_URL_TTL_SECONDS;
+      const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn });
       console.log(`[storage-presign] Signed download URL generated for: ${path}`);
-      return json({ downloadUrl, expiresIn: DOWNLOAD_URL_TTL_SECONDS });
+      return json({ downloadUrl, expiresIn });
     }
     if (action === 'delete') {
       if (!await deleteObject(path)) {

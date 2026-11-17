@@ -21,15 +21,18 @@ import 'models/clipboard_limits.dart';
 import 'repositories/clipboard_repository.dart';
 import 'services/account_prompt_store.dart';
 import 'services/agent_command_handler.dart';
+import 'services/app_review_service.dart';
 import 'services/app_update_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_start_service.dart';
 import 'services/clipboard_sync_service.dart';
+import 'services/cloud_consent_service.dart';
 import 'services/command_line_tool_service.dart';
 import 'services/crash_reporting_service.dart';
 import 'services/desktop_push_service.dart';
 import 'services/device_service.dart';
 import 'services/diagnostic_file_log.dart';
+import 'services/distribution_consent_service.dart';
 import 'services/fcm_service.dart';
 import 'services/file_type_service.dart';
 import 'services/game_mode_service.dart';
@@ -58,6 +61,7 @@ import 'services/lifecycle_controller.dart';
 import 'services/notification_service.dart';
 import 'services/obsidian_service.dart';
 import 'services/packaged_app_data.dart';
+import 'services/public_backend_config.dart';
 import 'services/push_notification_service.dart';
 import 'services/reinstall_keychain_reset.dart';
 import 'services/security_service.dart';
@@ -73,6 +77,7 @@ import 'services/webhook_service.dart';
 import 'services/window_service.dart';
 import 'services/windows_package_service.dart';
 import 'ui/platform_adaptive.dart';
+import 'ui/screens/distribution_onboarding.dart';
 import 'ui/screens/mobile_main_screen.dart';
 import 'ui/screens/mobile_welcome_screen.dart';
 import 'ui/screens/spotlight_screen.dart';
@@ -81,6 +86,7 @@ import 'ui/theme/appearance.dart';
 import 'ui/theme/colors.dart';
 import 'ui/tray_menu_lifecycle.dart';
 import 'ui/viewmodels/spotlight_viewmodel.dart';
+import 'ui/widgets/cloud_access_guard.dart';
 import 'ui/widgets/tray_menu_window.dart';
 import 'utils/auth_callback.dart';
 import 'utils/file_picker_setup.dart';
@@ -99,9 +105,8 @@ import 'utils/windows_working_set.dart';
 // Moved now because there are no released builds to strand - the key is
 // compiled in, so changing it later would mean every old install keeps sending
 // the legacy key and legacy keys could never be turned off.
-const _supabaseUrl = 'https://xhbggxftvnlkotvehwmj.supabase.co';
-const _supabasePublishableKey =
-    'sb_publishable_tTHKyNA1zqQDYC8O_kMvvg_HSaoUYje';
+const _supabaseUrl = PublicBackendConfig.url;
+const _supabasePublishableKey = PublicBackendConfig.publishableKey;
 
 /// Top-level background message handler for Firebase Cloud Messaging.
 /// This handles notifications when the app is terminated or in background.
@@ -134,6 +139,11 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
+    final prefs = await loadConsentPreferences();
+    if (!DistributionConsentService(prefs).isAccepted) return;
+    // A background isolate starts with none of main()'s state.
+    CloudConsentService.seedParentManaged(prefs);
+
     // Before anything that can fail: note that a push really did name this
     // clip. MainActivity is exported, so a notification tap and a third-party
     // app inventing an id look identical in the extras - this record is what
@@ -161,6 +171,18 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
     if (Supabase.instance.client.auth.currentUser == null) {
       debugPrint('[FCM Background] No session in this isolate - skipping');
       return;
+    }
+
+    // RLS already refuses an unauthorized account's read. Only a parent lease
+    // (15 minutes) needs renewing first, or the read fails while still allowed.
+    if (CloudConsentService.parentManaged.value) {
+      final backgroundSession = Supabase.instance.client.auth.currentSession;
+      if (backgroundSession == null ||
+          !(await CloudConsentService.instance.authorize(
+            backgroundSession.accessToken,
+          )).allowed) {
+        return;
+      }
     }
 
     // getById() applies RLS and decrypts, so `content` is plaintext here.
@@ -279,9 +301,34 @@ Future<void> main(List<String> args) async {
     stopped = (e, stack);
   }
 
-  // One instance, so the startup steps below can report a failure they
-  // recovered from through the same Sentry client that wraps the app.
-  final crashReporting = SentryCrashReportingService();
+  WidgetsFlutterBinding.ensureInitialized();
+  // Preserve fresh-install Keychain detection before onboarding writes preferences.
+  if (Platform.isIOS) await clearKeychainLeftByEarlierInstall();
+  // Only one desktop instance may run. Without this, the ghostcopy:// registry
+  // entry starts a whole second app every time Google OAuth redirects back -
+  // second window, second tray icon, second hotkey - and the callback lands in
+  // that new process, so the running app never signs in and the browser sits
+  // on the callback page forever.
+  //
+  // --send-file is exempt: it is a headless one-shot that uploads and exits
+  // without any UI, so a second process there is harmless and simpler.
+  if (_isDesktop() && !args.contains('--send-file')) {
+    final isPrimary = await SingleInstance.instance.acquire(args);
+    if (!isPrimary) {
+      // Arguments were handed to the running instance; nothing else to do.
+      exit(0);
+    }
+  }
+
+  await ensureDistributionConsent(headless: args.contains('--send-file'));
+
+  // No diagnostics SDK starts from a local receipt alone. It follows the
+  // server's classification: on for an allowed, opted-in independent adult,
+  // off for anything else.
+  final crashReporting = SentryCrashReportingService(
+    deferUntilAuthorized: true,
+    authorization: CloudConsentService.authorization,
+  );
   return crashReporting.run(() {
     if (stopped case (final error, final stack)) {
       Error.throwWithStackTrace(error, stack);
@@ -292,13 +339,10 @@ Future<void> main(List<String> args) async {
 
 Future<void> _appMain(
   List<String> args,
-  ICrashReportingService crashReporting,
+  SentryCrashReportingService crashReporting,
 ) async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Before anything reads the Keychain, or writes a preference: a fresh
-  // install is recognised by having none yet.
-  if (Platform.isIOS) await clearKeychainLeftByEarlierInstall();
+  locator.registerSingleton<SentryCrashReportingService>(crashReporting);
 
   // Flutter's image cache defaults to 100MB / 1000 images, which is sized for
   // an app that scrolls through photos. This one shows small history
@@ -351,22 +395,6 @@ Future<void> _appMain(
         FlutterError.presentError(details);
       }
     };
-  }
-
-  // Only one desktop instance may run. Without this, the ghostcopy:// registry
-  // entry starts a whole second app every time Google OAuth redirects back -
-  // second window, second tray icon, second hotkey - and the callback lands in
-  // that new process, so the running app never signs in and the browser sits
-  // on the callback page forever.
-  //
-  // --send-file is exempt: it is a headless one-shot that uploads and exits
-  // without any UI, so a second process there is harmless and simpler.
-  if (_isDesktop() && !args.contains('--send-file')) {
-    final isPrimary = await SingleInstance.instance.acquire(args);
-    if (!isPrimary) {
-      // Arguments were handed to the running instance; nothing else to do.
-      exit(0);
-    }
   }
 
   // Check if app was launched at startup (for hidden mode)
@@ -425,10 +453,34 @@ Future<void> _appMain(
   ]);
 
   // Initialize services that depend on Supabase
+  CloudConsentService.currentAccessToken = () =>
+      Supabase.instance.client.auth.currentSession?.accessToken;
   final deviceService = DeviceService();
   final authService = AuthService(
     deviceService: deviceService,
     pkceStore: pkceStore,
+    beforeGuestCreation: CloudConsentService.instance.beforeGuestCreation,
+    beforeAccountChange: crashReporting.pauseForAccountChange,
+    recreateGuestAfterSignOut: () => !CloudConsentService.parentManaged.value,
+    pauseCloudSetup: () async {
+      final prefs = await loadConsentPreferences();
+      await prefs.setBool(IDistributionConsentService.cloudPausedKey, true);
+    },
+    beforeIndependentAuth: () async {
+      if (CloudConsentService.parentManaged.value) {
+        throw Exception(
+          'Use parent-managed setup and device linking for this account.',
+        );
+      }
+    },
+    authorizeCloud: () async {
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session == null) throw Exception('Sign in required.');
+      final consent = await CloudConsentService.instance.authorize(
+        session.accessToken,
+      );
+      if (!consent.allowed) throw Exception('Cloud authorization required.');
+    },
   );
 
   locator
@@ -746,6 +798,9 @@ Future<void> _appMain(
     locator
       ..registerSingleton<ISettingsService>(settingsService)
       ..registerSingleton<AccountPromptStore>(accountPromptStore)
+      ..registerSingleton<IAppReviewService>(
+        AppReviewService(await loadConsentPreferences()),
+      )
       // Core mobile services required by screens/viewmodels even when
       // Firebase/FCM is not configured.
       ..registerSingleton<IClipboardRepository>(ClipboardRepository.instance)
@@ -754,6 +809,7 @@ Future<void> _appMain(
 
     try {
       await Firebase.initializeApp();
+      await FirebaseMessaging.instance.setAutoInitEnabled(true);
       debugPrint('[App] ✅ Firebase initialized for mobile');
 
       // Register background message handler (must be before other FCM setup)
@@ -1108,15 +1164,12 @@ class _MyAppState extends State<MyApp> with WindowListener {
         _mobileAuthComplete = true;
         debugPrint('[Mobile] User already signed in, skipping welcome screen');
 
-        // Persist the FCM token on THIS path too. It was only ever written
+        // The FCM token is persisted for this path too, once the account
+        // guard authorizes it (onAuthorized below). It was once only written
         // inside MobileWelcomeScreen's onAuthComplete callback, which never
-        // runs for an already-signed-in user - the welcome screen is skipped
-        // entirely. So the token was fetched on every launch and thrown away,
-        // and the devices row kept whatever token happened to be current at
-        // first sign-in. FCM rotates tokens (reinstall, cleared data, restore
-        // to a new device), and every rotation silently killed push until the
-        // user signed out and back in.
-        unawaited(_registerDeviceForPush());
+        // runs for an already-signed-in user, so every FCM token rotation
+        // (reinstall, cleared data, restore to a new device) silently killed
+        // push until the user signed out and back in.
       }
     }
   }
@@ -1129,12 +1182,30 @@ class _MyAppState extends State<MyApp> with WindowListener {
     // Awaited here rather than at startup: by the time this runs the UI is
     // already on screen, so waiting on Google's registration servers costs the
     // user nothing.
-    final token = await widget.fcmTokenFuture;
+    final prefs = await loadConsentPreferences();
+    // A permission denial deleted the token and turned auto-init off. The
+    // launch-time token is then stale or missing, so fetch a new one.
+    final revoked =
+        prefs.getBool(IDistributionConsentService.pushRevokedKey) == true;
+    String? token;
+    if (revoked && locator.isRegistered<IFcmService>()) {
+      try {
+        await FirebaseMessaging.instance.setAutoInitEnabled(true);
+        token = await locator<IFcmService>().getToken();
+      } on Exception {
+        // Device sync can register without push during a Firebase outage.
+      }
+    } else {
+      token = await widget.fcmTokenFuture;
+    }
     try {
       final registered = await locator<IDeviceService>().registerCurrentDevice(
         fcmToken: token,
       );
       if (registered && token != null) {
+        if (revoked) {
+          await prefs.remove(IDistributionConsentService.pushRevokedKey);
+        }
         debugPrint('[Mobile] ✅ FCM token stored for signed-in device');
       } else {
         debugPrint(
@@ -1543,7 +1614,24 @@ class _MyAppState extends State<MyApp> with WindowListener {
         debugShowCheckedModeBanner: false,
         // Keep the Navigator full-width for iOS edge-back gestures. Mobile
         // screens apply horizontal safe areas inside their route content.
-        home: _buildHome(),
+        home: CloudAccessGuard(
+          builder: _buildHome,
+          watchAuthorization: watchCloudAuthorization,
+          onAuthorized: (authorization) {
+            if (!_isDesktop()) {
+              // The one registration per authorized account, already signed in
+              // or not. A fresh FCM token is fetched only when a denial
+              // revoked push (see CloudAccessGuard).
+              unawaited(_registerDeviceForPush());
+            }
+          },
+          onBlocked: () {
+            // A single redirect covers any settings/auth route above the gate.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+            });
+          },
+        ),
       ),
     );
   }
@@ -1573,7 +1661,9 @@ class _MyAppState extends State<MyApp> with WindowListener {
     }
 
     // Mobile app - show welcome screen or main screen based on auth state
-    if (!_mobileAuthComplete) {
+    if ((Supabase.instance.client.auth.currentSession == null ||
+            !_mobileAuthComplete) &&
+        !CloudConsentService.parentManaged.value) {
       return MobileWelcomeScreen(
         fcmTokenFuture: widget.fcmTokenFuture,
         onAuthComplete: () async {
