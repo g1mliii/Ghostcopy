@@ -49,12 +49,9 @@ class DistributionConsentService implements IDistributionConsentService {
 
   @override
   bool get diagnosticsAllowed =>
-      // ageGroup is null unless the receipt is accepted.
+      // ageGroup is null unless the receipt is accepted. Crash reporting also
+      // requires the server to classify the session as an independent adult.
       ageGroup == DistributionAgeGroup.adult &&
-      _preferences.getBool(
-            IDistributionConsentService.diagnosticsDisabledKey,
-          ) !=
-          true &&
       _receipt?['diagnosticsAllowed'] == true;
 
   @override

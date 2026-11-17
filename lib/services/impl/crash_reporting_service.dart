@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sentry_flutter/sentry_flutter.dart';
 
+import '../cloud_consent_service.dart';
 import '../crash_reporting_service.dart';
+import '../distribution_consent_service.dart';
 import '../packaged_app_data.dart';
 
 /// The GhostCopy Sentry project (spiderweb/flutter). A DSN only lets a client
@@ -22,30 +24,68 @@ class SentryCrashReportingService implements ICrashReportingService {
   SentryCrashReportingService({
     bool? enabled,
     this.deferUntilAuthorized = false,
+    ValueListenable<CloudAuthorization?>? authorization,
+    Future<bool> Function()? optedIn,
     Future<void> Function()? initializeSdk,
     Future<void> Function()? stopSdk,
   }) : _enabled = enabled ?? kReleaseMode,
+       _authorization = authorization,
+       _optedIn = optedIn ?? _receiptOptedIn,
        _initializeSdk = initializeSdk ?? _initializeSentry,
-       _stopSdk = stopSdk ?? Sentry.close;
+       _stopSdk = stopSdk ?? Sentry.close {
+    if (_enabled) authorization?.addListener(_followAuthorization);
+  }
 
   final bool _enabled;
   final bool deferUntilAuthorized;
+  final ValueListenable<CloudAuthorization?>? _authorization;
+  final Future<bool> Function() _optedIn;
   final Future<void> Function() _initializeSdk;
   final Future<void> Function() _stopSdk;
   Future<void>? _initializing;
+  Future<void> _following = Future<void>.value();
   bool _pausedForAccountChange = false;
   bool _active = false;
 
   static Future<void> _initializeSentry() =>
       SentryFlutter.init(configureCrashReporting);
 
+  /// The adult's own choice on this device's setup receipt.
+  static Future<bool> _receiptOptedIn() async => DistributionConsentService(
+    await loadConsentPreferences(),
+  ).diagnosticsAllowed;
+
+  /// Run diagnostics only while the server classifies the current session as
+  /// an allowed, independent adult who opted in on this device. Anything else -
+  /// parent-managed, withdrawn, signed out - stops them. Changes are applied in
+  /// order, each against the latest classification.
+  void _followAuthorization() {
+    _following = _following.then((_) async {
+      final current = _authorization?.value;
+      try {
+        if (current != null &&
+            current.allowed &&
+            current.independentAdult &&
+            await _optedIn()) {
+          await startAfterAuthorization();
+        } else {
+          await _stop();
+        }
+      } on Exception catch (e) {
+        debugPrint('[CrashReporting] Could not follow authorization: $e');
+      }
+    });
+  }
+
   /// Called only after server authorization confirms an opted-in adult.
+  @visibleForTesting
   Future<void> startAfterAuthorization() async {
     if (!_enabled || _pausedForAccountChange) return;
     try {
       await (_initializing ??= _start());
     } on Exception catch (e) {
       _pausedForAccountChange = true;
+      _initializing = null;
       await _stopSdk();
       debugPrint('[CrashReporting] Could not start diagnostics: $e');
     }
@@ -56,18 +96,24 @@ class SentryCrashReportingService implements ICrashReportingService {
     _active = true;
   }
 
+  Future<void> _stop() async {
+    final starting = _initializing;
+    _initializing = null;
+    try {
+      await starting;
+    } finally {
+      if (_active) {
+        _active = false;
+        await _stopSdk();
+      }
+    }
+  }
+
   /// Stop before installing any new session. Re-enable only on the next launch,
   /// after fresh classification, so stale authorizations cannot restart it.
   Future<void> pauseForAccountChange() async {
     _pausedForAccountChange = true;
-    try {
-      await _initializing;
-    } finally {
-      if (_active) {
-        await _stopSdk();
-        _active = false;
-      }
-    }
+    await _stop();
   }
 
   @override

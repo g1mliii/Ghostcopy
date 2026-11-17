@@ -61,10 +61,7 @@ class _Fixture {
 
   Future<void> open({bool parentManaged = true}) async {
     serverLease = now.add(const Duration(minutes: 15));
-    SharedPreferences.setMockInitialValues({
-      'media_cache_owner': 'child',
-      'parent_managed_diagnostics_disabled': true,
-    });
+    SharedPreferences.setMockInitialValues({'media_cache_owner': 'child'});
     final local = DistributionConsentService(
       await SharedPreferences.getInstance(),
     );

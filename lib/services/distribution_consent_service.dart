@@ -16,7 +16,10 @@ abstract class IDistributionConsentService {
 
   /// A parent-managed account is old enough to confirm independent setup.
   static const graduationPendingKey = 'distribution_graduation_pending';
-  static const diagnosticsDisabledKey = 'parent_managed_diagnostics_disabled';
+
+  /// A permission denial deleted this device's push token; the next
+  /// authorized registration must fetch a new one.
+  static const pushRevokedKey = 'distribution_push_revoked';
   static const declaredAgeKey = 'distribution_declared_age';
   static const declaredCountryKey = 'distribution_declared_country';
 

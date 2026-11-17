@@ -102,14 +102,14 @@ class SettingsService implements ISettingsService {
   @override
   Future<bool> getAutoSendEnabled() async {
     _ensureInitialized();
-    if (CloudConsentService.isParentManaged(_prefs!)) return false;
+    if (CloudConsentService.parentManaged.value) return false;
     return _prefs!.getBool(_keyAutoSendEnabled) ?? _defaultAutoSendEnabled;
   }
 
   @override
   Future<void> setAutoSendEnabled({required bool enabled}) async {
     _ensureInitialized();
-    if (enabled && CloudConsentService.isParentManaged(_prefs!)) {
+    if (enabled && CloudConsentService.parentManaged.value) {
       throw Exception('Parent-managed accounts use manual sending.');
     }
     await _prefs!.setBool(_keyAutoSendEnabled, enabled);

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
-import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'distribution_consent_service.dart';
@@ -40,11 +39,9 @@ class CloudConsentService {
   CloudConsentService({
     http.Client? client,
     FlutterSecureStorage? storage,
-    Future<void> Function()? stopDiagnostics,
     DateTime Function()? now,
   }) : _client = client ?? TimeoutHttpClient(),
        _storage = storage ?? const FlutterSecureStorage(),
-       _stopDiagnostics = stopDiagnostics ?? Sentry.close,
        _now = now ?? DateTime.now;
 
   static final instance = CloudConsentService();
@@ -56,11 +53,35 @@ class CloudConsentService {
   static CloudAuthorization? authorizationForSession(String accessToken) =>
       _authorizedAccessToken == accessToken ? authorization.value : null;
 
-  /// Parent-managed by the server's classification or this device's setup.
-  static bool isParentManaged(SharedPreferences prefs) =>
-      authorization.value?.parentManaged == true ||
-      DistributionConsentService(prefs).ageGroup ==
+  /// The one answer to "is this a parent-managed account?".
+  ///
+  /// Seeded from this device's setup receipt (see [seedParentManaged]) so it is
+  /// right before any network call, then replaced by the server's
+  /// classification each time [authorize] classifies the current session.
+  static final parentManaged = ValueNotifier<bool>(false);
+
+  /// Seed [parentManaged] from the local setup receipt. Call once per isolate
+  /// before anything reads it; a later server classification overrides it.
+  static void seedParentManaged(SharedPreferences prefs) =>
+      parentManaged.value =
+          DistributionConsentService(prefs).ageGroup ==
           DistributionAgeGroup.parentManaged;
+
+  /// A cached classification is reused until a parent lease is this close to
+  /// expiring. The access guard renews it this long before expiry too.
+  static const leaseMargin = Duration(minutes: 2);
+
+  /// [authorizationForSession], but only while it can stand in for a server
+  /// check: allowed, and for a parent-managed account, with a lease that has
+  /// more than [leaseMargin] left.
+  CloudAuthorization? freshAuthorizationForSession(String accessToken) {
+    final cached = authorizationForSession(accessToken);
+    if (cached == null || !cached.allowed) return null;
+    if (!cached.parentManaged) return cached;
+    return cached.validUntil?.isAfter(_now().add(leaseMargin)) == true
+        ? cached
+        : null;
+  }
 
   /// Wired after Supabase initializes; stale account responses cannot update UI.
   static String? Function()? currentAccessToken;
@@ -70,7 +91,6 @@ class CloudConsentService {
       currentAccessToken == null || currentAccessToken!() == accessToken;
   final http.Client _client;
   final FlutterSecureStorage _storage;
-  final Future<void> Function() _stopDiagnostics;
   final DateTime Function() _now;
   final _requests = <String, Future<CloudAuthorization>>{};
 
@@ -131,8 +151,7 @@ class CloudConsentService {
     if (prefs.getBool(IDistributionConsentService.cloudPausedKey) == true) {
       throw Exception('Review account setup before signing in.');
     }
-    if (DistributionConsentService(prefs).ageGroup ==
-        DistributionAgeGroup.parentManaged) {
+    if (parentManaged.value) {
       final status = await poll();
       if (status['status'] != 'authorized' || status['hasAccount'] != false) {
         throw Exception(
@@ -212,16 +231,6 @@ class CloudConsentService {
           ? DateTime.tryParse(result['validUntil']! as String)
           : null,
     );
-    if (snapshot.parentManaged &&
-        prefs.getBool(IDistributionConsentService.diagnosticsDisabledKey) !=
-            true) {
-      // Stop collection before a storage failure can interrupt reconciliation.
-      await _stopDiagnostics();
-      await prefs.setBool(
-        IDistributionConsentService.diagnosticsDisabledKey,
-        true,
-      );
-    }
     if (snapshot.allowed &&
         snapshot.parentManaged &&
         result['deviceClaim'] is String &&
@@ -248,12 +257,12 @@ class CloudConsentService {
         prefs.getBool(IDistributionConsentService.graduationPendingKey) ==
             true) {
       await _storage.delete(key: claimKey);
-      await prefs.remove(IDistributionConsentService.diagnosticsDisabledKey);
       await prefs.setString(IDistributionConsentService.declaredAgeKey, '18+');
       await prefs.remove(IDistributionConsentService.graduationPendingKey);
     }
     if (_isCurrent(accessToken)) {
       _authorizedAccessToken = accessToken;
+      parentManaged.value = snapshot.parentManaged;
       authorization.value = snapshot;
     }
     return snapshot;

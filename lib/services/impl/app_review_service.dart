@@ -44,7 +44,7 @@ class AppReviewService implements IAppReviewService {
   bool get canReview =>
       _supported &&
       CloudConsentService.authorization.value?.allowed == true &&
-      CloudConsentService.authorization.value?.parentManaged == false &&
+      !CloudConsentService.parentManaged.value &&
       // ageGroup is null unless the setup receipt is accepted.
       _consent.ageGroup == DistributionAgeGroup.adult;
 

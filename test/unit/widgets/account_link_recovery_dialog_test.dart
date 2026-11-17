@@ -41,8 +41,8 @@ void main() {
                     headers: {'content-type': 'application/json'},
                   )
                 : http.Response(
-                    '{"error":"invalid_pin"}',
-                    403,
+                    '{"error":"Incorrect PIN","code":"invalid_pin"}',
+                    401,
                     headers: {'content-type': 'application/json'},
                   );
           }),
@@ -97,7 +97,7 @@ void main() {
             as Future<void> Function(),
       );
       await tester.pumpAndSettle();
-      expect(find.textContaining('Could not link.'), findsOneWidget);
+      expect(find.textContaining('Incorrect PIN.'), findsOneWidget);
       verifyNever(() => auth.signInWithRefreshToken(any()));
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getBool('distribution_cloud_paused'), isTrue);

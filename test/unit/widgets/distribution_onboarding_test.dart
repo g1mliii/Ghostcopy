@@ -213,16 +213,9 @@ void main() {
     await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
     await prefs.setString('distribution_declared_age', '17');
     await prefs.setString('distribution_declared_country', 'CA');
-    cloud
-      ..claim = 'claim'
-      ..approved = true
-      ..hasAccount = true
-      ..independentEligible = true;
-    await expectLater(
-      ensureDistributionConsent(headless: true, cloud: cloud),
-      throwsException,
-    );
-    expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+    // CloudAccessGuard asks about eligibility after the first frame and sets
+    // this; the onboarding then starts at the adult acknowledgement.
+    await prefs.setBool('distribution_graduation_pending', true);
     var accepted = false;
     await pump(tester, () => accepted = true);
     expect(find.text('Your choice, clearly'), findsOneWidget);
@@ -247,15 +240,23 @@ void main() {
     expect(prefs.getBool('distribution_graduation_pending'), isTrue);
   }, variant: mobile);
 
-  test('authorized children below adulthood retain headless access', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
-    cloud
-      ..claim = 'claim'
-      ..approved = true;
-    await ensureDistributionConsent(headless: true, cloud: cloud);
-    expect(prefs.getBool('distribution_graduation_pending'), isNull);
-  });
+  test(
+    'an accepted parent-managed receipt starts without a network check',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await DistributionConsentService(
+        prefs,
+      ).acceptParentManaged(country: 'CA');
+      cloud
+        ..claim = 'claim'
+        ..approved = false
+        ..independentEligible = true;
+      await ensureDistributionConsent(headless: true, cloud: cloud);
+      expect(cloud.actions, isEmpty);
+      expect(prefs.getBool('distribution_graduation_pending'), isNull);
+      expect(CloudConsentService.parentManaged.value, isTrue);
+    },
+  );
 
   testWidgets(
     'pending setup can cancel and send to a corrected parent email',

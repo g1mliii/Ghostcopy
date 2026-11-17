@@ -19,28 +19,20 @@ import '../theme/colors.dart';
 
 /// Runs before cloud, crash-reporting, authentication and clipboard services.
 /// Headless processes cannot bypass the first interactive acknowledgement.
+///
+/// An accepted receipt returns at once, with no network call: a parent-managed
+/// account's permission and graduation checks run inside CloudAccessGuard
+/// after the first frame, so an offline launch is not held on a blank screen.
 Future<void> ensureDistributionConsent({
   required bool headless,
   CloudConsentService? cloud,
 }) async {
   final prefs = await loadConsentPreferences();
+  CloudConsentService.seedParentManaged(prefs);
   final consent = DistributionConsentService(prefs);
   if (consent.isAccepted &&
       prefs.getBool(IDistributionConsentService.cloudPausedKey) != true) {
-    if (consent.ageGroup != DistributionAgeGroup.parentManaged) return;
-    try {
-      final status = await (cloud ?? CloudConsentService.instance).poll();
-      if (status['independentEligible'] == true) {
-        await prefs.setBool(
-          IDistributionConsentService.graduationPendingKey,
-          true,
-        );
-      } else if (status['status'] == 'authorized') {
-        return;
-      }
-    } on Exception {
-      // The interactive screen lets the parent retry while cloud stays off.
-    }
+    return;
   }
   if (headless) throw Exception('Open GhostCopy to complete setup first.');
   final saved = prefs.getString('theme_mode');
@@ -310,6 +302,9 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
 
   void _finish() {
     if (!mounted) return;
+    // Until the server classifies the new session, the receipt just written
+    // is the best answer.
+    CloudConsentService.seedParentManaged(widget.prefs);
     setState(() => _completed = true);
     widget.onAccepted();
   }

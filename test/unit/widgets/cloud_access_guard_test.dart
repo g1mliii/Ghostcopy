@@ -31,6 +31,7 @@ class _Consent extends CloudConsentService {
     await pending?.future;
     final error = failure;
     if (error != null) throw error;
+    CloudConsentService.parentManaged.value = true;
     return CloudAuthorization(
       allowed: allowed,
       parentManaged: true,
@@ -94,7 +95,50 @@ Map<String, Object?> _session(String id, [String signature = 'signature']) {
   };
 }
 
+/// Leases like the server: 15 minutes from each check, cached per token.
+class _LeaseConsent extends CloudConsentService {
+  _LeaseConsent(this.clock);
+  final DateTime Function() clock;
+  final checks = <DateTime>[];
+  bool allowed = true;
+  bool eligible = false;
+  CloudAuthorization? _cached;
+
+  @override
+  Future<Map<String, Object?>> poll() async => {
+    'status': 'authorized',
+    'hasAccount': true,
+    'independentEligible': eligible,
+  };
+
+  @override
+  Future<CloudAuthorization> authorize(String accessToken) async {
+    checks.add(clock());
+    CloudConsentService.parentManaged.value = true;
+    return _cached = CloudAuthorization(
+      allowed: allowed,
+      parentManaged: true,
+      fileSync: false,
+      validUntil: clock().add(const Duration(minutes: 15)),
+    );
+  }
+
+  @override
+  CloudAuthorization? freshAuthorizationForSession(String accessToken) {
+    final cached = _cached;
+    return cached != null &&
+            cached.allowed &&
+            cached.validUntil!.isAfter(
+              clock().add(CloudConsentService.leaseMargin),
+            )
+        ? cached
+        : null;
+  }
+}
+
 void main() {
+  setUp(() => CloudConsentService.parentManaged.value = false);
+
   testWidgets(
     'auth errors and refresh preserve drafts; switching accounts blocks immediately',
     (tester) async {
@@ -103,6 +147,7 @@ void main() {
       await DistributionConsentService(
         prefs,
       ).acceptParentManaged(country: 'CA');
+      CloudConsentService.seedParentManaged(prefs);
       final client = (await tester.runAsync(
         () async => SupabaseClient(
           'https://example.test',
@@ -189,6 +234,7 @@ void main() {
       await DistributionConsentService(
         prefs,
       ).acceptParentManaged(country: 'CA');
+      CloudConsentService.seedParentManaged(prefs);
       final requests = <String>[];
       final client = (await tester.runAsync(
         () async => SupabaseClient(
@@ -344,4 +390,186 @@ void main() {
     timeout: const Timeout(Duration(seconds: 30)),
     variant: const TargetPlatformVariant({TargetPlatform.android}),
   );
+
+  group('parent lease cadence', () {
+    late DateTime now;
+    late _LeaseConsent consent;
+    late SupabaseClient client;
+    late ValueNotifier<int> revision;
+    late StreamController<Map<String, dynamic>> rows;
+
+    Future<void> elapse(WidgetTester tester, Duration duration) async {
+      now = now.add(duration);
+      await tester.pump(duration);
+      await tester.pump();
+    }
+
+    Future<void> settle(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump();
+    }
+
+    Future<void> open(WidgetTester tester, {bool eligible = false}) async {
+      final prefs = await SharedPreferences.getInstance();
+      await DistributionConsentService(
+        prefs,
+      ).acceptParentManaged(country: 'CA');
+      CloudConsentService.seedParentManaged(prefs);
+      now = DateTime.utc(2026, 11, 17, 12);
+      consent = _LeaseConsent(() => now)..eligible = eligible;
+      rows = StreamController<Map<String, dynamic>>.broadcast();
+      client = (await tester.runAsync(
+        () async => SupabaseClient(
+          'https://example.test',
+          'public',
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+          httpClient: MockClient((_) async => http.Response('{}', 200)),
+        ),
+      ))!;
+      await client.auth.recoverSession(jsonEncode(_session('child')));
+      final encryption = _Encryption();
+      revision = ValueNotifier(0);
+      when(() => encryption.keyRevision).thenReturn(revision);
+      when(() => encryption.initialize(any())).thenAnswer((_) async {});
+      when(encryption.isEnabled).thenAnswer((_) async => true);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CloudAccessGuard(
+            client: client,
+            consent: consent,
+            encryption: encryption,
+            isDesktop: false,
+            now: () => now,
+            revokePush: () async {},
+            watchAuthorization: (_, _) => rows.stream,
+            builder: () => const Text('Private clipboard'),
+          ),
+        ),
+      );
+      await settle(tester);
+    }
+
+    Future<void> close(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox());
+      revision.dispose();
+      await rows.close();
+      await tester.runAsync(client.dispose);
+    }
+
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    testWidgets(
+      'one check per lease, two minutes before expiry, rescheduled each time',
+      (tester) async {
+        await open(tester);
+        expect(find.text('Private clipboard'), findsOneWidget);
+        expect(consent.checks, hasLength(1));
+        // Lease 15 minutes: nothing until 13 minutes have passed.
+        await elapse(tester, const Duration(minutes: 12, seconds: 59));
+        expect(consent.checks, hasLength(1));
+        await elapse(tester, const Duration(seconds: 1));
+        expect(consent.checks, hasLength(2));
+        // The renewed lease reschedules the timer from the new expiry.
+        await elapse(tester, const Duration(minutes: 12, seconds: 59));
+        expect(consent.checks, hasLength(2));
+        await elapse(tester, const Duration(seconds: 1));
+        expect(consent.checks, hasLength(3));
+        await close(tester);
+      },
+      variant: const TargetPlatformVariant({TargetPlatform.android}),
+    );
+
+    testWidgets(
+      'resume reuses a fresh lease and asks the server once it is near expiry',
+      (tester) async {
+        await open(tester);
+        expect(consent.checks, hasLength(1));
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await elapse(tester, const Duration(minutes: 10));
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await settle(tester);
+        expect(consent.checks, hasLength(1));
+        expect(find.text('Private clipboard'), findsOneWidget);
+        // Paused past the timer: resuming inside the margin renews.
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await elapse(tester, const Duration(minutes: 4));
+        expect(consent.checks, hasLength(1));
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await settle(tester);
+        expect(consent.checks, hasLength(2));
+        await close(tester);
+      },
+      variant: const TargetPlatformVariant({TargetPlatform.android}),
+    );
+
+    testWidgets(
+      'try again always asks the server; a blocked account retries each minute',
+      (tester) async {
+        await open(tester);
+        consent.allowed = false;
+        rows.add({'status': 'revoked', 'cloud_sync': false});
+        await settle(tester);
+        expect(consent.checks, hasLength(2));
+        expect(find.text('Ask for parent permission again'), findsOneWidget);
+        await elapse(tester, CloudAccessGuard.retryWithoutLease);
+        expect(consent.checks, hasLength(3));
+        await tester.tap(find.text('Try again'));
+        await settle(tester);
+        expect(consent.checks, hasLength(4));
+        consent.allowed = true;
+        await tester.tap(find.text('Try again'));
+        await settle(tester);
+        expect(consent.checks, hasLength(5));
+        expect(find.text('Private clipboard'), findsOneWidget);
+        await close(tester);
+      },
+      variant: const TargetPlatformVariant({TargetPlatform.android}),
+    );
+
+    testWidgets(
+      'a parent withdrawal shows at once; a lease renewal of the row does not recheck',
+      (tester) async {
+        await open(tester);
+        expect(consent.checks, hasLength(1));
+        rows.add({
+          'status': 'authorized',
+          'cloud_sync': true,
+          'file_sync': false,
+          'account_kind': 'parent_managed',
+        });
+        await settle(tester);
+        expect(consent.checks, hasLength(1));
+        consent.allowed = false;
+        rows.add({
+          'status': 'revoked',
+          'cloud_sync': false,
+          'file_sync': false,
+          'account_kind': 'parent_managed',
+        });
+        await settle(tester);
+        expect(consent.checks, hasLength(2));
+        expect(find.text('Private clipboard'), findsNothing);
+        await close(tester);
+      },
+      variant: const TargetPlatformVariant({TargetPlatform.android}),
+    );
+
+    testWidgets(
+      'an eligible account confirms adult setup after the first frame',
+      (tester) async {
+        await open(tester, eligible: true);
+        await settle(tester);
+        expect(find.text('Your choice, clearly'), findsOneWidget);
+        expect(find.text('Private clipboard'), findsNothing);
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+        await close(tester);
+      },
+      variant: const TargetPlatformVariant({TargetPlatform.android}),
+    );
+  });
 }

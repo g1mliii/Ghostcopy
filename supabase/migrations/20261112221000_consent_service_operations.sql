@@ -17,7 +17,7 @@ DECLARE
 BEGIN
   IF p_action = 'configuration' THEN
     RETURN (SELECT jsonb_build_object('enforced',enforce_all_accounts,
-      'childrenEnabled',child_consent_enabled,'noticeVersion','2026-11-12-v3',
+      'childrenEnabled',child_consent_enabled,'noticeVersion',private.notice_version(),
       'minimumAge',5,'independentAge',18) FROM private.cloud_consent_settings);
   ELSIF p_action = 'access' THEN
     SELECT * INTO profile FROM public.cloud_authorizations WHERE user_id=(p_data->>'userId')::uuid;
@@ -26,14 +26,14 @@ BEGIN
         'fileSync',NOT enforce_all_accounts,'parentManaged',false) FROM private.cloud_consent_settings);
     END IF;
     RETURN jsonb_build_object('allowed',profile.status='authorized' AND profile.cloud_sync
-      AND profile.notice_version='2026-11-12-v3'
+      AND profile.notice_version=private.notice_version()
       AND (profile.account_kind='adult' OR profile.valid_until>now()),
       'fileSync',profile.file_sync,'parentManaged',profile.account_kind='parent_managed');
   ELSIF p_action = 'start' THEN
     IF NOT (SELECT child_consent_enabled AND enforce_all_accounts FROM private.cloud_consent_settings) THEN
       RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='Parent setup is not enabled';
     END IF;
-    IF p_data->>'noticeVersion' IS DISTINCT FROM '2026-11-12-v3' THEN
+    IF p_data->>'noticeVersion' IS DISTINCT FROM private.notice_version() THEN
       RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='Current parental notice required';
     END IF;
     FOREACH result IN ARRAY ARRAY[
@@ -52,7 +52,7 @@ BEGIN
     END LOOP;
     INSERT INTO private.parental_consent_requests(claim_hash,parent_hash,age,country,notice_version)
       VALUES(p_data->>'claimHash',p_data->>'parentHash',(p_data->>'age')::integer,
-        p_data->>'country','2026-11-12-v3') RETURNING * INTO request;
+        p_data->>'country',private.notice_version()) RETURNING * INTO request;
     RETURN to_jsonb(request);
   ELSIF p_action = 'sent' THEN
     UPDATE private.parental_consent_requests SET status='pending',
@@ -114,8 +114,10 @@ BEGIN
     IF NOT FOUND OR request.requires_new_consent OR request.kws_request_id IS NULL
       OR (request.bound_user_id IS NULL AND request.expires_at<=now())
       OR request.refresh_lease_until>now()
+      -- Renew inside the last 3 minutes: the app rechecks 2 minutes before
+      -- expiry (CloudConsentService.leaseMargin), and that check must renew.
       OR (coalesce(p_data->'force','false'::jsonb)<>'true'::jsonb AND (
-        (request.status='authorized' AND request.valid_until>now()+interval '1 minute')
+        (request.status='authorized' AND request.valid_until>now()+interval '3 minutes')
         OR request.last_checked_at>now()-interval '30 seconds')) THEN
       RETURN NULL;
     END IF;
@@ -124,7 +126,7 @@ BEGIN
     RETURN to_jsonb(request);
   ELSIF p_action = 'adult' THEN
     actor := (p_data->>'userId')::uuid;
-    IF p_data->>'noticeVersion' IS DISTINCT FROM '2026-11-12-v3'
+    IF p_data->>'noticeVersion' IS DISTINCT FROM private.notice_version()
       OR p_data->>'age' IS NULL OR p_data->>'country' IS NULL
       OR (p_data->>'age')::integer < 18 OR (p_data->>'age')::integer > 120
       OR p_data->>'country' !~ '^[A-Z]{2}$'
@@ -146,7 +148,7 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='Cloud access has been withdrawn';
     END IF;
     INSERT INTO public.cloud_authorizations(user_id,account_kind,country,notice_version,status,cloud_sync,file_sync)
-      VALUES(actor,'adult',p_data->>'country','2026-11-12-v3','authorized',true,true)
+      VALUES(actor,'adult',p_data->>'country',private.notice_version(),'authorized',true,true)
       ON CONFLICT(user_id) DO UPDATE SET notice_version=excluded.notice_version,updated_at=now()
       RETURNING * INTO profile;
     RETURN to_jsonb(profile);
@@ -156,7 +158,7 @@ BEGIN
       WHERE claim_hash=p_data->>'claimHash' FOR UPDATE;
     IF NOT FOUND OR request.status<>'authorized' OR NOT request.cloud_sync
       OR request.approved_at IS NULL OR request.valid_until IS NULL OR request.valid_until <= now()
-      OR request.notice_version<>'2026-11-12-v3' OR request.requires_new_consent
+      OR request.notice_version<>private.notice_version() OR request.requires_new_consent
       OR (request.bound_user_id IS NULL AND request.expires_at <= now())
       OR (request.bound_user_id IS NOT NULL AND request.bound_user_id<>actor) THEN
       RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='Verified parental authorization required';
