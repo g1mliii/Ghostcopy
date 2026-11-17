@@ -1,8 +1,12 @@
 import { KwsClient, parentalNoticeVersion, verifyKwsSignature } from './kws.ts';
+import { storeRefHash, validStoreRef } from './store_notifications.ts';
 
 type Row = Record<string, unknown>;
 export interface ConsentDependencies {
   operation(action: string, data?: Row): Promise<unknown>;
+  /** public.store_consent_service: binds an app store reference to a request
+   * so the store's consent withdrawal can revoke it. */
+  storeOperation(action: string, data: Row): Promise<unknown>;
   authenticate(request: Request): Promise<{ id: string; email?: string; emailConfirmed: boolean } | null>;
   isMaintenance(request: Request): boolean;
   deleteUser(id: string): Promise<void>;
@@ -215,7 +219,8 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
       if (action === 'start') {
         if (!configured()) throw new Rejected(503, 'Parent setup is not available yet.');
         const email = text(data.parentEmail).trim().toLowerCase();
-        if (!Number.isInteger(data.age) || Number(data.age) < 5 || Number(data.age) > 17 ||
+        const storeRef = data.storeRef === undefined ? null : row(data.storeRef);
+        if ((storeRef && !validStoreRef(storeRef.store, storeRef.id)) || !Number.isInteger(data.age) || Number(data.age) < 5 || Number(data.age) > 17 ||
           !/^[A-Z]{2}$/.test(text(data.country)) || email.length > 254 ||
           !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
           data.noticeVersion !== parentalNoticeVersion || data.noticeAcknowledged !== true) {
@@ -227,6 +232,13 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
           age: data.age, country: data.country, noticeVersion: parentalNoticeVersion,
         }));
         try {
+          // Bound before the parent is asked, so a withdrawal through the
+          // store can never miss a request it was meant to reach.
+          if (storeRef) {
+            const store = text(storeRef.store) as 'app_store' | 'google_play';
+            await deps.storeOperation('bind', { store, requestId: record.id,
+              refHash: await storeRefHash(store, text(storeRef.id), deps.parentPepper) });
+          }
           const providerId = await deps.kws!.requestConsent({ consenteeId: text(record.id),
             parentEmail: email, age: Number(data.age), location: text(data.country) });
           const sent = row(await deps.operation('sent', { id: record.id, kwsRequestId: providerId }));

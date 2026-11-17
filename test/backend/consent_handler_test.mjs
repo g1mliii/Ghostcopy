@@ -7,8 +7,10 @@ import { setupConsentDatabase } from './consent_fixture.mjs';
 
 const moduleUrl = (source) => `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source, { mode: 'transform' })).toString('base64')}`;
 const kwsUrl = moduleUrl(await readFile(new URL('../../supabase/functions/_shared/kws.ts', import.meta.url), 'utf8'));
+const storeUrl = moduleUrl(await readFile(new URL('../../supabase/functions/_shared/store_notifications.ts', import.meta.url), 'utf8'));
 const { createConsentHandler } = await import(moduleUrl((await readFile(
-  new URL('../../supabase/functions/_shared/consent_handler.ts', import.meta.url), 'utf8')).replace("'./kws.ts'", JSON.stringify(kwsUrl))));
+  new URL('../../supabase/functions/_shared/consent_handler.ts', import.meta.url), 'utf8'))
+  .replace("'./kws.ts'", JSON.stringify(kwsUrl)).replace("'./store_notifications.ts'", JSON.stringify(storeUrl))));
 const db = new PGlite();
 const user = '00000000-0000-4000-8000-000000000001';
 const other = '00000000-0000-4000-8000-000000000002';
@@ -21,9 +23,12 @@ const calls = []; const erased = []; const exports = [];
 async function operation(action, data = {}) {
   return (await db.query('SELECT public.consent_service($1,$2::jsonb) AS value', [action, JSON.stringify(data)])).rows[0].value;
 }
+async function storeOperation(action, data) {
+  return (await db.query('SELECT public.store_consent_service($1,$2::jsonb) AS value', [action, JSON.stringify(data)])).rows[0].value;
+}
 function handler() {
   return createConsentHandler({
-    operation, organizationId, productId,
+    operation, storeOperation, organizationId, productId,
     parentPepper: 'a-private-test-only-pepper-at-least-32-characters',
     parentPortalUrl: configurationComplete ? 'https://family.test.kidswebservices.com/' : '',
     webhookSecrets,
@@ -59,7 +64,7 @@ beforeEach(async () => {
   granted = false; files = false; available = true; configurationComplete = true;
   permissionTimes = {};
   calls.length = 0; erased.length = 0; exports.length = 0;
-  await db.exec(`TRUNCATE auth.users CASCADE; TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_audit,private.consent_rate_limits,private.kws_deletion_queue;
+  await db.exec(`TRUNCATE auth.users CASCADE; TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_audit,private.consent_rate_limits,private.kws_deletion_queue CASCADE;
     UPDATE private.cloud_consent_settings SET enforce_all_accounts=true,child_consent_enabled=true;
     INSERT INTO auth.users(id) VALUES('${user}'),('${other}');`);
 });

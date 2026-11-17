@@ -11,6 +11,7 @@ import '../../services/cloud_consent_service.dart';
 import '../../services/consent_countries.dart';
 import '../../services/distribution_consent_service.dart';
 import '../../services/settings_service.dart';
+import '../../services/store_age_signal_service.dart';
 import '../../utils/auth_errors.dart';
 import '../platform_adaptive.dart';
 import '../theme/app_theme.dart';
@@ -92,12 +93,16 @@ class DistributionOnboarding extends StatefulWidget {
     required this.onAccepted,
     this.cloud,
     this.parentAccount = false,
+    this.storeAge,
     super.key,
   });
   final SharedPreferences prefs;
   final VoidCallback onAccepted;
   final CloudConsentService? cloud;
   final bool parentAccount;
+
+  /// The app store's age signal. Defaults to the platform channel.
+  final IStoreAgeSignalService? storeAge;
 
   @override
   State<DistributionOnboarding> createState() => _DistributionOnboardingState();
@@ -120,8 +125,34 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     widget.prefs,
   );
   late bool _blocked = _consent.isAgeBlocked;
+  late final IStoreAgeSignalService _store =
+      widget.storeAge ?? StoreAgeSignalService();
+
+  /// The store's answer, held only for this setup. Null while not asked.
+  StoreAgeSignal? _signal;
+  bool _checkingStore = false;
 
   bool get _adult => _age == '18+';
+
+  bool get _storeAdult => _signal?.status == StoreAgeStatus.adult;
+  bool get _storeMinor => _signal?.status == StoreAgeStatus.minor;
+  bool get _storeNotApproved => _signal?.status == StoreAgeStatus.notApproved;
+
+  String get _storeName =>
+      _signal?.store == AppStore.googlePlay ? 'Google Play' : 'Apple Account';
+
+  /// A parent-managed account re-consenting after the parental notice
+  /// changed: the store's significant-change consent applies too.
+  bool get _significantChange {
+    final approved = widget.prefs.getString(
+      IDistributionConsentService.storeConsentNoticeKey,
+    );
+    return approved != null && approved != IDistributionConsentService.version;
+  }
+
+  static String get _changeDescription =>
+      'GhostCopy updated its parental notice (${IDistributionConsentService.version}). '
+      'Review what changed at ghostcopy.app/parents before allowing cloud sync again.';
 
   @override
   void initState() {
@@ -142,6 +173,39 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     if (_age != null && _country != null && !_adult && !_blocked) {
       unawaited(_restorePending());
     }
+    // The store's age category replaces the age question when it has one.
+    // A saved age is the user's earlier answer and is not asked again.
+    if (_age == null && !widget.parentAccount && !_blocked) {
+      unawaited(_askStore());
+    }
+  }
+
+  Future<void> _askStore() async {
+    setState(() {
+      _checkingStore = true;
+      _error = null;
+    });
+    final signal = await _store.request();
+    if (!mounted) return;
+    setState(() {
+      _checkingStore = false;
+      _signal = signal;
+      switch (signal.status) {
+        case StoreAgeStatus.adult:
+          _age = '18+';
+        case StoreAgeStatus.minor:
+          final lower = '${signal.ageLower ?? 0}';
+          final choices = signal.ageChoices;
+          _age = choices.contains(lower)
+              ? lower
+              : choices.length == 1
+              ? choices.single
+              : null;
+        case StoreAgeStatus.notApproved:
+        case StoreAgeStatus.unavailable:
+          _age = null;
+      }
+    });
   }
 
   Future<void> _restorePending() async {
@@ -209,6 +273,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         );
         _finish();
       } else if (!_pending) {
+        final signal = _signal;
         final result = await _cloud.call(
           'start',
           data: {
@@ -217,6 +282,13 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
             'parentEmail': _parentEmail.text.trim(),
             'noticeVersion': IDistributionConsentService.version,
             'noticeAcknowledged': true,
+            if (signal?.storeRef != null && signal?.store != null)
+              'storeRef': {
+                'store': signal!.store == AppStore.appStore
+                    ? 'app_store'
+                    : 'google_play',
+                'id': signal.storeRef,
+              },
           },
         );
         final token = result['claimToken'];
@@ -226,6 +298,16 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         await _cloud.saveClaim(token);
         _parentEmail.clear();
         if (mounted) setState(() => _pending = true);
+        if (_significantChange) {
+          // Apple: asks the child to send the store's significant-change
+          // request to their parent. Play: the change is declared in Play
+          // Console, so there is nothing to present.
+          await _store.significantChange(
+            version: IDistributionConsentService.version,
+            description: _changeDescription,
+            ask: true,
+          );
+        }
       } else {
         final result = await _cloud.poll();
         _hasAccount = result['hasAccount'] == true;
@@ -254,10 +336,32 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                 : 'Waiting for your parent to verify and allow cloud sync.',
           );
         }
+        if (_significantChange) {
+          final change = await _store.significantChange(
+            version: IDistributionConsentService.version,
+            description: _changeDescription,
+          );
+          if (change == SignificantChangeStatus.declined) {
+            throw Exception(
+              'Your parent declined this GhostCopy update in Screen Time or Family Link. Cloud services stay off.',
+            );
+          }
+          if (change == SignificantChangeStatus.pending) {
+            throw Exception(
+              'Waiting for your parent to approve this GhostCopy update in Screen Time or Family Link.',
+            );
+          }
+        }
         await _consent.acceptParentManaged(country: _country!);
         await widget.prefs.setBool(
           IDistributionConsentService.cloudPausedKey,
           false,
+        );
+        // The version this parent consent covers. A later notice version is
+        // a significant change that the store's consent flow must cover too.
+        await widget.prefs.setString(
+          IDistributionConsentService.storeConsentNoticeKey,
+          IDistributionConsentService.version,
         );
         _finish();
       }
@@ -309,6 +413,12 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     widget.onAccepted();
   }
 
+  String _bandLabel() {
+    final lower = _signal?.ageLower;
+    final upper = _signal?.ageUpper;
+    return lower == null ? 'under ${upper! + 1}' : '$lower–$upper';
+  }
+
   Future<void> _openPolicy(String path) async {
     try {
       if (!await launchUrl(
@@ -349,7 +459,9 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     final enabled =
         !_saving &&
         !_completed &&
+        !_checkingStore &&
         (_step == 0 ? _age != null && _country != null : _step != 1 || _agreed);
+    final waiting = _step == 0 && _storeNotApproved && !_blocked;
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -372,6 +484,8 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                     Text(
                       _blocked
                           ? 'Cloud setup is unavailable'
+                          : waiting
+                          ? 'Waiting for a parent'
                           : [
                               'Before we begin',
                               'Your choice, clearly',
@@ -387,42 +501,69 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                       const Text(
                         'GhostCopy does not create cloud accounts for children under 5. Cloud services stay off. For an existing account or an age entered by mistake, contact support@ghostcopy.app.',
                       )
-                    else ...[
+                    else if (waiting) ...[
+                      Text(
+                        _signal!.pending
+                            ? 'Your parent has not approved this version of GhostCopy in Family Link yet. Cloud services stay off until they do. Ask them to review it, then check again.'
+                            : 'Your parent declined this version of GhostCopy in Family Link, so cloud services stay off. If they change their mind in Family Link, check again.',
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: _checkingStore
+                            ? null
+                            : () => unawaited(_askStore()),
+                        child: Text(
+                          _checkingStore ? 'Please wait…' : 'Check again',
+                        ),
+                      ),
+                    ] else ...[
                       Text(
                         'Step ${_step + 1} of 3',
                         style: TextStyle(color: GhostColors.textSecondary),
                       ),
                       const SizedBox(height: 20),
                       if (_step == 0) ...[
-                        const Text(
-                          'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Tell us your age and country so we can show the right setup. We do not ask for your date of birth.',
+                        Text(
+                          _checkingStore
+                              ? 'Checking the age setting on your app store account…'
+                              : _storeAdult
+                              ? 'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Your $_storeName shares that you are 18 or older, so tell us your country to show the right setup.'
+                              : _storeMinor
+                              ? 'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until a parent gives permission. Your $_storeName shares an age range of ${_bandLabel()}. Choose your age and country. We do not ask for your date of birth.'
+                              : 'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Tell us your age and country so we can show the right setup. We do not ask for your date of birth.',
                         ),
                         const SizedBox(height: 16),
-                        DropdownButtonFormField<String>(
-                          initialValue: _age,
-                          decoration: const InputDecoration(labelText: 'Age'),
-                          items: [
-                            for (final age in [
-                              'Under 5',
-                              for (var i = 5; i < 18; i++) '$i',
-                              if (!widget.parentAccount) '18+',
-                            ])
-                              DropdownMenuItem(value: age, child: Text(age)),
-                          ],
-                          onChanged:
-                              _saving ||
-                                  widget.prefs.containsKey(
-                                        IDistributionConsentService
-                                            .declaredAgeKey,
-                                      ) &&
-                                      widget.prefs.getString(
-                                            IDistributionConsentService
-                                                .declaredAgeKey,
-                                          ) ==
-                                          _age
-                              ? null
-                              : (value) => setState(() => _age = value),
-                        ),
+                        if (!_storeAdult && !_checkingStore)
+                          DropdownButtonFormField<String>(
+                            // Rebuilt when the store's answer narrows the choices.
+                            key: ValueKey(_signal?.status),
+                            initialValue: _age,
+                            decoration: const InputDecoration(labelText: 'Age'),
+                            items: [
+                              for (final age
+                                  in _storeMinor
+                                      ? _signal!.ageChoices
+                                      : [
+                                          'Under 5',
+                                          for (var i = 5; i < 18; i++) '$i',
+                                          if (!widget.parentAccount) '18+',
+                                        ])
+                                DropdownMenuItem(value: age, child: Text(age)),
+                            ],
+                            onChanged:
+                                _saving ||
+                                    widget.prefs.containsKey(
+                                          IDistributionConsentService
+                                              .declaredAgeKey,
+                                        ) &&
+                                        widget.prefs.getString(
+                                              IDistributionConsentService
+                                                  .declaredAgeKey,
+                                            ) ==
+                                            _age
+                                ? null
+                                : (value) => setState(() => _age = value),
+                          ),
                         const SizedBox(height: 16),
                         DropdownButtonFormField<String>(
                           initialValue: _country,
