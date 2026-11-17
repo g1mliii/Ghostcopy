@@ -141,6 +141,8 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
 
     final prefs = await loadConsentPreferences();
     if (!DistributionConsentService(prefs).isAccepted) return;
+    // A background isolate starts with none of main()'s state.
+    CloudConsentService.seedParentManaged(prefs);
 
     // Before anything that can fail: note that a push really did name this
     // clip. MainActivity is exported, so a notification tap and a third-party
@@ -173,8 +175,7 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
 
     // RLS already refuses an unauthorized account's read. Only a parent lease
     // (15 minutes) needs renewing first, or the read fails while still allowed.
-    if (DistributionConsentService(prefs).ageGroup ==
-        DistributionAgeGroup.parentManaged) {
+    if (CloudConsentService.parentManaged.value) {
       final backgroundSession = Supabase.instance.client.auth.currentSession;
       if (backgroundSession == null ||
           !(await CloudConsentService.instance.authorize(
@@ -321,12 +322,12 @@ Future<void> main(List<String> args) async {
 
   await ensureDistributionConsent(headless: args.contains('--send-file'));
 
-  // No diagnostics SDK starts from a local receipt alone. The root account
-  // gate enables it only after the server confirms an opted-in adult.
-  final consent = DistributionConsentService(await loadConsentPreferences());
+  // No diagnostics SDK starts from a local receipt alone. It follows the
+  // server's classification: on for an allowed, opted-in independent adult,
+  // off for anything else.
   final crashReporting = SentryCrashReportingService(
-    enabled: kReleaseMode && consent.diagnosticsAllowed,
     deferUntilAuthorized: true,
+    authorization: CloudConsentService.authorization,
   );
   return crashReporting.run(() {
     if (stopped case (final error, final stack)) {
@@ -460,14 +461,13 @@ Future<void> _appMain(
     pkceStore: pkceStore,
     beforeGuestCreation: CloudConsentService.instance.beforeGuestCreation,
     beforeAccountChange: crashReporting.pauseForAccountChange,
-    recreateGuestAfterSignOut: () =>
-        CloudConsentService.authorization.value?.parentManaged != true,
+    recreateGuestAfterSignOut: () => !CloudConsentService.parentManaged.value,
     pauseCloudSetup: () async {
       final prefs = await loadConsentPreferences();
       await prefs.setBool(IDistributionConsentService.cloudPausedKey, true);
     },
     beforeIndependentAuth: () async {
-      if (CloudConsentService.isParentManaged(await loadConsentPreferences())) {
+      if (CloudConsentService.parentManaged.value) {
         throw Exception(
           'Use parent-managed setup and device linking for this account.',
         );
@@ -1164,15 +1164,12 @@ class _MyAppState extends State<MyApp> with WindowListener {
         _mobileAuthComplete = true;
         debugPrint('[Mobile] User already signed in, skipping welcome screen');
 
-        // Persist the FCM token on THIS path too. It was only ever written
+        // The FCM token is persisted for this path too, once the account
+        // guard authorizes it (onAuthorized below). It was once only written
         // inside MobileWelcomeScreen's onAuthComplete callback, which never
-        // runs for an already-signed-in user - the welcome screen is skipped
-        // entirely. So the token was fetched on every launch and thrown away,
-        // and the devices row kept whatever token happened to be current at
-        // first sign-in. FCM rotates tokens (reinstall, cleared data, restore
-        // to a new device), and every rotation silently killed push until the
-        // user signed out and back in.
-        unawaited(_registerDeviceForPush());
+        // runs for an already-signed-in user, so every FCM token rotation
+        // (reinstall, cleared data, restore to a new device) silently killed
+        // push until the user signed out and back in.
       }
     }
   }
@@ -1181,12 +1178,17 @@ class _MyAppState extends State<MyApp> with WindowListener {
   ///
   /// Safe to run on every launch: registerCurrentDevice() upserts, and
   /// updateFcmToken() is a no-op write when the value has not changed.
-  Future<void> _registerDeviceForPush({bool freshToken = false}) async {
+  Future<void> _registerDeviceForPush() async {
     // Awaited here rather than at startup: by the time this runs the UI is
     // already on screen, so waiting on Google's registration servers costs the
     // user nothing.
+    final prefs = await loadConsentPreferences();
+    // A permission denial deleted the token and turned auto-init off. The
+    // launch-time token is then stale or missing, so fetch a new one.
+    final revoked =
+        prefs.getBool(IDistributionConsentService.pushRevokedKey) == true;
     String? token;
-    if (freshToken && locator.isRegistered<IFcmService>()) {
+    if (revoked && locator.isRegistered<IFcmService>()) {
       try {
         await FirebaseMessaging.instance.setAutoInitEnabled(true);
         token = await locator<IFcmService>().getToken();
@@ -1201,6 +1203,9 @@ class _MyAppState extends State<MyApp> with WindowListener {
         fcmToken: token,
       );
       if (registered && token != null) {
+        if (revoked) {
+          await prefs.remove(IDistributionConsentService.pushRevokedKey);
+        }
         debugPrint('[Mobile] ✅ FCM token stored for signed-in device');
       } else {
         debugPrint(
@@ -1611,18 +1616,13 @@ class _MyAppState extends State<MyApp> with WindowListener {
         // screens apply horizontal safe areas inside their route content.
         home: CloudAccessGuard(
           builder: _buildHome,
+          watchAuthorization: watchCloudAuthorization,
           onAuthorized: (authorization) {
-            if (authorization.allowed && authorization.independentAdult) {
-              final diagnostics = locator
-                  .maybeGet<SentryCrashReportingService>();
-              if (diagnostics != null) {
-                unawaited(diagnostics.startAfterAuthorization());
-              }
-            }
             if (!_isDesktop()) {
-              // Restore push after a successful check for every account,
-              // including an adult retry after a previous permission denial.
-              unawaited(_registerDeviceForPush(freshToken: true));
+              // The one registration per authorized account, already signed in
+              // or not. A fresh FCM token is fetched only when a denial
+              // revoked push (see CloudAccessGuard).
+              unawaited(_registerDeviceForPush());
             }
           },
           onBlocked: () {
@@ -1663,7 +1663,7 @@ class _MyAppState extends State<MyApp> with WindowListener {
     // Mobile app - show welcome screen or main screen based on auth state
     if ((Supabase.instance.client.auth.currentSession == null ||
             !_mobileAuthComplete) &&
-        CloudConsentService.authorization.value?.parentManaged != true) {
+        !CloudConsentService.parentManaged.value) {
       return MobileWelcomeScreen(
         fcmTokenFuture: widget.fcmTokenFuture,
         onAuthComplete: () async {

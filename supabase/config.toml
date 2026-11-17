@@ -4,6 +4,12 @@ project_id = "xhbggxftvnlkotvehwmj"
 [functions.cloud-consent]
 verify_jwt = false
 
+# The App Store posts signed notifications with no Supabase credentials; the
+# handler verifies the JWS against Apple's root. The Play revocation path
+# checks the secret key itself.
+[functions.store-consent-notifications]
+verify_jwt = false
+
 # Signed-out recovery authenticates with a single-use link token and bounded
 # six-digit PIN attempts inside the handler, not a session JWT. The opaque
 # publishable key cannot pass the platform JWT gate.

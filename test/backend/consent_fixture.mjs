@@ -39,4 +39,6 @@ export async function setupConsentDatabase(db) {
   await db.exec(await readFile(new URL('../../supabase/migrations/20261112220000_cloud_consent_authorization.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../../supabase/migrations/20261112221000_consent_service_operations.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../../supabase/migrations/20261112222000_parent_account_and_cleanup.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../../supabase/migrations/20261117120000_cloud_authorizations_realtime.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../../supabase/migrations/20261117130000_store_consent_refs.sql', import.meta.url), 'utf8'));
 }

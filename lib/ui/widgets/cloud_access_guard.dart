@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
@@ -20,8 +21,54 @@ import '../theme/colors.dart';
 import 'account_link_recovery_dialog.dart';
 import 'passphrase_dialog.dart';
 
+/// Realtime changes to the signed-in user's own `cloud_authorizations` row,
+/// as the new row (empty for a delete). RLS limits the feed to that row.
+Stream<Map<String, dynamic>> watchCloudAuthorization(
+  SupabaseClient client,
+  String userId,
+) {
+  // A unique topic per subscription: the previous one may still be leaving
+  // when an account check subscribes again.
+  final topic = 'cloud-authorization-$userId-${_watchSequence++}';
+  RealtimeChannel? channel;
+  late final StreamController<Map<String, dynamic>> changes;
+  changes = StreamController<Map<String, dynamic>>(
+    onListen: () {
+      channel = client
+          .channel(topic)
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'cloud_authorizations',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'user_id',
+              value: userId,
+            ),
+            callback: (payload) => changes.add(payload.newRecord),
+          )
+          .subscribe();
+    },
+    onCancel: () async {
+      final subscribed = channel;
+      channel = null;
+      if (subscribed != null) await client.removeChannel(subscribed);
+      await changes.close();
+    },
+  );
+  return changes.stream;
+}
+
+var _watchSequence = 0;
+
 /// Rechecks the authenticated account, including after switching accounts,
 /// returning to the app and losing a required encryption key.
+///
+/// A parent-managed account is rechecked once, shortly before its permission
+/// lease expires, and at once when [watchAuthorization] reports a change to
+/// its authorization row. Returning to the app reuses a still-fresh check.
+/// RLS enforces a withdrawal on the server immediately either way; this only
+/// decides how soon the UI shows it.
 class CloudAccessGuard extends StatefulWidget {
   const CloudAccessGuard({
     required this.builder,
@@ -32,6 +79,8 @@ class CloudAccessGuard extends StatefulWidget {
     this.encryption,
     this.isDesktop,
     this.revokePush,
+    this.watchAuthorization,
+    this.now,
     super.key,
   });
   final Widget Function() builder;
@@ -43,6 +92,28 @@ class CloudAccessGuard extends StatefulWidget {
   final bool? isDesktop;
   final Future<void> Function()? revokePush;
 
+  /// Usually [watchCloudAuthorization]. Without it, a change shows at the next
+  /// lease check, on return to the app once the lease is stale, or on retry.
+  final Stream<Map<String, dynamic>> Function(
+    SupabaseClient client,
+    String userId,
+  )?
+  watchAuthorization;
+  final DateTime Function()? now;
+
+  /// Retry interval while a parent-managed account has no current lease:
+  /// waiting for permission, blocked, or offline.
+  static const retryWithoutLease = Duration(minutes: 1);
+
+  /// Floor for the lease timer, so a lease the server did not extend cannot
+  /// become a tight loop.
+  static const minimumLeaseDelay = Duration(seconds: 30);
+
+  /// Floor once a server check came back with the lease already held: the
+  /// device clock runs ahead of the server's, which renews only near its own
+  /// expiry.
+  static const unrenewedLeaseDelay = Duration(minutes: 2);
+
   @override
   State<CloudAccessGuard> createState() => _CloudAccessGuardState();
 }
@@ -50,20 +121,35 @@ class CloudAccessGuard extends StatefulWidget {
 class _CloudAccessGuardState extends State<CloudAccessGuard>
     with WidgetsBindingObserver, WindowListener {
   StreamSubscription<AuthState>? _auth;
+  StreamSubscription<Map<String, dynamic>>? _watch;
+  String? _watchedUser;
   Timer? _timer;
   SupabaseClient get _client => widget.client ?? Supabase.instance.client;
   CloudConsentService get _cloud =>
       widget.consent ?? CloudConsentService.instance;
   IEncryptionService get _encryption =>
       widget.encryption ?? EncryptionService.instance;
+  DateTime _now() => (widget.now ?? DateTime.now)();
+  bool get _parent => CloudConsentService.parentManaged.value;
   bool _ready = false;
   bool _busy = false;
   bool _checkAgain = false;
+  bool _forceAgain = false;
   bool _foreground = true;
   bool _notifiedBlocked = false;
   bool _needsKey = false;
-  bool _parent = false;
   bool _needsAccountLink = false;
+
+  /// Lease of the last allowed parent-managed check; null when none is known.
+  DateTime? _validUntil;
+
+  /// The last check due for renewal returned the lease already held: the
+  /// device clock is ahead of the server's, which renews only near its own
+  /// expiry.
+  bool _leaseUnrenewed = false;
+
+  /// Set while an account that has turned 18 confirms independent setup.
+  SharedPreferences? _graduation;
   String? _authorizedUser;
   String? _error;
 
@@ -81,6 +167,10 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
           _onAccountSignal(_client.auth.currentUser?.id),
     );
     unawaited(_check());
+    // Off the startup path: an offline launch must not wait on this.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_checkGraduation()),
+    );
   }
 
   /// Refreshing the same account must preserve the composer and attachments.
@@ -99,25 +189,99 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
 
   bool get _desktop => widget.isDesktop ?? Adaptive.isDesktop;
 
+  /// One timer, rescheduled after every check: [CloudConsentService.leaseMargin]
+  /// before the lease expires, or [CloudAccessGuard.retryWithoutLease] while
+  /// there is none.
   void _maintainTimer() {
-    if (!mounted) {
-      _timer?.cancel();
-      _timer = null;
-      return;
-    }
+    _timer?.cancel();
+    _timer = null;
+    if (!mounted) return;
     final visible =
         !_desktop ||
         !locator.isRegistered<IWindowService>() ||
         locator<IWindowService>().isVisible;
-    if (_parent && _foreground && visible) {
-      _timer ??= Timer.periodic(
-        const Duration(minutes: 1),
-        (_) => unawaited(_check()),
-      );
-    } else {
-      _timer?.cancel();
+    if (!_parent || !_foreground || !visible) return;
+    final lease = _validUntil;
+    // Not renewed: wait until the lease's expiry, when the server will.
+    final margin = _leaseUnrenewed
+        ? Duration.zero
+        : CloudConsentService.leaseMargin;
+    final floor = _leaseUnrenewed
+        ? CloudAccessGuard.unrenewedLeaseDelay
+        : CloudAccessGuard.minimumLeaseDelay;
+    var delay = lease == null
+        ? CloudAccessGuard.retryWithoutLease
+        : lease.difference(_now()) - margin;
+    if (delay < floor) delay = floor;
+    _timer = Timer(delay, () {
       _timer = null;
+      unawaited(_check(force: true));
+    });
+  }
+
+  /// Follow a parent-managed account's own authorization row while signed in.
+  void _maintainWatch() {
+    final watch = widget.watchAuthorization;
+    final wanted = mounted && watch != null && _parent
+        ? _client.auth.currentUser?.id
+        : null;
+    if (wanted == _watchedUser) return;
+    unawaited(_watch?.cancel());
+    _watch = null;
+    _watchedUser = wanted;
+    if (wanted != null) {
+      _watch = watch!(_client, wanted).listen(_authorizationRowChanged);
     }
+  }
+
+  /// Lease renewals update the row too; only a change that would alter the
+  /// answer needs a server check.
+  void _authorizationRowChanged(Map<String, dynamic> row) {
+    final token = _client.auth.currentSession?.accessToken;
+    final cached = token == null
+        ? null
+        : _cloud.freshAuthorizationForSession(token);
+    if (cached != null &&
+        row['status'] == 'authorized' &&
+        row['cloud_sync'] == true &&
+        row['file_sync'] == cached.fileSync &&
+        (row['account_kind'] == 'parent_managed') == cached.parentManaged) {
+      return;
+    }
+    unawaited(_check(force: true));
+  }
+
+  /// A parent-managed account that has turned 18 confirms independent setup
+  /// once. Asked after the first frame rather than before runApp.
+  Future<void> _checkGraduation() async {
+    try {
+      final prefs = await loadConsentPreferences();
+      if (!_parent ||
+          prefs.getBool(IDistributionConsentService.cloudPausedKey) == true) {
+        return;
+      }
+      if (prefs.getBool(IDistributionConsentService.graduationPendingKey) !=
+          true) {
+        final status = await _cloud.poll();
+        if (status['independentEligible'] != true) return;
+        await prefs.setBool(
+          IDistributionConsentService.graduationPendingKey,
+          true,
+        );
+      }
+      if (!mounted) return;
+      _notifyBlocked();
+      setState(() => _graduation = prefs);
+    } on Exception {
+      // Offline or no claim: permission checks carry on, and eligibility is
+      // asked again on the next launch.
+    }
+  }
+
+  void _graduated() {
+    if (!mounted) return;
+    setState(() => _graduation = null);
+    unawaited(_check(force: true));
   }
 
   @override
@@ -148,10 +312,13 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     if (state == AppLifecycleState.resumed) unawaited(_check());
   }
 
-  Future<void> _check() async {
+  /// [force] skips a still-fresh cached classification: the lease timer, a
+  /// changed authorization row, and the user asking to try again.
+  Future<void> _check({bool force = false}) async {
     if (!mounted) return;
     if (_busy) {
       _checkAgain = true;
+      _forceAgain |= force;
       return;
     }
     _busy = true;
@@ -159,13 +326,10 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     var checkedUser = session?.user.id;
     try {
       final prefs = await loadConsentPreferences();
-      final local = DistributionConsentService(prefs);
       final paused =
           prefs.getBool(IDistributionConsentService.cloudPausedKey) == true;
-      if (session == null &&
-          local.ageGroup == DistributionAgeGroup.parentManaged &&
-          !paused) {
-        _parent = true;
+      if (session == null && _parent && !paused) {
+        _validUntil = null;
         final status = await _cloud.poll();
         if (_client.auth.currentSession != null) {
           _checkAgain = true;
@@ -192,10 +356,8 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
       }
       _needsAccountLink = false;
       if (session == null) {
-        if (paused) {
-          _parent = local.ageGroup == DistributionAgeGroup.parentManaged;
-          throw const CloudConsentException(401);
-        }
+        _validUntil = null;
+        if (paused) throw const CloudConsentException(401);
         if (mounted) {
           setState(() {
             _ready = true;
@@ -204,17 +366,29 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         }
         return;
       }
-      final snapshot = await _cloud.authorize(session.accessToken);
+      final held = _validUntil;
+      // Due for renewal by this device's clock, so the server should extend it.
+      final due =
+          held != null &&
+          !held.isAfter(_now().add(CloudConsentService.leaseMargin));
+      final cached = force
+          ? null
+          : _cloud.freshAuthorizationForSession(session.accessToken);
+      final snapshot = cached ?? await _cloud.authorize(session.accessToken);
       // A late response from the previous account must not reveal its screen.
       if (_client.auth.currentUser?.id != session.user.id) {
         return;
       }
-      _parent = snapshot.parentManaged;
+      final lease = snapshot.allowed && snapshot.parentManaged
+          ? snapshot.validUntil
+          : null;
+      if (cached == null) _leaseUnrenewed = due && lease == held;
+      _validUntil = lease;
       if (!snapshot.allowed) {
         throw const CloudConsentException(403);
       }
       await _encryption.initialize(session.user.id);
-      final needsKey = _parent && !await _encryption.isEnabled();
+      final needsKey = snapshot.parentManaged && !await _encryption.isEnabled();
       if (_client.auth.currentUser?.id != checkedUser || !mounted) return;
       if (needsKey) _notifyBlocked();
       if (!needsKey) _notifiedBlocked = false;
@@ -232,6 +406,7 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     } on Exception catch (error) {
       // A failed check belonging to an account we left cannot block its successor.
       if (_client.auth.currentUser?.id != checkedUser) return;
+      _validUntil = null;
       _authorizedUser = null;
       _notifyBlocked();
       // A timeout or key-storage failure is not withdrawn permission.
@@ -254,15 +429,21 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     } finally {
       _busy = false;
       _maintainTimer();
+      _maintainWatch();
       if (_checkAgain && mounted) {
+        final force = _forceAgain;
         _checkAgain = false;
-        unawaited(_check());
+        _forceAgain = false;
+        unawaited(_check(force: force));
       }
     }
   }
 
   Future<void> _revokePush() async {
     if (Platform.isAndroid || Platform.isIOS) {
+      // Recorded first: even a partial revoke needs a new token later.
+      final prefs = await loadConsentPreferences();
+      await prefs.setBool(IDistributionConsentService.pushRevokedKey, true);
       await FirebaseMessaging.instance.setAutoInitEnabled(false);
       await FirebaseMessaging.instance.deleteToken();
     }
@@ -286,12 +467,21 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     if (_desktop) windowManager.removeListener(this);
     _encryption.keyRevision.removeListener(_keyChanged);
     unawaited(_auth?.cancel());
+    unawaited(_watch?.cancel());
     _timer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final graduation = _graduation;
+    if (graduation != null) {
+      return DistributionOnboarding(
+        prefs: graduation,
+        cloud: _cloud,
+        onAccepted: _graduated,
+      );
+    }
     if (_ready) return widget.builder();
     return Scaffold(
       backgroundColor: GhostColors.background,
@@ -341,7 +531,7 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
                       ),
                     ),
                     FilledButton(
-                      onPressed: () => unawaited(_check()),
+                      onPressed: () => unawaited(_check(force: true)),
                       child: const Text('Try again'),
                     ),
                     if (_client.auth.currentSession != null)
@@ -396,7 +586,7 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         ),
       ),
     );
-    await _check();
+    await _check(force: true);
   }
 
   Future<void> _signOut() async {

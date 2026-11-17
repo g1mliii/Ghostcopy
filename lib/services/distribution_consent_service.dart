@@ -16,8 +16,17 @@ abstract class IDistributionConsentService {
 
   /// A parent-managed account is old enough to confirm independent setup.
   static const graduationPendingKey = 'distribution_graduation_pending';
-  static const diagnosticsDisabledKey = 'parent_managed_diagnostics_disabled';
+
+  /// A permission denial deleted this device's push token; the next
+  /// authorized registration must fetch a new one.
+  static const pushRevokedKey = 'distribution_push_revoked';
   static const declaredAgeKey = 'distribution_declared_age';
+
+  /// The parental notice [version] the last completed parent consent covered.
+  /// A parent-managed device that later sees a different [version] has had a
+  /// significant change, which the store's consent flow must also cover
+  /// (docs/store-age-signals.md). Our version string, not a store signal.
+  static const storeConsentNoticeKey = 'distribution_store_consent_notice';
   static const declaredCountryKey = 'distribution_declared_country';
 
   bool get isAccepted;
@@ -34,6 +43,7 @@ abstract class IDistributionConsentService {
   });
 
   /// Called only after the server confirms verified, purpose-specific consent.
+  /// Also records [version] under [storeConsentNoticeKey].
   Future<void> acceptParentManaged({required String country});
 
   /// Persist an ineligible age choice. No child cloud account is created.

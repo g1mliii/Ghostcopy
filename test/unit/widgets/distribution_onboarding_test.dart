@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostcopy/services/cloud_consent_service.dart';
 import 'package:ghostcopy/services/distribution_consent_service.dart';
 import 'package:ghostcopy/services/settings_service.dart';
+import 'package:ghostcopy/services/store_age_signal_service.dart';
 import 'package:ghostcopy/ui/screens/distribution_onboarding.dart';
 import 'package:ghostcopy/ui/theme/app_theme.dart';
 import 'package:ghostcopy/ui/theme/appearance.dart';
@@ -18,6 +19,7 @@ class _Cloud extends CloudConsentService {
   bool cancelFails = false;
   String? claim;
   final actions = <String>[];
+  Map<String, Object?>? started;
 
   @override
   Future<Map<String, Object?>> call(
@@ -26,6 +28,7 @@ class _Cloud extends CloudConsentService {
     String? accessToken,
   }) async {
     actions.add(action);
+    if (action == 'start') started = data;
     return switch (action) {
       'configuration' => {'childrenEnabled': enabled},
       'start' => {'claimToken': 'a' * 64, 'status': 'pending'},
@@ -53,6 +56,37 @@ class _Cloud extends CloudConsentService {
   }
 }
 
+/// The app store's answer, through the same mapping as the platform channel.
+class _Store implements IStoreAgeSignalService {
+  _Store(Map<String, Object?>? answer)
+    : signal = StoreAgeSignal.fromPlatform(answer);
+  StoreAgeSignal signal;
+  SignificantChangeStatus change = SignificantChangeStatus.notRequired;
+  final asks = <bool>[];
+  int requests = 0;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<StoreAgeSignal> request() async {
+    requests++;
+    return signal;
+  }
+
+  @override
+  Future<SignificantChangeStatus> significantChange({
+    required String version,
+    required String description,
+    bool ask = false,
+  }) async {
+    expect(version, IDistributionConsentService.version);
+    expect(description, contains(version));
+    asks.add(ask);
+    return change;
+  }
+}
+
 void main() {
   late _Cloud cloud;
   const mobile = TargetPlatformVariant({TargetPlatform.android});
@@ -66,8 +100,10 @@ void main() {
 
   Future<SharedPreferences> pump(
     WidgetTester tester,
-    VoidCallback accepted,
-  ) async {
+    VoidCallback accepted, {
+    IStoreAgeSignalService? store,
+    bool parentAccount = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       AppearanceBuilder(
@@ -77,6 +113,8 @@ void main() {
             prefs: prefs,
             onAccepted: accepted,
             cloud: cloud,
+            storeAge: store,
+            parentAccount: parentAccount,
           ),
         ),
       ),
@@ -213,16 +251,9 @@ void main() {
     await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
     await prefs.setString('distribution_declared_age', '17');
     await prefs.setString('distribution_declared_country', 'CA');
-    cloud
-      ..claim = 'claim'
-      ..approved = true
-      ..hasAccount = true
-      ..independentEligible = true;
-    await expectLater(
-      ensureDistributionConsent(headless: true, cloud: cloud),
-      throwsException,
-    );
-    expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+    // CloudAccessGuard asks about eligibility after the first frame and sets
+    // this; the onboarding then starts at the adult acknowledgement.
+    await prefs.setBool('distribution_graduation_pending', true);
     var accepted = false;
     await pump(tester, () => accepted = true);
     expect(find.text('Your choice, clearly'), findsOneWidget);
@@ -247,15 +278,23 @@ void main() {
     expect(prefs.getBool('distribution_graduation_pending'), isTrue);
   }, variant: mobile);
 
-  test('authorized children below adulthood retain headless access', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
-    cloud
-      ..claim = 'claim'
-      ..approved = true;
-    await ensureDistributionConsent(headless: true, cloud: cloud);
-    expect(prefs.getBool('distribution_graduation_pending'), isNull);
-  });
+  test(
+    'an accepted parent-managed receipt starts without a network check',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await DistributionConsentService(
+        prefs,
+      ).acceptParentManaged(country: 'CA');
+      cloud
+        ..claim = 'claim'
+        ..approved = false
+        ..independentEligible = true;
+      await ensureDistributionConsent(headless: true, cloud: cloud);
+      expect(cloud.actions, isEmpty);
+      expect(prefs.getBool('distribution_graduation_pending'), isNull);
+      expect(CloudConsentService.parentManaged.value, isTrue);
+    },
+  );
 
   testWidgets(
     'pending setup can cancel and send to a corrected parent email',
@@ -390,5 +429,250 @@ void main() {
     );
     final prefs = await SharedPreferences.getInstance();
     expect(DistributionConsentService(prefs).isAccepted, isFalse);
+  });
+
+  group('store age signal', () {
+    const apple = {'shared': true, 'store': 'app_store'};
+
+    Future<void> chooseCountry(WidgetTester tester) async {
+      await tester.ensureVisible(
+        find.byType(DropdownButtonFormField<String>).last,
+      );
+      await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Canada').hitTestable(),
+        250,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('Canada').hitTestable().last);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> tap(WidgetTester tester, String label) async {
+      await tester.ensureVisible(find.text(label));
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+    }
+
+    /// The store is asked only when the user taps Continue on step 0.
+    Future<void> askStore(WidgetTester tester) async {
+      expect(find.textContaining('Continue to check the age'), findsOneWidget);
+      expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+      await tap(tester, 'Continue');
+    }
+
+    Future<void> agree(WidgetTester tester) async {
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pump();
+      await tap(tester, 'Continue');
+    }
+
+    testWidgets('an adult signal replaces the age question', (tester) async {
+      final store = _Store({...apple, 'ageLower': 18});
+      var calls = 0;
+      final prefs = await pump(tester, () => calls++, store: store);
+      await askStore(tester);
+      expect(store.requests, 1);
+      expect(find.textContaining('18 or older'), findsOneWidget);
+      // Country only; no age to choose.
+      expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+      await chooseCountry(tester);
+      await tap(tester, 'Continue');
+      expect(find.text('Your choice, clearly'), findsOneWidget);
+      await agree(tester);
+      await tap(tester, 'Finish setup');
+      expect(calls, 1);
+      expect(
+        DistributionConsentService(prefs).ageGroup,
+        DistributionAgeGroup.adult,
+      );
+      expect(prefs.getString('distribution_declared_age'), '18+');
+      expect(cloud.actions, isEmpty);
+    }, variant: mobile);
+
+    testWidgets(
+      'a minor signal takes the parent path with the age band and store reference',
+      (tester) async {
+        final store = _Store({
+          ...apple,
+          'ageLower': 13,
+          'ageUpper': 15,
+          'storeRef': '704289572311430368',
+        });
+        var calls = 0;
+        final prefs = await pump(tester, () => calls++, store: store);
+        await askStore(tester);
+        expect(find.textContaining('13–15'), findsOneWidget);
+        await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+        await tester.pumpAndSettle();
+        // Only the band is offered; nothing that would reach the adult path.
+        expect(find.text('18+'), findsNothing);
+        expect(find.text('12'), findsNothing);
+        expect(find.text('15').hitTestable(), findsOneWidget);
+        await tester.tap(find.text('13').hitTestable().last);
+        await tester.pumpAndSettle();
+        await chooseCountry(tester);
+        await tap(tester, 'Continue');
+        expect(find.text('Your choice, clearly'), findsOneWidget);
+        await agree(tester);
+        expect(find.text('Ask your parent'), findsOneWidget);
+        await tester.enterText(find.byType(TextField), 'parent@example.test');
+        await tap(tester, 'Send parent request');
+        expect(cloud.started?['age'], 13);
+        expect(cloud.started?['storeRef'], {
+          'store': 'app_store',
+          'id': '704289572311430368',
+        });
+        cloud.approved = true;
+        await tap(tester, 'Check permission');
+        expect(calls, 1);
+        expect(
+          DistributionConsentService(prefs).ageGroup,
+          DistributionAgeGroup.parentManaged,
+        );
+        // First consent: no significant change to ask about.
+        expect(store.asks, isEmpty);
+        expect(
+          prefs.getString(IDistributionConsentService.storeConsentNoticeKey),
+          IDistributionConsentService.version,
+        );
+      },
+      variant: mobile,
+    );
+
+    testWidgets('an under-13 band still refuses under 5', (tester) async {
+      final store = _Store({...apple, 'ageUpper': 12});
+      final prefs = await pump(tester, () {}, store: store);
+      await askStore(tester);
+      expect(find.textContaining('under 13'), findsOneWidget);
+      await choose(tester, 'Under 5');
+      expect(prefs.getBool(IDistributionConsentService.blockedKey), isTrue);
+    }, variant: mobile);
+
+    testWidgets(
+      'a supervised account the parent has not approved is blocked until approval',
+      (tester) async {
+        final store = _Store({
+          'shared': true,
+          'store': 'google_play',
+          'ageLower': 13,
+          'ageUpper': 15,
+          'significantChange': 'pending',
+        });
+        var calls = 0;
+        await pump(tester, () => calls++, store: store);
+        await askStore(tester);
+        expect(find.text('Waiting for a parent'), findsOneWidget);
+        expect(find.textContaining('not approved'), findsOneWidget);
+        expect(find.text('Continue'), findsNothing);
+        expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+        store.signal = StoreAgeSignal.fromPlatform({
+          'shared': true,
+          'store': 'google_play',
+          'significantChange': 'declined',
+        });
+        await tap(tester, 'Check again');
+        expect(store.requests, 2);
+        expect(find.textContaining('declined'), findsOneWidget);
+        store.signal = StoreAgeSignal.fromPlatform({
+          'shared': true,
+          'store': 'google_play',
+          'ageLower': 13,
+          'ageUpper': 15,
+          'significantChange': 'approved',
+          'storeRef': 'install-1',
+        });
+        await tap(tester, 'Check again');
+        expect(find.text('Before we begin'), findsOneWidget);
+        expect(find.textContaining('Google Play'), findsOneWidget);
+        expect(calls, 0);
+        expect(cloud.actions, isEmpty);
+      },
+      variant: mobile,
+    );
+
+    testWidgets('no signal keeps the self-declared flow unchanged', (
+      tester,
+    ) async {
+      final store = _Store({'shared': false});
+      await pump(tester, () {}, store: store);
+      await askStore(tester);
+      expect(store.requests, 1);
+      expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
+      await choose(tester, '8');
+      await agree(tester);
+      await tester.enterText(find.byType(TextField), 'parent@example.test');
+      await tap(tester, 'Send parent request');
+      expect(cloud.started?['age'], 8);
+      expect(cloud.started!.containsKey('storeRef'), isFalse);
+    }, variant: mobile);
+
+    testWidgets('the store is not asked until the user taps Continue', (
+      tester,
+    ) async {
+      final store = _Store({...apple, 'ageLower': 18});
+      await pump(tester, () {}, store: store);
+      expect(store.requests, 0);
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+      expect(store.requests, 0);
+      await askStore(tester);
+      expect(store.requests, 1);
+    }, variant: mobile);
+
+    testWidgets('a saved age is not replaced by the store', (tester) async {
+      final store = _Store({...apple, 'ageLower': 18});
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('distribution_declared_age', '8');
+      await pump(tester, () {}, store: store);
+      expect(store.requests, 0);
+      expect(find.textContaining('Continue to check the age'), findsNothing);
+      expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
+    }, variant: mobile);
+
+    testWidgets(
+      'a new notice version needs the store significant-change consent too',
+      (tester) async {
+        final store = _Store(null);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          IDistributionConsentService.storeConsentNoticeKey,
+          '2026-01-01-v1',
+        );
+        await prefs.setString('distribution_declared_age', '13');
+        await prefs.setString('distribution_declared_country', 'CA');
+        var calls = 0;
+        await pump(tester, () => calls++, store: store, parentAccount: true);
+        await tap(tester, 'Continue');
+        await agree(tester);
+        await tester.enterText(find.byType(TextField), 'parent@example.test');
+        store.change = SignificantChangeStatus.pending;
+        await tap(tester, 'Send parent request');
+        expect(store.asks, [true]);
+        cloud.approved = true;
+        await tap(tester, 'Check permission');
+        expect(
+          find.textContaining('approve this GhostCopy update'),
+          findsOneWidget,
+        );
+        expect(calls, 0);
+        store.change = SignificantChangeStatus.declined;
+        await tap(tester, 'Check permission');
+        expect(
+          find.textContaining('declined this GhostCopy update'),
+          findsOneWidget,
+        );
+        expect(calls, 0);
+        store.change = SignificantChangeStatus.approved;
+        await tap(tester, 'Check permission');
+        expect(calls, 1);
+        expect(store.asks, [true, false, false, false]);
+        expect(
+          prefs.getString(IDistributionConsentService.storeConsentNoticeKey),
+          IDistributionConsentService.version,
+        );
+      },
+      variant: mobile,
+    );
   });
 }

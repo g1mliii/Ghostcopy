@@ -17,6 +17,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     CloudConsentService.authorization.value = null;
+    CloudConsentService.parentManaged.value = false;
     CloudConsentService.currentAccessToken = null;
     final prefs = await SharedPreferences.getInstance();
     await DistributionConsentService(prefs).accept(
@@ -24,7 +25,6 @@ void main() {
       diagnosticsAllowed: false,
       country: 'CA',
     );
-    await prefs.setBool('parent_managed_diagnostics_disabled', true);
   });
   tearDown(() {
     CloudConsentService.currentAccessToken = null;
@@ -99,9 +99,7 @@ void main() {
           diagnosticsAllowed: optedIn,
           country: 'CA',
         );
-        await prefs.setBool('parent_managed_diagnostics_disabled', true);
         await prefs.setBool('distribution_graduation_pending', true);
-        expect(DistributionConsentService(prefs).diagnosticsAllowed, isFalse);
         final storage = _Storage();
         when(
           () => storage.delete(key: CloudConsentService.claimKey),
@@ -122,8 +120,8 @@ void main() {
         expect((await service.authorize('session')).independentAdult, isTrue);
         expect(prefs.getBool('distribution_graduation_pending'), isNull);
         expect(prefs.getString('distribution_declared_age'), '18+');
-        expect(prefs.getBool('parent_managed_diagnostics_disabled'), isNull);
         expect(DistributionConsentService(prefs).diagnosticsAllowed, optedIn);
+        expect(CloudConsentService.parentManaged.value, isFalse);
         verify(
           () => storage.delete(key: CloudConsentService.claimKey),
         ).called(1);
@@ -131,42 +129,38 @@ void main() {
     },
   );
 
-  test(
-    'unconfirmed or stale graduation cannot clear the child diagnostics lock',
-    () async {
-      for (final scenario in ['denied', 'parent', 'unclassified', 'stale']) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('parent_managed_diagnostics_disabled', true);
-        await prefs.setBool('distribution_graduation_pending', true);
-        final service = CloudConsentService(
-          client: MockClient((request) async {
-            if (scenario == 'stale') {
-              CloudConsentService.currentAccessToken = () => 'new-session';
-            }
-            return http.Response(
-              jsonEncode({
-                'allowed': scenario != 'denied',
-                'accountKind': scenario == 'parent'
-                    ? 'parent_managed'
-                    : scenario == 'unclassified'
-                    ? 'unclassified'
-                    : 'adult',
-              }),
-              200,
-            );
-          }),
-        );
-        CloudConsentService.currentAccessToken = () => 'session';
-        await service.authorize('session');
-        expect(prefs.getBool('parent_managed_diagnostics_disabled'), isTrue);
-        expect(prefs.getBool('distribution_graduation_pending'), isTrue);
-      }
-    },
-  );
+  test('unconfirmed or stale graduation stays pending', () async {
+    for (final scenario in ['denied', 'parent', 'unclassified', 'stale']) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('distribution_graduation_pending', true);
+      final service = CloudConsentService(
+        client: MockClient((request) async {
+          if (scenario == 'stale') {
+            CloudConsentService.currentAccessToken = () => 'new-session';
+          }
+          return http.Response(
+            jsonEncode({
+              'allowed': scenario != 'denied',
+              'accountKind': scenario == 'parent'
+                  ? 'parent_managed'
+                  : scenario == 'unclassified'
+                  ? 'unclassified'
+                  : 'adult',
+            }),
+            200,
+          );
+        }),
+      );
+      CloudConsentService.currentAccessToken = () => 'session';
+      await service.authorize('session');
+      expect(prefs.getBool('distribution_graduation_pending'), isTrue);
+    }
+  });
 
   test('only approved unbound parent setup may create a first guest', () async {
     final prefs = await SharedPreferences.getInstance();
     await DistributionConsentService(prefs).acceptParentManaged(country: 'CA');
+    CloudConsentService.seedParentManaged(prefs);
     final storage = _Storage();
     when(
       () => storage.read(key: CloudConsentService.claimKey),
@@ -319,6 +313,12 @@ void main() {
       expect(receipt.ageGroup, DistributionAgeGroup.parentManaged);
       expect(receipt.diagnosticsAllowed, isFalse);
       expect(prefs.getString('distribution_declared_age'), '8');
+      // The QR-linked device records the notice version its parent's consent
+      // covers, so the next notice version is a significant change here too.
+      expect(
+        prefs.getString(IDistributionConsentService.storeConsentNoticeKey),
+        IDistributionConsentService.version,
+      );
       verify(
         () => storage.write(
           key: CloudConsentService.claimKey,
@@ -329,23 +329,14 @@ void main() {
   );
 
   test(
-    'diagnostics stop before a child-receipt storage failure can interrupt account reconciliation',
+    'a child-receipt storage failure leaves the account unclassified',
     () async {
-      final prefs = await loadConsentPreferences();
-      await prefs.remove('parent_managed_diagnostics_disabled');
-      final steps = <String>[];
       final storage = _Storage();
       when(
         () => storage.write(key: CloudConsentService.claimKey, value: 'proof'),
-      ).thenAnswer((_) async {
-        steps.add('write');
-        throw Exception('Storage unavailable');
-      });
+      ).thenAnswer((_) async => throw Exception('Storage unavailable'));
       final service = CloudConsentService(
         storage: storage,
-        stopDiagnostics: () async {
-          steps.add('stop');
-        },
         client: MockClient(
           (_) async => http.Response(
             jsonEncode({
@@ -361,9 +352,125 @@ void main() {
         ),
       );
       await expectLater(service.authorize('child'), throwsException);
-      expect(steps, ['stop', 'write']);
-      expect(prefs.getBool('parent_managed_diagnostics_disabled'), isTrue);
       expect(CloudConsentService.authorization.value, isNull);
+      expect(CloudConsentService.parentManaged.value, isFalse);
+    },
+  );
+
+  group('parentManaged', () {
+    test('is seeded from the local receipt', () async {
+      final prefs = await loadConsentPreferences();
+      CloudConsentService.seedParentManaged(prefs);
+      expect(CloudConsentService.parentManaged.value, isFalse);
+      await DistributionConsentService(
+        prefs,
+      ).acceptParentManaged(country: 'CA');
+      CloudConsentService.seedParentManaged(prefs);
+      expect(CloudConsentService.parentManaged.value, isTrue);
+      await prefs.remove(IDistributionConsentService.receiptKey);
+      CloudConsentService.seedParentManaged(prefs);
+      expect(CloudConsentService.parentManaged.value, isFalse);
+    });
+
+    test('follows each server classification of the current session', () async {
+      var kind = 'parent_managed';
+      final service = CloudConsentService(
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'allowed': true,
+              'accountKind': kind,
+              'fileSync': false,
+              'validUntil': '2099-01-01T00:00:00Z',
+            }),
+            200,
+          ),
+        ),
+      );
+      final notified = <bool>[];
+      void record() => notified.add(CloudConsentService.parentManaged.value);
+      CloudConsentService.parentManaged.addListener(record);
+      addTearDown(
+        () => CloudConsentService.parentManaged.removeListener(record),
+      );
+      // The local receipt says adult; the server decides.
+      await service.authorize('first');
+      expect(CloudConsentService.parentManaged.value, isTrue);
+      kind = 'adult';
+      await service.authorize('second');
+      expect(CloudConsentService.parentManaged.value, isFalse);
+      expect(notified, [true, false]);
+    });
+
+    test('a stale session response cannot change it', () async {
+      CloudConsentService.currentAccessToken = () => 'current';
+      final service = CloudConsentService(
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'allowed': true,
+              'accountKind': 'parent_managed',
+              'fileSync': false,
+            }),
+            200,
+          ),
+        ),
+      );
+      await service.authorize('previous');
+      expect(CloudConsentService.parentManaged.value, isFalse);
+    });
+  });
+
+  test(
+    'a cached classification stands in for a check only while its lease is fresh',
+    () async {
+      var now = DateTime.utc(2026, 11, 17, 12);
+      final lease = now.add(const Duration(minutes: 15));
+      var kind = 'parent_managed';
+      var allowed = true;
+      var calls = 0;
+      final service = CloudConsentService(
+        now: () => now,
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(
+            jsonEncode({
+              'allowed': allowed,
+              'accountKind': kind,
+              'fileSync': false,
+              'validUntil': lease.toIso8601String(),
+            }),
+            200,
+          );
+        }),
+      );
+      expect(service.freshAuthorizationForSession('session'), isNull);
+      await service.authorize('session');
+      expect(service.freshAuthorizationForSession('session'), isNotNull);
+      expect(service.freshAuthorizationForSession('refreshed'), isNull);
+      now = lease.subtract(
+        CloudConsentService.leaseMargin + const Duration(seconds: 1),
+      );
+      expect(service.freshAuthorizationForSession('session'), isNotNull);
+      now = lease.subtract(CloudConsentService.leaseMargin);
+      expect(service.freshAuthorizationForSession('session'), isNull);
+      // An adult has no lease; its check is reused for a few minutes only,
+      // so returning to the app later still asks the server.
+      kind = 'adult';
+      await service.authorize('session');
+      now = now.add(
+        CloudConsentService.unleasedCacheAge - const Duration(seconds: 1),
+      );
+      expect(service.freshAuthorizationForSession('session'), isNotNull);
+      now = now.add(const Duration(seconds: 1));
+      expect(service.freshAuthorizationForSession('session'), isNull);
+      await service.authorize('session');
+      expect(service.freshAuthorizationForSession('session'), isNotNull);
+      // A refusal is never reused: returning to the app asks again.
+      allowed = false;
+      await service.authorize('session');
+      expect(service.freshAuthorizationForSession('session'), isNull);
+      expect(calls, 4);
     },
   );
 }

@@ -11,6 +11,7 @@ import '../../services/account_prompt_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_service.dart';
 import '../../services/impl/encryption_service.dart';
+import '../../services/link_token_exchange.dart';
 import '../../utils/auth_errors.dart';
 import '../guest_clips_guard.dart';
 import '../layout/side_safe_area.dart';
@@ -703,32 +704,6 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
     );
   }
 
-  /// Turn a link-token exchange failure into something worth reading.
-  ///
-  /// functions_client throws [FunctionsHttpException] for any non-2xx rather
-  /// than returning it, so the server's `code` lives in `details` - not in a
-  /// response the caller can inspect. Without unpacking it the user saw raw
-  /// exception text and the whole point of the server distinguishing a wrong
-  /// PIN from an expired code was lost.
-  String _describeExchangeError(Object error) {
-    if (error is FunctionsHttpException) {
-      final details = error.details;
-      final code = details is Map ? details['code'] as String? : null;
-      switch (code) {
-        case 'invalid_pin':
-          return 'Incorrect PIN. Check the code on your other device and '
-              'try again.';
-        case 'expired':
-          return 'This code has expired or was already used. Generate a new '
-              'QR code on your other device.';
-      }
-      final message = details is Map ? details['error'] as String? : null;
-      if (message != null && message.isNotEmpty) return message;
-      return 'Could not link this device. Please try again.';
-    }
-    return error.toString().replaceAll('Exception: ', '');
-  }
-
   /// Ask for the 6-digit PIN shown on the sending device.
   ///
   /// Returns null if the user cancels. A wrong PIN does not consume the link
@@ -863,37 +838,12 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       }
 
       debugPrint('[QR] Exchanging link token...');
-
-      // Call edge function to exchange token for session
-      final response = await supabase.functions.invoke(
-        'exchange-link-token',
-        body: {'token': linkToken, 'pin': pin},
+      await exchangeLinkToken(
+        client: supabase,
+        auth: locator<IAuthService>(),
+        token: linkToken,
+        pin: pin,
       );
-
-      // Note: functions_client throws FunctionsHttpException for any non-2xx,
-      // so this only catches a 2xx with an empty body. The error codes the
-      // server sends (invalid_pin / expired) arrive as that exception instead
-      // and are unpacked in the catch below.
-      if (response.data == null) {
-        throw Exception('Failed to authenticate');
-      }
-
-      final data = response.data as Map<String, dynamic>;
-      // Nullable cast: this used to be `as String`, and when the server
-      // returned no tokens the resulting TypeError was an Error, not an
-      // Exception - so `on Exception catch` below never caught it, the scanner
-      // hung on a spinner forever, and the single-use token was already gone.
-      final refreshToken = data['refresh_token'] as String?;
-      if (refreshToken == null || refreshToken.isEmpty) {
-        throw Exception(
-          'The server did not return a session. Please generate a new QR code.',
-        );
-      }
-
-      debugPrint('[QR] ✅ Got session tokens, setting session...');
-
-      // Preserve the previous account until the new session is established.
-      await locator<IAuthService>().signInWithRefreshToken(refreshToken);
 
       debugPrint('[QR] ✅ Session set');
 
@@ -929,7 +879,7 @@ class _MobileWelcomeScreenState extends State<MobileWelcomeScreen>
       // exactly the failure that happened most often.
       if (mounted) {
         setState(() {
-          _qrError = _describeExchangeError(e);
+          _qrError = describeLinkExchangeError(e);
           _qrScanning = false;
         });
       }

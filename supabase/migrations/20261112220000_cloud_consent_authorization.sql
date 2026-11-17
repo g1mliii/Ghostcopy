@@ -115,6 +115,17 @@ DO $$ DECLARE item record; BEGIN
 END $$;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA private TO service_role;
 
+-- The one SQL copy of the current parental notice version. It changes together
+-- with parentalNoticeVersion (supabase/functions/_shared/kws.ts) and
+-- IDistributionConsentService.version (Dart); test/backend/notice_version_test.mjs
+-- fails when the three differ.
+CREATE FUNCTION private.notice_version() RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog AS $$
+  SELECT text '2026-11-12-v3';
+$$;
+REVOKE ALL ON FUNCTION private.notice_version() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION private.notice_version() TO service_role;
+
 CREATE FUNCTION public.has_cloud_access() RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
   SELECT (NOT EXISTS (SELECT 1 FROM public.cloud_authorizations WHERE user_id = (SELECT auth.uid()))
@@ -122,7 +133,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
       AND NOT (SELECT enforce_all_accounts FROM private.cloud_consent_settings))
     OR EXISTS (SELECT 1 FROM public.cloud_authorizations
     WHERE user_id = (SELECT auth.uid()) AND status = 'authorized' AND cloud_sync
-      AND notice_version = '2026-11-12-v3'
+      AND notice_version = private.notice_version()
       AND (account_kind = 'adult' OR valid_until > statement_timestamp()));
 $$;
 CREATE FUNCTION public.has_cloud_file_access() RETURNS boolean

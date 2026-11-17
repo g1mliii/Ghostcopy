@@ -23,6 +23,7 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		AC0000010000000000000003 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000003 /* SceneDelegate.swift */; };
 		AC0000010000000000000004 /* FlutterChannelHub.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000004 /* FlutterChannelHub.swift */; };
+		AC0000010000000000000009 /* StoreAgeSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000009 /* StoreAgeSignals.swift */; };
 		AC0000010000000000000005 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000005 /* GoogleService-Info.plist */; };
 		AC0000010000000000000007 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000007 /* PrivacyInfo.xcprivacy */; };
 		AC0000010000000000000008 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC0000020000000000000008 /* PrivacyInfo.xcprivacy */; };
@@ -98,6 +99,7 @@
 		9F771051747172CA988C1B77 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		AC0000020000000000000003 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AC0000020000000000000004 /* FlutterChannelHub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlutterChannelHub.swift; sourceTree = "<group>"; };
+		AC0000020000000000000009 /* StoreAgeSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreAgeSignals.swift; sourceTree = "<group>"; };
 		AC0000020000000000000005 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		AC0000020000000000000007 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AC0000020000000000000008 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -217,6 +219,7 @@
 				AC0000020000000000000005 /* GoogleService-Info.plist */,
 				AC0000020000000000000007 /* PrivacyInfo.xcprivacy */,
 				AC0000020000000000000004 /* FlutterChannelHub.swift */,
+				AC0000020000000000000009 /* StoreAgeSignals.swift */,
 				AC0000020000000000000003 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -508,6 +511,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				AC0000010000000000000004 /* FlutterChannelHub.swift in Sources */,
+				AC0000010000000000000009 /* StoreAgeSignals.swift in Sources */,
 				AC0000010000000000000003 /* SceneDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
@@ -616,6 +620,13 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					DeclaredAgeRange,
+					"-weak_framework",
+					PermissionKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostcopy.ghostcopy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -834,6 +845,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					DeclaredAgeRange,
+					"-weak_framework",
+					PermissionKit,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostcopy.ghostcopy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -858,6 +876,13 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					DeclaredAgeRange,
+					"-weak_framework",
+					PermissionKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostcopy.ghostcopy;
 				PRODUCT_NAME = "$(TARGET_NAME)";

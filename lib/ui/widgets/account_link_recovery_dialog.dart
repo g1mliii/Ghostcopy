@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/auth_service.dart';
 import '../../services/distribution_consent_service.dart';
+import '../../services/link_token_exchange.dart';
 import '../theme/colors.dart';
 
 /// Restores an existing account using a fresh device link and its separate PIN.
@@ -61,27 +62,24 @@ class _AccountLinkRecoveryDialogState extends State<AccountLinkRecoveryDialog> {
       _error = null;
     });
     try {
-      final response = await widget.client.functions.invoke(
-        'exchange-link-token',
-        body: {'token': token, 'pin': _pin.text.trim()},
+      await exchangeLinkToken(
+        client: widget.client,
+        auth: widget.auth,
+        token: token,
+        pin: _pin.text.trim(),
       );
-      final data = response.data;
-      final refresh = data is Map<String, Object?>
-          ? data['refresh_token']
-          : null;
-      if (refresh is! String || refresh.isEmpty) {
-        throw const FormatException('Missing session');
-      }
-      await widget.auth.signInWithRefreshToken(refresh);
       final prefs = await loadConsentPreferences();
       await prefs.setBool(IDistributionConsentService.cloudPausedKey, false);
       if (mounted) Navigator.of(context).pop(true);
-    } on Exception {
+    } on Exception catch (error) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error =
-              'Could not link. Check the PIN and connection, or generate a new link code on your signed-in device.';
+          _error = describeLinkExchangeError(
+            error,
+            fallback:
+                'Could not link. Check the PIN and connection, or generate a new link code on your signed-in device.',
+          );
         });
       }
     }

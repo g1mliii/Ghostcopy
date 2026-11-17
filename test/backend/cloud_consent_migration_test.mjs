@@ -14,7 +14,7 @@ after(() => db.close());
 beforeEach(async () => {
   await db.exec(`RESET ROLE; SELECT set_config('request.jwt.claim.sub','',false);
     TRUNCATE auth.users CASCADE;
-    TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_rate_limits,private.consent_audit,private.kws_deletion_queue;
+    TRUNCATE private.parental_consent_requests,private.consent_events,private.consent_rate_limits,private.consent_audit,private.kws_deletion_queue CASCADE;
     UPDATE private.cloud_consent_settings SET enforce_all_accounts=true,child_consent_enabled=false;
     INSERT INTO auth.users(id) VALUES('${user}'),('${other}');`);
 });
@@ -121,6 +121,20 @@ test('a child claim cannot bind before verified permissions and cannot become ad
   await assert.rejects(operation('adult',{ userId:user,age:18,country:'CA',noticeVersion:'2026-11-12-v3',
     termsAccepted:true,privacyAcknowledged:true }), /Parent authorization required/);
   await assert.rejects(asUser("SELECT public.consent_service('apply_permissions','{}')"), /permission denied/);
+});
+
+test('a lease renews in its last three minutes, when the app rechecks it', async () => {
+  const request = await pending();
+  await operation('apply_permissions',{ id:request.id,revision:request.revision,
+    kwsRequestId:request.kws_request_id,cloudSync:true,fileSync:false });
+  const lease = (minutes) => db.query(
+    "UPDATE private.parental_consent_requests SET valid_until=now()+($1::numeric * interval '1 minute'),last_checked_at=now()-interval '1 minute' WHERE id=$2",
+    [minutes, request.id]);
+  await lease(4);
+  assert.equal(await operation('begin_refresh',{ id:request.id }), null);
+  // CloudAccessGuard checks 2 minutes before expiry; that check must renew.
+  await lease(2);
+  assert.equal((await operation('begin_refresh',{ id:request.id })).id, request.id);
 });
 
 test('stale provider reads cannot resurrect a revoked authorization', async () => {
@@ -252,4 +266,19 @@ test('unchanged permission polling does not create repetitive consent audit reco
   assert.equal((await db.query('SELECT count(*)::int AS n FROM private.consent_audit')).rows[0].n,0);
   for (let i=0;i<3;i++) request = await operation('apply_permissions',{id:request.id,revision:request.revision,kwsRequestId:request.kws_request_id,cloudSync:true,fileSync:true});
   assert.equal((await db.query('SELECT count(*)::int AS n FROM private.consent_audit')).rows[0].n,1);
+});
+
+test('authorization rows publish to Realtime where the publication exists', async () => {
+  const published = new PGlite();
+  try {
+    await published.exec('CREATE PUBLICATION supabase_realtime');
+    await setupConsentDatabase(published);
+    // Applying it twice is harmless.
+    await published.exec(await readFile(new URL('../../supabase/migrations/20261117120000_cloud_authorizations_realtime.sql', import.meta.url), 'utf8'));
+    const rows = await published.query(`SELECT 1 FROM pg_publication_tables
+      WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='cloud_authorizations'`);
+    assert.equal(rows.rows.length, 1);
+  } finally {
+    await published.close();
+  }
 });

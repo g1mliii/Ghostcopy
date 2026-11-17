@@ -358,8 +358,7 @@ class _LinkDeviceDialogState extends State<LinkDeviceDialog> {
               // session: reinstall or sign out and the phone is linked to an
               // account nothing can reach again. An account survives both.
               if (widget.authService.isAnonymous &&
-                  CloudConsentService.authorization.value?.parentManaged !=
-                      true) ...[
+                  !CloudConsentService.parentManaged.value) ...[
                 const SizedBox(height: 12),
                 Text(
                   'Or create an account and sign in on both devices. It stays '
