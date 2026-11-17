@@ -102,6 +102,10 @@ class _LeaseConsent extends CloudConsentService {
   final checks = <DateTime>[];
   bool allowed = true;
   bool eligible = false;
+
+  /// Answer with the lease already held, as the server does while the
+  /// device clock runs ahead of it.
+  bool renew = true;
   CloudAuthorization? _cached;
 
   @override
@@ -115,11 +119,14 @@ class _LeaseConsent extends CloudConsentService {
   Future<CloudAuthorization> authorize(String accessToken) async {
     checks.add(clock());
     CloudConsentService.parentManaged.value = true;
+    final held = _cached?.validUntil;
     return _cached = CloudAuthorization(
       allowed: allowed,
       parentManaged: true,
       fileSync: false,
-      validUntil: clock().add(const Duration(minutes: 15)),
+      validUntil: !renew && held != null
+          ? held
+          : clock().add(const Duration(minutes: 15)),
     );
   }
 
@@ -474,6 +481,38 @@ void main() {
         expect(consent.checks, hasLength(2));
         await elapse(tester, const Duration(seconds: 1));
         expect(consent.checks, hasLength(3));
+        await close(tester);
+      },
+      variant: const TargetPlatformVariant({TargetPlatform.android}),
+    );
+
+    testWidgets(
+      'a lease the server did not renew is retried at its expiry, not every 30 seconds',
+      (tester) async {
+        await open(tester);
+        expect(consent.checks, hasLength(1));
+        // The device clock is ahead: the check two minutes before expiry
+        // comes back with the same lease.
+        consent.renew = false;
+        await elapse(tester, const Duration(minutes: 13));
+        expect(consent.checks, hasLength(2));
+        await elapse(tester, const Duration(minutes: 1, seconds: 59));
+        expect(consent.checks, hasLength(2));
+        await elapse(tester, const Duration(seconds: 1));
+        expect(consent.checks, hasLength(3));
+        // Past the device's view of expiry: back off two minutes, not 30s.
+        await elapse(tester, const Duration(minutes: 1, seconds: 59));
+        expect(consent.checks, hasLength(3));
+        await elapse(tester, const Duration(seconds: 1));
+        expect(consent.checks, hasLength(4));
+        // Once the server renews, the usual margin applies again.
+        consent.renew = true;
+        await elapse(tester, CloudAccessGuard.unrenewedLeaseDelay);
+        expect(consent.checks, hasLength(5));
+        await elapse(tester, const Duration(minutes: 12, seconds: 59));
+        expect(consent.checks, hasLength(5));
+        await elapse(tester, const Duration(seconds: 1));
+        expect(consent.checks, hasLength(6));
         await close(tester);
       },
       variant: const TargetPlatformVariant({TargetPlatform.android}),

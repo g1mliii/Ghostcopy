@@ -47,6 +47,10 @@ class SentryCrashReportingService implements ICrashReportingService {
   bool _pausedForAccountChange = false;
   bool _active = false;
 
+  /// Whether the last applied classification was an allowed, independent
+  /// adult; null before the first. The opt-in is read only when it changes.
+  bool? _followedAdult;
+
   static Future<void> _initializeSentry() =>
       SentryFlutter.init(configureCrashReporting);
 
@@ -62,11 +66,13 @@ class SentryCrashReportingService implements ICrashReportingService {
   void _followAuthorization() {
     _following = _following.then((_) async {
       final current = _authorization?.value;
+      final adult =
+          current != null && current.allowed && current.independentAdult;
+      // Lease renewals and repeat checks of the same account change nothing.
+      if (adult == _followedAdult) return;
+      _followedAdult = adult;
       try {
-        if (current != null &&
-            current.allowed &&
-            current.independentAdult &&
-            await _optedIn()) {
+        if (adult && await _optedIn()) {
           await startAfterAuthorization();
         } else {
           await _stop();

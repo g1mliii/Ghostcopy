@@ -228,12 +228,16 @@ void main() {
     test('runs only for an allowed, opted-in independent adult', () async {
       final authorization = ValueNotifier<CloudAuthorization?>(null);
       var optedIn = true;
+      var reads = 0;
       final calls = <String>[];
       SentryCrashReportingService(
         enabled: true,
         deferUntilAuthorized: true,
         authorization: authorization,
-        optedIn: () async => optedIn,
+        optedIn: () async {
+          reads++;
+          return optedIn;
+        },
         initializeSdk: () async => calls.add('start'),
         stopSdk: () async => calls.add('stop'),
       );
@@ -243,10 +247,18 @@ void main() {
       authorization.value = adult;
       await settle();
       expect(calls, ['start']);
-      // Re-authorizing the same adult keeps the one running SDK.
-      authorization.value = adult;
+      expect(reads, 1);
+      // Re-authorizing the same adult keeps the one running SDK, and does
+      // not read the opt-in again.
+      authorization.value = CloudAuthorization(
+        allowed: adult.allowed,
+        parentManaged: adult.parentManaged,
+        fileSync: adult.fileSync,
+        independentAdult: adult.independentAdult,
+      );
       await settle();
       expect(calls, ['start']);
+      expect(reads, 1);
       authorization.value = const CloudAuthorization(
         allowed: false,
         parentManaged: false,

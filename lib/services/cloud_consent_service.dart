@@ -49,6 +49,10 @@ class CloudConsentService {
   static final authorization = ValueNotifier<CloudAuthorization?>(null);
   static String? _authorizedAccessToken;
 
+  /// When [authorization] was last classified by the server, on the clock of
+  /// the service that classified it.
+  static DateTime? _authorizedAt;
+
   /// A previous account's classification cannot authorize a new session's send.
   static CloudAuthorization? authorizationForSession(String accessToken) =>
       _authorizedAccessToken == accessToken ? authorization.value : null;
@@ -71,13 +75,23 @@ class CloudConsentService {
   /// expiring. The access guard renews it this long before expiry too.
   static const leaseMargin = Duration(minutes: 2);
 
+  /// How long an account without a lease (an adult) reuses its last check
+  /// when the app returns to the foreground.
+  static const unleasedCacheAge = Duration(minutes: 5);
+
   /// [authorizationForSession], but only while it can stand in for a server
   /// check: allowed, and for a parent-managed account, with a lease that has
-  /// more than [leaseMargin] left.
+  /// more than [leaseMargin] left; otherwise no older than [unleasedCacheAge].
   CloudAuthorization? freshAuthorizationForSession(String accessToken) {
     final cached = authorizationForSession(accessToken);
     if (cached == null || !cached.allowed) return null;
-    if (!cached.parentManaged) return cached;
+    if (!cached.parentManaged) {
+      final checkedAt = _authorizedAt;
+      return checkedAt != null &&
+              _now().difference(checkedAt) < unleasedCacheAge
+          ? cached
+          : null;
+    }
     return cached.validUntil?.isAfter(_now().add(leaseMargin)) == true
         ? cached
         : null;
@@ -185,10 +199,7 @@ class CloudConsentService {
     if (cached != null &&
         cached.allowed &&
         (!cached.parentManaged ||
-            cached.validUntil?.isAfter(
-                  _now().add(const Duration(minutes: 1)),
-                ) ==
-                true)) {
+            cached.validUntil?.isAfter(_now().add(leaseMargin)) == true)) {
       return cached;
     }
     // authorize() coalesces simultaneous shortcut/file sends for this token.
@@ -262,6 +273,7 @@ class CloudConsentService {
     }
     if (_isCurrent(accessToken)) {
       _authorizedAccessToken = accessToken;
+      _authorizedAt = _now();
       parentManaged.value = snapshot.parentManaged;
       authorization.value = snapshot;
     }

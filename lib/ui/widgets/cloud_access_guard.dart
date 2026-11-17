@@ -27,12 +27,15 @@ Stream<Map<String, dynamic>> watchCloudAuthorization(
   SupabaseClient client,
   String userId,
 ) {
+  // A unique topic per subscription: the previous one may still be leaving
+  // when an account check subscribes again.
+  final topic = 'cloud-authorization-$userId-${_watchSequence++}';
   RealtimeChannel? channel;
   late final StreamController<Map<String, dynamic>> changes;
   changes = StreamController<Map<String, dynamic>>(
     onListen: () {
       channel = client
-          .channel('cloud-authorization-$userId')
+          .channel(topic)
           .onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
@@ -55,6 +58,8 @@ Stream<Map<String, dynamic>> watchCloudAuthorization(
   );
   return changes.stream;
 }
+
+var _watchSequence = 0;
 
 /// Rechecks the authenticated account, including after switching accounts,
 /// returning to the app and losing a required encryption key.
@@ -104,6 +109,11 @@ class CloudAccessGuard extends StatefulWidget {
   /// become a tight loop.
   static const minimumLeaseDelay = Duration(seconds: 30);
 
+  /// Floor once a server check came back with the lease already held: the
+  /// device clock runs ahead of the server's, which renews only near its own
+  /// expiry.
+  static const unrenewedLeaseDelay = Duration(minutes: 2);
+
   @override
   State<CloudAccessGuard> createState() => _CloudAccessGuardState();
 }
@@ -132,6 +142,11 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
 
   /// Lease of the last allowed parent-managed check; null when none is known.
   DateTime? _validUntil;
+
+  /// The last check due for renewal returned the lease already held: the
+  /// device clock is ahead of the server's, which renews only near its own
+  /// expiry.
+  bool _leaseUnrenewed = false;
 
   /// Set while an account that has turned 18 confirms independent setup.
   SharedPreferences? _graduation;
@@ -187,12 +202,17 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         locator<IWindowService>().isVisible;
     if (!_parent || !_foreground || !visible) return;
     final lease = _validUntil;
+    // Not renewed: wait until the lease's expiry, when the server will.
+    final margin = _leaseUnrenewed
+        ? Duration.zero
+        : CloudConsentService.leaseMargin;
+    final floor = _leaseUnrenewed
+        ? CloudAccessGuard.unrenewedLeaseDelay
+        : CloudAccessGuard.minimumLeaseDelay;
     var delay = lease == null
         ? CloudAccessGuard.retryWithoutLease
-        : lease.difference(_now()) - CloudConsentService.leaseMargin;
-    if (delay < CloudAccessGuard.minimumLeaseDelay) {
-      delay = CloudAccessGuard.minimumLeaseDelay;
-    }
+        : lease.difference(_now()) - margin;
+    if (delay < floor) delay = floor;
     _timer = Timer(delay, () {
       _timer = null;
       unawaited(_check(force: true));
@@ -346,18 +366,24 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
         }
         return;
       }
-      final snapshot =
-          (force
-              ? null
-              : _cloud.freshAuthorizationForSession(session.accessToken)) ??
-          await _cloud.authorize(session.accessToken);
+      final held = _validUntil;
+      // Due for renewal by this device's clock, so the server should extend it.
+      final due =
+          held != null &&
+          !held.isAfter(_now().add(CloudConsentService.leaseMargin));
+      final cached = force
+          ? null
+          : _cloud.freshAuthorizationForSession(session.accessToken);
+      final snapshot = cached ?? await _cloud.authorize(session.accessToken);
       // A late response from the previous account must not reveal its screen.
       if (_client.auth.currentUser?.id != session.user.id) {
         return;
       }
-      _validUntil = snapshot.allowed && snapshot.parentManaged
+      final lease = snapshot.allowed && snapshot.parentManaged
           ? snapshot.validUntil
           : null;
+      if (cached == null) _leaseUnrenewed = due && lease == held;
+      _validUntil = lease;
       if (!snapshot.allowed) {
         throw const CloudConsentException(403);
       }
@@ -387,9 +413,6 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
       if (error is CloudConsentException &&
           (error.statusCode == 401 || error.statusCode == 403)) {
         try {
-          // Recorded first: even a partial revoke needs a new token later.
-          final prefs = await loadConsentPreferences();
-          await prefs.setBool(IDistributionConsentService.pushRevokedKey, true);
           await (widget.revokePush?.call() ?? _revokePush());
         } on Exception {
           /* Firebase may not have started. */
@@ -418,6 +441,9 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
 
   Future<void> _revokePush() async {
     if (Platform.isAndroid || Platform.isIOS) {
+      // Recorded first: even a partial revoke needs a new token later.
+      final prefs = await loadConsentPreferences();
+      await prefs.setBool(IDistributionConsentService.pushRevokedKey, true);
       await FirebaseMessaging.instance.setAutoInitEnabled(false);
       await FirebaseMessaging.instance.deleteToken();
     }

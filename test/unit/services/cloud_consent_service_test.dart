@@ -454,16 +454,23 @@ void main() {
       expect(service.freshAuthorizationForSession('session'), isNotNull);
       now = lease.subtract(CloudConsentService.leaseMargin);
       expect(service.freshAuthorizationForSession('session'), isNull);
-      // An adult has no lease to expire.
+      // An adult has no lease; its check is reused for a few minutes only,
+      // so returning to the app later still asks the server.
       kind = 'adult';
       await service.authorize('session');
-      now = lease.add(const Duration(days: 1));
+      now = now.add(
+        CloudConsentService.unleasedCacheAge - const Duration(seconds: 1),
+      );
+      expect(service.freshAuthorizationForSession('session'), isNotNull);
+      now = now.add(const Duration(seconds: 1));
+      expect(service.freshAuthorizationForSession('session'), isNull);
+      await service.authorize('session');
       expect(service.freshAuthorizationForSession('session'), isNotNull);
       // A refusal is never reused: returning to the app asks again.
       allowed = false;
       await service.authorize('session');
       expect(service.freshAuthorizationForSession('session'), isNull);
-      expect(calls, 3);
+      expect(calls, 4);
     },
   );
 }
