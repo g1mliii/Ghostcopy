@@ -9,8 +9,10 @@
 // (1.2.840.113635.100.6.2.1) and the leaf carries the App Store receipt
 // signing extension (1.2.840.113635.100.6.11.1).
 //
-// No dependencies: it runs in the Deno edge runtime and in the Node tests
-// (test/backend/apple_jws_test.mjs) through WebCrypto alone.
+// WebCrypto only: it runs in the Deno edge runtime and in the Node tests
+// (test/backend/apple_jws_test.mjs).
+
+import { sameBytes } from './crypto.ts';
 
 /** Apple Root CA - G3, DER, from https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
  * SHA-256 63343ABFB89A6A03EBB57E9B3F5FA7BE7C4F5C756F3017B3A8C488C3653E9179. */
@@ -174,13 +176,6 @@ function rawSignature(der: Bytes, size: number): Bytes {
   return output;
 }
 
-function same(a: Bytes, b: Bytes): boolean {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
-  return difference === 0;
-}
-
 function isCertificateAuthority(certificate: Certificate): boolean {
   const value = certificate.extensions.get('2.5.29.19');
   if (!value) return false;
@@ -196,7 +191,7 @@ function publicKey(certificate: Certificate): Promise<CryptoKey> {
 
 async function signedBy(child: Certificate, issuer: Certificate): Promise<boolean> {
   const hash = signatureHashes[child.signatureAlgorithm];
-  if (!hash || !same(child.issuer, issuer.subject)) return false;
+  if (!hash || !sameBytes(child.issuer, issuer.subject)) return false;
   const size = issuer.curve === 'P-384' ? 48 : 32;
   return crypto.subtle.verify({ name: 'ECDSA', hash }, await publicKey(issuer),
     rawSignature(child.signature, size), child.tbs);
@@ -208,7 +203,7 @@ function base64(value: string): Bytes {
   return Uint8Array.from(binary, (c) => c.charCodeAt(0));
 }
 
-function json(segment: string): Record<string, unknown> {
+function decodeSegment(segment: string): Record<string, unknown> {
   const value: unknown = JSON.parse(new TextDecoder().decode(base64(segment)));
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail();
   return value as Record<string, unknown>;
@@ -227,7 +222,7 @@ export async function verifyAppleJws(jws: string, options: AppleJwsOptions): Pro
   try {
     const parts = jws.split('.');
     if (parts.length !== 3 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) fail();
-    const header = json(parts[0]);
+    const header = decodeSegment(parts[0]);
     if (header.alg !== 'ES256' || !Array.isArray(header.x5c) || header.x5c.length < 2 ||
       !header.x5c.every((item) => typeof item === 'string')) fail();
     const [leaf, intermediate] = (header.x5c as string[]).slice(0, 2).map((item) => parseCertificate(base64(item)));
@@ -247,7 +242,7 @@ export async function verifyAppleJws(jws: string, options: AppleJwsOptions): Pro
     const valid = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, await publicKey(leaf),
       signature, new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
     if (!valid) fail();
-    return json(parts[1]);
+    return decodeSegment(parts[1]);
   } catch (error) {
     if (error instanceof AppleJwsError) throw error;
     fail();

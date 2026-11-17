@@ -148,7 +148,12 @@ a factory reset, and may be stored server-side only to match that report.
 ### Setup (`distribution_onboarding.dart`)
 
 `StoreAgeSignalService` (`lib/services/store_age_signal_service.dart`) asks the
-store when setup starts with no saved age, on iOS and Android only:
+store on iOS and Android only, when setup starts with no saved age, and only
+once the user taps Continue on the first step: the store's sharing sheet or
+Play's verification screen never appears before the user does anything. On
+Android, once Play has granted access (SHARED), later checks in the same
+process go straight to `checkAgeSignals()` so "Check again" does not prompt
+again.
 
 | Store answer | Setup |
 |---|---|
@@ -207,9 +212,10 @@ or longer retention. Copy changes and bug fixes are not significant.
 The server already refuses a parent-managed account whose notice version is
 not current, which sends the child back to parent setup. On top of that:
 
-- When parent setup completes, the device records the notice version it
-  covered (`storeConsentNoticeKey`). A later setup with a different version is
-  a significant change.
+- Every parent-managed receipt records the notice version it covers
+  (`storeConsentNoticeKey`, written by `acceptParentManaged`), whether from
+  setup on this device or a QR-linked device classified by the server. A later
+  setup with a different version is a significant change.
 - iOS: sending the new KWS request also asks
   `AskCenter.ask(SignificantAppUpdateTopic(description:))` where
   `requiredRegulatoryFeatures` contains
@@ -219,6 +225,39 @@ not current, which sends the child back to parent setup. On top of that:
 - Android: the release that bumps the version is declared in Play Console with
   its effective date; setup cannot finish while `significantChangeStatus` is
   `PENDING` or `DECLINED`.
+
+### iOS build notes
+
+DeclaredAgeRange and PermissionKit are iOS 26 frameworks and the deployment
+target is iOS 16, so the Runner target weak-links both (`-weak_framework` in
+`OTHER_LDFLAGS`). Every call is behind `#available`. Verify on an archive with
+`otool -l Runner.app/Runner | grep -A2 LC_LOAD_WEAK_DYLIB`, which should list
+both, and by launching on an iOS 18 device.
+
+APIs in `ios/Runner/StoreAgeSignals.swift`, checked against Apple's DocC
+declarations on 2026-11-17:
+
+| API | Declaration | Since |
+|---|---|---|
+| `AgeRangeService.shared` | `static let shared: AgeRangeService` (struct, Sendable) | 26.0 |
+| `requestAgeRange(ageGates:_:_:in:)` | `func requestAgeRange(ageGates threshold1: Int, _ threshold2: Int? = nil, _ threshold3: Int? = nil, in viewController: UIViewController) async throws -> AgeRangeService.Response` | 26.0 (UIKit; macOS has an NSWindow overload) |
+| `Response` | `.declinedSharing`, `.sharing(range: AgeRangeService.AgeRange)` | 26.0 |
+| `AgeRange.lowerBound` / `upperBound` | `var lowerBound: Int?` / `var upperBound: Int?` | 26.0 |
+| `requiredRegulatoryFeatures` | `var requiredRegulatoryFeatures: Set<AgeRangeService.RegulatoryFeature> { get async throws }` | 26.4 |
+| `.significantAppChangeRequiresParentalConsent` | `case significantAppChangeRequiresParentalConsent` | 26.4 |
+| `SignificantAppUpdateTopic(description:)` | `init(description: String)` | 26.2 |
+| `PermissionQuestion(significantAppUpdateTopic:)` | `convenience init(significantAppUpdateTopic: Topic)` where Topic is SignificantAppUpdateTopic | 26.2 |
+| `AskCenter.shared.ask(_:in:)` | `final func ask(_ question: PermissionQuestion<SignificantAppUpdateTopic>, in viewController: UIViewController) async throws` | 26.2 |
+| `AskCenter.shared.responses(for:)` | `final func responses<Topic>(for topicType: Topic.Type) -> some AsyncSequence<PermissionResponse<Topic>, Never>` | 26.2 |
+| `PermissionChoice.approve` | `static let approve: PermissionChoice` (Equatable) | 26.0 |
+| `PermissionResponse.choice` / `.question`, `PermissionQuestion.topic` | `let choice: PermissionChoice`, `let question: PermissionQuestion<Topic>`, `final let topic: Topic` | 26.0 |
+| `AskError.notAvailable` | `case notAvailable`; AskError is **not** Equatable, so it is matched with `case`, not `==` | 26.2 (enum 26.1) |
+| `AppTransaction.shared` | `static var shared: VerificationResult<AppTransaction> { get async throws }` | 16.0 |
+| `AppTransaction.appTransactionID` | `var appTransactionID: String { get }`, `@backDeployed(before: iOS 18.4)` | 16.0 |
+
+Not verifiable without a Mac: that the file compiles (it has never been
+built), Swift concurrency diagnostics, and the `ask` page's conflicting Mac
+Catalyst availability (irrelevant here: iOS only).
 
 ## Follow-ups
 

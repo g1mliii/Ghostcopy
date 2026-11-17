@@ -1,18 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { stripTypeScriptTypes } from 'node:module';
 import { after, before, beforeEach, test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { setupConsentDatabase } from './consent_fixture.mjs';
 import { appleChain, appleJws, signJws } from './apple_fixture.mjs';
+import { importShared } from './ts_module.mjs';
 
-const moduleUrl = (source) => `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source, { mode: 'transform' })).toString('base64')}`;
-const read = (path) => readFile(new URL(`../../supabase/functions/_shared/${path}`, import.meta.url), 'utf8');
-const storeUrl = moduleUrl(await read('store_notifications.ts'));
-const { createStoreNotificationHandler } = await import(storeUrl);
-const { createConsentHandler } = await import(moduleUrl((await read('consent_handler.ts'))
-  .replace("'./kws.ts'", JSON.stringify(moduleUrl(await read('kws.ts'))))
-  .replace("'./store_notifications.ts'", JSON.stringify(storeUrl))));
+const { createStoreNotificationHandler } = await importShared('store_notifications.ts');
+const { createConsentHandler } = await importShared('consent_handler.ts');
 
 const db = new PGlite();
 const child = '00000000-0000-4000-8000-000000000001';

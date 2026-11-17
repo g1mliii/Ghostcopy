@@ -1,7 +1,7 @@
+import { hex, hmacHex, jsonResponse, row, type Row, sameText, sha256Hex as hash, text } from './crypto.ts';
 import { KwsClient, parentalNoticeVersion, verifyKwsSignature } from './kws.ts';
 import { storeRefHash, validStoreRef } from './store_notifications.ts';
 
-type Row = Record<string, unknown>;
 export interface ConsentDependencies {
   operation(action: string, data?: Row): Promise<unknown>;
   /** public.store_consent_service: binds an app store reference to a request
@@ -24,11 +24,6 @@ export interface ConsentDependencies {
 class Rejected extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
-function row(value: unknown): Row {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value as Row;
-}
-function text(value: unknown): string { return typeof value === 'string' ? value : ''; }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const headers = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
@@ -37,22 +32,14 @@ const headers = {
   'X-Content-Type-Options': 'nosniff',
 };
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers });
-}
-async function hash(value: string): Promise<string> {
-  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
-}
-function hex(value: ArrayBuffer): string {
-  return Array.from(new Uint8Array(value), (n) => n.toString(16).padStart(2, '0')).join('');
+  return jsonResponse(body, status, headers);
 }
 function parentHash(email: string, pepper: string): Promise<string> {
   return hmac(email.trim().toLowerCase(), pepper);
 }
-async function hmac(value: string, pepper: string): Promise<string> {
+function hmac(value: string, pepper: string): Promise<string> {
   if (pepper.length < 32) throw new Rejected(503, 'Parent setup is unavailable.');
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pepper),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value)));
+  return hmacHex(value, pepper);
 }
 async function deviceProof(request: Row, pepper: string, now: number): Promise<string> {
   const payload = btoa(JSON.stringify({ id: request.id, userId: request.bound_user_id,
@@ -106,9 +93,7 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
       if (!match) throw new Rejected(403, 'Invalid setup token.');
       // Domain separation keeps device proofs distinct from parent-email hashes.
       const expected = await hmac(`device-proof:${match[1]}`, deps.parentPepper);
-      let difference = 0;
-      for (let i = 0; i < expected.length; i++) difference |= expected.charCodeAt(i) ^ match[2].charCodeAt(i);
-      if (difference) throw new Rejected(403, 'Invalid setup token.');
+      if (!sameText(expected, match[2])) throw new Rejected(403, 'Invalid setup token.');
       const proof = row(JSON.parse(atob(match[1].replaceAll('-', '+').replaceAll('_', '/'))));
       if (!uuid.test(text(proof.id)) || !uuid.test(text(proof.userId)) ||
         typeof proof.expiresAt !== 'number' || proof.expiresAt <= now() ||

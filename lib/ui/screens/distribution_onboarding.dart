@@ -132,6 +132,11 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
   StoreAgeSignal? _signal;
   bool _checkingStore = false;
 
+  /// The store has not been asked yet. It is asked only when the user taps
+  /// Continue on the first step, never on its own: the store's sheet or Play's
+  /// verification screen must not appear before the user does anything.
+  bool _storeUnasked = false;
+
   bool get _adult => _age == '18+';
 
   bool get _storeAdult => _signal?.status == StoreAgeStatus.adult;
@@ -175,25 +180,23 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     }
     // The store's age category replaces the age question when it has one.
     // A saved age is the user's earlier answer and is not asked again.
-    if (_age == null && !widget.parentAccount && !_blocked) {
-      _checkingStore = true;
-      unawaited(_loadStore());
-    }
+    _storeUnasked =
+        _age == null &&
+        !widget.parentAccount &&
+        !_blocked &&
+        _store.isSupported;
   }
 
-  void _askStore() {
+  Future<void> _askStore() async {
     setState(() {
       _checkingStore = true;
       _error = null;
     });
-    unawaited(_loadStore());
-  }
-
-  Future<void> _loadStore() async {
     final signal = await _store.request();
     if (!mounted) return;
     setState(() {
       _checkingStore = false;
+      _storeUnasked = false;
       _signal = signal;
       switch (signal.status) {
         case StoreAgeStatus.adult:
@@ -362,12 +365,6 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
           IDistributionConsentService.cloudPausedKey,
           false,
         );
-        // The version this parent consent covers. A later notice version is
-        // a significant change that the store's consent flow must cover too.
-        await widget.prefs.setString(
-          IDistributionConsentService.storeConsentNoticeKey,
-          IDistributionConsentService.version,
-        );
         _finish();
       }
     } on Exception catch (error) {
@@ -465,7 +462,9 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         !_saving &&
         !_completed &&
         !_checkingStore &&
-        (_step == 0 ? _age != null && _country != null : _step != 1 || _agreed);
+        (_step == 0
+            ? _storeUnasked || _age != null && _country != null
+            : _step != 1 || _agreed);
     final waiting = _step == 0 && _storeNotApproved && !_blocked;
     return PopScope(
       canPop: false,
@@ -514,7 +513,9 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                       ),
                       const SizedBox(height: 24),
                       FilledButton(
-                        onPressed: _checkingStore ? null : _askStore,
+                        onPressed: _checkingStore
+                            ? null
+                            : () => unawaited(_askStore()),
                         child: Text(
                           _checkingStore ? 'Please wait…' : 'Check again',
                         ),
@@ -529,6 +530,8 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                         Text(
                           _checkingStore
                               ? 'Checking the age setting on your app store account…'
+                              : _storeUnasked
+                              ? 'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Continue to check the age shared by your App Store or Google Play account. If it is not shared, you can enter your age instead. We do not ask for your date of birth.'
                               : _storeAdult
                               ? 'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Your $_storeName shares that you are 18 or older, so tell us your country to show the right setup.'
                               : _storeMinor
@@ -536,7 +539,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                               : 'GhostCopy sends the clips you choose to your linked devices. Cloud services stay off until setup is complete. Tell us your age and country so we can show the right setup. We do not ask for your date of birth.',
                         ),
                         const SizedBox(height: 16),
-                        if (!_storeAdult && !_checkingStore)
+                        if (!_storeAdult && !_checkingStore && !_storeUnasked)
                           DropdownButtonFormField<String>(
                             // Rebuilt when the store's answer narrows the choices.
                             key: ValueKey(_signal?.status),
@@ -567,27 +570,29 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                                 ? null
                                 : (value) => setState(() => _age = value),
                           ),
-                        const SizedBox(height: 16),
-                        DropdownButtonFormField<String>(
-                          initialValue: _country,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Country or region',
-                          ),
-                          items: [
-                            for (final country in consentCountries.entries)
-                              DropdownMenuItem(
-                                value: country.key,
-                                child: Text(
-                                  country.value,
-                                  overflow: TextOverflow.ellipsis,
+                        if (!_storeUnasked) ...[
+                          const SizedBox(height: 16),
+                          DropdownButtonFormField<String>(
+                            initialValue: _country,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Country or region',
+                            ),
+                            items: [
+                              for (final country in consentCountries.entries)
+                                DropdownMenuItem(
+                                  value: country.key,
+                                  child: Text(
+                                    country.value,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
-                              ),
-                          ],
-                          onChanged: _saving
-                              ? null
-                              : (value) => setState(() => _country = value),
-                        ),
+                            ],
+                            onChanged: _saving
+                                ? null
+                                : (value) => setState(() => _country = value),
+                          ),
+                        ],
                         _policies(),
                       ],
                       if (_step == 1) ...[
@@ -653,7 +658,11 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                       ],
                       const SizedBox(height: 24),
                       FilledButton(
-                        onPressed: enabled ? () => unawaited(_next()) : null,
+                        onPressed: !enabled
+                            ? null
+                            : _step == 0 && _storeUnasked
+                            ? () => unawaited(_askStore())
+                            : () => unawaited(_next()),
                         child: Text(
                           _completed
                               ? 'Starting GhostCopy…'

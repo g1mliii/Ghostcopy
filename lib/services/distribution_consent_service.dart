@@ -43,6 +43,7 @@ abstract class IDistributionConsentService {
   });
 
   /// Called only after the server confirms verified, purpose-specific consent.
+  /// Also records [version] under [storeConsentNoticeKey].
   Future<void> acceptParentManaged({required String country});
 
   /// Persist an ineligible age choice. No child cloud account is created.

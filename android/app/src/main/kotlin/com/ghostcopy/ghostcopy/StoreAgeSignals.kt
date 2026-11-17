@@ -28,6 +28,16 @@ import io.flutter.plugin.common.MethodChannel
 object StoreAgeSignals {
     private const val CHANNEL = "com.ghostcopy/store_age"
 
+    /**
+     * Play granted access (SHARED) in this process. Later calls - "Check
+     * again", the significant-change check - go straight to checkAgeSignals()
+     * for a fresh status instead of asking for access again, which would
+     * re-prompt or re-open Play's verification screen on every tap. Process
+     * memory only: whether to share is the user's choice in Play each launch.
+     */
+    @Volatile
+    private var accessGranted = false
+
     fun attach(messenger: BinaryMessenger, activity: Activity) {
         MethodChannel(messenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -60,15 +70,23 @@ object StoreAgeSignals {
             done(null)
             return
         }
+        fun signals() {
+            manager.checkAgeSignals(AgeSignalsRequest.builder().build())
+                .addOnSuccessListener { done(it) }
+                .addOnFailureListener { done(null) }
+        }
+        if (accessGranted) {
+            signals()
+            return
+        }
         manager.requestAgeSignalsAccess(AgeSignalsAccessRequest.builder().setActivity(activity).build())
             .addOnSuccessListener { access ->
                 if (access.ageSignalsStatus() != AgeSignalsStatus.SHARED) {
                     done(null)
                     return@addOnSuccessListener
                 }
-                manager.checkAgeSignals(AgeSignalsRequest.builder().build())
-                    .addOnSuccessListener { done(it) }
-                    .addOnFailureListener { done(null) }
+                accessGranted = true
+                signals()
             }
             .addOnFailureListener { done(null) }
     }

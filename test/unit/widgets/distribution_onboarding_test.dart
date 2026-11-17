@@ -66,6 +66,9 @@ class _Store implements IStoreAgeSignalService {
   int requests = 0;
 
   @override
+  bool get isSupported => true;
+
+  @override
   Future<StoreAgeSignal> request() async {
     requests++;
     return signal;
@@ -452,6 +455,13 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// The store is asked only when the user taps Continue on step 0.
+    Future<void> askStore(WidgetTester tester) async {
+      expect(find.textContaining('Continue to check the age'), findsOneWidget);
+      expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+      await tap(tester, 'Continue');
+    }
+
     Future<void> agree(WidgetTester tester) async {
       await tester.tap(find.byType(CheckboxListTile));
       await tester.pump();
@@ -462,6 +472,7 @@ void main() {
       final store = _Store({...apple, 'ageLower': 18});
       var calls = 0;
       final prefs = await pump(tester, () => calls++, store: store);
+      await askStore(tester);
       expect(store.requests, 1);
       expect(find.textContaining('18 or older'), findsOneWidget);
       // Country only; no age to choose.
@@ -491,6 +502,7 @@ void main() {
         });
         var calls = 0;
         final prefs = await pump(tester, () => calls++, store: store);
+        await askStore(tester);
         expect(find.textContaining('13–15'), findsOneWidget);
         await tester.tap(find.byType(DropdownButtonFormField<String>).first);
         await tester.pumpAndSettle();
@@ -532,6 +544,7 @@ void main() {
     testWidgets('an under-13 band still refuses under 5', (tester) async {
       final store = _Store({...apple, 'ageUpper': 12});
       final prefs = await pump(tester, () {}, store: store);
+      await askStore(tester);
       expect(find.textContaining('under 13'), findsOneWidget);
       await choose(tester, 'Under 5');
       expect(prefs.getBool(IDistributionConsentService.blockedKey), isTrue);
@@ -549,6 +562,7 @@ void main() {
         });
         var calls = 0;
         await pump(tester, () => calls++, store: store);
+        await askStore(tester);
         expect(find.text('Waiting for a parent'), findsOneWidget);
         expect(find.textContaining('not approved'), findsOneWidget);
         expect(find.text('Continue'), findsNothing);
@@ -583,6 +597,7 @@ void main() {
     ) async {
       final store = _Store({'shared': false});
       await pump(tester, () {}, store: store);
+      await askStore(tester);
       expect(store.requests, 1);
       expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
       await choose(tester, '8');
@@ -593,12 +608,26 @@ void main() {
       expect(cloud.started!.containsKey('storeRef'), isFalse);
     }, variant: mobile);
 
+    testWidgets('the store is not asked until the user taps Continue', (
+      tester,
+    ) async {
+      final store = _Store({...apple, 'ageLower': 18});
+      await pump(tester, () {}, store: store);
+      expect(store.requests, 0);
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+      expect(store.requests, 0);
+      await askStore(tester);
+      expect(store.requests, 1);
+    }, variant: mobile);
+
     testWidgets('a saved age is not replaced by the store', (tester) async {
       final store = _Store({...apple, 'ageLower': 18});
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('distribution_declared_age', '8');
       await pump(tester, () {}, store: store);
       expect(store.requests, 0);
+      expect(find.textContaining('Continue to check the age'), findsNothing);
+      expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     }, variant: mobile);
 
     testWidgets(

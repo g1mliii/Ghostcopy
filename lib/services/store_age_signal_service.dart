@@ -140,7 +140,12 @@ enum SignificantChangeStatus {
 }
 
 abstract class IStoreAgeSignalService {
-  /// Ask the store for the user's age category. Never throws.
+  /// Whether this platform has a store age signal to ask for at all. When
+  /// false, setup goes straight to the self-declared age step.
+  bool get isSupported;
+
+  /// Ask the store for the user's age category. May show the store's own
+  /// sharing sheet, so call it only from a user action. Never throws.
   Future<StoreAgeSignal> request();
 
   /// The store's parent answer for significant change [version], whose
@@ -160,6 +165,9 @@ class StoreAgeSignalService implements IStoreAgeSignalService {
 
   final MethodChannel _channel;
   final bool _supported;
+
+  @override
+  bool get isSupported => _supported;
 
   @override
   Future<StoreAgeSignal> request() async {

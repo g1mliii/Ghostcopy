@@ -22,6 +22,12 @@ import PermissionKit
 /// Needs the com.apple.developer.declared-age-range entitlement and the iOS
 /// 26.4 SDK (Xcode 26.4+) to build. On older iOS every call answers "not
 /// shared" / "notRequired", which keeps the self-declared setup.
+/// DeclaredAgeRange and PermissionKit are weak-linked (OTHER_LDFLAGS in the
+/// Runner target) because the deployment target is iOS 16: a strong link
+/// would stop the app launching on iOS 16-25.
+///
+/// Every API used was checked against Apple's documentation on 2026-11-17;
+/// see docs/store-age-signals.md. This file has not yet been compiled.
 final class StoreAgeSignals {
   static let shared = StoreAgeSignals()
 
@@ -131,10 +137,10 @@ final class StoreAgeSignals {
         var asked = Self.asked
         asked.insert(description)
         UserDefaults.standard.set(Array(asked), forKey: Self.askedKey)
-      } catch AskError.notAvailable {
-        // Thrown for adults: nothing for a parent to approve.
-        return "notRequired"
       } catch {
+        // AskError is not Equatable; match the case. notAvailable is thrown
+        // for adults: there is nothing for a parent to approve.
+        if let error = error as? AskError, case .notAvailable = error { return "notRequired" }
         // Cancelled or failed: still pending, and asked again next time.
       }
     }
@@ -154,7 +160,7 @@ final class StoreAgeSignals {
       for await response in AskCenter.shared.responses(for: SignificantAppUpdateTopic.self) {
         var answers = Self.answers
         answers[response.question.topic.description] =
-          response.choice.id == PermissionChoice.approve.id ? "approved" : "declined"
+          response.choice == .approve ? "approved" : "declined"
         UserDefaults.standard.set(answers, forKey: Self.answersKey)
       }
     }

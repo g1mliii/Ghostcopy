@@ -2,11 +2,9 @@
 // follow Apple's JWSDecodedHeader documentation: a P-256 leaf carrying
 // 1.2.840.113635.100.6.11.1, an intermediate CA carrying
 // 1.2.840.113635.100.6.2.1, and a P-384 root.
-import { readFile } from 'node:fs/promises';
-import { stripTypeScriptTypes } from 'node:module';
+import { importShared } from './ts_module.mjs';
 
-const source = await readFile(new URL('../../supabase/functions/_shared/apple_jws.ts', import.meta.url), 'utf8');
-export const appleJws = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source, { mode: 'transform' })).toString('base64')}`);
+export const appleJws = await importShared('apple_jws.ts');
 
 const length = (n) => n < 128 ? [n] : n < 256 ? [0x81, n] : [0x82, n >> 8, n & 255];
 const tlv = (tag, ...parts) => {

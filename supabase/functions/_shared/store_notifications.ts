@@ -11,8 +11,9 @@
 // an operator posts them to /google-revocations with a secret key.
 // See docs/store-age-signals.md.
 
+import { hmacHex, jsonResponse, row, type Row } from './crypto.ts';
+
 export type Store = 'app_store' | 'google_play';
-type Row = Record<string, unknown>;
 
 export interface StoreNotificationDependencies {
   verifyApple(jws: string): Promise<Row>;
@@ -33,22 +34,14 @@ export interface StoreNotificationDependencies {
 
 const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers });
-}
-function row(value: unknown): Row {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
-}
-function hex(value: ArrayBuffer): string {
-  return Array.from(new Uint8Array(value), (n) => n.toString(16).padStart(2, '0')).join('');
+  return jsonResponse(body, status, headers);
 }
 
 /** Store references are stored only as this keyed hash. Domain-separated from
  * parent-email hashes and device proofs made with the same key. */
-export async function storeRefHash(store: Store, id: string, pepper: string): Promise<string> {
-  if (pepper.length < 32) throw new Error('Store reference key unavailable');
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pepper),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`store-ref:${store}:${id}`)));
+export function storeRefHash(store: Store, id: string, pepper: string): Promise<string> {
+  if (pepper.length < 32) return Promise.reject(new Error('Store reference key unavailable'));
+  return hmacHex(`store-ref:${store}:${id}`, pepper);
 }
 
 /** Shapes accepted from clients and stores. Neither is documented as a format,

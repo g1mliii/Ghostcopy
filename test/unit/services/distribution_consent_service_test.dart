@@ -36,6 +36,28 @@ void main() {
     expect(prefs.containsKey(IDistributionConsentService.receiptKey), isFalse);
   });
 
+  test(
+    'a parent-managed receipt records the notice version it covers',
+    () async {
+      final consent = await service();
+      await consent.accept(
+        ageGroup: DistributionAgeGroup.adult,
+        country: 'CA',
+        diagnosticsAllowed: false,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.containsKey(IDistributionConsentService.storeConsentNoticeKey),
+        isFalse,
+      );
+      await consent.acceptParentManaged(country: 'CA');
+      expect(
+        prefs.getString(IDistributionConsentService.storeConsentNoticeKey),
+        IDistributionConsentService.version,
+      );
+    },
+  );
+
   test('adult receipt survives reload without enabling diagnostics', () async {
     final consent = await service();
     await consent.accept(
