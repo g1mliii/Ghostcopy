@@ -11,6 +11,6 @@
   "devDependencies": {
     "cf": "1.0.0-beta.5",
     "tailwindcss": "^3.4.0",
-    "wrangler": "^4.143.1"
+    "wrangler": "4.161.0"
   }
 }
