@@ -11,6 +11,8 @@ const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
 // .trim() guards against accidental whitespace when secrets are set via dashboard copy-paste
 const R2_BUCKET_NAME = (Deno.env.get('R2_BUCKET_NAME') ?? 'ghostcopy-files').trim();
 const DOWNLOAD_URL_TTL_SECONDS = 300;
+// Parent-managed accounts get URLs that cannot outlive a withdrawn permission.
+const PARENT_URL_TTL_SECONDS = 60;
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -169,12 +171,6 @@ Deno.serve(async (req)=>{
     if (action !== 'upload' && action !== 'download' && action !== 'delete') {
       return json({ error: 'Invalid action' }, 400);
     }
-    let parentManaged = false;
-    if (userId !== 'service-role' && action !== 'delete') {
-      const access = await cloudAccess(serviceClient(), userId);
-      if (!access.allowed || !access.fileSync) return json({ error: 'Cloud file permission required' }, 403);
-      parentManaged = access.parentManaged;
-    }
     if (path.startsWith('/') || path.includes('..') || path.includes('\\') || path.includes('\u0000') || path.split('/').some((segment)=>segment.length === 0)) {
       return json({ error: 'Invalid storage path' }, 400);
     }
@@ -186,6 +182,13 @@ Deno.serve(async (req)=>{
       return json({ error: 'Forbidden' }, 403);
     }
     const isUserAction = userId !== 'service-role';
+    // After the free checks above, so a malformed request costs no RPC.
+    let parentManaged = false;
+    if (isUserAction && action !== 'delete') {
+      const access = await cloudAccess(serviceClient(), userId);
+      if (!access.allowed || !access.fileSync) return json({ error: 'Cloud file permission required' }, 403);
+      parentManaged = access.parentManaged;
+    }
     // `action` was already narrowed to exactly the three rate-limited actions
     // above, so there is nothing further to test here.
     if (isUserAction) {
@@ -222,7 +225,7 @@ Deno.serve(async (req)=>{
         ContentLength: size
       });
       const presignedUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: parentManaged ? 60 : 3600
+        expiresIn: parentManaged ? PARENT_URL_TTL_SECONDS : 3600
       });
       console.log(`[storage-presign] Presigned upload URL generated for: ${path}`);
       return json({ presignedUrl, storagePath: path });
@@ -232,11 +235,10 @@ Deno.serve(async (req)=>{
         Bucket: R2_BUCKET_NAME,
         Key: path
       });
-      const downloadUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: parentManaged ? 60 : DOWNLOAD_URL_TTL_SECONDS
-      });
+      const expiresIn = parentManaged ? PARENT_URL_TTL_SECONDS : DOWNLOAD_URL_TTL_SECONDS;
+      const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn });
       console.log(`[storage-presign] Signed download URL generated for: ${path}`);
-      return json({ downloadUrl, expiresIn: parentManaged ? 60 : DOWNLOAD_URL_TTL_SECONDS });
+      return json({ downloadUrl, expiresIn });
     }
     if (action === 'delete') {
       if (!await deleteObject(path)) {

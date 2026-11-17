@@ -171,12 +171,17 @@ Future<void> _prefetchClipForInstantCopy(RemoteMessage message) async {
       return;
     }
 
-    final backgroundSession = Supabase.instance.client.auth.currentSession;
-    if (backgroundSession == null ||
-        !(await CloudConsentService.instance.authorize(
-          backgroundSession.accessToken,
-        )).allowed) {
-      return;
+    // RLS already refuses an unauthorized account's read. Only a parent lease
+    // (15 minutes) needs renewing first, or the read fails while still allowed.
+    if (DistributionConsentService(prefs).ageGroup ==
+        DistributionAgeGroup.parentManaged) {
+      final backgroundSession = Supabase.instance.client.auth.currentSession;
+      if (backgroundSession == null ||
+          !(await CloudConsentService.instance.authorize(
+            backgroundSession.accessToken,
+          )).allowed) {
+        return;
+      }
     }
 
     // getById() applies RLS and decrypts, so `content` is plaintext here.
@@ -459,12 +464,10 @@ Future<void> _appMain(
         CloudConsentService.authorization.value?.parentManaged != true,
     pauseCloudSetup: () async {
       final prefs = await loadConsentPreferences();
-      await prefs.setBool('distribution_cloud_paused', true);
+      await prefs.setBool(IDistributionConsentService.cloudPausedKey, true);
     },
     beforeIndependentAuth: () async {
-      final local = DistributionConsentService(await loadConsentPreferences());
-      if (local.ageGroup == DistributionAgeGroup.parentManaged ||
-          CloudConsentService.authorization.value?.parentManaged == true) {
+      if (CloudConsentService.isParentManaged(await loadConsentPreferences())) {
         throw Exception(
           'Use parent-managed setup and device linking for this account.',
         );

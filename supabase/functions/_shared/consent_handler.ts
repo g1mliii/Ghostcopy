@@ -63,7 +63,9 @@ function publicRequest(request: Row, now: number): Row {
     request.requires_new_consent === false && Date.parse(text(request.valid_until)) > now;
   return { independentEligible: Number.isFinite(adulthood.getTime()) && adulthood.getTime() <= now,
     status: expired ? 'expired' : authorized ? 'authorized' :
-    request.requires_new_consent ? 'revoked' : request.status === 'initiating' ? 'pending' : request.status,
+    // A stored 'authorized' with a lapsed lease is not a current permission.
+    request.requires_new_consent ? 'revoked' :
+    request.status === 'initiating' || request.status === 'authorized' ? 'pending' : request.status,
   hasAccount: !!request.bound_user_id, cloudSync: authorized, fileSync: authorized && request.file_sync === true,
   expiresAt: request.expires_at, validUntil: request.valid_until,
   accountLabel: `GhostCopy account ${text(request.id).slice(-6)}` };
@@ -143,22 +145,23 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
       ? payload.members.map((member) => text(row(member).userId))
       : [text(payload.userId || payload.consenteeId)];
     const eventHash = await hash(new TextDecoder().decode(raw));
+    // Properties of the event, not of each subject it names.
+    const unlink = name === 'families:user-removed-from-family' || name === 'families:family-group-deleted';
+    const cloudDenied = denied('cloudSync') || name === 'consent:deleted' || name === 'families:guardian-request-expired';
+    const fileDenied = denied('fileSync');
     for (const id of [...new Set(ids)]) {
       if (!uuid.test(id)) continue;
-      const unlink = name === 'families:user-removed-from-family' || name === 'families:family-group-deleted';
-      const permanent = unlink || denied('cloudSync') || name === 'consent:deleted' || name === 'families:guardian-request-expired';
+      const subjectHash = await hash(`${eventHash}:${id}`);
       const updated = row(await deps.operation('event', {
-        id, hash: await hash(`${eventHash}:${id}`), name, eventAt: new Date(eventTime).toISOString(),
-        permanent, unlinkParent: unlink,
-        cloudDenied: denied('cloudSync') || name === 'consent:deleted' || name === 'families:guardian-request-expired',
-        fileDenied: denied('fileSync'),
+        id, hash: subjectHash, name, eventAt: new Date(eventTime).toISOString(),
+        permanent: unlink || cloudDenied, unlinkParent: unlink, cloudDenied, fileDenied,
         // Never restore a locally withdrawn request using an unrelated settings event.
         grantChange: false,
         ...(payload.consentRequestId ? { kwsRequestId: payload.consentRequestId } : {}),
       }));
       if (updated.ignored || !updated.id || updated.requires_new_consent) continue;
       await refresh(updated, true);
-      await deps.operation('event_done', { hash: await hash(`${eventHash}:${id}`) });
+      await deps.operation('event_done', { hash: subjectHash });
     }
     return json({ received: true });
   }
@@ -243,11 +246,12 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
       const user = await deps.authenticate(request);
       if (!user) throw new Rejected(401, 'Sign in required.');
       if (action === 'authorize' || action === 'status') {
+        const acknowledgeAdult = async () => row(await deps.operation('adult', { userId: user.id,
+          age: data.age, country: data.country, noticeVersion: data.noticeVersion,
+          termsAccepted: data.termsAccepted, privacyAcknowledged: data.privacyAcknowledged }));
         let profile = row(await deps.operation('profile', { userId: user.id }));
         if (action === 'authorize' && data.graduate === true) {
-          profile = row(await deps.operation('adult', { userId: user.id, age: data.age,
-            country: data.country, noticeVersion: data.noticeVersion,
-            termsAccepted: data.termsAccepted, privacyAcknowledged: data.privacyAcknowledged }));
+          profile = await acknowledgeAdult();
         } else if (action === 'authorize' && data.claimToken &&
             (!profile.user_id || profile.status === 'revoked')) {
           const child = await refresh(await claim(data.claimToken));
@@ -265,14 +269,13 @@ export function createConsentHandler(deps: ConsentDependencies): (request: Reque
           await refresh(row(await deps.operation('lookup', { userId: user.id })));
           profile = row(await deps.operation('profile', { userId: user.id }));
         } else if (action === 'authorize' && (!profile.user_id || profile.notice_version !== parentalNoticeVersion)) {
-          profile = row(await deps.operation('adult', { userId: user.id, age: data.age,
-            country: data.country, noticeVersion: data.noticeVersion,
-            termsAccepted: data.termsAccepted, privacyAcknowledged: data.privacyAcknowledged }));
+          profile = await acknowledgeAdult();
         }
-        const config = row(await deps.operation('configuration'));
+        // Configuration only decides for an unclassified account.
         const allowed = profile.user_id ? profile.status === 'authorized' && profile.cloud_sync === true &&
           profile.notice_version === parentalNoticeVersion &&
-          (profile.account_kind === 'adult' || Date.parse(text(profile.valid_until)) > now()) : config.enforced === false;
+          (profile.account_kind === 'adult' || Date.parse(text(profile.valid_until)) > now())
+          : row(await deps.operation('configuration')).enforced === false;
         let updatedClaim: string | undefined;
         let child: Row = {};
         if (allowed && profile.account_kind === 'parent_managed') {

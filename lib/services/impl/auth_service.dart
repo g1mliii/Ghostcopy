@@ -1168,7 +1168,6 @@ class AuthService implements IAuthService {
     try {
       final remainSignedOut =
           !createGuest || recreateGuestAfterSignOut?.call() == false;
-      if (remainSignedOut) await pauseCloudSetup?.call();
       final deviceId = _deviceService?.getCurrentDeviceId();
       final userId = currentUserId;
       if (deviceId != null && userId != null) {
@@ -1182,6 +1181,9 @@ class AuthService implements IAuthService {
       }
       await _clearLocalAccountState();
 
+      // Only once nothing retryable is left, but before the signedOut event,
+      // so the account guard cannot start a replacement guest.
+      if (remainSignedOut) await pauseCloudSetup?.call();
       await _client.auth.signOut();
       debugPrint('[AuthService] Signed out successfully');
 

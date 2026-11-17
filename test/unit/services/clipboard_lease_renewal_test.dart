@@ -23,7 +23,7 @@ class _Storage extends Mock implements IStorageService {}
 
 class _SecureStorage extends Mock implements FlutterSecureStorage {}
 
-Map<String, Object?> _session(String id) {
+Map<String, Object?> _session(String id, {String signature = 'signature'}) {
   final expires =
       DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
       1000;
@@ -31,7 +31,7 @@ Map<String, Object?> _session(String id) {
       .encode(utf8.encode(jsonEncode({'sub': id, 'exp': expires})))
       .replaceAll('=', '');
   return {
-    'access_token': 'e30.$payload.signature',
+    'access_token': 'e30.$payload.$signature',
     'refresh_token': 'refresh-$id',
     'token_type': 'bearer',
     'expires_in': 3600,
@@ -315,6 +315,19 @@ void main() {
     await expectLater(fixture.sendFile(), throwsA(isA<RepositoryException>()));
     expect(fixture.events, ['authorize']);
   });
+
+  for (final parentManaged in [true, false]) {
+    test('a refreshed access token is checked on send, not refused '
+        '(parentManaged=$parentManaged)', () async {
+      await fixture.open(parentManaged: parentManaged);
+      // Same account, new token: the guard has not rechecked it yet.
+      await fixture.client.auth.recoverSession(
+        jsonEncode(_session('child', signature: 'refreshed')),
+      );
+      await fixture.sendText();
+      expect(fixture.events, ['authorize', 'insert']);
+    });
+  }
 
   test(
     'independent accounts do not acquire a per-send permission request',

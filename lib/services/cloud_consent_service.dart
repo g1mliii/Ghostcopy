@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'distribution_consent_service.dart';
 import 'public_backend_config.dart';
@@ -55,8 +56,18 @@ class CloudConsentService {
   static CloudAuthorization? authorizationForSession(String accessToken) =>
       _authorizedAccessToken == accessToken ? authorization.value : null;
 
+  /// Parent-managed by the server's classification or this device's setup.
+  static bool isParentManaged(SharedPreferences prefs) =>
+      authorization.value?.parentManaged == true ||
+      DistributionConsentService(prefs).ageGroup ==
+          DistributionAgeGroup.parentManaged;
+
   /// Wired after Supabase initializes; stale account responses cannot update UI.
   static String? Function()? currentAccessToken;
+
+  /// True unless a wired session getter names a different session.
+  static bool _isCurrent(String accessToken) =>
+      currentAccessToken == null || currentAccessToken!() == accessToken;
   final http.Client _client;
   final FlutterSecureStorage _storage;
   final Future<void> Function() _stopDiagnostics;
@@ -77,8 +88,17 @@ class CloudConsentService {
       },
       body: jsonEncode({'action': action, ...data}),
     );
-    final decoded = jsonDecode(response.body);
-    if (response.statusCode != 200 || decoded is! Map<String, Object?>) {
+    // A gateway error page is not JSON; keep the status for recovery paths.
+    if (response.statusCode != 200) {
+      throw CloudConsentException(response.statusCode);
+    }
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw CloudConsentException(response.statusCode);
+    }
+    if (decoded is! Map<String, Object?>) {
       throw CloudConsentException(response.statusCode);
     }
     return decoded;
@@ -108,7 +128,7 @@ class CloudConsentService {
   /// Account recovery requires a fresh link and PIN from an authorized device.
   Future<void> beforeGuestCreation() async {
     final prefs = await loadConsentPreferences();
-    if (prefs.getBool('distribution_cloud_paused') == true) {
+    if (prefs.getBool(IDistributionConsentService.cloudPausedKey) == true) {
       throw Exception('Review account setup before signing in.');
     }
     if (DistributionConsentService(prefs).ageGroup ==
@@ -139,12 +159,12 @@ class CloudConsentService {
   /// Renew a known parent lease only when a send needs it, including in tray
   /// mode. [accessToken] must still identify the current classified session.
   Future<CloudAuthorization> authorizeSend(String accessToken) async {
-    if (currentAccessToken != null && currentAccessToken!() != accessToken) {
-      throw const CloudConsentException(401);
-    }
+    if (!_isCurrent(accessToken)) throw const CloudConsentException(401);
+    // A refreshed access token has no cached check yet: ask the server for
+    // this token rather than refusing until the account guard catches up.
     final cached = authorizationForSession(accessToken);
-    if (cached == null) throw const CloudConsentException(403);
-    if (cached.allowed &&
+    if (cached != null &&
+        cached.allowed &&
         (!cached.parentManaged ||
             cached.validUntil?.isAfter(
                   _now().add(const Duration(minutes: 1)),
@@ -154,9 +174,7 @@ class CloudConsentService {
     }
     // authorize() coalesces simultaneous shortcut/file sends for this token.
     final renewed = await authorize(accessToken);
-    if (currentAccessToken != null && currentAccessToken!() != accessToken) {
-      throw const CloudConsentException(401);
-    }
+    if (!_isCurrent(accessToken)) throw const CloudConsentException(401);
     if (!renewed.allowed ||
         (renewed.parentManaged &&
             renewed.validUntil?.isAfter(_now()) != true)) {
@@ -169,7 +187,8 @@ class CloudConsentService {
     final prefs = await loadConsentPreferences();
     final consent = DistributionConsentService(prefs);
     if (!consent.isAccepted) throw Exception('Complete setup first.');
-    final graduating = prefs.getBool('distribution_graduation_pending') == true;
+    final graduating =
+        prefs.getBool(IDistributionConsentService.graduationPendingKey) == true;
     final result = await call(
       'authorize',
       accessToken: accessToken,
@@ -194,38 +213,46 @@ class CloudConsentService {
           : null,
     );
     if (snapshot.parentManaged &&
-        prefs.getBool('parent_managed_diagnostics_disabled') != true) {
+        prefs.getBool(IDistributionConsentService.diagnosticsDisabledKey) !=
+            true) {
       // Stop collection before a storage failure can interrupt reconciliation.
       await _stopDiagnostics();
-      await prefs.setBool('parent_managed_diagnostics_disabled', true);
+      await prefs.setBool(
+        IDistributionConsentService.diagnosticsDisabledKey,
+        true,
+      );
     }
     if (snapshot.allowed &&
         snapshot.parentManaged &&
         result['deviceClaim'] is String &&
-        (currentAccessToken == null || currentAccessToken!() == accessToken)) {
+        _isCurrent(accessToken)) {
       // A QR-linked child account needs a consent capability for that actual
       // account on its next pre-auth launch, not the previous local receipt.
       await saveClaim(result['deviceClaim']! as String);
       final country = result['country'];
       if (country is! String) throw const CloudConsentException(503);
       await consent.acceptParentManaged(country: country);
-      await prefs.setString('distribution_declared_country', country);
       await prefs.setString(
-        'distribution_declared_age',
+        IDistributionConsentService.declaredCountryKey,
+        country,
+      );
+      await prefs.setString(
+        IDistributionConsentService.declaredAgeKey,
         '${result['ageAtSetup']}',
       );
     }
     if (snapshot.allowed &&
         result['accountKind'] == 'adult' &&
         graduating &&
-        (currentAccessToken == null || currentAccessToken!() == accessToken) &&
-        prefs.getBool('distribution_graduation_pending') == true) {
+        _isCurrent(accessToken) &&
+        prefs.getBool(IDistributionConsentService.graduationPendingKey) ==
+            true) {
       await _storage.delete(key: claimKey);
-      await prefs.remove('parent_managed_diagnostics_disabled');
-      await prefs.setString('distribution_declared_age', '18+');
-      await prefs.remove('distribution_graduation_pending');
+      await prefs.remove(IDistributionConsentService.diagnosticsDisabledKey);
+      await prefs.setString(IDistributionConsentService.declaredAgeKey, '18+');
+      await prefs.remove(IDistributionConsentService.graduationPendingKey);
     }
-    if (currentAccessToken == null || currentAccessToken!() == accessToken) {
+    if (_isCurrent(accessToken)) {
       _authorizedAccessToken = accessToken;
       authorization.value = snapshot;
     }

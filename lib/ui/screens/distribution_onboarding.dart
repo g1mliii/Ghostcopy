@@ -11,6 +11,8 @@ import '../../services/cloud_consent_service.dart';
 import '../../services/consent_countries.dart';
 import '../../services/distribution_consent_service.dart';
 import '../../services/settings_service.dart';
+import '../../utils/auth_errors.dart';
+import '../platform_adaptive.dart';
 import '../theme/app_theme.dart';
 import '../theme/appearance.dart';
 import '../theme/colors.dart';
@@ -24,12 +26,15 @@ Future<void> ensureDistributionConsent({
   final prefs = await loadConsentPreferences();
   final consent = DistributionConsentService(prefs);
   if (consent.isAccepted &&
-      prefs.getBool('distribution_cloud_paused') != true) {
+      prefs.getBool(IDistributionConsentService.cloudPausedKey) != true) {
     if (consent.ageGroup != DistributionAgeGroup.parentManaged) return;
     try {
       final status = await (cloud ?? CloudConsentService.instance).poll();
       if (status['independentEligible'] == true) {
-        await prefs.setBool('distribution_graduation_pending', true);
+        await prefs.setBool(
+          IDistributionConsentService.graduationPendingKey,
+          true,
+        );
       } else if (status['status'] == 'authorized') {
         return;
       }
@@ -57,7 +62,7 @@ Future<void> ensureDistributionConsent({
       ),
     ),
   );
-  final desktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+  final desktop = Adaptive.isDesktop;
   if (desktop) {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
@@ -129,10 +134,15 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
   @override
   void initState() {
     super.initState();
-    _age = widget.prefs.getString('distribution_declared_age');
+    _age = widget.prefs.getString(IDistributionConsentService.declaredAgeKey);
     if (widget.parentAccount && _age == '18+') _age = null;
-    _country = widget.prefs.getString('distribution_declared_country');
-    if (widget.prefs.getBool('distribution_graduation_pending') == true) {
+    _country = widget.prefs.getString(
+      IDistributionConsentService.declaredCountryKey,
+    );
+    if (widget.prefs.getBool(
+          IDistributionConsentService.graduationPendingKey,
+        ) ==
+        true) {
       _age = '18+';
       _step = 1;
       return;
@@ -171,9 +181,12 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
     });
     try {
       if (_step == 0) {
-        await widget.prefs.setString('distribution_declared_age', _age!);
         await widget.prefs.setString(
-          'distribution_declared_country',
+          IDistributionConsentService.declaredAgeKey,
+          _age!,
+        );
+        await widget.prefs.setString(
+          IDistributionConsentService.declaredCountryKey,
           _country!,
         );
         if (_age == 'Under 5') {
@@ -198,7 +211,10 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
           diagnosticsAllowed: _diagnostics,
           country: _country!,
         );
-        await widget.prefs.setBool('distribution_cloud_paused', false);
+        await widget.prefs.setBool(
+          IDistributionConsentService.cloudPausedKey,
+          false,
+        );
         _finish();
       } else if (!_pending) {
         final result = await _cloud.call(
@@ -222,7 +238,10 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         final result = await _cloud.poll();
         _hasAccount = result['hasAccount'] == true;
         if (result['independentEligible'] == true) {
-          await widget.prefs.setBool('distribution_graduation_pending', true);
+          await widget.prefs.setBool(
+            IDistributionConsentService.graduationPendingKey,
+            true,
+          );
           if (mounted) {
             setState(() {
               _age = '18+';
@@ -244,7 +263,10 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
           );
         }
         await _consent.acceptParentManaged(country: _country!);
-        await widget.prefs.setBool('distribution_cloud_paused', false);
+        await widget.prefs.setBool(
+          IDistributionConsentService.cloudPausedKey,
+          false,
+        );
         _finish();
       }
     } on Exception catch (error) {
@@ -254,9 +276,7 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
         _pending = false;
       }
       if (mounted) {
-        setState(
-          () => _error = error.toString().replaceFirst('Exception: ', ''),
-        );
+        setState(() => _error = authErrorMessage(error));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -397,10 +417,12 @@ class _DistributionOnboardingState extends State<DistributionOnboarding> {
                           onChanged:
                               _saving ||
                                   widget.prefs.containsKey(
-                                        'distribution_declared_age',
+                                        IDistributionConsentService
+                                            .declaredAgeKey,
                                       ) &&
                                       widget.prefs.getString(
-                                            'distribution_declared_age',
+                                            IDistributionConsentService
+                                                .declaredAgeKey,
                                           ) ==
                                           _age
                               ? null

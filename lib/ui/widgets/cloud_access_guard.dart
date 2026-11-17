@@ -14,6 +14,7 @@ import '../../services/distribution_consent_service.dart';
 import '../../services/encryption_service.dart';
 import '../../services/impl/encryption_service.dart';
 import '../../services/window_service.dart';
+import '../platform_adaptive.dart';
 import '../screens/distribution_onboarding.dart';
 import '../theme/colors.dart';
 import 'account_link_recovery_dialog.dart';
@@ -73,39 +74,30 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     if (_desktop) windowManager.addListener(this);
     _encryption.keyRevision.addListener(_keyChanged);
     _auth = _client.auth.onAuthStateChange.listen(
-      (state) {
-        // Refreshing the same account must preserve the composer and attachments.
-        // A different account or sign-out immediately removes the private subtree.
-        if (mounted && state.session?.user.id != _authorizedUser) {
-          _authorizedUser = null;
-          _notifyBlocked();
-          setState(() {
-            _ready = false;
-            _needsKey = false;
-          });
-        }
-        unawaited(_check());
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        // GoTrue replays failed deep-link/refresh errors as well as auth events.
-        // Recheck the actual session without discarding a same-account draft.
-        if (mounted && _client.auth.currentUser?.id != _authorizedUser) {
-          _authorizedUser = null;
-          _notifyBlocked();
-          setState(() {
-            _ready = false;
-            _needsKey = false;
-          });
-        }
-        unawaited(_check());
-      },
+      (state) => _onAccountSignal(state.session?.user.id),
+      // GoTrue replays failed deep-link/refresh errors as well as auth events.
+      // Recheck the actual session without discarding a same-account draft.
+      onError: (Object error, StackTrace stackTrace) =>
+          _onAccountSignal(_client.auth.currentUser?.id),
     );
     unawaited(_check());
   }
 
-  bool get _desktop =>
-      widget.isDesktop ??
-      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+  /// Refreshing the same account must preserve the composer and attachments.
+  /// A different account or sign-out immediately removes the private subtree.
+  void _onAccountSignal(String? userId) {
+    if (mounted && userId != _authorizedUser) {
+      _authorizedUser = null;
+      _notifyBlocked();
+      setState(() {
+        _ready = false;
+        _needsKey = false;
+      });
+    }
+    unawaited(_check());
+  }
+
+  bool get _desktop => widget.isDesktop ?? Adaptive.isDesktop;
 
   void _maintainTimer() {
     if (!mounted) {
@@ -166,9 +158,10 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
     var session = _client.auth.currentSession;
     var checkedUser = session?.user.id;
     try {
-      final local = DistributionConsentService(await loadConsentPreferences());
       final prefs = await loadConsentPreferences();
-      final paused = prefs.getBool('distribution_cloud_paused') == true;
+      final local = DistributionConsentService(prefs);
+      final paused =
+          prefs.getBool(IDistributionConsentService.cloudPausedKey) == true;
       if (session == null &&
           local.ageGroup == DistributionAgeGroup.parentManaged &&
           !paused) {
@@ -407,8 +400,8 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
   }
 
   Future<void> _signOut() async {
-    final prefs = await loadConsentPreferences();
-    await prefs.setBool('distribution_cloud_paused', true);
+    // signOut(createGuest: false) pauses cloud setup itself, and only once the
+    // sign-out can no longer fail part-way.
     try {
       await locator<IAuthService>().signOut(createGuest: false);
       CloudConsentService.authorization.value = null;
@@ -423,26 +416,15 @@ class _CloudAccessGuardState extends State<CloudAccessGuard>
   Future<void> _delete() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete this account?'),
-        content: const Text(
+    final confirmed = await Adaptive.confirm(
+      context,
+      title: 'Delete this account?',
+      message:
           'This permanently removes the cloud account and its saved clips. It cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete account'),
-          ),
-        ],
-      ),
+      confirmText: 'Delete account',
+      isDestructive: true,
     );
-    if (confirmed != true || _client.auth.currentUser?.id != userId) return;
+    if (!confirmed || _client.auth.currentUser?.id != userId) return;
     try {
       await locator<IAuthService>().deleteAccount();
     } on Exception {

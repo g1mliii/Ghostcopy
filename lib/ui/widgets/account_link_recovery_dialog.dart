@@ -74,7 +74,7 @@ class _AccountLinkRecoveryDialogState extends State<AccountLinkRecoveryDialog> {
       }
       await widget.auth.signInWithRefreshToken(refresh);
       final prefs = await loadConsentPreferences();
-      await prefs.setBool('distribution_cloud_paused', false);
+      await prefs.setBool(IDistributionConsentService.cloudPausedKey, false);
       if (mounted) Navigator.of(context).pop(true);
     } on Exception {
       if (mounted) {

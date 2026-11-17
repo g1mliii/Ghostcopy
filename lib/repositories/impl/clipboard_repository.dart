@@ -203,21 +203,24 @@ class ClipboardRepository implements IClipboardRepository {
   Future<bool> _encryptionForSend() async {
     await _ensureEncryptionInitialized();
     final enabled = await _encryptionService.isEnabled();
-    final token = _client.auth.currentSession?.accessToken;
-    // Production wires this session getter at startup. During an account
-    // switch/refresh, wait for that session's check instead of using stale flags.
-    if (CloudConsentService.currentAccessToken != null &&
-        (token == null ||
-            CloudConsentService.authorizationForSession(token) == null)) {
-      throw SecurityException('Check account permission before sending.');
-    }
-    if (CloudConsentService.currentAccessToken != null && token != null) {
-      await _cloudConsent.authorizeSend(token);
+    var authorization = CloudConsentService.authorization.value;
+    // Production wires this session getter at startup. Check this session
+    // (renewing after a token refresh) instead of using another one's flags.
+    if (CloudConsentService.currentAccessToken != null) {
+      final token = _client.auth.currentSession?.accessToken;
+      if (token == null) {
+        throw SecurityException('Check account permission before sending.');
+      }
+      try {
+        authorization = await _cloudConsent.authorizeSend(token);
+      } on Exception catch (e) {
+        if (isNetworkError(e)) rethrow;
+        throw SecurityException('Check account permission before sending.');
+      }
       if (_client.auth.currentSession?.accessToken != token) {
         throw SecurityException('Account changed before sending.');
       }
     }
-    final authorization = CloudConsentService.authorization.value;
     if (authorization != null &&
         authorization.parentManaged &&
         (!authorization.allowed || !enabled)) {

@@ -62,15 +62,21 @@
           pages.push(page); offset = page.data?.nextOffset ?? null;
         } while (offset !== null);
         download({ pages }, `ghostcopy-${child.id}-export.json`);
+        // A repeated export replaces the previous file buttons and links.
+        actions.querySelectorAll('[data-export-file]').forEach((node) => node.remove());
         const paths = [...new Set(pages.flatMap((page) => page.data?.clips ?? []).map((clip) => clip.storage_path).filter(Boolean))];
         for (const path of paths) {
-          actions.append(button('Get encrypted file', async () => {
+          const link = document.createElement('a'); link.rel = 'noopener noreferrer'; link.target = '_blank';
+          link.dataset.exportFile = ''; link.textContent = `Download ${path.split('/').pop()}`;
+          const fileButton = button('Get encrypted file', async () => {
             const file = await consent('parent-file', { id: child.id, path });
             const url = new URL(file.downloadUrl);
             if (url.protocol !== 'https:' || !url.hostname.endsWith('.r2.cloudflarestorage.com')) throw new Error('Invalid file URL');
-            const link = document.createElement('a'); link.href = url.href; link.rel = 'noopener noreferrer'; link.target = '_blank';
-            link.textContent = `Download ${path.split('/').pop()}`; actions.append(link);
-          }));
+            // Refreshing a link replaces the expired one rather than adding another.
+            link.href = url.href; fileButton.after(link);
+          });
+          fileButton.dataset.exportFile = '';
+          actions.append(fileButton);
         }
         message('Export downloaded. Clips and files remain encrypted; their passphrase is needed to read them. File links expire after five minutes.');
       }), button('Stop cloud sync', async () => {

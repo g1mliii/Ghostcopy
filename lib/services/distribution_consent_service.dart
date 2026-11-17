@@ -11,6 +11,15 @@ abstract class IDistributionConsentService {
   static const receiptKey = 'distribution_consent_receipt';
   static const blockedKey = 'distribution_age_blocked';
 
+  /// Setup was declined or signed out: no guest or cloud session may start.
+  static const cloudPausedKey = 'distribution_cloud_paused';
+
+  /// A parent-managed account is old enough to confirm independent setup.
+  static const graduationPendingKey = 'distribution_graduation_pending';
+  static const diagnosticsDisabledKey = 'parent_managed_diagnostics_disabled';
+  static const declaredAgeKey = 'distribution_declared_age';
+  static const declaredCountryKey = 'distribution_declared_country';
+
   bool get isAccepted;
   DistributionAgeGroup? get ageGroup;
   bool get isAgeBlocked;

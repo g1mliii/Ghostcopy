@@ -11,6 +11,7 @@ class DistributionConsentService implements IDistributionConsentService {
 
   final SharedPreferences _preferences;
   final DateTime Function() _now;
+  static final _countryCode = RegExp(r'^[A-Z]{2}$');
 
   Map<String, Object?>? get _receipt {
     final raw = _preferences.get(IDistributionConsentService.receiptKey);
@@ -40,7 +41,7 @@ class DistributionConsentService implements IDistributionConsentService {
         DateTime.tryParse(receipt['acceptedAt']! as String) == null) {
       return false;
     }
-    return RegExp(r'^[A-Z]{2}$').hasMatch(country ?? '') &&
+    return _countryCode.hasMatch(country ?? '') &&
         (receipt['ageGroup'] == DistributionAgeGroup.adult.name ||
             (receipt['ageGroup'] == DistributionAgeGroup.parentManaged.name &&
                 receipt['verificationMethod'] == 'kws-server-checked'));
@@ -48,9 +49,12 @@ class DistributionConsentService implements IDistributionConsentService {
 
   @override
   bool get diagnosticsAllowed =>
-      isAccepted &&
+      // ageGroup is null unless the receipt is accepted.
       ageGroup == DistributionAgeGroup.adult &&
-      _preferences.getBool('parent_managed_diagnostics_disabled') != true &&
+      _preferences.getBool(
+            IDistributionConsentService.diagnosticsDisabledKey,
+          ) !=
+          true &&
       _receipt?['diagnosticsAllowed'] == true;
 
   @override
@@ -73,32 +77,32 @@ class DistributionConsentService implements IDistributionConsentService {
     required bool diagnosticsAllowed,
     required String country,
   }) async {
-    if (isAgeBlocked ||
-        ageGroup != DistributionAgeGroup.adult ||
-        !RegExp(r'^[A-Z]{2}$').hasMatch(country)) {
+    if (ageGroup != DistributionAgeGroup.adult) {
       throw Exception('This account is not eligible for cloud setup.');
     }
-    final receipt = jsonEncode({
-      'version': IDistributionConsentService.version,
-      'country': country,
-      'ageGroup': ageGroup.name,
-      'termsAccepted': true,
-      'privacyAcknowledged': true,
-      'diagnosticsAllowed': diagnosticsAllowed,
-      'acceptedAt': _now().toUtc().toIso8601String(),
-      'verificationMethod': 'self-declared',
-    });
-    if (!await _preferences.setString(
-      IDistributionConsentService.receiptKey,
-      receipt,
-    )) {
-      throw Exception('Could not save setup. Please try again.');
-    }
+    await _writeReceipt(
+      ageGroup: ageGroup,
+      diagnosticsAllowed: diagnosticsAllowed,
+      country: country,
+      verificationMethod: 'self-declared',
+    );
   }
 
   @override
-  Future<void> acceptParentManaged({required String country}) async {
-    if (isAgeBlocked || !RegExp(r'^[A-Z]{2}$').hasMatch(country)) {
+  Future<void> acceptParentManaged({required String country}) => _writeReceipt(
+    ageGroup: DistributionAgeGroup.parentManaged,
+    diagnosticsAllowed: false,
+    country: country,
+    verificationMethod: 'kws-server-checked',
+  );
+
+  Future<void> _writeReceipt({
+    required DistributionAgeGroup ageGroup,
+    required bool diagnosticsAllowed,
+    required String country,
+    required String verificationMethod,
+  }) async {
+    if (isAgeBlocked || !_countryCode.hasMatch(country)) {
       throw Exception('This account is not eligible for cloud setup.');
     }
     if (!await _preferences.setString(
@@ -106,15 +110,15 @@ class DistributionConsentService implements IDistributionConsentService {
       jsonEncode({
         'version': IDistributionConsentService.version,
         'country': country,
-        'ageGroup': DistributionAgeGroup.parentManaged.name,
+        'ageGroup': ageGroup.name,
         'termsAccepted': true,
         'privacyAcknowledged': true,
-        'diagnosticsAllowed': false,
+        'diagnosticsAllowed': diagnosticsAllowed,
         'acceptedAt': _now().toUtc().toIso8601String(),
-        'verificationMethod': 'kws-server-checked',
+        'verificationMethod': verificationMethod,
       }),
     )) {
-      throw Exception('Could not save setup.');
+      throw Exception('Could not save setup. Please try again.');
     }
   }
 
